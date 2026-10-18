@@ -1,12 +1,15 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace ErpWeb.Tests.Inventory.Transaction;
 
@@ -327,7 +330,6 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         var company = InventoryLedgerTestFixture.CompanyCode;
         var branch = InventoryLedgerTestFixture.BranchCode;
         var pile = await db.IvBalLocs.SingleAsync();
-        var revision = await db.ItemStandardCostRevisions.SingleAsync();
         var header = new IvStockCountHdr
         {
             CompanyCode = company, BranchCode = branch,
@@ -343,35 +345,22 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         };
         db.IvStockCountLines.Add(line);
         await db.SaveChangesAsync();
-        var basis = new StockCountCostBasis
-        {
-            CompanyCode = company, BranchCode = branch,
-            StockCountLineId = line.Id,
-            CostBasisKind = StockCountCostBasisKinds.StandardRevision,
-            StandardCostRevisionId = revision.Id,
-            FrozenFallbackUnitCost = 2m,
-            CreatedAtUtc = DateTime.UtcNow
-        };
         db.ChangeTracker.Clear();
-        var sheet = await StockReplayPhysicalPlanner.BuildCountSheetInsertionAsync(
-            db, company, branch, header.Id);
-        var postingPlan = await StockReplayStandardCountSheetPostingWriter.BuildAsync(
-            db, sheet, [basis]);
+        var access = new Mock<IAccessRightService>(MockBehavior.Strict);
+        var rootPlan = await StockReplayCountSheetRootWriter.BuildAsync(
+            db, access.Object, company, branch, header.Id, [], "unused", DateTime.UtcNow);
+        var postingPlan = Assert.IsType<StockReplayStandardCountSheetPostingPlan>(rootPlan.Standard);
         Assert.Equal(220m, Assert.Single(postingPlan.Items).Projection.FinalValue);
-        var command = await StockCountAnchorCommandFactory.CreateAsync(
-            db, company, branch, header.Id, [basis]);
         await using var transaction = await db.Database.BeginTransactionAsync();
         var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
-        var begin = await coordinator.BeginInTransactionAsync(db, command);
+        var begin = await coordinator.BeginInTransactionAsync(db, rootPlan.Command);
         Assert.NotNull(begin.Context);
         var root = begin.Context!;
         try
         {
-            var prepared = await StockReplayStandardCountSheetPostingWriter
-                .PrepareWithinRootAsync(root, postingPlan);
-            var result = await StockReplayStandardCountSheetPostingWriter
-                .AppendWithinRootAsync(root, prepared, [basis],
-                    new RunningNumberService());
+            var written = await StockReplayCountSheetRootWriter.AppendWithinRootAsync(
+                root, rootPlan, new RunningNumberService());
+            var result = Assert.IsType<StockReplayStandardCountSheetPostResult>(written.Standard);
             var fact = Assert.Single(result.InitialFacts);
             Assert.Equal(2m, fact.UnitCost);
             Assert.Equal(20m, fact.CostAmount);
@@ -401,10 +390,12 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(110, 20)]
-    [InlineData(100, 0)]
-    public async Task Standard_count_sheet_values_two_piles_at_one_revision(
-        int firstPhysical, int firstAmount)
+    [InlineData(false, 110, 98, 196)]
+    [InlineData(true, 110, 102, 204)]
+    [InlineData(false, 100, 98, 196)]
+    [InlineData(true, 100, 102, 204)]
+    public async Task Standard_count_rollback_preserves_later_movement_and_its_value(
+        bool receipt, int physicalQty, int expectedQuantity, int expectedValue)
     {
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
@@ -414,12 +405,1113 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 2m);
         var company = InventoryLedgerTestFixture.CompanyCode;
         var branch = InventoryLedgerTestFixture.BranchCode;
+        var pile = await db.IvBalLocs.SingleAsync();
+        var header = new IvStockCountHdr
+        {
+            CompanyCode = company, BranchCode = branch,
+            CountNo = "CC-STD-ISSUE-REMOVE", CountDate = FixedToday,
+            Status = IvStockCountStatuses.Counted
+        };
+        db.IvStockCountLines.Add(new IvStockCountLine
+        {
+            Header = header, LineNumber = 1, BalLocId = pile.Id,
+            ICode = "A100", WHCode = "MAIN", LocCode = "BIN1",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            SystemQty = 100m, PhysicalQty = physicalQty
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var access = new Mock<IAccessRightService>(MockBehavior.Strict);
+        var postingPlan = await StockReplayCountSheetRootWriter.BuildAsync(
+            db, access.Object, company, branch, header.Id, [],
+            "unused", DateTime.UtcNow);
+        var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+        await using (var transaction = await db.Database.BeginTransactionAsync())
+        {
+            var begin = await coordinator.BeginInTransactionAsync(
+                db, postingPlan.Command);
+            Assert.NotNull(begin.Context);
+            try
+            {
+                var written = await StockReplayCountSheetRootWriter
+                    .AppendWithinRootAsync(begin.Context!, postingPlan,
+                        new RunningNumberService());
+                await coordinator.CompleteReplayInTransactionAsync(
+                    begin.Context!, written.RequiredActiveHistoryIds);
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await coordinator.AbortInTransactionAsync(begin.Context!);
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
+        db.ChangeTracker.Clear();
+        var countPosting = await db.StockPostings.SingleAsync();
+        var issueAt = FixedToday.AddDays(1).AddHours(9);
+        var sourceNo = receipt ? "STD-RECEIPT" : "STD-ISSUE";
+        var issuePosting = new StockPosting
+        {
+            CompanyCode = company, BranchCode = branch,
+            LedgerEpochId = countPosting.LedgerEpochId,
+            PostingSequence = countPosting.PostingSequence + 1,
+            RequestId = Guid.NewGuid(),
+            CommandType = receipt ? "IV_MR_POST" : "IV_MI_POST",
+            RequestFingerprint = new string('C', 64),
+            SourceModule = "INVENTORY", SourceDocumentType = "IV_TRX",
+            SourceDocumentId = sourceNo, SourceDocumentNo = sourceNo,
+            SourceSnapshotJson = "{}",
+            SourceSnapshotHash = new string('D', 64),
+            EffectiveAt = issueAt, BusinessDate = issueAt.Date,
+            PeriodKey = issueAt.ToString("yyyy-MM"),
+            PostedAtUtc = DateTime.UtcNow, PostedBy = "TEST",
+            SealedAtUtc = DateTime.UtcNow
+        };
+        db.StockPostings.Add(issuePosting);
+        await db.SaveChangesAsync();
+        var issue = new IvTrxHistory
+        {
+            CompanyCode = company, BranchCode = branch,
+            BatchNo = 902, TrxLineNo = 1, TrxDtTime = issueAt,
+            TrxType = receipt ? IvTrxTypes.MiscellaneousReceipt
+                : IvTrxTypes.MiscellaneousIssue,
+            BatchStatus = IvBatchStatuses.Posted,
+            ICode = "A100",
+            FromBalLocId = receipt ? null : pile.Id,
+            ToBalLocId = receipt ? pile.Id : null,
+            FrStdQty = receipt ? null : 2m,
+            ToStdQty = receipt ? 2m : null,
+            FrStdUom = receipt ? null : "EA",
+            ToStdUom = receipt ? "EA" : null,
+            FrWarehouse = receipt ? null : "MAIN",
+            ToWarehouse = receipt ? "MAIN" : null,
+            FrLocation = receipt ? null : "BIN1",
+            ToLocation = receipt ? "BIN1" : null,
+            IStatus = "ACTIVE", LedgerVersion = 2,
+            LedgerEpochId = countPosting.LedgerEpochId,
+            StockPostingId = issuePosting.Id, PostingLineNo = 1,
+            EntryRole = "ORIGINAL",
+            ValuationStatus = StockValuationStatuses.Valued
+        };
+        db.IvTrxHistories.Add(issue);
+        await db.SaveChangesAsync();
+        db.StockValuationFacts.Add(new StockValuationFact
+        {
+            CompanyCode = company, BranchCode = branch,
+            LedgerEpochId = countPosting.LedgerEpochId,
+            StockPostingId = issuePosting.Id,
+            PostingLineNo = 1, SplitOrdinal = 0,
+            SourceLineId = $"IV_TRX:{sourceNo}:1:1:0",
+            SourceDocumentType = issuePosting.SourceDocumentType,
+            SourceDocumentId = issuePosting.SourceDocumentId,
+            SourceDocumentNo = issuePosting.SourceDocumentNo,
+            SourceDocumentLine = "1",
+            EffectiveAt = issueAt, BusinessDate = issueAt.Date,
+            PeriodKey = issuePosting.PeriodKey,
+            ItemCode = "A100", WarehouseCode = "MAIN",
+            LocationCode = "BIN1", ItemStatus = "ACTIVE",
+            BaseUom = "EA", MovementCode = receipt ? "RECEIPT" : "ISSUE",
+            Direction = receipt ? 1 : -1, BaseQty = 2m,
+            CostMethod = StockCostMethods.Standard,
+            UnitCost = 2m, CostAmount = 4m,
+            BaseCostAmount = 4m,
+            ValuationSource = StockValuationSources.Standard,
+            ValuationStatus = StockValuationStatuses.Valued,
+            InventoryHistoryId = issue.Id,
+            FromBalLocId = receipt ? null : pile.Id,
+            ToBalLocId = receipt ? pile.Id : null,
+            CreatedAtUtc = DateTime.UtcNow, CreatedBy = "TEST"
+        });
+        pile = await db.IvBalLocs.SingleAsync(b => b.Id == pile.Id);
+        pile.StdQty = physicalQty + (receipt ? 2m : -2m);
+        pile.TransDate = issueAt;
+        var state = await db.StockCostStates.SingleAsync(s =>
+            s.CostMethod == StockCostMethods.Standard);
+        state.OnHandBaseQty = pile.StdQty;
+        state.InventoryValue = physicalQty * 2m + (receipt ? 4m : -4m);
+        state.LastPostingSequence = issuePosting.PostingSequence;
+        var sequence = await db.StockPostingBranchSequences.SingleAsync();
+        sequence.LastSequence = issuePosting.PostingSequence;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var plan = await StockReplayCountSheetRemovalRootWriter.BuildAsync(
+            db, company, branch, header.Id);
+        if (physicalQty == 100)
+        {
+            var zero = Assert.IsType<StockReplayZeroCountRemovalRootPlan>(
+                plan.Zero);
+            Assert.Single(Assert.Single(zero.Removal.Lines).Physical.LaterEvents);
+        }
+        else
+        {
+            var item = Assert.Single(
+                Assert.IsType<StockReplayStandardCountSheetRemovalPlan>(
+                    plan.Standard).Items);
+            Assert.Equal(expectedQuantity, item.FinalQuantity);
+            Assert.Equal(expectedValue, item.FinalValue);
+        }
+        await using var rollback = await db.Database.BeginTransactionAsync();
+        var reversal = await coordinator.BeginInTransactionAsync(db, plan.Command);
+        Assert.NotNull(reversal.Context);
+        try
+        {
+            if (receipt)
+            {
+                var pendingFact = await db.StockValuationFacts.SingleAsync(f =>
+                    f.InventoryHistoryId == issue.Id);
+                pendingFact.CostAmount = 5m;
+                var pending = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayCountSheetRemovalRootWriter.AppendWithinRootAsync(
+                        reversal.Context!, plan, new RunningNumberService(),
+                        "Count entered in error", DateTime.UtcNow));
+                Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                    pending.Error.Code);
+                Assert.Equal(physicalQty == 100 ? 0 : 1,
+                    await db.IvTrxBatches.CountAsync());
+                await db.Entry(pendingFact).ReloadAsync();
+            }
+            var removed = await StockReplayCountSheetRemovalRootWriter
+                .AppendWithinRootAsync(reversal.Context!, plan,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow);
+            Assert.Equal(physicalQty == 100 ? 0 : 1,
+                removed.ReversalHistoryIds.Count);
+            Assert.Single(removed.RemovalGenerationIds);
+            await coordinator.CompleteReplayInTransactionAsync(
+                reversal.Context!, []);
+            await rollback.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(reversal.Context!);
+            await rollback.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(expectedQuantity,
+            (await db.IvBalLocs.SingleAsync()).StdQty);
+        var restored = await db.StockCostStates.SingleAsync(s =>
+            s.CostMethod == StockCostMethods.Standard);
+        Assert.Equal(expectedQuantity, restored.OnHandBaseQty);
+        Assert.Equal(expectedValue, restored.InventoryValue);
+        var activeIssue = await StockReplayValuationGenerationResolver.ResolveAsync(
+            db, company, branch, [issue]);
+        Assert.Equal(receipt ? 4m : -4m,
+            Assert.Single(activeIssue[issue.Id]).SignedValue);
+        var tail = await StockReplayStandardFinancialTailReader.ReadLaterAsync(
+            db, company, branch, "A100",
+            new StockReplayEventKey(FixedToday,
+                StockReplayEventKey.OrdinaryClass, long.MaxValue,
+                "\uffff", int.MaxValue));
+        Assert.Equal(StockReplayStandardEventKinds.Movement,
+            Assert.Single(tail.LaterEvents).Kind);
+    }
+
+    [Theory]
+    [InlineData(110, false)]
+    [InlineData(100, false)]
+    [InlineData(110, true)]
+    public async Task Wac_count_rollback_preserves_later_misc_receipt_and_its_value(
+        int physicalQty, bool withLaterIssue)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+        var company = InventoryLedgerTestFixture.CompanyCode;
+        var branch = InventoryLedgerTestFixture.BranchCode;
+        var pile = await db.IvBalLocs.SingleAsync();
+        var header = new IvStockCountHdr
+        {
+            CompanyCode = company, BranchCode = branch,
+            CountNo = "CC-WAC-MR-REMOVE", CountDate = FixedToday,
+            Status = IvStockCountStatuses.Counted
+        };
+        var line = new IvStockCountLine
+        {
+            Header = header, LineNumber = 1, BalLocId = pile.Id,
+            ICode = "A100", WHCode = "MAIN", LocCode = "BIN1",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            SystemQty = 100m, PhysicalQty = physicalQty
+        };
+        db.IvStockCountLines.Add(line);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var access = new Mock<IAccessRightService>();
+        access.Setup(a => a.CanAsync(MenuCodes.InventoryStockCount,
+                PermissionCodes.PriceOverride, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var post = await StockReplayCountSheetRootWriter.BuildAsync(
+            db, access.Object, company, branch, header.Id,
+            [new StockCountCostApprovalRequest(line.Id,
+                StockCountCostBasisKinds.ManualApproved, 2m,
+                "Approved count basis")], "manager", DateTime.UtcNow);
+        var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+        await using (var transaction = await db.Database.BeginTransactionAsync())
+        {
+            var begin = await coordinator.BeginInTransactionAsync(db, post.Command);
+            Assert.NotNull(begin.Context);
+            try
+            {
+                var written = await StockReplayCountSheetRootWriter
+                    .AppendWithinRootAsync(begin.Context!, post,
+                        new RunningNumberService());
+                await coordinator.CompleteReplayInTransactionAsync(
+                    begin.Context!, written.RequiredActiveHistoryIds);
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await coordinator.AbortInTransactionAsync(begin.Context!);
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
+        db.ChangeTracker.Clear();
+        var countPosting = await db.StockPostings.SingleAsync();
+        var receiptAt = FixedToday.AddDays(1).AddHours(9);
+        var receiptPosting = new StockPosting
+        {
+            CompanyCode = company, BranchCode = branch,
+            LedgerEpochId = countPosting.LedgerEpochId,
+            PostingSequence = countPosting.PostingSequence + 1,
+            RequestId = Guid.NewGuid(), CommandType = "IV_MR_POST",
+            RequestFingerprint = new string('C', 64),
+            SourceModule = "INVENTORY", SourceDocumentType = "IV_TRX",
+            SourceDocumentId = "WAC-MR", SourceDocumentNo = "WAC-MR",
+            SourceSnapshotJson = "{}", SourceSnapshotHash = new string('D', 64),
+            EffectiveAt = receiptAt, BusinessDate = receiptAt.Date,
+            PeriodKey = receiptAt.ToString("yyyy-MM"),
+            PostedAtUtc = DateTime.UtcNow, PostedBy = "TEST",
+            SealedAtUtc = DateTime.UtcNow
+        };
+        db.StockPostings.Add(receiptPosting);
+        await db.SaveChangesAsync();
+        var receipt = new IvTrxHistory
+        {
+            CompanyCode = company, BranchCode = branch,
+            BatchNo = 902, TrxLineNo = 1, TrxDtTime = receiptAt,
+            TrxType = IvTrxTypes.MiscellaneousReceipt,
+            BatchStatus = IvBatchStatuses.Posted, ICode = "A100",
+            ToBalLocId = pile.Id, ToStdQty = 2m, ToStdUom = "EA",
+            ToWarehouse = "MAIN", ToLocation = "BIN1", IStatus = "ACTIVE",
+            LedgerVersion = 2, LedgerEpochId = countPosting.LedgerEpochId,
+            StockPostingId = receiptPosting.Id, PostingLineNo = 1,
+            EntryRole = "ORIGINAL",
+            ValuationStatus = StockValuationStatuses.Valued
+        };
+        db.IvTrxHistories.Add(receipt);
+        await db.SaveChangesAsync();
+        db.StockValuationFacts.Add(new StockValuationFact
+        {
+            CompanyCode = company, BranchCode = branch,
+            LedgerEpochId = countPosting.LedgerEpochId,
+            StockPostingId = receiptPosting.Id,
+            PostingLineNo = 1, SplitOrdinal = 0,
+            SourceLineId = "IV_TRX:WAC-MR:1:1:0",
+            SourceDocumentType = "IV_TRX", SourceDocumentId = "WAC-MR",
+            SourceDocumentNo = "WAC-MR", SourceDocumentLine = "1",
+            EffectiveAt = receiptAt, BusinessDate = receiptAt.Date,
+            PeriodKey = receiptPosting.PeriodKey,
+            ItemCode = "A100", WarehouseCode = "MAIN",
+            LocationCode = "BIN1", ItemStatus = "ACTIVE",
+            BaseUom = "EA", MovementCode = "RECEIPT",
+            Direction = 1, BaseQty = 2m,
+            CostMethod = StockCostMethods.MovingAverage,
+            UnitCost = 3m, CostAmount = 6m, BaseCostAmount = 6m,
+            ValuationSource = StockValuationSources.ReceiptActual,
+            ValuationStatus = StockValuationStatuses.Valued,
+            InventoryHistoryId = receipt.Id, ToBalLocId = pile.Id,
+            CreatedAtUtc = DateTime.UtcNow, CreatedBy = "TEST"
+        });
+        IvTrxHistory? issue = null;
+        StockPosting? issuePosting = null;
+        var issueOldCost = StockLedgerPrecision.Money(2m
+            * StockLedgerPrecision.Money(
+                (physicalQty * 2m + 6m) / (physicalQty + 2m)));
+        if (withLaterIssue)
+        {
+            var issueAt = receiptAt.AddHours(1);
+            issuePosting = new StockPosting
+            {
+                CompanyCode = company, BranchCode = branch,
+                LedgerEpochId = countPosting.LedgerEpochId,
+                PostingSequence = receiptPosting.PostingSequence + 1,
+                RequestId = Guid.NewGuid(), CommandType = "IV_MI_POST",
+                RequestFingerprint = new string('E', 64),
+                SourceModule = "INVENTORY", SourceDocumentType = "IV_TRX",
+                SourceDocumentId = "WAC-MI", SourceDocumentNo = "WAC-MI",
+                SourceSnapshotJson = "{}", SourceSnapshotHash = new string('F', 64),
+                EffectiveAt = issueAt, BusinessDate = issueAt.Date,
+                PeriodKey = issueAt.ToString("yyyy-MM"),
+                PostedAtUtc = DateTime.UtcNow, PostedBy = "TEST",
+                SealedAtUtc = DateTime.UtcNow
+            };
+            db.StockPostings.Add(issuePosting);
+            await db.SaveChangesAsync();
+            issue = new IvTrxHistory
+            {
+                CompanyCode = company, BranchCode = branch,
+                BatchNo = 903, TrxLineNo = 1, TrxDtTime = issueAt,
+                TrxType = IvTrxTypes.MiscellaneousIssue,
+                BatchStatus = IvBatchStatuses.Posted, ICode = "A100",
+                FromBalLocId = pile.Id, FrStdQty = 2m, FrStdUom = "EA",
+                FrWarehouse = "MAIN", FrLocation = "BIN1", IStatus = "ACTIVE",
+                LedgerVersion = 2, LedgerEpochId = countPosting.LedgerEpochId,
+                StockPostingId = issuePosting.Id, PostingLineNo = 1,
+                EntryRole = "ORIGINAL",
+                ValuationStatus = StockValuationStatuses.Valued
+            };
+            db.IvTrxHistories.Add(issue);
+            await db.SaveChangesAsync();
+            db.StockValuationFacts.Add(new StockValuationFact
+            {
+                CompanyCode = company, BranchCode = branch,
+                LedgerEpochId = countPosting.LedgerEpochId,
+                StockPostingId = issuePosting.Id,
+                PostingLineNo = 1, SplitOrdinal = 0,
+                SourceLineId = "IV_TRX:WAC-MI:1:1:0",
+                SourceDocumentType = "IV_TRX", SourceDocumentId = "WAC-MI",
+                SourceDocumentNo = "WAC-MI", SourceDocumentLine = "1",
+                EffectiveAt = issueAt, BusinessDate = issueAt.Date,
+                PeriodKey = issuePosting.PeriodKey,
+                ItemCode = "A100", WarehouseCode = "MAIN",
+                LocationCode = "BIN1", ItemStatus = "ACTIVE",
+                BaseUom = "EA", MovementCode = "ISSUE_OUT",
+                Direction = -1, BaseQty = 2m,
+                CostMethod = StockCostMethods.MovingAverage,
+                UnitCost = StockLedgerPrecision.Money(issueOldCost / 2m),
+                CostAmount = issueOldCost, BaseCostAmount = issueOldCost,
+                ValuationSource = StockValuationSources.MovingAverage,
+                ValuationStatus = StockValuationStatuses.Valued,
+                InventoryHistoryId = issue.Id, FromBalLocId = pile.Id,
+                CreatedAtUtc = DateTime.UtcNow, CreatedBy = "TEST"
+            });
+        }
+        pile = await db.IvBalLocs.SingleAsync(b => b.Id == pile.Id);
+        pile.StdQty = physicalQty + (withLaterIssue ? 0m : 2m);
+        pile.TransDate = issue?.TrxDtTime ?? receiptAt;
+        var state = await db.StockCostStates.SingleAsync();
+        state.OnHandBaseQty = pile.StdQty;
+        state.InventoryValue = physicalQty * 2m + 6m
+            - (withLaterIssue ? issueOldCost : 0m);
+        state.AverageUnitCost = StockLedgerPrecision.Money(
+            state.InventoryValue / state.OnHandBaseQty);
+        state.CurrentUnitCost = state.AverageUnitCost;
+        state.LastPostingSequence = issuePosting?.PostingSequence
+            ?? receiptPosting.PostingSequence;
+        (await db.StockPostingBranchSequences.SingleAsync()).LastSequence =
+            state.LastPostingSequence;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        if (physicalQty != 100)
+        {
+            var foreignOwner = await db.StockPostings.SingleAsync(p =>
+                p.Id == receiptPosting.Id);
+            foreignOwner.SourceModule = "PRODUCTION";
+            await db.SaveChangesAsync();
+            var refused = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayCountSheetRemovalRootWriter.BuildAsync(
+                    db, company, branch, header.Id));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, refused.Error.Code);
+            foreignOwner.SourceModule = "INVENTORY";
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+        }
+        if (withLaterIssue)
+        {
+            var foreignIssueOwner = await db.StockPostings.SingleAsync(p =>
+                p.Id == issuePosting!.Id);
+            foreignIssueOwner.SourceModule = "PRODUCTION";
+            await db.SaveChangesAsync();
+            var refusedIssue = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayCountSheetRemovalRootWriter.BuildAsync(
+                    db, company, branch, header.Id));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                refusedIssue.Error.Code);
+            foreignIssueOwner.SourceModule = "INVENTORY";
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+        }
+        var removal = await StockReplayCountSheetRemovalRootWriter.BuildAsync(
+            db, company, branch, header.Id);
+        if (physicalQty == 100)
+        {
+            var zero = Assert.IsType<StockReplayZeroCountRemovalRootPlan>(
+                removal.Zero);
+            Assert.Single(Assert.Single(zero.Removal.Lines).Physical.LaterEvents);
+        }
+        else
+        {
+            var item = Assert.Single(
+                Assert.IsType<StockReplayWacCountSheetRemovalPlan>(
+                    removal.Wac).Items);
+            Assert.Equal(withLaterIssue ? 100m : 102m,
+                item.FinalQuantity);
+            Assert.Equal(withLaterIssue ? 201.960784m : 206m,
+                item.FinalValue);
+            Assert.Equal(withLaterIssue, item.Repricing is not null);
+        }
+        await using var rollback = await db.Database.BeginTransactionAsync();
+        var reverse = await coordinator.BeginInTransactionAsync(db, removal.Command);
+        Assert.NotNull(reverse.Context);
+        try
+        {
+            if (physicalQty == 100)
+            {
+                var changedFact = await db.StockValuationFacts.SingleAsync(f =>
+                    f.InventoryHistoryId == receipt.Id);
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE StockValuationFact SET CostAmount = {7m} WHERE Id = {changedFact.Id}");
+                var staleValue = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayCountSheetRemovalRootWriter.AppendWithinRootAsync(
+                        reverse.Context!, removal, new RunningNumberService(),
+                        "Count entered in error", DateTime.UtcNow));
+                Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                    staleValue.Error.Code);
+                Assert.Empty(await db.IvTrxBatches.ToArrayAsync());
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE StockValuationFact SET CostAmount = {6m} WHERE Id = {changedFact.Id}");
+            }
+            if (physicalQty != 100)
+            {
+                var changedOwner = await db.StockPostings.SingleAsync(p =>
+                    p.Id == receiptPosting.Id);
+                changedOwner.SourceModule = "PRODUCTION";
+                await db.SaveChangesAsync();
+                var stale = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayCountSheetRemovalRootWriter.AppendWithinRootAsync(
+                        reverse.Context!, removal, new RunningNumberService(),
+                        "Count entered in error", DateTime.UtcNow));
+                Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                    stale.Error.Code);
+                Assert.Single(await db.IvTrxBatches.ToArrayAsync());
+                changedOwner.SourceModule = "INVENTORY";
+                await db.SaveChangesAsync();
+            }
+            if (withLaterIssue)
+            {
+                var changedIssueOwner = await db.StockPostings.SingleAsync(p =>
+                    p.Id == issuePosting!.Id);
+                changedIssueOwner.SourceModule = "PRODUCTION";
+                await db.SaveChangesAsync();
+                var staleIssue = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayCountSheetRemovalRootWriter.AppendWithinRootAsync(
+                        reverse.Context!, removal, new RunningNumberService(),
+                        "Count entered in error", DateTime.UtcNow));
+                Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                    staleIssue.Error.Code);
+                changedIssueOwner.SourceModule = "INVENTORY";
+                await db.SaveChangesAsync();
+            }
+            var pendingFact = await db.StockValuationFacts.SingleAsync(f =>
+                f.InventoryHistoryId == (withLaterIssue ? issue!.Id : receipt.Id));
+            pendingFact.CostAmount = 7m;
+            var pending = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayCountSheetRemovalRootWriter.AppendWithinRootAsync(
+                    reverse.Context!, removal, new RunningNumberService(),
+                    "Count entered in error", DateTime.UtcNow));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                pending.Error.Code);
+            Assert.Equal(physicalQty == 100 ? 0 : 1,
+                await db.IvTrxBatches.CountAsync());
+            await db.Entry(pendingFact).ReloadAsync();
+            var written = await StockReplayCountSheetRemovalRootWriter
+                .AppendWithinRootAsync(reverse.Context!, removal,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow);
+            Assert.Equal(physicalQty == 100 ? 0 : 1,
+                written.ReversalHistoryIds.Count);
+            Assert.Single(written.RemovalGenerationIds);
+            Assert.Equal(withLaterIssue ? [issue!.Id] : [],
+                written.RequiredActiveHistoryIds);
+            await coordinator.CompleteReplayInTransactionAsync(
+                reverse.Context!, written.RequiredActiveHistoryIds);
+            await rollback.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(reverse.Context!);
+            await rollback.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(withLaterIssue ? 100m : 102m,
+            (await db.IvBalLocs.SingleAsync()).StdQty);
+        var finalState = await db.StockCostStates.SingleAsync();
+        Assert.Equal(withLaterIssue ? 100m : 102m,
+            finalState.OnHandBaseQty);
+        Assert.Equal(withLaterIssue ? 201.960784m : 206m,
+            finalState.InventoryValue);
+        var active = await StockReplayValuationGenerationResolver.ResolveAsync(
+            db, company, branch, [receipt]);
+        Assert.Equal(6m, Assert.Single(active[receipt.Id]).SignedValue);
+        if (withLaterIssue)
+        {
+            var issueFacts = await StockReplayValuationGenerationResolver
+                .ResolveAsync(db, company, branch, [issue!]);
+            var corrected = Assert.Single(issueFacts[issue!.Id]);
+            Assert.Equal(4.039216m, corrected.CostAmount);
+            Assert.Equal(issueOldCost,
+                (await db.StockValuationFacts.SingleAsync(f =>
+                    f.StockPostingId == issuePosting!.Id)).CostAmount);
+        }
+        var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(
+            db, company, branch, "A100",
+            new StockReplayEventKey(FixedToday,
+                StockReplayEventKey.OrdinaryClass, long.MaxValue,
+                "\uffff", int.MaxValue));
+        Assert.Equal(withLaterIssue ? 2 : 1, tail.LaterEvents.Count);
+    }
+
+    [Theory]
+    [InlineData(false, 206, 6)]
+    [InlineData(true, 204, 4)]
+    public async Task Count_rollback_keeps_ordinary_receipt_at_final_count_tick(
+        bool standard, int expectedValue, int receiptValue)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+        if (standard)
+        {
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(
+                db, "A100", 100m, 2m, StockCostMethods.Standard);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 2m);
+        }
+        var company = InventoryLedgerTestFixture.CompanyCode;
+        var branch = InventoryLedgerTestFixture.BranchCode;
+        var pile = await db.IvBalLocs.SingleAsync();
+        var epochId = await db.StockLedgerEpochs.Select(e => e.Id).SingleAsync();
+        var receiptAt = StockReplayEventKey.CountEndOfDay(FixedToday);
+        var receiptPosting = new StockPosting
+        {
+            CompanyCode = company, BranchCode = branch,
+            LedgerEpochId = epochId, PostingSequence = 1,
+            RequestId = Guid.NewGuid(), CommandType = "IV_MR_POST",
+            RequestFingerprint = new string('C', 64),
+            SourceModule = "INVENTORY", SourceDocumentType = "IV_TRX",
+            SourceDocumentId = "WAC-FINAL-TICK-MR",
+            SourceDocumentNo = "WAC-FINAL-TICK-MR",
+            SourceSnapshotJson = "{}", SourceSnapshotHash = new string('D', 64),
+            EffectiveAt = receiptAt, BusinessDate = FixedToday,
+            PeriodKey = FixedToday.ToString("yyyy-MM"),
+            PostedAtUtc = DateTime.UtcNow, PostedBy = "TEST",
+            SealedAtUtc = DateTime.UtcNow
+        };
+        db.StockPostings.Add(receiptPosting);
+        await db.SaveChangesAsync();
+        var receipt = new IvTrxHistory
+        {
+            CompanyCode = company, BranchCode = branch,
+            BatchNo = 902, TrxLineNo = 1, TrxDtTime = receiptAt,
+            TrxType = IvTrxTypes.MiscellaneousReceipt,
+            BatchStatus = IvBatchStatuses.Posted, ICode = "A100",
+            ToBalLocId = pile.Id, ToStdQty = 2m, ToStdUom = "EA",
+            ToWarehouse = "MAIN", ToLocation = "BIN1", IStatus = "ACTIVE",
+            LedgerVersion = 2, LedgerEpochId = epochId,
+            StockPostingId = receiptPosting.Id, PostingLineNo = 1,
+            EntryRole = "ORIGINAL",
+            ValuationStatus = StockValuationStatuses.Valued
+        };
+        db.IvTrxHistories.Add(receipt);
+        await db.SaveChangesAsync();
+        db.StockValuationFacts.Add(new StockValuationFact
+        {
+            CompanyCode = company, BranchCode = branch,
+            LedgerEpochId = epochId, StockPostingId = receiptPosting.Id,
+            PostingLineNo = 1, SplitOrdinal = 0,
+            SourceLineId = "IV_TRX:WAC-FINAL-TICK-MR:1:1:0",
+            SourceDocumentType = "IV_TRX",
+            SourceDocumentId = "WAC-FINAL-TICK-MR",
+            SourceDocumentNo = "WAC-FINAL-TICK-MR",
+            SourceDocumentLine = "1", EffectiveAt = receiptAt,
+            BusinessDate = FixedToday,
+            PeriodKey = receiptPosting.PeriodKey,
+            ItemCode = "A100", WarehouseCode = "MAIN",
+            LocationCode = "BIN1", ItemStatus = "ACTIVE",
+            BaseUom = "EA", MovementCode = "RECEIPT",
+            Direction = 1, BaseQty = 2m,
+            CostMethod = standard ? StockCostMethods.Standard
+                : StockCostMethods.MovingAverage,
+            UnitCost = standard ? 2m : 3m,
+            CostAmount = receiptValue, BaseCostAmount = receiptValue,
+            ValuationSource = standard ? StockValuationSources.Standard
+                : StockValuationSources.ReceiptActual,
+            ValuationStatus = StockValuationStatuses.Valued,
+            InventoryHistoryId = receipt.Id, ToBalLocId = pile.Id,
+            CreatedAtUtc = DateTime.UtcNow, CreatedBy = "TEST"
+        });
+        pile.StdQty = 102m;
+        pile.TransDate = receiptAt;
+        var state = await db.StockCostStates.SingleAsync(s =>
+            s.CostMethod == (standard ? StockCostMethods.Standard
+                : StockCostMethods.MovingAverage));
+        state.OnHandBaseQty = 102m;
+        state.InventoryValue = expectedValue;
+        state.LastPostingSequence = 1;
+        db.StockPostingBranchSequences.Add(new StockPostingBranchSequence
+        {
+            CompanyCode = company, BranchCode = branch,
+            LastSequence = 1, UpdatedAtUtc = DateTime.UtcNow
+        });
+        var header = new IvStockCountHdr
+        {
+            CompanyCode = company, BranchCode = branch,
+            CountNo = "CC-FINAL-TICK", CountDate = FixedToday,
+            Status = IvStockCountStatuses.Counted
+        };
+        var line = new IvStockCountLine
+        {
+            Header = header, LineNumber = 1, BalLocId = pile.Id,
+            ICode = "A100", WHCode = "MAIN", LocCode = "BIN1",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            SystemQty = 102m, PhysicalQty = 110m
+        };
+        db.IvStockCountLines.Add(line);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var access = new Mock<IAccessRightService>();
+        access.Setup(a => a.CanAsync(MenuCodes.InventoryStockCount,
+                PermissionCodes.PriceOverride, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        StockCountCostApprovalRequest[] approvals = standard ? [] :
+        [
+            new StockCountCostApprovalRequest(line.Id,
+                StockCountCostBasisKinds.ManualApproved, 2m,
+                "Approved count basis")
+        ];
+        var post = await StockReplayCountSheetRootWriter.BuildAsync(
+            db, access.Object, company, branch, header.Id,
+            approvals, "manager", DateTime.UtcNow);
+        Assert.Equal(8m, Assert.Single(post.PhysicalSheet.Lines)
+            .Projection.Candidate.SignedDelta);
+        var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+        await using (var transaction = await db.Database.BeginTransactionAsync())
+        {
+            var begin = await coordinator.BeginInTransactionAsync(db, post.Command);
+            Assert.NotNull(begin.Context);
+            try
+            {
+                var written = await StockReplayCountSheetRootWriter
+                    .AppendWithinRootAsync(begin.Context!, post,
+                        new RunningNumberService());
+                await coordinator.CompleteReplayInTransactionAsync(
+                    begin.Context!, written.RequiredActiveHistoryIds);
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await coordinator.AbortInTransactionAsync(begin.Context!);
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
+        db.ChangeTracker.Clear();
+        var removal = await StockReplayCountSheetRemovalRootWriter.BuildAsync(
+            db, company, branch, header.Id);
+        var finalQuantity = standard
+            ? Assert.Single(Assert.IsType<StockReplayStandardCountSheetRemovalPlan>(
+                removal.Standard).Items).FinalQuantity
+            : Assert.Single(Assert.IsType<StockReplayWacCountSheetRemovalPlan>(
+                removal.Wac).Items).FinalQuantity;
+        var finalValue = standard
+            ? Assert.Single(removal.Standard!.Items).FinalValue
+            : Assert.Single(removal.Wac!.Items).FinalValue;
+        Assert.Equal(102m, finalQuantity);
+        Assert.Equal(expectedValue, finalValue);
+        await using var rollback = await db.Database.BeginTransactionAsync();
+        var reverse = await coordinator.BeginInTransactionAsync(db, removal.Command);
+        Assert.NotNull(reverse.Context);
+        try
+        {
+            await StockReplayCountSheetRemovalRootWriter.AppendWithinRootAsync(
+                reverse.Context!, removal, new RunningNumberService(),
+                "Count entered in error", DateTime.UtcNow);
+            await coordinator.CompleteReplayInTransactionAsync(
+                reverse.Context!, []);
+            await rollback.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(reverse.Context!);
+            await rollback.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(102m, (await db.IvBalLocs.SingleAsync()).StdQty);
+        Assert.Equal(expectedValue,
+            (await db.StockCostStates.SingleAsync(s =>
+                s.CostMethod == (standard ? StockCostMethods.Standard
+                    : StockCostMethods.MovingAverage))).InventoryValue);
+        var active = await StockReplayValuationGenerationResolver.ResolveAsync(
+            db, company, branch, [receipt]);
+        Assert.Equal(receiptValue,
+            Assert.Single(active[receipt.Id]).SignedValue);
+    }
+
+    [Theory]
+    [InlineData(110, 220)]
+    [InlineData(90, 180)]
+    public async Task Wac_count_root_freezes_approved_basis_and_seals_adjustment(
+        int physicalQty, int expectedValue)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+        var company = InventoryLedgerTestFixture.CompanyCode;
+        var branch = InventoryLedgerTestFixture.BranchCode;
+        var pile = await db.IvBalLocs.SingleAsync();
+        var header = new IvStockCountHdr
+        {
+            CompanyCode = company, BranchCode = branch,
+            CountNo = "CC-WAC-ROOT", CountDate = FixedToday,
+            Status = IvStockCountStatuses.Counted
+        };
+        var line = new IvStockCountLine
+        {
+            Header = header, LineNumber = 1, BalLocId = pile.Id,
+            ICode = "A100", WHCode = "MAIN", LocCode = "BIN1",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            SystemQty = 100m, PhysicalQty = physicalQty
+        };
+        db.IvStockCountLines.Add(line);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var approvedAt = DateTime.UtcNow;
+        var approvals = new[]
+        {
+            new StockCountCostApprovalRequest(line.Id,
+                StockCountCostBasisKinds.ManualApproved, 2.123456m,
+                "Approved fallback for count")
+        };
+        var access = new Mock<IAccessRightService>();
+        var denied = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayCountSheetRootWriter.BuildAsync(db, access.Object,
+                company, branch, header.Id, approvals, "manager", approvedAt));
+        Assert.Equal(StockLedgerErrorCodes.ValuationRequired, denied.Error.Code);
+        access.Setup(a => a.CanAsync(ErpWeb.Core.Menus.MenuCodes.InventoryStockCount,
+                ErpWeb.Core.Menus.PermissionCodes.PriceOverride,
+                It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var rootPlan = await StockReplayCountSheetRootWriter.BuildAsync(
+            db, access.Object, company, branch, header.Id,
+            approvals, "manager", approvedAt);
+        Assert.NotNull(rootPlan.Wac);
+        Assert.Equal(2.123456m, Assert.Single(rootPlan.FrozenBases).FrozenFallbackUnitCost);
+
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+        var begin = await coordinator.BeginInTransactionAsync(db, rootPlan.Command);
+        Assert.NotNull(begin.Context);
+        var root = begin.Context!;
+        try
+        {
+            var policy = await db.StockCostPolicyRevisions.SingleAsync(p =>
+                p.Status == StockCostPolicyStatuses.Active);
+            policy.CostMethod = StockCostMethods.Fifo;
+            await db.SaveChangesAsync();
+            var changedPolicy = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayCountSheetRootWriter.AppendWithinRootAsync(
+                    root, rootPlan, new RunningNumberService()));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, changedPolicy.Error.Code);
+            Assert.False(await db.StockCountCostBases.AnyAsync());
+            policy.CostMethod = StockCostMethods.MovingAverage;
+            await db.SaveChangesAsync();
+            var written = await StockReplayCountSheetRootWriter.AppendWithinRootAsync(
+                root, rootPlan, new RunningNumberService());
+            var wac = Assert.IsType<StockReplayWacCountSheetPostResult>(written.Wac);
+            Assert.Equal(20m, Assert.Single(wac.InitialFacts).CostAmount);
+            Assert.Single(written.RequiredActiveHistoryIds);
+            await coordinator.CompleteReplayInTransactionAsync(root,
+                written.RequiredActiveHistoryIds);
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(root);
+            await transaction.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        var basis = await db.StockCountCostBases.SingleAsync();
+        Assert.Equal(2.123456m, basis.FrozenFallbackUnitCost);
+        Assert.Equal("manager", basis.CostApprovedBy);
+        Assert.Equal(IvStockCountStatuses.Posted,
+            (await db.IvStockCountHdrs.SingleAsync()).Status);
+        var state = await db.StockCostStates.SingleAsync();
+        Assert.Equal(physicalQty, state.OnHandBaseQty);
+        Assert.Equal(expectedValue, state.InventoryValue);
+        Assert.NotNull((await db.StockPostings.SingleAsync()).SealedAtUtc);
+        var removalPlan = await StockReplayWacSingleCountRemovalPlanner.BuildAsync(
+            db, company, branch, header.Id);
+        Assert.Equal(100m, removalPlan.Financial.Projection.FinalQuantity);
+        Assert.Equal(200m, removalPlan.Financial.Projection.FinalValue);
+        await using var removalTransaction = await db.Database.BeginTransactionAsync();
+        var removalBegin = await coordinator.BeginInTransactionAsync(
+            db, removalPlan.Command);
+        Assert.NotNull(removalBegin.Context);
+        try
+        {
+            var policy = await db.StockCostPolicyRevisions.SingleAsync(p =>
+                p.Status == StockCostPolicyStatuses.Active);
+            policy.CostMethod = StockCostMethods.Fifo;
+            await db.SaveChangesAsync();
+            var changedRemovalPolicy = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayWacSingleCountRemovalPlanner.ValidateWithinRootAsync(
+                    removalBegin.Context!, removalPlan));
+            Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                changedRemovalPolicy.Error.Code);
+            policy.CostMethod = StockCostMethods.MovingAverage;
+            await db.SaveChangesAsync();
+            await StockReplayWacSingleCountRemovalPlanner.ValidateWithinRootAsync(
+                removalBegin.Context!, removalPlan);
+            var originalDetail = await db.IvTrxBatchDetails.SingleAsync();
+            if (physicalQty > 100)
+                originalDetail.ToStdQty = 9m;
+            else
+                originalDetail.FrStdQty = 9m;
+            var dirtyDetail = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayWacSingleCountRemovalRootWriter.AppendWithinRootAsync(
+                    removalBegin.Context!, removalPlan,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                dirtyDetail.Error.Code);
+            Assert.Single(await db.IvTrxBatches.ToArrayAsync());
+            await db.SaveChangesAsync();
+            var changedDetail = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayWacSingleCountRemovalRootWriter.AppendWithinRootAsync(
+                    removalBegin.Context!, removalPlan,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                changedDetail.Error.Code);
+            Assert.Single(await db.IvTrxBatches.ToArrayAsync());
+            if (physicalQty > 100)
+                originalDetail.ToStdQty = 10m;
+            else
+                originalDetail.FrStdQty = 10m;
+            await db.SaveChangesAsync();
+            var removed = await StockReplayWacSingleCountRemovalRootWriter
+                .AppendWithinRootAsync(removalBegin.Context!, removalPlan,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow);
+            Assert.True(removed.ReversalHistoryId > 0);
+            Assert.True(removed.RemovalGenerationId > 0);
+            await coordinator.CompleteReplayInTransactionAsync(
+                removalBegin.Context!, []);
+            await removalTransaction.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(removalBegin.Context!);
+            await removalTransaction.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        var rolledBackHeader = await db.IvStockCountHdrs.SingleAsync();
+        Assert.Equal(IvStockCountStatuses.RolledBack, rolledBackHeader.Status);
+        Assert.NotNull(rolledBackHeader.PostedBatchNo);
+        Assert.True((await StockCountGenerationResolver.ResolveActiveAsync(
+            db, company, branch, [line.Id]))[line.Id].IsRemoval);
+        Assert.Equal(100m, (await db.IvBalLocs.SingleAsync()).StdQty);
+        var restored = await db.StockCostStates.SingleAsync();
+        Assert.Equal(100m, restored.OnHandBaseQty);
+        Assert.Equal(200m, restored.InventoryValue);
+        var histories = await db.IvTrxHistories.ToArrayAsync();
+        var originalHistory = Assert.Single(histories.Where(h =>
+            h.EntryRole == "ORIGINAL"));
+        var reversalHistory = Assert.Single(histories.Where(h =>
+            h.EntryRole == "REVERSAL"));
+        Assert.Equal(originalHistory.Id, reversalHistory.ReversesHistoryId);
+        Assert.NotEqual(rolledBackHeader.PostedBatchNo, reversalHistory.BatchNo);
+        var facts = await db.StockValuationFacts.ToArrayAsync();
+        var originalFact = Assert.Single(facts.Where(f =>
+            f.ReversesValuationFactId is null));
+        var reversalFact = Assert.Single(facts.Where(f =>
+            f.ReversesValuationFactId is not null));
+        Assert.Equal(originalFact.Id, reversalFact.ReversesValuationFactId);
+        Assert.Equal(reversalHistory.Id, reversalFact.InventoryHistoryId);
+        Assert.Empty(await StockReplayPhysicalTimelineReader.ReadLaterAsync(
+            db, company, branch, pile.Id,
+            new StockReplayEventKey(FixedToday,
+                StockReplayEventKey.OrdinaryClass, 0, "before-count", 0)));
+        var activeFinancial = await StockReplayWacFinancialTailReader.ReadLaterAsync(
+            db, company, branch, "A100",
+            new StockReplayEventKey(FixedToday,
+                StockReplayEventKey.OrdinaryClass, 0, "before-count", 0));
+        Assert.Empty(activeFinancial.LaterEvents);
+        Assert.Equal(100m, activeFinancial.CurrentQuantity);
+        Assert.Equal(200m, activeFinancial.CurrentValue);
+    }
+
+    [Fact]
+    public async Task Wac_zero_variance_count_root_seals_positive_line_without_adjustment_batch()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+        var company = InventoryLedgerTestFixture.CompanyCode;
+        var branch = InventoryLedgerTestFixture.BranchCode;
+        var pile = await db.IvBalLocs.SingleAsync();
+        var emptyPile = new IvBalLoc
+        {
+            CompanyCode = company, BranchCode = branch,
+            ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA", StdQty = 0m
+        };
+        db.IvBalLocs.Add(emptyPile);
+        await db.SaveChangesAsync();
+        var header = new IvStockCountHdr
+        {
+            CompanyCode = company, BranchCode = branch,
+            CountNo = "CC-WAC-ZERO-ROOT", CountDate = FixedToday,
+            Status = IvStockCountStatuses.Counted
+        };
+        var line = new IvStockCountLine
+        {
+            Header = header, LineNumber = 1, BalLocId = pile.Id,
+            ICode = "A100", WHCode = "MAIN", LocCode = "BIN1",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            SystemQty = 100m, PhysicalQty = 100m
+        };
+        var emptyLine = new IvStockCountLine
+        {
+            Header = header, LineNumber = 2, BalLocId = emptyPile.Id,
+            ICode = "A100", WHCode = "MAIN", LocCode = "BIN2",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            SystemQty = 0m, PhysicalQty = 0m
+        };
+        db.IvStockCountLines.AddRange(line, emptyLine);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var access = new Mock<IAccessRightService>();
+        access.Setup(a => a.CanAsync(ErpWeb.Core.Menus.MenuCodes.InventoryStockCount,
+                ErpWeb.Core.Menus.PermissionCodes.PriceOverride,
+                It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var rootPlan = await StockReplayCountSheetRootWriter.BuildAsync(
+            db, access.Object, company, branch, header.Id,
+            [new StockCountCostApprovalRequest(line.Id,
+                StockCountCostBasisKinds.ManualApproved, 2m, "Approved count fallback")],
+            "manager", DateTime.UtcNow);
+
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+        var begin = await coordinator.BeginInTransactionAsync(db, rootPlan.Command);
+        Assert.NotNull(begin.Context);
+        var root = begin.Context!;
+        try
+        {
+            var written = await StockReplayCountSheetRootWriter.AppendWithinRootAsync(
+                root, rootPlan, new RunningNumberService());
+            var wac = Assert.IsType<StockReplayWacCountSheetPostResult>(written.Wac);
+            Assert.Equal(2, wac.History.Generations.Count);
+            Assert.Empty(wac.InitialFacts);
+            Assert.Empty(written.RequiredActiveHistoryIds);
+            await coordinator.CompleteReplayInTransactionAsync(root,
+                written.RequiredActiveHistoryIds);
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(root);
+            await transaction.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(2m, (await db.StockCountCostBases.SingleAsync()).FrozenFallbackUnitCost);
+        Assert.All(await db.StockCountReplayGenerations.ToArrayAsync(),
+            generation => Assert.Equal(0m, generation.SignedAdjustmentQty));
+        Assert.Empty(await db.IvTrxBatches.ToArrayAsync());
+        Assert.Empty(await db.StockValuationFacts.ToArrayAsync());
+        Assert.NotNull((await db.StockPostings.SingleAsync()).SealedAtUtc);
+
+        var removal = await StockReplayZeroCountRemovalRootWriter.BuildAsync(
+            db, company, branch, header.Id);
+        var selectedZero = await StockReplayCountSheetRemovalRootWriter.BuildAsync(
+            db, company, branch, header.Id);
+        Assert.NotNull(selectedZero.Zero);
+        Assert.Equal(removal.Command.RequestId,
+            selectedZero.Command.RequestId);
+        Assert.Equal(2, removal.Removal.Lines.Count);
+        Assert.All(removal.Removal.Lines,
+            planned => Assert.Empty(planned.Physical.LaterEvents));
+        await using var rollback = await db.Database.BeginTransactionAsync();
+        var rollbackBegin = await coordinator.BeginInTransactionAsync(
+            db, removal.Command);
+        Assert.NotNull(rollbackBegin.Context);
+        var rollbackRoot = rollbackBegin.Context!;
+        try
+        {
+            var removed = await StockReplayCountSheetRemovalRootWriter
+                .AppendWithinRootAsync(rollbackRoot, selectedZero,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow);
+            Assert.Empty(removed.ReversalHistoryIds);
+            Assert.Equal(2, removed.RemovalGenerationIds.Count);
+            var removalLeaves = db.StockCountReplayGenerations.Local
+                .Where(g => removed.RemovalGenerationIds.Contains(g.Id))
+                .ToArray();
+            Assert.Equal(2, removalLeaves.Length);
+            Assert.All(removalLeaves, generation =>
+            {
+                Assert.True(generation.IsRemoval);
+                Assert.Null(generation.ReversalHistoryId);
+            });
+            await coordinator.CompleteReplayInTransactionAsync(
+                rollbackRoot, []);
+            await rollback.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(rollbackRoot);
+            await rollback.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(IvStockCountStatuses.RolledBack,
+            (await db.IvStockCountHdrs.SingleAsync()).Status);
+        Assert.Equal(4,
+            await db.StockCountReplayGenerations.CountAsync());
+        var activeRemoval = await StockCountGenerationResolver.ResolveActiveAsync(
+            db, company, branch, [line.Id, emptyLine.Id]);
+        Assert.All(activeRemoval.Values, generation => Assert.True(generation.IsRemoval));
+        Assert.Equal(100m, (await db.IvBalLocs.SingleAsync(p => p.Id == pile.Id)).StdQty);
+        Assert.Equal(0m, (await db.IvBalLocs.SingleAsync(p => p.Id == emptyPile.Id)).StdQty);
+        var beforeCount = new StockReplayEventKey(FixedToday,
+            StockReplayEventKey.OrdinaryClass, 0, "before-count", 0);
+        Assert.Empty(await StockReplayPhysicalTimelineReader.ReadLaterAsync(
+            db, company, branch, pile.Id, beforeCount));
+        Assert.Empty(await StockReplayPhysicalTimelineReader.ReadLaterAsync(
+            db, company, branch, emptyPile.Id, beforeCount));
+        Assert.Empty(await db.IvTrxHistories.ToArrayAsync());
+        Assert.Empty(await db.StockValuationFacts.ToArrayAsync());
+        Assert.Equal(2, await db.StockPostings.CountAsync());
+    }
+
+    [Theory]
+    [InlineData(110, 20, 0, 5)]
+    [InlineData(100, 0, 0, 5)]
+    [InlineData(110, 20, 5, 0)]
+    public async Task Standard_count_sheet_values_two_piles_at_one_revision(
+        int firstPhysical, int firstAmount, int secondSystem,
+        int secondPhysical)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+        await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+        await InventoryLedgerTestFixture.SeedCostStateAsync(
+            db, "A100", 100m + secondSystem, 2m,
+            StockCostMethods.Standard);
+        await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 2m);
+        var company = InventoryLedgerTestFixture.CompanyCode;
+        var branch = InventoryLedgerTestFixture.BranchCode;
         var firstPile = await db.IvBalLocs.SingleAsync();
         var secondPile = new IvBalLoc
         {
             CompanyCode = company, BranchCode = branch,
             ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
-            LotNo = "", IStatus = "ACTIVE", StdUom = "EA", StdQty = 0m
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            StdQty = secondSystem
         };
         db.IvBalLocs.Add(secondPile);
         await db.SaveChangesAsync();
@@ -443,7 +1535,7 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             Header = header, LineNumber = 2, BalLocId = secondPile.Id,
             ICode = "A100", WHCode = "MAIN", LocCode = "BIN2",
             LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
-            SystemQty = 0m, PhysicalQty = 5m
+            SystemQty = secondSystem, PhysicalQty = secondPhysical
         };
         db.IvStockCountLines.AddRange(firstLine, secondLine);
         await db.SaveChangesAsync();
@@ -456,15 +1548,17 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             FrozenFallbackUnitCost = 2m,
             CreatedAtUtc = DateTime.UtcNow
         };
-        var bases = new[] { Basis(firstLine.Id), Basis(secondLine.Id) };
+        var bases = secondPhysical > 0
+            ? new[] { Basis(firstLine.Id), Basis(secondLine.Id) }
+            : new[] { Basis(firstLine.Id) };
         db.ChangeTracker.Clear();
         var sheet = await StockReplayPhysicalPlanner.BuildCountSheetInsertionAsync(
             db, company, branch, header.Id);
         var plan = await StockReplayStandardCountSheetPostingWriter.BuildAsync(
             db, sheet, bases);
-        Assert.Equal(firstPhysical + 5m,
+        Assert.Equal(firstPhysical + secondPhysical,
             Assert.Single(plan.Items).Projection.FinalQuantity);
-        Assert.Equal(210m + firstAmount,
+        Assert.Equal((firstPhysical + secondPhysical) * 2m,
             plan.Items[0].Projection.FinalValue);
         var command = await StockCountAnchorCommandFactory.CreateAsync(
             db, company, branch, header.Id, bases);
@@ -498,9 +1592,103 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         db.ChangeTracker.Clear();
         var state = await db.StockCostStates.SingleAsync(s =>
             s.CostMethod == StockCostMethods.Standard);
-        Assert.Equal(firstPhysical + 5m, state.OnHandBaseQty);
-        Assert.Equal(210m + firstAmount, state.InventoryValue);
+        Assert.Equal(firstPhysical + secondPhysical, state.OnHandBaseQty);
+        Assert.Equal((firstPhysical + secondPhysical) * 2m,
+            state.InventoryValue);
         Assert.Equal(2, await db.StockCountReplayGenerations.CountAsync());
+        var removal = await StockReplayStandardCountSheetRemovalPlanner.BuildAsync(
+            db, company, branch, header.Id);
+        var selectedRemoval = await StockReplayCountSheetRemovalRootWriter
+            .BuildAsync(db, company, branch, header.Id);
+        Assert.NotNull(selectedRemoval.Standard);
+        Assert.Equal(removal.Command.RequestId,
+            selectedRemoval.Command.RequestId);
+        var removedItem = Assert.Single(removal.Items);
+        Assert.Equal(2, removedItem.CountLineIds.Count);
+        Assert.Equal(100m + secondSystem, removedItem.FinalQuantity);
+        Assert.Equal((100m + secondSystem) * 2m,
+            removedItem.FinalValue);
+        Assert.Equal(new[] { (decimal)(firstPhysical - 100),
+                (decimal)(secondPhysical - secondSystem) },
+            removedItem.RemovedEvents.Select(e => e.OldSignedQuantity));
+        await using var removalTransaction = await db.Database.BeginTransactionAsync();
+        var removalBegin = await coordinator.BeginInTransactionAsync(
+            db, removal.Command);
+        Assert.NotNull(removalBegin.Context);
+        try
+        {
+            Assert.Equal(removal.Command.RequestId,
+                removalBegin.Context!.Posting.RequestId);
+            Assert.Equal(removal.Command.Evidence.RequestFingerprint,
+                removalBegin.Context.Posting.RequestFingerprint);
+            await StockReplayStandardCountSheetRemovalPlanner
+                .ValidateWithinRootAsync(removalBegin.Context!, removal);
+            Assert.Equal(StockCostMethods.Standard,
+                removalBegin.Context!.CostMethod);
+            state.InventoryValue += 1m;
+            await db.SaveChangesAsync();
+            var stale = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayStandardCountSheetRemovalPlanner
+                    .ValidateWithinRootAsync(removalBegin.Context!, removal));
+            Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                stale.Error.Code);
+            state.InventoryValue -= 1m;
+            await db.SaveChangesAsync();
+            var detail = await db.IvTrxBatchDetails
+                .OrderBy(d => d.TrxLineNo).FirstAsync();
+            detail.ToStdQty += 1m;
+            var dirtyDetail = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayStandardCountSheetRemovalRootWriter
+                    .AppendWithinRootAsync(removalBegin.Context!, removal,
+                        new RunningNumberService(), "Count entered in error",
+                        DateTime.UtcNow));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                dirtyDetail.Error.Code);
+            await db.Entry(detail).ReloadAsync();
+            var written = await StockReplayCountSheetRemovalRootWriter
+                .AppendWithinRootAsync(removalBegin.Context!, selectedRemoval,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow);
+            Assert.Equal(firstAmount == 0 ? 1 : 2,
+                written.ReversalHistoryIds.Count);
+            Assert.Equal(2, written.RemovalGenerationIds.Count);
+            await coordinator.CompleteReplayInTransactionAsync(
+                removalBegin.Context!, []);
+            await removalTransaction.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(removalBegin.Context!);
+            await removalTransaction.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(IvStockCountStatuses.RolledBack,
+            (await db.IvStockCountHdrs.SingleAsync()).Status);
+        Assert.All((await StockCountGenerationResolver.ResolveActiveAsync(
+            db, company, branch, [firstLine.Id, secondLine.Id])).Values,
+            generation => Assert.True(generation.IsRemoval));
+        var restored = await db.StockCostStates.SingleAsync(s =>
+            s.CostMethod == StockCostMethods.Standard);
+        Assert.Equal(100m + secondSystem, restored.OnHandBaseQty);
+        Assert.Equal((100m + secondSystem) * 2m,
+            restored.InventoryValue);
+        var restoredPiles = await db.IvBalLocs.AsNoTracking()
+            .ToDictionaryAsync(b => b.Id);
+        Assert.Equal(100m, restoredPiles[firstPile.Id].StdQty);
+        Assert.Equal(secondSystem, restoredPiles[secondPile.Id].StdQty);
+        var beforeCount = new StockReplayEventKey(FixedToday,
+            StockReplayEventKey.OrdinaryClass, 0, "before-count", 0);
+        var finalTail = await StockReplayStandardFinancialTailReader
+            .ReadLaterAsync(db, company, branch, "A100", beforeCount);
+        Assert.Empty(finalTail.LaterEvents);
+        var reversalFacts = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.ValuationStatus == StockValuationStatuses.Reversed)
+            .ToArrayAsync();
+        Assert.Equal(firstAmount == 0 ? 1 : 2,
+            reversalFacts.Length);
+        Assert.All(reversalFacts, fact =>
+            Assert.Equal(StockCostMethods.Standard, fact.CostMethod));
     }
 
     [Theory]
@@ -632,6 +1820,15 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         Assert.Equal(new decimal[] { (earlierPhysical - 100m) * 2m,
                 (laterPhysical - earlierPhysical) * 2m },
             tail.LaterEvents.Select(e => e.OldSignedValue));
+        var earlierHeaderId = await db.IvStockCountLines
+            .Where(l => l.Id == earlier.LineId)
+            .Select(l => l.StockCountId).SingleAsync();
+        var laterCountNeedsCorrection = await Assert.ThrowsAsync<
+            StockLedgerException>(() =>
+            StockReplayCountSheetRemovalRootWriter.BuildAsync(
+                db, company, branch, earlierHeaderId));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            laterCountNeedsCorrection.Error.Code);
     }
 
     [Theory]
@@ -794,10 +1991,14 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(5, 2)]
-    [InlineData(0, 1)]
+    [InlineData(5, 2, 0, false, false)]
+    [InlineData(0, 1, 0, false, false)]
+    [InlineData(0, 2, 5, false, false)]
+    [InlineData(5, 2, 0, true, false)]
+    [InlineData(5, 2, 0, true, true)]
     public async Task Initial_historical_count_writer_uses_one_batch_for_multiple_adjusted_piles(
-        int secondPhysical, int expectedFactCount)
+        int secondPhysical, int expectedFactCount, int secondSystem,
+        bool withLaterIssue, bool splitLaterIssue)
     {
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
@@ -806,10 +2007,10 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         var firstPile = await db.IvBalLocs.SingleAsync();
         firstPile.StdQty = 0m;
         var initialState = await db.StockCostStates.SingleAsync();
-        initialState.OnHandBaseQty = 0m;
-        initialState.InventoryValue = 0m;
-        initialState.AverageUnitCost = 0m;
-        initialState.CurrentUnitCost = 0m;
+        initialState.OnHandBaseQty = secondSystem;
+        initialState.InventoryValue = secondSystem * 2m;
+        initialState.AverageUnitCost = secondSystem > 0 ? 2m : 0m;
+        initialState.CurrentUnitCost = secondSystem > 0 ? 2m : 0m;
         db.IvLocations.Add(new IvLocation
         {
             CompanyCode = company, BranchCode = branch,
@@ -819,7 +2020,8 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         {
             CompanyCode = company, BranchCode = branch,
             ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
-            LotNo = "", IStatus = "ACTIVE", StdUom = "EA", StdQty = 0m
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            StdQty = secondSystem
         };
         db.IvBalLocs.Add(secondPile);
         await db.SaveChangesAsync();
@@ -841,7 +2043,7 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             Header = header, LineNumber = 2, BalLocId = secondPile.Id,
             ICode = "A100", WHCode = "MAIN", LocCode = "BIN2",
             LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
-            SystemQty = 0m, PhysicalQty = secondPhysical
+            SystemQty = secondSystem, PhysicalQty = secondPhysical
         };
         db.IvStockCountLines.AddRange(firstLine, secondLine);
         await db.SaveChangesAsync();
@@ -869,10 +2071,17 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             db, sheet, bases);
         Assert.Single(postingPlan.Items);
         Assert.Equal(10m + secondPhysical, wacSheet.Projection.FinalQuantity);
-        Assert.Equal(40m + secondPhysical * 4m, wacSheet.Projection.FinalValue);
-        Assert.Equal(40m, wacSheet.Projection.Candidate.SignedValue);
-        Assert.Equal(secondPhysical * 4m,
-            Assert.Single(wacSheet.Projection.LaterSteps).SignedValue);
+        if (secondSystem == 0)
+            Assert.Equal(40m + secondPhysical * 4m,
+                wacSheet.Projection.FinalValue);
+        Assert.Equal(secondSystem > 0 ? 20m : 40m,
+            wacSheet.Projection.Candidate.SignedValue);
+        if (secondSystem == 0)
+            Assert.Equal(secondPhysical * 4m,
+                Assert.Single(wacSheet.Projection.LaterSteps).SignedValue);
+        else
+            Assert.True(Assert.Single(wacSheet.Projection.LaterSteps)
+                .SignedValue < 0m);
         var command = await StockCountAnchorCommandFactory.CreateAsync(
             db, company, branch, header.Id, bases);
         await using var transaction = await db.Database.BeginTransactionAsync();
@@ -889,7 +2098,7 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
                 StockReplayWacCountSheetInsertionPlanner.ValidateWithinRootAsync(
                     root, wacSheet));
             Assert.Equal(StockLedgerErrorCodes.StaleDocument, staleWac.Error.Code);
-            changedState.InventoryValue = 0m;
+            changedState.InventoryValue = secondSystem * 2m;
             await db.SaveChangesAsync();
             var prepared = await StockReplayWacCountSheetPostingWriter
                 .PrepareWithinRootAsync(root, postingPlan);
@@ -898,13 +2107,21 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             var written = result.History;
             Assert.NotNull(written.AdjustmentBatchNo);
             Assert.Equal(2, written.Generations.Count);
-            Assert.Equal(new[] { 10m, (decimal)secondPhysical },
+            Assert.Equal(new[] { 10m,
+                    (decimal)(secondPhysical - secondSystem) },
                 written.Generations.OrderBy(g => g.StockCountLineId)
                     .Select(g => g.SignedAdjustmentQty));
             var facts = result.InitialFacts;
-            Assert.Equal(secondPhysical > 0
-                    ? new[] { 40m, 20m } : new[] { 40m },
-                facts.OrderBy(f => f.PostingLineNo).Select(f => f.CostAmount));
+            Assert.Equal(expectedFactCount, facts.Count);
+            Assert.Equal(secondSystem > 0 ? 20m : 40m,
+                facts.OrderBy(f => f.PostingLineNo)
+                .First().CostAmount);
+            if (secondSystem > 0)
+                Assert.Equal(-1, facts.OrderBy(f => f.PostingLineNo)
+                    .Last().Direction);
+            else if (secondPhysical > 0)
+                Assert.Equal(20m, facts.OrderBy(f => f.PostingLineNo)
+                    .Last().CostAmount);
             Assert.Empty(result.RepricedHistoryIds);
             Assert.Empty(result.RepricedCountLineIds);
             Assert.Equal(expectedFactCount, result.RequiredActiveHistoryIds.Count);
@@ -924,15 +2141,16 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         var details = await db.IvTrxBatchDetails.AsNoTracking()
             .Where(d => d.BatchNo == batch.BatchNo)
             .OrderBy(d => d.TrxLineNo).ToArrayAsync();
-        Assert.Equal(secondPhysical > 0
+        Assert.Equal(expectedFactCount == 2
                 ? new short[] { 1, 2 } : new short[] { 1 },
             details.Select(d => d.TrxLineNo));
-        Assert.Equal(secondPhysical > 0
-                ? new[] { firstPile.Id, secondPile.Id } : new[] { firstPile.Id },
-            details.Select(d => d.ToBalLocId!.Value));
+        Assert.Equal(firstPile.Id, details[0].ToBalLocId);
+        if (expectedFactCount == 2)
+            Assert.Equal(secondSystem > 0 ? secondPile.Id : null,
+                details[1].FromBalLocId);
         Assert.Equal(10m + secondPhysical,
             (await db.StockCostStates.SingleAsync()).OnHandBaseQty);
-        Assert.Equal(40m + secondPhysical * 4m,
+        Assert.Equal(wacSheet.Projection.FinalValue,
             (await db.StockCostStates.SingleAsync()).InventoryValue);
         var finalPiles = await db.IvBalLocs.AsNoTracking()
             .ToDictionaryAsync(b => b.Id);
@@ -948,9 +2166,247 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             new StockReplayEventKey(FixedToday,
                 StockReplayEventKey.OrdinaryClass, 0, "before-count", 0));
         Assert.Equal(10m + secondPhysical, timeline.CurrentQuantity);
-        Assert.Equal(40m + secondPhysical * 4m, timeline.CurrentValue);
-        Assert.Equal(new[] { 10m, (decimal)secondPhysical }, timeline.LaterEvents
+        Assert.Equal(wacSheet.Projection.FinalValue, timeline.CurrentValue);
+        Assert.Equal(new[] { 10m,
+                (decimal)(secondPhysical - secondSystem) }, timeline.LaterEvents
             .Select(e => e.OldSignedQuantity));
+        IvTrxHistory? laterIssue = null;
+        if (withLaterIssue)
+        {
+            var countPosting = await db.StockPostings.SingleAsync();
+            var receiptAt = FixedToday.AddDays(1).AddHours(9);
+            var issueAt = receiptAt.AddHours(1);
+            async Task<IvTrxHistory> SeedMovementAsync(bool receipt,
+                DateTime at, long sequence, decimal amount)
+            {
+                var document = receipt ? "SHEET-MR" : "SHEET-MI";
+                var owner = new StockPosting
+                {
+                    CompanyCode = company, BranchCode = branch,
+                    LedgerEpochId = countPosting.LedgerEpochId,
+                    PostingSequence = sequence,
+                    RequestId = Guid.NewGuid(),
+                    CommandType = receipt ? "IV_MR_POST" : "IV_MI_POST",
+                    RequestFingerprint = new string(receipt ? 'C' : 'E', 64),
+                    SourceModule = "INVENTORY",
+                    SourceDocumentType = "IV_TRX",
+                    SourceDocumentId = document,
+                    SourceDocumentNo = document,
+                    SourceSnapshotJson = "{}",
+                    SourceSnapshotHash = new string(receipt ? 'D' : 'F', 64),
+                    EffectiveAt = at, BusinessDate = at.Date,
+                    PeriodKey = at.ToString("yyyy-MM"),
+                    PostedAtUtc = DateTime.UtcNow, PostedBy = "TEST",
+                    SealedAtUtc = DateTime.UtcNow
+                };
+                db.StockPostings.Add(owner);
+                await db.SaveChangesAsync();
+                var movement = new IvTrxHistory
+                {
+                    CompanyCode = company, BranchCode = branch,
+                    BatchNo = receipt ? 912 : 913, TrxLineNo = 1,
+                    TrxDtTime = at,
+                    TrxType = receipt
+                        ? IvTrxTypes.MiscellaneousReceipt
+                        : IvTrxTypes.MiscellaneousIssue,
+                    BatchStatus = IvBatchStatuses.Posted, ICode = "A100",
+                    ToBalLocId = receipt ? secondPile.Id : null,
+                    ToStdQty = receipt ? 2m : null,
+                    ToStdUom = receipt ? "EA" : null,
+                    ToWarehouse = receipt ? "MAIN" : null,
+                    ToLocation = receipt ? "BIN2" : null,
+                    FromBalLocId = receipt ? null : secondPile.Id,
+                    FrStdQty = receipt ? null : 2m,
+                    FrStdUom = receipt ? null : "EA",
+                    FrWarehouse = receipt ? null : "MAIN",
+                    FrLocation = receipt ? null : "BIN2",
+                    IStatus = "ACTIVE", LedgerVersion = 2,
+                    LedgerEpochId = countPosting.LedgerEpochId,
+                    StockPostingId = owner.Id, PostingLineNo = 1,
+                    EntryRole = "ORIGINAL",
+                    ValuationStatus = StockValuationStatuses.Valued
+                };
+                db.IvTrxHistories.Add(movement);
+                await db.SaveChangesAsync();
+                var splitCount = !receipt && splitLaterIssue ? 2 : 1;
+                for (var split = 0; split < splitCount; split++)
+                {
+                    db.StockValuationFacts.Add(new StockValuationFact
+                    {
+                        CompanyCode = company, BranchCode = branch,
+                        LedgerEpochId = countPosting.LedgerEpochId,
+                        StockPostingId = owner.Id,
+                        PostingLineNo = 1, SplitOrdinal = split,
+                        SourceLineId = $"IV_TRX:{document}:1:1:{split}",
+                        SourceDocumentType = "IV_TRX",
+                        SourceDocumentId = document,
+                        SourceDocumentNo = document, SourceDocumentLine = "1",
+                        EffectiveAt = at, BusinessDate = at.Date,
+                        PeriodKey = owner.PeriodKey,
+                        ItemCode = "A100", WarehouseCode = "MAIN",
+                        LocationCode = "BIN2", ItemStatus = "ACTIVE",
+                        BaseUom = "EA",
+                        MovementCode = receipt ? "RECEIPT" : "ISSUE_OUT",
+                        Direction = receipt ? 1 : -1,
+                        BaseQty = 2m / splitCount,
+                        CostMethod = StockCostMethods.MovingAverage,
+                        UnitCost = StockLedgerPrecision.Money(amount / 2m),
+                        CostAmount = amount / splitCount,
+                        BaseCostAmount = amount / splitCount,
+                        ValuationSource = receipt
+                            ? StockValuationSources.ReceiptActual
+                            : StockValuationSources.MovingAverage,
+                        ValuationStatus = StockValuationStatuses.Valued,
+                        InventoryHistoryId = movement.Id,
+                        ToBalLocId = receipt ? secondPile.Id : null,
+                        FromBalLocId = receipt ? null : secondPile.Id,
+                        CreatedAtUtc = DateTime.UtcNow, CreatedBy = "TEST"
+                    });
+                }
+                await db.SaveChangesAsync();
+                return movement;
+            }
+            await SeedMovementAsync(true, receiptAt,
+                countPosting.PostingSequence + 1, 12m);
+            laterIssue = await SeedMovementAsync(false, issueAt,
+                countPosting.PostingSequence + 2, 8.470588m);
+            var livePile = await db.IvBalLocs.SingleAsync(p =>
+                p.Id == secondPile.Id);
+            livePile.TransDate = issueAt;
+            var liveState = await db.StockCostStates.SingleAsync();
+            liveState.InventoryValue = 63.529412m;
+            liveState.AverageUnitCost = StockLedgerPrecision.Money(
+                liveState.InventoryValue / liveState.OnHandBaseQty);
+            liveState.CurrentUnitCost = liveState.AverageUnitCost;
+            liveState.LastPostingSequence = countPosting.PostingSequence + 2;
+            (await db.StockPostingBranchSequences.SingleAsync()).LastSequence =
+                liveState.LastPostingSequence;
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+        }
+        var removal = await StockReplayWacCountSheetRemovalPlanner.BuildAsync(
+            db, company, branch, header.Id);
+        var itemRemoval = Assert.Single(removal.Items);
+        Assert.Equal(2, itemRemoval.CountLineIds.Count);
+        Assert.Equal(secondSystem, itemRemoval.FinalQuantity);
+        Assert.Equal(secondSystem * 2m, itemRemoval.FinalValue);
+        Assert.Equal(withLaterIssue, itemRemoval.Repricing is not null);
+        await using var rollbackTransaction = await db.Database.BeginTransactionAsync();
+        var rollbackBegin = await coordinator.BeginInTransactionAsync(
+            db, removal.Command);
+        Assert.NotNull(rollbackBegin.Context);
+        try
+        {
+            if (withLaterIssue)
+            {
+                var forgedItem = itemRemoval with
+                {
+                    Repricing = itemRemoval.Repricing! with
+                    {
+                        FinalValue = itemRemoval.Repricing.FinalValue + 1m
+                    }
+                };
+                var forgedPlan = removal with { Items = [forgedItem] };
+                var forged = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayWacCountSheetRemovalPlanner.ValidateWithinRootAsync(
+                        rollbackBegin.Context!, forgedPlan));
+                Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                    forged.Error.Code);
+            }
+            await StockReplayWacCountSheetRemovalPlanner.ValidateWithinRootAsync(
+                rollbackBegin.Context!, removal);
+            var currentState = await db.StockCostStates.SingleAsync();
+            currentState.InventoryValue += 1m;
+            await db.SaveChangesAsync();
+            var staleRemoval = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayWacCountSheetRemovalPlanner.ValidateWithinRootAsync(
+                    rollbackBegin.Context!, removal));
+            Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                staleRemoval.Error.Code);
+            currentState.InventoryValue -= 1m;
+            await db.SaveChangesAsync();
+            if (withLaterIssue)
+            {
+                var owner = await db.StockPostings.SingleAsync(p =>
+                    p.Id == laterIssue!.StockPostingId);
+                owner.SourceModule = "PRODUCTION";
+                await db.SaveChangesAsync();
+                var staleOwner = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayWacCountSheetRemovalRootWriter
+                        .AppendWithinRootAsync(rollbackBegin.Context!, removal,
+                            new RunningNumberService(), "Count entered in error",
+                            DateTime.UtcNow));
+                Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                    staleOwner.Error.Code);
+                Assert.Single(await db.IvTrxBatches.ToArrayAsync());
+                owner.SourceModule = "INVENTORY";
+                await db.SaveChangesAsync();
+            }
+            if (splitLaterIssue)
+            {
+                var splitFacts = await db.StockValuationFacts.AsNoTracking()
+                    .Where(f => f.InventoryHistoryId == laterIssue!.Id)
+                    .OrderBy(f => f.SplitOrdinal).ToArrayAsync();
+                Assert.Equal(2, splitFacts.Length);
+                var raised = splitFacts[0].CostAmount + 0.1m;
+                var lowered = splitFacts[1].CostAmount - 0.1m;
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE StockValuationFact SET CostAmount = {raised}, BaseCostAmount = {raised}, UnitCost = {raised} WHERE Id = {splitFacts[0].Id}");
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE StockValuationFact SET CostAmount = {lowered}, BaseCostAmount = {lowered}, UnitCost = {lowered} WHERE Id = {splitFacts[1].Id}");
+                var staleSplits = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayWacCountSheetRemovalPlanner.ValidateWithinRootAsync(
+                        rollbackBegin.Context!, removal));
+                Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                    staleSplits.Error.Code);
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE StockValuationFact SET CostAmount = {splitFacts[0].CostAmount}, BaseCostAmount = {splitFacts[0].BaseCostAmount}, UnitCost = {splitFacts[0].UnitCost} WHERE Id = {splitFacts[0].Id}");
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE StockValuationFact SET CostAmount = {splitFacts[1].CostAmount}, BaseCostAmount = {splitFacts[1].BaseCostAmount}, UnitCost = {splitFacts[1].UnitCost} WHERE Id = {splitFacts[1].Id}");
+            }
+            var removed = await StockReplayWacCountSheetRemovalRootWriter
+                .AppendWithinRootAsync(rollbackBegin.Context!, removal,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow);
+            Assert.Equal(expectedFactCount, removed.ReversalHistoryIds.Count);
+            Assert.Equal(2, removed.RemovalGenerationIds.Count);
+            Assert.Equal(withLaterIssue ? [laterIssue!.Id] : [],
+                removed.RequiredActiveHistoryIds);
+            await coordinator.CompleteReplayInTransactionAsync(
+                rollbackBegin.Context!, removed.RequiredActiveHistoryIds);
+            await rollbackTransaction.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(rollbackBegin.Context!);
+            await rollbackTransaction.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(IvStockCountStatuses.RolledBack,
+            (await db.IvStockCountHdrs.SingleAsync()).Status);
+        Assert.All((await StockCountGenerationResolver.ResolveActiveAsync(
+            db, company, branch, [firstLine.Id, secondLine.Id])).Values,
+            generation => Assert.True(generation.IsRemoval));
+        var restoredPiles = await db.IvBalLocs.AsNoTracking()
+            .ToDictionaryAsync(b => b.Id);
+        Assert.Equal(0m, restoredPiles[firstPile.Id].StdQty);
+        Assert.Equal(secondSystem, restoredPiles[secondPile.Id].StdQty);
+        var restoredState = await db.StockCostStates.SingleAsync();
+        Assert.Equal(secondSystem, restoredState.OnHandBaseQty);
+        Assert.Equal(secondSystem * 2m, restoredState.InventoryValue);
+        Assert.Equal(2, await db.IvTrxBatches.CountAsync());
+        Assert.Equal(expectedFactCount * 2
+                + (withLaterIssue ? splitLaterIssue ? 7 : 4 : 0),
+            await db.StockValuationFacts.CountAsync());
+        if (withLaterIssue)
+        {
+            var activeIssue = await StockReplayValuationGenerationResolver
+                .ResolveAsync(db, company, branch, [laterIssue!]);
+            Assert.Equal(splitLaterIssue ? 2 : 1,
+                activeIssue[laterIssue!.Id].Count);
+            Assert.Equal(12m, activeIssue[laterIssue.Id].Sum(f => f.CostAmount));
+        }
     }
 
     [Fact]
@@ -1073,10 +2529,103 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             states.Select(s => s.InventoryValue));
         Assert.Single(await db.IvTrxBatches.ToArrayAsync());
         Assert.NotNull((await db.StockPostings.SingleAsync()).SealedAtUtc);
+        var removal = await StockReplayWacCountSheetRemovalPlanner.BuildAsync(
+            db, company, branch, header.Id);
+        Assert.Equal(new[] { "A100", "B200" },
+            removal.Items.Select(i => i.ItemCode));
+        var selectedRemoval = await StockReplayCountSheetRemovalRootWriter
+            .BuildAsync(db, company, branch, header.Id);
+        Assert.NotNull(selectedRemoval.Wac);
+        Assert.Equal(removal.Command.RequestId,
+            selectedRemoval.Command.RequestId);
+        Assert.Equal(new[] { 100m, 0m },
+            removal.Items.Select(i => i.FinalQuantity));
+        Assert.Equal(new[] { 200m, 0m },
+            removal.Items.Select(i => i.FinalValue));
+        await using var rollback = await db.Database.BeginTransactionAsync();
+        var rollbackBegin = await coordinator.BeginInTransactionAsync(
+            db, removal.Command);
+        Assert.NotNull(rollbackBegin.Context);
+        try
+        {
+            await StockReplayWacCountSheetRemovalPlanner.ValidateWithinRootAsync(
+                rollbackBegin.Context!, removal);
+            var originalDetail = await db.IvTrxBatchDetails
+                .OrderBy(d => d.TrxLineNo).FirstAsync();
+            originalDetail.ToStdQty += 1m;
+            var dirtyDetail = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayWacCountSheetRemovalRootWriter
+                    .AppendWithinRootAsync(rollbackBegin.Context!, removal,
+                        new RunningNumberService(), "Count entered in error",
+                        DateTime.UtcNow));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                dirtyDetail.Error.Code);
+            Assert.Equal(1, await db.IvTrxBatches.CountAsync());
+            await db.SaveChangesAsync();
+            var changedDetail = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayWacCountSheetRemovalRootWriter
+                    .AppendWithinRootAsync(rollbackBegin.Context!, removal,
+                        new RunningNumberService(), "Count entered in error",
+                        DateTime.UtcNow));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                changedDetail.Error.Code);
+            originalDetail.ToStdQty -= 1m;
+            await db.SaveChangesAsync();
+            var removed = await StockReplayCountSheetRemovalRootWriter
+                .AppendWithinRootAsync(rollbackBegin.Context!, selectedRemoval,
+                    new RunningNumberService(), "Count entered in error",
+                    DateTime.UtcNow);
+            Assert.Equal(2, removed.ReversalHistoryIds.Count);
+            Assert.Equal(2, removed.RemovalGenerationIds.Count);
+            await coordinator.CompleteReplayInTransactionAsync(
+                rollbackBegin.Context!, []);
+            await rollback.CommitAsync();
+        }
+        catch
+        {
+            await coordinator.AbortInTransactionAsync(rollbackBegin.Context!);
+            await rollback.RollbackAsync();
+            throw;
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(IvStockCountStatuses.RolledBack,
+            (await db.IvStockCountHdrs.SingleAsync()).Status);
+        Assert.All((await StockCountGenerationResolver.ResolveActiveAsync(
+            db, company, branch, [firstLine.Id, secondLine.Id])).Values,
+            generation => Assert.True(generation.IsRemoval));
+        var finalStates = await db.StockCostStates.AsNoTracking()
+            .OrderBy(s => s.ItemCode).ToArrayAsync();
+        Assert.Equal(new[] { 100m, 0m },
+            finalStates.Select(s => s.OnHandBaseQty));
+        Assert.Equal(new[] { 200m, 0m },
+            finalStates.Select(s => s.InventoryValue));
+        Assert.Equal(2, await db.IvTrxBatches.CountAsync());
+        Assert.Equal(4, await db.StockValuationFacts.CountAsync());
+        var finalHistories = await db.IvTrxHistories.AsNoTracking()
+            .OrderBy(h => h.Id).ToArrayAsync();
+        Assert.Equal(4, finalHistories.Length);
+        var reversalHistories = finalHistories.Where(h =>
+            h.ReversesHistoryId.HasValue).ToArray();
+        Assert.Equal(2, reversalHistories.Length);
+        Assert.All(reversalHistories, reversal =>
+            Assert.Contains(finalHistories, original =>
+                original.Id == reversal.ReversesHistoryId
+                && original.StockPostingId != reversal.StockPostingId));
+        foreach (var item in new[] { "A100", "B200" })
+        {
+            var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(
+                db, company, branch, item,
+                new StockReplayEventKey(FixedToday,
+                    StockReplayEventKey.OrdinaryClass, 0, "before-count", 0));
+            Assert.Empty(tail.LaterEvents);
+        }
     }
 
-    [Fact]
-    public async Task Initial_historical_multi_pile_WAC_count_reprices_later_issue_and_seals()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Initial_historical_multi_pile_WAC_count_reprices_later_issue_and_seals(
+        bool splitIssue)
     {
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
@@ -1108,7 +2657,9 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         {
             CompanyCode = company, BranchCode = branch,
             LedgerEpochId = epochId, PostingSequence = sequence,
-            RequestId = Guid.NewGuid(), CommandType = "TEST",
+            RequestId = Guid.NewGuid(),
+            CommandType = id == "MULTI-RECEIPT"
+                ? "IV_MR_POST" : "IV_MI_POST",
             SourceModule = "INVENTORY", SourceDocumentType = "IV_TRX",
             SourceDocumentId = id, SourceDocumentNo = id,
             EffectiveAt = at, BusinessDate = at.Date,
@@ -1175,9 +2726,21 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             FromBalLocId = history.FromBalLocId,
             ToBalLocId = history.ToBalLocId
         };
-        db.StockValuationFacts.AddRange(
-            Fact(receiptOwner, receipt, 1, 100m, 400m),
-            Fact(issueOwner, issue, -1, 50m, 150m));
+        var originalIssueFacts = splitIssue
+            ? new[]
+            {
+                Fact(issueOwner, issue, -1, 25m, 75m),
+                Fact(issueOwner, issue, -1, 25m, 75m)
+            }
+            : new[] { Fact(issueOwner, issue, -1, 50m, 150m) };
+        if (splitIssue)
+        {
+            originalIssueFacts[1].SplitOrdinal = 1;
+            originalIssueFacts[1].SourceLineId =
+                $"IV_TRX:{issueOwner.SourceDocumentId}:1:1:1";
+        }
+        db.StockValuationFacts.Add(Fact(receiptOwner, receipt, 1, 100m, 400m));
+        db.StockValuationFacts.AddRange(originalIssueFacts);
         var header = new IvStockCountHdr
         {
             CompanyCode = company, BranchCode = branch,
@@ -1220,6 +2783,15 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             db, sheet, "A100", bases);
         Assert.Equal(165m, wacSheet.Projection.FinalQuantity);
         Assert.Equal(483.488350m, wacSheet.Projection.FinalValue);
+        var changedIssue = await db.IvTrxHistories.SingleAsync(h => h.Id == issue.Id);
+        changedIssue.TrxType = IvTrxTypes.IssueToProduction;
+        await db.SaveChangesAsync();
+        var unsupportedBuild = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayWacCountSheetPostingWriter.BuildAsync(db, sheet, bases));
+        Assert.Equal(StockLedgerErrorCodes.ValuationRequired,
+            unsupportedBuild.Error.Code);
+        changedIssue.TrxType = IvTrxTypes.MiscellaneousIssue;
+        await db.SaveChangesAsync();
         var postingPlan = await StockReplayWacCountSheetPostingWriter.BuildAsync(
             db, sheet, bases);
         var command = await StockCountAnchorCommandFactory.CreateAsync(
@@ -1231,6 +2803,28 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         var root = begin.Context!;
         try
         {
+            var laterIssue = await db.IvTrxHistories.SingleAsync(h => h.Id == issue.Id);
+            laterIssue.TrxType = IvTrxTypes.IssueToProduction;
+            await db.SaveChangesAsync();
+            var unsupportedRoot = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayWacCountSheetPostingWriter.PrepareWithinRootAsync(
+                    root, postingPlan));
+            Assert.Equal(StockLedgerErrorCodes.ValuationRequired,
+                unsupportedRoot.Error.Code);
+            Assert.Empty(await db.StockCountCostBases.ToArrayAsync());
+            laterIssue.TrxType = IvTrxTypes.MiscellaneousIssue;
+            await db.SaveChangesAsync();
+            var laterOwner = await db.StockPostings.SingleAsync(p =>
+                p.Id == issueOwner.Id);
+            laterOwner.SourceModule = "PRODUCTION";
+            await db.SaveChangesAsync();
+            var foreignOwner = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayWacCountSheetPostingWriter.PrepareWithinRootAsync(
+                    root, postingPlan));
+            Assert.Equal(StockLedgerErrorCodes.ValuationRequired,
+                foreignOwner.Error.Code);
+            laterOwner.SourceModule = "INVENTORY";
+            await db.SaveChangesAsync();
             var prepared = await StockReplayWacCountSheetPostingWriter
                 .PrepareWithinRootAsync(root, postingPlan);
             var result = await StockReplayWacCountSheetPostingWriter.AppendWithinRootAsync(
@@ -1262,8 +2856,11 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             finalPiles[secondPile.Id].TransDate);
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(
             db, company, branch, [issue]);
+        var correctedFacts = active[issue.Id];
+        Assert.Equal(splitIssue ? 2 : 1, correctedFacts.Count);
         Assert.Equal(146.511650m,
-            Assert.Single(active[issue.Id]).CostAmount);
+            correctedFacts.Sum(f => f.CostAmount));
+        var correctedFact = correctedFacts[0];
         Assert.NotNull((await db.StockPostings.SingleAsync(p =>
             p.SourceDocumentNo == header.CountNo)).SealedAtUtc);
         var timeline = await StockReplayWacFinancialTailReader.ReadLaterAsync(
@@ -1273,6 +2870,255 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         Assert.Equal(4, timeline.LaterEvents.Count);
         Assert.Equal(165m, timeline.CurrentQuantity);
         Assert.Equal(483.488350m, timeline.CurrentValue);
+        var removal = await StockReplayCountSheetRemovalPlanner.BuildAsync(db,
+            company, branch, header.Id);
+        Assert.Equal(2, removal.Lines.Count);
+        var multiLine = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayWacSingleCountRemovalPlanner.BuildAsync(
+                db, company, branch, header.Id));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, multiLine.Error.Code);
+        var needsFinancialReplay = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayZeroCountRemovalRootWriter.BuildAsync(
+                db, company, branch, header.Id));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            needsFinancialReplay.Error.Code);
+        Assert.Equal(StockReplayEventKey.CountEndOfDay(FixedToday),
+            removal.EffectiveAt);
+        Assert.Equal(150m, removal.Lines.Sum(l =>
+            l.Physical.Projection.FinalQuantity));
+        Assert.Throws<StockLedgerException>(() =>
+            StockReplayCountSheetRemovalPlanner.ValidatePreparedPlan(
+                removal with { Lines = removal.Lines.Take(1).ToArray() }));
+        var rollbackCommand = await StockCountRollbackCommandFactory.CreateAsync(
+            db, removal);
+        var sameCommand = await StockCountRollbackCommandFactory.CreateAsync(
+            db, removal);
+        Assert.Equal(rollbackCommand.RequestId, sameCommand.RequestId);
+        Assert.Equal(rollbackCommand.Evidence.RequestFingerprint,
+            sameCommand.Evidence.RequestFingerprint);
+        Assert.Equal(removal.AnchorPostingId,
+            rollbackCommand.ReversesPostingId);
+        await using var rollbackTx = await db.Database.BeginTransactionAsync();
+        var rollbackBegin = await coordinator.BeginInTransactionAsync(
+            db, rollbackCommand);
+        Assert.NotNull(rollbackBegin.Context);
+        try
+        {
+            await StockReplayCountSheetRemovalPlanner.ValidateWithinRootAsync(
+                rollbackBegin.Context!, removal);
+            var changedLine = await db.IvStockCountLines.SingleAsync(l =>
+                l.Id == secondLine.Id);
+            changedLine.PhysicalQty = 4m;
+            await db.SaveChangesAsync();
+            var staleCommand = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockCountRollbackCommandFactory.CreateAsync(db, removal));
+            Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                staleCommand.Error.Code);
+            var stale = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayCountSheetRemovalPlanner.ValidateWithinRootAsync(
+                    rollbackBegin.Context!, removal));
+            Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                stale.Error.Code);
+        }
+        finally
+        {
+            await coordinator.AbortInTransactionAsync(rollbackBegin.Context!);
+            await rollbackTx.RollbackAsync();
+        }
+        db.ChangeTracker.Clear();
+        var receiptOriginId = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.InventoryHistoryId == receipt.Id
+                && f.ReversesValuationFactId == null)
+            .Select(f => f.Id).SingleAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE StockValuationFact SET OriginalValuationFactId = {receiptOriginId} WHERE Id = {correctedFact.Id}");
+        var foreignOrigin = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayCountSheetRemovalRootWriter.BuildAsync(
+                db, company, branch, header.Id));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            foreignOrigin.Error.Code);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE StockValuationFact SET OriginalValuationFactId = {correctedFact.OriginalValuationFactId} WHERE Id = {correctedFact.Id}");
+        var financialRemoval = await StockReplayCountSheetRemovalRootWriter
+            .BuildAsync(db, company, branch, header.Id);
+        var projectedRemoval = Assert.Single(
+            Assert.IsType<StockReplayWacCountSheetRemovalPlan>(
+                financialRemoval.Wac).Items);
+        Assert.Equal(150m, projectedRemoval.FinalQuantity);
+        Assert.Equal(450m, projectedRemoval.FinalValue);
+        Assert.Single(projectedRemoval.Repricing!.LaterSteps
+            .Where(step => step.EventId == issue.Id));
+        await using (var staleOwnerTx = await db.Database.BeginTransactionAsync())
+        {
+            var staleBegin = await coordinator.BeginInTransactionAsync(
+                db, financialRemoval.Command);
+            Assert.NotNull(staleBegin.Context);
+            try
+            {
+                var correctionOwner = await db.StockPostings.SingleAsync(p =>
+                    p.Id == correctedFact.StockPostingId);
+                correctionOwner.SourceSnapshotHash = "FORGED";
+                await db.SaveChangesAsync();
+                var batchesBefore = await db.IvTrxBatches.CountAsync();
+                var staleOwner = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayCountSheetRemovalRootWriter.AppendWithinRootAsync(
+                        staleBegin.Context!, financialRemoval,
+                        new RunningNumberService(),
+                        "Count entered in error", DateTime.UtcNow));
+                Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                    staleOwner.Error.Code);
+                Assert.Equal(batchesBefore, await db.IvTrxBatches.CountAsync());
+            }
+            finally
+            {
+                await coordinator.AbortInTransactionAsync(staleBegin.Context!);
+                await staleOwnerTx.RollbackAsync();
+            }
+        }
+        db.ChangeTracker.Clear();
+        await using (var financialRollback = await db.Database.BeginTransactionAsync())
+        {
+            var financialBegin = await coordinator.BeginInTransactionAsync(
+                db, financialRemoval.Command);
+            Assert.NotNull(financialBegin.Context);
+            try
+            {
+                var removed = await StockReplayCountSheetRemovalRootWriter
+                    .AppendWithinRootAsync(financialBegin.Context!,
+                        financialRemoval, new RunningNumberService(),
+                        "Count entered in error", DateTime.UtcNow);
+                Assert.Equal(2, removed.ReversalHistoryIds.Count);
+                Assert.Equal(2, removed.RemovalGenerationIds.Count);
+                Assert.Equal([issue.Id], removed.RequiredActiveHistoryIds);
+                await coordinator.CompleteReplayInTransactionAsync(
+                    financialBegin.Context!, removed.RequiredActiveHistoryIds);
+                await financialRollback.CommitAsync();
+            }
+            catch
+            {
+                await coordinator.AbortInTransactionAsync(
+                    financialBegin.Context!);
+                await financialRollback.RollbackAsync();
+                throw;
+            }
+        }
+        db.ChangeTracker.Clear();
+        var restoredState = await db.StockCostStates.SingleAsync();
+        Assert.Equal(150m, restoredState.OnHandBaseQty);
+        Assert.Equal(450m, restoredState.InventoryValue);
+        var restoredIssue = await StockReplayValuationGenerationResolver
+            .ResolveAsync(db, company, branch, [issue]);
+        var restoredFacts = restoredIssue[issue.Id];
+        Assert.Equal(splitIssue ? 2 : 1, restoredFacts.Count);
+        Assert.Equal(150m, restoredFacts.Sum(f => f.CostAmount));
+        var originalIds = (await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.StockPostingId == issueOwner.Id)
+            .Select(f => f.Id).ToArrayAsync()).Order().ToArray();
+        Assert.Equal(originalIds, restoredFacts
+            .Select(f => f.OriginalValuationFactId!.Value).Order());
+        Assert.Equal(IvStockCountStatuses.RolledBack,
+            (await db.IvStockCountHdrs.SingleAsync()).Status);
+        var secondHeader = new IvStockCountHdr
+        {
+            CompanyCode = company, BranchCode = branch,
+            CountNo = "CC-MULTI-SECOND", CountDate = FixedToday,
+            Status = IvStockCountStatuses.Counted
+        };
+        var secondFirstLine = new IvStockCountLine
+        {
+            Header = secondHeader, LineNumber = 1, BalLocId = firstPile.Id,
+            ICode = "A100", WHCode = "MAIN", LocCode = "BIN1",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            SystemQty = 100m, PhysicalQty = 110m
+        };
+        var secondSecondLine = new IvStockCountLine
+        {
+            Header = secondHeader, LineNumber = 2, BalLocId = secondPile.Id,
+            ICode = "A100", WHCode = "MAIN", LocCode = "BIN2",
+            LotNo = "", IStatus = "ACTIVE", StdUom = "EA",
+            SystemQty = 0m, PhysicalQty = 5m
+        };
+        db.IvStockCountLines.AddRange(secondFirstLine, secondSecondLine);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var secondBases = new[]
+        {
+            Basis(secondFirstLine.Id), Basis(secondSecondLine.Id)
+        };
+        var secondSheet = await StockReplayPhysicalPlanner
+            .BuildCountSheetInsertionAsync(db, company, branch, secondHeader.Id);
+        var secondPosting = await StockReplayWacCountSheetPostingWriter
+            .BuildAsync(db, secondSheet, secondBases);
+        var secondCommand = await StockCountAnchorCommandFactory.CreateAsync(
+            db, company, branch, secondHeader.Id, secondBases);
+        await using (var secondTx = await db.Database.BeginTransactionAsync())
+        {
+            var secondBegin = await coordinator.BeginInTransactionAsync(
+                db, secondCommand);
+            Assert.NotNull(secondBegin.Context);
+            try
+            {
+                var prepared = await StockReplayWacCountSheetPostingWriter
+                    .PrepareWithinRootAsync(secondBegin.Context!, secondPosting);
+                var inserted = await StockReplayWacCountSheetPostingWriter
+                    .AppendWithinRootAsync(secondBegin.Context!, prepared,
+                        secondBases, new RunningNumberService());
+                Assert.Equal([issue.Id], inserted.RepricedHistoryIds);
+                await coordinator.CompleteReplayInTransactionAsync(
+                    secondBegin.Context!, inserted.RequiredActiveHistoryIds);
+                await secondTx.CommitAsync();
+            }
+            catch
+            {
+                await coordinator.AbortInTransactionAsync(secondBegin.Context!);
+                await secondTx.RollbackAsync();
+                throw;
+            }
+        }
+        db.ChangeTracker.Clear();
+        var secondIssue = await StockReplayValuationGenerationResolver
+            .ResolveAsync(db, company, branch, [issue]);
+        Assert.Equal(146.511650m,
+            secondIssue[issue.Id].Sum(f => f.CostAmount));
+        Assert.Equal(originalIds, secondIssue[issue.Id]
+            .Select(f => f.OriginalValuationFactId!.Value).Order());
+        Assert.Equal(483.488350m,
+            (await db.StockCostStates.SingleAsync()).InventoryValue);
+        var secondRemoval = await StockReplayCountSheetRemovalRootWriter
+            .BuildAsync(db, company, branch, secondHeader.Id);
+        await using (var secondRollbackTx = await db.Database.BeginTransactionAsync())
+        {
+            var secondRollbackBegin = await coordinator.BeginInTransactionAsync(
+                db, secondRemoval.Command);
+            Assert.NotNull(secondRollbackBegin.Context);
+            try
+            {
+                var removed = await StockReplayCountSheetRemovalRootWriter
+                    .AppendWithinRootAsync(secondRollbackBegin.Context!,
+                        secondRemoval, new RunningNumberService(),
+                        "Count entered in error", DateTime.UtcNow);
+                Assert.Equal([issue.Id], removed.RequiredActiveHistoryIds);
+                await coordinator.CompleteReplayInTransactionAsync(
+                    secondRollbackBegin.Context!, removed.RequiredActiveHistoryIds);
+                await secondRollbackTx.CommitAsync();
+            }
+            catch
+            {
+                await coordinator.AbortInTransactionAsync(
+                    secondRollbackBegin.Context!);
+                await secondRollbackTx.RollbackAsync();
+                throw;
+            }
+        }
+        db.ChangeTracker.Clear();
+        var finalIssue = await StockReplayValuationGenerationResolver
+            .ResolveAsync(db, company, branch, [issue]);
+        Assert.Equal(150m, finalIssue[issue.Id].Sum(f => f.CostAmount));
+        Assert.Equal(originalIds, finalIssue[issue.Id]
+            .Select(f => f.OriginalValuationFactId!.Value).Order());
+        var finalCost = await db.StockCostStates.SingleAsync();
+        Assert.Equal(150m, finalCost.OnHandBaseQty);
+        Assert.Equal(450m, finalCost.InventoryValue);
     }
 
     [Fact]
@@ -1831,6 +3677,15 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             StockReplayEventKey.CountEndOfDay(FixedToday));
         Assert.Equal(100m, beforeCount[balanceId].AsOfBaseQty);
         Assert.Equal(110m, afterCount[balanceId].AsOfBaseQty);
+        var asOfService = new InventoryAsOfStockService();
+        var publicBefore = await asOfService.GetAsync(db,
+            header.CompanyCode, header.BranchCode, [balanceId],
+            FixedToday.AddHours(12));
+        var publicAfter = await asOfService.GetAsync(db,
+            header.CompanyCode, header.BranchCode, [balanceId],
+            StockReplayEventKey.CountEndOfDay(FixedToday));
+        Assert.Equal(100m, publicBefore[balanceId].AsOfBaseQty);
+        Assert.Equal(110m, publicAfter[balanceId].AsOfBaseQty);
         if (standardCost)
         {
             var tail = await StockReplayStandardFinancialTailReader.ReadLaterAsync(
@@ -2007,6 +3862,12 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             var branchSequence = await db.StockPostingBranchSequences.SingleAsync();
             branchSequence.LastSequence = issuePosting.PostingSequence;
             await db.SaveChangesAsync();
+            var revaluationNeedsCorrection = await Assert.ThrowsAsync<
+                StockLedgerException>(() =>
+                StockReplayCountSheetRemovalRootWriter.BuildAsync(db,
+                    header.CompanyCode, header.BranchCode, header.Id));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                revaluationNeedsCorrection.Error.Code);
             var secondHeader = new IvStockCountHdr
             {
                 CompanyCode = header.CompanyCode,

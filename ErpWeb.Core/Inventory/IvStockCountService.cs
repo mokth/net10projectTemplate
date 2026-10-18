@@ -5,6 +5,7 @@ using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -236,11 +237,53 @@ public sealed partial class IvStockCountService : IIvStockCountService
             .OrderBy(l => l.LineNumber)
             .ToListAsync(cancellationToken);
 
+        var lineIds = lines.Select(l => l.Id).ToArray();
+        var frozenBases = await db.StockCountCostBases.AsNoTracking()
+            .Where(b => lineIds.Contains(b.StockCountLineId))
+            .ToArrayAsync(cancellationToken);
+        if (frozenBases.Any(b => b.CompanyCode != context.CompanyCode
+                || b.BranchCode != context.BranchCode))
+            return IvStockCountOperationResult.Fail(
+                $"Stock count {no} has cost evidence for another tenant.");
+        var basisByLine = frozenBases.ToDictionary(b => b.StockCountLineId);
+        IReadOnlyDictionary<int, StockCountReplayGeneration> activeByLine =
+            new Dictionary<int, StockCountReplayGeneration>();
+        var generationLineIds = await db.StockCountReplayGenerations.AsNoTracking()
+            .Where(g => g.CompanyCode == context.CompanyCode
+                && g.BranchCode == context.BranchCode
+                && lineIds.Contains(g.StockCountLineId))
+            .Select(g => g.StockCountLineId).Distinct().ToArrayAsync(cancellationToken);
+        if (generationLineIds.Length > 0)
+        {
+            var countedLineIds = lines.Where(l => l.PhysicalQty is not null)
+                .Select(l => l.Id).ToArray();
+            if (generationLineIds.Except(countedLineIds).Any())
+                return IvStockCountOperationResult.Fail(
+                    $"Stock count {no} has a generation for an uncounted line.");
+            var positiveLineIds = lines.Where(l => l.PhysicalQty > 0m)
+                .Select(l => l.Id).Order().ToArray();
+            if (!basisByLine.Keys.Order().SequenceEqual(positiveLineIds)
+                || frozenBases.Any(b => !StockCountAnchorCommandFactory.ValidBasis(b)))
+                return IvStockCountOperationResult.Fail(
+                    $"Stock count {no} lacks valid frozen cost evidence for every positive line.");
+            try
+            {
+                activeByLine = await StockCountGenerationResolver.ResolveActiveAsync(
+                    db, context.CompanyCode!, context.BranchCode!,
+                    countedLineIds,
+                    cancellationToken);
+            }
+            catch (StockLedgerException ex)
+            {
+                return IvStockCountOperationResult.Fail(ex.Error.Message);
+            }
+        }
+
         var live = await LoadLiveQtyAsync(
             db, context.CompanyCode!, context.BranchCode!, lines.Select(l => l.BalLocId), cancellationToken);
 
         return IvStockCountOperationResult.OkDocument(
-            MapDocument(header, lines, live));
+            MapDocument(header, lines, live, basisByLine, activeByLine));
     }
 
     // ── Header lifecycle ─────────────────────────────────────────────────────────────────────────
@@ -1555,7 +1598,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
     private static IvStockCountDocument MapDocument(
         IvStockCountHdr header,
         IReadOnlyList<IvStockCountLine> lines,
-        IReadOnlyDictionary<int, decimal> live)
+        IReadOnlyDictionary<int, decimal> live,
+        IReadOnlyDictionary<int, StockCountCostBasis> basisByLine,
+        IReadOnlyDictionary<int, StockCountReplayGeneration> activeByLine)
     {
         return new IvStockCountDocument
         {
@@ -1581,13 +1626,19 @@ public sealed partial class IvStockCountService : IIvStockCountService
             RolledBackOn = header.RolledBackOn,
             RollbackReason = header.RollbackReason,
             RowVersion = header.RowVersion.Length == 0 ? string.Empty : Convert.ToBase64String(header.RowVersion),
-            Lines = lines.Select(l => MapLine(l, live)).ToList()
+            Lines = lines.Select(l => MapLine(l, live, basisByLine, activeByLine)).ToList()
         };
     }
 
-    private static IvStockCountLineDto MapLine(IvStockCountLine line, IReadOnlyDictionary<int, decimal> live)
+    private static IvStockCountLineDto MapLine(
+        IvStockCountLine line,
+        IReadOnlyDictionary<int, decimal> live,
+        IReadOnlyDictionary<int, StockCountCostBasis> basisByLine,
+        IReadOnlyDictionary<int, StockCountReplayGeneration> activeByLine)
     {
         live.TryGetValue(line.BalLocId, out var liveQty);
+        basisByLine.TryGetValue(line.Id, out var basis);
+        activeByLine.TryGetValue(line.Id, out var active);
         decimal? variance = null;
         string? direction = null;
         var isStale = false;
@@ -1619,6 +1670,13 @@ public sealed partial class IvStockCountService : IIvStockCountService
             RecountCount = line.RecountCount,
             CountedBy = line.CountedBy,
             CountedOn = line.CountedOn,
+            FrozenCostBasis = basis is null ? null : new IvStockCountCostBasisDto(
+                basis.CostBasisKind, basis.FrozenFallbackUnitCost,
+                basis.StandardCostRevisionId, basis.CostBasisWatermark,
+                basis.CostBasisHash, basis.CostOverrideReason,
+                basis.CostApprovedBy, basis.CostApprovedAtUtc),
+            ActiveAdjustment = active is null ? null : new IvStockCountActiveAdjustmentDto(
+                active.SignedAdjustmentQty, active.AdjustmentBatchNo, active.IsRemoval),
             LiveQty = liveQty,
             Variance = variance,
             Direction = direction,

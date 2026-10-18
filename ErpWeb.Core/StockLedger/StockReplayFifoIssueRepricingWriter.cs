@@ -21,35 +21,98 @@ public static class StockReplayFifoIssueRepricingWriter
         StockReplayEventKey issueKey,
         int reversalPostingLineNo,
         int replacementPostingLineNo,
+        long? receiptLayerId,
+        CancellationToken cancellationToken = default)
+    {
+        StockReplayFifoReceiptLayerBinding.Validate(plan, receiptLayerId);
+        await ValidateFifoPolicyAsync(context, plan, cancellationToken);
+        return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
+            plan.Projection, plan.PlanHash, "INSERT", permit, issueKey,
+            reversalPostingLineNo, replacementPostingLineNo,
+            receiptLayerId, cancellationToken);
+    }
+
+    public static async Task<IReadOnlyList<StockValuationFact>> AppendAsync(
+        StockPostingContext context,
+        StockReplayFifoInsertionPlan plan,
+        StockReplayFifoWritePermit permit,
+        StockReplayEventKey issueKey,
+        int reversalPostingLineNo,
+        int replacementPostingLineNo,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(permit);
-        context.EnsureUnsealed();
         StockReplayFifoInsertionPlanner.ValidatePreparedPlan(plan);
-        if (permit.Operation != "INSERT"
+        if (plan.PhysicalPlan.Candidate.SignedDelta >= 0m)
+            throw Invalid("FIFO receipt issue correction needs its saved layer identity.");
+        await ValidateFifoPolicyAsync(context, plan, cancellationToken);
+        return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
+            plan.Projection, plan.PlanHash, "INSERT", permit, issueKey,
+            reversalPostingLineNo, replacementPostingLineNo, null, cancellationToken);
+    }
+
+    public static async Task<IReadOnlyList<StockValuationFact>> AppendAsync(
+        StockPostingContext context,
+        StockReplayFifoRemovalPlan plan,
+        StockReplayFifoWritePermit permit,
+        StockReplayEventKey issueKey,
+        int reversalPostingLineNo,
+        int replacementPostingLineNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(permit);
+        StockReplayFifoRemovalPlanner.ValidatePreparedPlan(plan);
+        if (plan.PhysicalPlan.RemovedActiveEvent.SignedDelta == 0m
+            || plan.PhysicalPlan.RemovedActiveEvent.SignedDelta > 0m
+                && plan.Projection.CandidateReceipt is null)
+            throw Invalid("FIFO issue correction needs a removed issue or receipt.");
+        await ValidateFifoPolicyAsync(context,
+            plan.PhysicalPlan.RemovedActiveEvent.Key.EffectiveAt.Date,
+            plan.PhysicalPlan.LaterEvents.Select(e => e.Key.EffectiveAt.Date)
+                .Append(plan.PhysicalPlan.RemovedActiveEvent.Key.EffectiveAt.Date).Max(),
+            cancellationToken);
+        return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
+            plan.Projection, plan.PlanHash, "REMOVE", permit, issueKey,
+            reversalPostingLineNo, replacementPostingLineNo, null, cancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<StockValuationFact>> AppendCoreAsync(
+        StockPostingContext context, string itemCode,
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayFifoTailProjection projection, string planHash,
+        string operation, StockReplayFifoWritePermit permit,
+        StockReplayEventKey issueKey, int reversalPostingLineNo,
+        int replacementPostingLineNo, long? receiptLayerId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(permit);
+        context.EnsureUnsealed();
+        if (permit.Operation != operation
             || permit.RootPostingId != context.Posting.Id
             || permit.RootPostingSequence != context.Posting.PostingSequence
             || permit.LedgerEpochId != context.Epoch.Id
             || permit.CompanyCode != context.CompanyCode
             || permit.BranchCode != context.BranchCode
-            || permit.ItemCode != plan.ItemCode
-            || permit.PlanHash != plan.PlanHash
-            || permit.SnapshotHash != plan.Snapshot.SnapshotHash
+            || permit.ItemCode != itemCode
+            || permit.PlanHash != planHash
+            || permit.SnapshotHash != snapshot.SnapshotHash
             || reversalPostingLineNo <= 0 || replacementPostingLineNo <= 0
             || reversalPostingLineNo == replacementPostingLineNo)
             throw Invalid("FIFO issue correction needs its validated root permit and unique lines.");
-        await ValidateFifoPolicyAsync(context, plan, cancellationToken);
 
-        var issue = plan.Projection.Issues.SingleOrDefault(i =>
+        var issue = projection.Issues.SingleOrDefault(i =>
             i.Key == issueKey && !i.IsCandidate && i.DepletesPool);
         if (issue is null || issueKey.LineIdentity.Length != 11
             || issueKey.LineIdentity[0] != 'H'
             || !int.TryParse(issueKey.LineIdentity.AsSpan(1), out var historyId)
             || historyId <= 0)
             throw Invalid("FIFO correction has no ordinary Inventory issue in the prepared tail.");
-        var previous = plan.Snapshot.ActiveConsumptions
+        var previous = snapshot.ActiveConsumptions
             .Where(c => c.IssueKey == issueKey).ToArray();
         if (previous.Length == 0
             || previous.Length != issue.PreviousConsumptions.Count
@@ -81,8 +144,8 @@ public static class StockReplayFifoIssueRepricingWriter
                 && h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode,
                 cancellationToken);
-        if (history is null || history.ICode != plan.ItemCode
-            || history.TrxType != IvTrxTypes.MiscellaneousIssue
+        if (history is null || history.ICode != itemCode
+            || !StockReplayFifoInventoryIssueKinds.IsSupported(history.TrxType)
             || history.LedgerVersion != 2
             || history.LedgerEpochId != context.Epoch.Id
             || history.EntryRole != "ORIGINAL"
@@ -101,7 +164,9 @@ public static class StockReplayFifoIssueRepricingWriter
         if (activeFacts.Length != previous.Length
             || activeFacts.Any(f => f.CostMethod != StockCostMethods.Fifo
                 || f.ValuationSource != StockValuationSources.Fifo
-                || f.MovementCode != "ISSUE_OUT"
+                || f.MovementCode !=
+                    StockReplayFifoInventoryIssueKinds.MovementCode(
+                        history.TrxType)
                 || f.Direction != -1 || f.EffectiveAt != issueKey.EffectiveAt
                 || f.TransactionCurrency is not null
                 || f.TransactionCostAmount is not null
@@ -216,7 +281,8 @@ public static class StockReplayFifoIssueRepricingWriter
                 CompanyCode = context.CompanyCode,
                 BranchCode = context.BranchCode,
                 IssueValuationFact = replacements[i],
-                FifoLayerId = allocation.LayerId,
+                FifoLayerId = StockReplayFifoReceiptLayerBinding.Map(
+                    allocation.LayerId, receiptLayerId),
                 ConsumedQty = allocation.Quantity,
                 ConsumedValue = allocation.Value,
                 SplitOrdinal = i,
@@ -230,7 +296,7 @@ public static class StockReplayFifoIssueRepricingWriter
     private static StockLedgerException Invalid(string message) =>
         new(new StockLedgerError(StockLedgerErrorCodes.LedgerMismatch, message));
 
-    private static async Task ValidateFifoPolicyAsync(
+    internal static async Task ValidateFifoPolicyAsync(
         StockPostingContext context, StockReplayFifoInsertionPlan plan,
         CancellationToken cancellationToken)
     {
@@ -238,6 +304,13 @@ public static class StockReplayFifoIssueRepricingWriter
         var last = plan.PhysicalPlan.LaterEvents
             .Select(e => e.Key.EffectiveAt.Date)
             .Append(first).Max();
+        await ValidateFifoPolicyAsync(context, first, last, cancellationToken);
+    }
+
+    internal static async Task ValidateFifoPolicyAsync(
+        StockPostingContext context, DateTime first, DateTime last,
+        CancellationToken cancellationToken)
+    {
         var policies = await context.Db.StockCostPolicyRevisions
             .AsNoTracking()
             .Where(p => p.CompanyCode == context.CompanyCode

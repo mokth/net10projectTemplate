@@ -27,14 +27,16 @@ public static class StockCountInitialHistoryWriter
         ArgumentNullException.ThrowIfNull(permit);
         ArgumentNullException.ThrowIfNull(numbers);
         context.EnsureUnsealed();
-        if (permit.CountStatus != IvStockCountStatuses.Counted
+        if (permit.CountStatus is not
+                (IvStockCountStatuses.Counted or IvStockCountStatuses.RolledBack)
             || permit.RootPostingId != context.Posting.Id
             || permit.LedgerEpochId != context.Epoch.Id
             || permit.PostingSequence != context.Posting.PostingSequence
             || permit.CompanyCode != context.CompanyCode
             || permit.BranchCode != context.BranchCode
             || permit.EffectiveAt != context.Posting.EffectiveAt
-            || context.Posting.DocumentRevision != 0
+            || (permit.CountStatus == IvStockCountStatuses.Counted)
+                != (context.Posting.DocumentRevision == 0)
             || context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType != "IV_STOCK_COUNT"
             || context.Posting.SourceDocumentId != permit.CountHeaderId.ToString(
@@ -47,8 +49,9 @@ public static class StockCountInitialHistoryWriter
         var header = await db.IvStockCountHdrs.SingleOrDefaultAsync(h =>
             h.Id == permit.CountHeaderId && h.CompanyCode == context.CompanyCode
             && h.BranchCode == context.BranchCode, cancellationToken);
-        if (header is null || header.Status != IvStockCountStatuses.Counted
-            || header.PostedBatchNo is not null
+        if (header is null || header.Status != permit.CountStatus
+            || permit.CountStatus == IvStockCountStatuses.Counted
+                && header.PostedBatchNo is not null
             || header.CountDate != header.CountDate.Date
             || StockReplayEventKey.CountEndOfDay(header.CountDate) != permit.EffectiveAt
             || header.CountNo != context.Posting.SourceDocumentNo)
@@ -192,7 +195,7 @@ public static class StockCountInitialHistoryWriter
                 LedgerEpochId = context.Epoch.Id,
                 StockPostingId = context.Posting.Id,
                 PostingLineNo = index + 1,
-                DocumentRevision = 0,
+                DocumentRevision = context.Posting.DocumentRevision,
                 EntryRole = "ORIGINAL",
                 ValuationStatus = StockValuationStatuses.Unvalued,
                 CreatedDate = now,
@@ -204,7 +207,7 @@ public static class StockCountInitialHistoryWriter
                 CompanyCode = context.CompanyCode,
                 BranchCode = context.BranchCode,
                 BatchNo = batchNo.Value,
-                DocumentRevision = 0,
+                DocumentRevision = context.Posting.DocumentRevision,
                 TrxLineNo = history.TrxLineNo,
                 TrxType = IvTrxTypes.StockAdjustment,
                 ICode = line.ICode,
@@ -239,7 +242,8 @@ public static class StockCountInitialHistoryWriter
         await db.SaveChangesAsync(cancellationToken);
 
         header.Status = IvStockCountStatuses.Posted;
-        header.PostedBatchNo = batchNo;
+        if (permit.CountStatus == IvStockCountStatuses.Counted)
+            header.PostedBatchNo = batchNo;
         header.PostedBy = context.UserId;
         header.PostedOn = now;
         header.PostedStaleLines = permit.Lines.Count(p =>

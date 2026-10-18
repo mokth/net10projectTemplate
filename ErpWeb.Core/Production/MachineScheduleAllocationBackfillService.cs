@@ -237,9 +237,14 @@ public sealed class MachineScheduleAllocationBackfillService : IMachineScheduleA
         var scope = _tenant.TryBranchScope();
         if (scope is null)
             return (null, (IvMasterErrorCode.InvalidScope, "A company and branch context is required."));
+        // Allocation backfill mutates physical capacity reservations. It requires planner access,
+        // the production-domain planner Edit permission, and Admin Settings edit authority. The
+        // planner write feature flag is intentionally not required for this maintenance command.
         if (!await _access.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Access, cancellationToken)
-            || !await _access.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Edit, cancellationToken))
-            return (null, (IvMasterErrorCode.AccessDenied, "Edit access to Machine Schedule Planner is required."));
+            || !await _access.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Edit, cancellationToken)
+            || !await _access.CanAsync(MenuCodes.AdminSettings, PermissionCodes.Edit, cancellationToken))
+            return (null, (IvMasterErrorCode.AccessDenied,
+                "Machine Schedule Planner access, Planner edit, and Admin Settings edit access are required."));
         return (scope, null);
     }
 

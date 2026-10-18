@@ -134,6 +134,7 @@ public static class StockCountAnchorCommandFactory
                 || StockLedgerPrecision.Money(b.FrozenFallbackUnitCost) != b.FrozenFallbackUnitCost
                 || (b.CostBasisKind is StockCountCostBasisKinds.LedgerWac
                     or StockCountCostBasisKinds.LedgerFifo)
+                    && header.Status == "COUNTED"
                     && b.CostBasisWatermark != watermark
                 || !ValidBasis(b)))
             throw Invalid($"Count {countId} lacks one frozen cost basis per positive line.");
@@ -248,6 +249,11 @@ public static class StockCountAnchorCommandFactory
 
     internal static bool ValidBasis(StockCountCostBasis basis)
     {
+        if (basis.FrozenFallbackUnitCost < 0m
+            || basis.FrozenFallbackUnitCost >= 10000000000000m
+            || StockLedgerPrecision.Money(basis.FrozenFallbackUnitCost)
+                != basis.FrozenFallbackUnitCost)
+            return false;
         if (basis.CostBasisKind is StockCountCostBasisKinds.LedgerWac
             or StockCountCostBasisKinds.LedgerFifo)
             return basis.CostBasisWatermark is > 0
@@ -276,8 +282,10 @@ public static class StockCountAnchorCommandFactory
             && basis.CostBasisWatermark is null
             && basis.CostBasisHash is null
             && basis.StandardCostRevisionId is null
-            && !string.IsNullOrWhiteSpace(basis.CostOverrideReason)
-            && !string.IsNullOrWhiteSpace(basis.CostApprovedBy)
+            && basis.CostOverrideReason is { Length: > 0 and <= 250 } reason
+            && !string.IsNullOrWhiteSpace(reason)
+            && basis.CostApprovedBy is { Length: > 0 and <= 100 } approver
+            && !string.IsNullOrWhiteSpace(approver)
             && basis.CostApprovedAtUtc is not null;
     }
 

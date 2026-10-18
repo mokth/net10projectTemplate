@@ -843,6 +843,11 @@ public sealed class MachineScheduleRescheduleServiceTests
                     PermissionCodes.Edit,
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
+            access.Setup(x => x.CanAsync(
+                    MenuCodes.AdminSettings,
+                    PermissionCodes.Edit,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
             return new MachineScheduleAllocationBackfillService(
                 Factory,
                 InventoryTenantTestHelper.CreateTenantContext(),

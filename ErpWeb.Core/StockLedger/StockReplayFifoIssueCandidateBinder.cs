@@ -71,7 +71,7 @@ public static class StockReplayFifoIssueCandidateBinder
             || history.BatchStatus != IvBatchStatuses.Posted
             || history.ICode != plan.ItemCode
             || history.TrxDtTime != candidate.Key.EffectiveAt
-            || history.TrxType != IvTrxTypes.MiscellaneousIssue
+            || !StockReplayFifoInventoryIssueKinds.IsSupported(history.TrxType)
             || history.FromBalLocId != physical.BalLocId
             || history.FrStdQty != -candidate.SignedDelta
             || history.ToBalLocId is not null
@@ -85,13 +85,22 @@ public static class StockReplayFifoIssueCandidateBinder
             .ToArrayAsync(cancellationToken);
         if (batches.Length != 1 || batches[0].BatchStatus != IvBatchStatuses.Posted
             || batches[0].TrxType != history.TrxType
-            || batches[0].TrxDtTime != candidate.Key.EffectiveAt)
+            || batches[0].TrxDtTime != candidate.Key.EffectiveAt
+            || context.Posting.SourceDocumentType != history.TrxType
+            || context.Posting.SourceDocumentId != batches[0].Id.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+            || context.Posting.SourceDocumentNo != history.BatchNo.ToString(
+                System.Globalization.CultureInfo.InvariantCulture))
             throw Invalid("FIFO candidate has no matching posted Inventory batch.");
         var details = await db.IvTrxBatchDetails.AsNoTracking()
             .Where(d => d.BatchId == batches[0].Id).ToArrayAsync(cancellationToken);
         if (details.Length != 1 || details[0].TrxLineNo != history.TrxLineNo
             || details[0].TrxType != history.TrxType
             || details[0].ICode != plan.ItemCode
+            || details[0].DocumentRevision != context.Posting.DocumentRevision
+            || details[0].CompanyCode != context.CompanyCode
+            || details[0].BranchCode != context.BranchCode
+            || details[0].BatchNo != history.BatchNo
             || details[0].FromBalLocId != physical.BalLocId
             || details[0].FrStdQty != -candidate.SignedDelta)
             throw Invalid("FIFO candidate history differs from its staged Inventory line.");

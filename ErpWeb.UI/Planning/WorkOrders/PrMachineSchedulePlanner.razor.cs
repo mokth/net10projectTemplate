@@ -6,6 +6,7 @@ using DevExtreme.AspNet.Data;
 using DevExtreme.AspNet.Data.ResponseModel;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Sales;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
@@ -27,11 +28,13 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private bool CanOpenWorkOrders;
     private bool CanEditSchedule;
     private bool CanRefreshReadinessEvidence;
+    private bool CanManageAllocationBackfill;
     private bool IsDetailsOpen;
     private bool IsRescheduleDialogOpen;
     private bool IsRescheduleBusy;
     private bool IsBackfillDialogOpen;
     private bool IsBackfillBusy;
+    private bool IsMoreFiltersOpen;
     private MachineScheduleAllocationBackfillReport? BackfillReport;
     private MachineSchedulePlannerJob? RescheduleDialogJob;
     private string RequestedDateText = string.Empty;
@@ -46,6 +49,14 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private string? SelectedWorkOrder;
     private string? SelectedProduct;
     private string? SelectedStatus;
+    private string? SelectedPriority;
+    private bool LateOnly;
+    private bool ShowIdleMachines;
+    private string? DraftProcess;
+    private string? DraftProduct;
+    private string? DraftStatus;
+    private string? DraftPriority;
+    private bool DraftLateOnly;
     private string SearchText = string.Empty;
     private DateTime PeriodStart = StartOfWeek(DateTime.Today);
     private PlannerView CurrentView = PlannerView.Week;
@@ -58,6 +69,13 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     [
         new("RELEASED", "Released"),
         new("IN_PROGRESS", "In progress")
+    ];
+
+    private IReadOnlyList<PlannerFilterOption> PriorityOptions =>
+    [
+        new(SaDeliveryRequestPriorities.Normal, "Normal"),
+        new(SaDeliveryRequestPriorities.High, "High"),
+        new(SaDeliveryRequestPriorities.Urgent, "Urgent")
     ];
 
     private TimeSpan ViewDuration => CurrentView switch
@@ -110,6 +128,84 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private string ScheduleModeText => CanDragAppointments ? "Rescheduling enabled" : "View only";
 
+    private string MoreFiltersText
+    {
+        get
+        {
+            var active = CountActiveMoreFilters();
+            return active == 0 ? "MORE FILTERS" : $"MORE FILTERS ({active})";
+        }
+    }
+
+    private string NoJobsInPeriodMessage => string.IsNullOrWhiteSpace(SelectedMachine)
+        ? "No current-branch jobs are scheduled in the selected period."
+        : "No current-branch jobs are scheduled on this machine in the selected period.";
+
+    private bool IsSelectedWorkOrderVisibleInPeriod => string.IsNullOrWhiteSpace(SelectedWorkOrder)
+        || Board?.Jobs.Any(job => string.Equals(job.WorkOrderNo, SelectedWorkOrder, StringComparison.OrdinalIgnoreCase)) == true;
+
+    private MachineSchedulePlannerAppointment? SelectedExternalCapacityAppointment
+    {
+        get
+        {
+            var location = SelectedAppointment?.Location;
+            return MachineSchedulePlannerAppointmentRules.IsExternalCapacity(location)
+                ? Board?.Appointments.FirstOrDefault(x =>
+                    string.Equals(x.Location, location, StringComparison.Ordinal))
+                : null;
+        }
+    }
+
+    private string DetailsHeading => SelectedJob is { } job
+        ? $"{job.WorkOrderNo} · {job.OperationCode}"
+        : SelectedExternalCapacityAppointment is not null
+            ? "Reserved · other branch"
+            : "Selected operation details";
+
+    private string DetailsSubheading => SelectedJob is { } job
+        ? $"{job.MachineCode} · {job.PlannedStart:dd MMM yyyy HH:mm} → {job.PlannedCompletion:dd MMM yyyy HH:mm}"
+        : SelectedExternalCapacityAppointment is { } external
+            ? $"{external.ResourceId} · {external.Start:dd MMM yyyy HH:mm} → {external.End:dd MMM yyyy HH:mm}"
+            : "Select a schedule bar to inspect the Work Order and operation.";
+
+    private string? RescheduleDemandAdvisory
+    {
+        get
+        {
+            if (RescheduleDialogJob is not { HasActiveDemandContext: true } job
+                || job.RequiredDate is not { } required
+                || ReschedulePreview?.WorkOrderCompletionAfter is not { } after)
+                return null;
+            var days = (after.Date - required.Date).Days;
+            return days > 0
+                ? $"This proposed schedule completes {days} calendar day(s) after the current DR required date."
+                : "This proposed schedule brings the WO on/before the current DR required date.";
+        }
+    }
+
+    private int CountActiveMoreFilters()
+    {
+        var count = 0;
+        if (!string.IsNullOrWhiteSpace(SelectedProcess)) count++;
+        if (!string.IsNullOrWhiteSpace(SelectedProduct)) count++;
+        if (!string.IsNullOrWhiteSpace(SelectedStatus)) count++;
+        if (!string.IsNullOrWhiteSpace(SelectedPriority)) count++;
+        if (LateOnly) count++;
+        return count;
+    }
+
+    private static string DemandSourceText(MachineSchedulePlannerJob job) => job.HasActiveDemandContext
+        ? $"Delivery Request · {job.DeliveryRequestNo}"
+        : job.DeliveryRequestNo is null
+            ? "Manual / no Delivery Request"
+            : $"Inactive or closed Delivery Request · {job.DeliveryRequestNo}";
+
+    private static string LateText(MachineSchedulePlannerJob job) => job.IsLateToRequiredDate
+        ? $"Late vs DR date: {job.LateDays} calendar day(s)"
+        : job.HasActiveDemandContext && job.RequiredDate.HasValue
+            ? "On/before current DR required date"
+            : "—";
+
     private static readonly int[] CellWidths = [48, 64, 80, 100, 125, 150, 180];
 
     private string PeriodLabel => CurrentView switch
@@ -124,9 +220,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         get
         {
             var location = SelectedAppointment?.Location;
-            if (string.IsNullOrWhiteSpace(location) || !location.StartsWith("operation:", StringComparison.Ordinal))
-                return null;
-            return long.TryParse(location.AsSpan("operation:".Length), out var operationId)
+            return MachineSchedulePlannerAppointmentRules.TryGetOperationId(location, out var operationId)
                 ? Board?.Jobs.FirstOrDefault(x => x.OperationId == operationId)
                 : null;
         }
@@ -135,8 +229,12 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     protected override async Task OnPageInitializedAsync()
     {
         CanOpenWorkOrders = await AccessRights.CanAsync(MenuCodes.PlanningWorkOrder, PermissionCodes.Access);
-        CanEditSchedule = await AccessRights.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Edit);
-        CanRefreshReadinessEvidence = await AccessRights.CanAsync(MenuCodes.AdminSettings, PermissionCodes.Edit);
+        var plannerAccess = await AccessRights.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Access);
+        CanEditSchedule = plannerAccess
+            && await AccessRights.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Edit);
+        var adminSettingsEdit = await AccessRights.CanAsync(MenuCodes.AdminSettings, PermissionCodes.Edit);
+        CanRefreshReadinessEvidence = plannerAccess && adminSettingsEdit;
+        CanManageAllocationBackfill = CanEditSchedule && adminSettingsEdit;
         await ReloadAsync();
     }
 
@@ -186,7 +284,10 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
             WorkOrderNo = NormalizeFilter(SelectedWorkOrder),
             ProductCode = NormalizeFilter(SelectedProduct),
             WorkOrderStatus = NormalizeFilter(SelectedStatus),
-            SearchText = SearchText
+            SearchText = SearchText,
+            Priority = NormalizeFilter(SelectedPriority),
+            LateOnly = LateOnly,
+            ShowIdleMachines = ShowIdleMachines
         };
 
         try
@@ -300,8 +401,120 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         SelectedWorkOrder = null;
         SelectedProduct = null;
         SelectedStatus = null;
+        SelectedPriority = null;
+        LateOnly = false;
+        ShowIdleMachines = false;
         SearchText = string.Empty;
+        DraftProcess = null;
+        DraftProduct = null;
+        DraftStatus = null;
+        DraftPriority = null;
+        DraftLateOnly = false;
+        IsMoreFiltersOpen = false;
         await ReloadAsync();
+    }
+
+    private async Task ClearMoreFiltersAsync() => await ClearFiltersAsync();
+
+    private void OpenMoreFilters()
+    {
+        DraftProcess = SelectedProcess;
+        DraftProduct = SelectedProduct;
+        DraftStatus = SelectedStatus;
+        DraftPriority = SelectedPriority;
+        DraftLateOnly = LateOnly;
+        IsMoreFiltersOpen = true;
+    }
+
+    private void CancelMoreFilters() => IsMoreFiltersOpen = false;
+
+    private async Task ApplyMoreFiltersAsync()
+    {
+        SelectedProcess = NormalizeFilter(DraftProcess);
+        SelectedProduct = NormalizeFilter(DraftProduct);
+        SelectedStatus = NormalizeFilter(DraftStatus);
+        SelectedPriority = NormalizeFilter(DraftPriority);
+        LateOnly = DraftLateOnly;
+        IsMoreFiltersOpen = false;
+        await ReloadAsync();
+    }
+
+    private async Task OnShowIdleMachinesChanged(bool value)
+    {
+        ShowIdleMachines = value;
+        await ReloadAsync();
+    }
+
+    /// <summary>
+    /// Work Order selection resolves the WO's actual machine schedule window and issues exactly
+    /// one board reload. Auto-jump only happens here; later manual period navigation is respected.
+    /// </summary>
+    private async Task OnWorkOrderSelectionChangedAsync()
+    {
+        if (_disposed)
+            return;
+
+        MachineSchedulePlannerWorkOrderWindow? window = null;
+        var windowResolved = false;
+        if (!string.IsNullOrWhiteSpace(SelectedWorkOrder))
+        {
+            try
+            {
+                var result = await Planner.GetWorkOrderMachineScheduleWindowAsync(SelectedWorkOrder);
+                if (result.Succeeded && result.Data is not null)
+                {
+                    window = result.Data;
+                    windowResolved = true;
+                }
+            }
+            catch
+            {
+                // A failed resolver must not swallow the selection. The single reload below
+                // simply keeps the current period.
+            }
+        }
+
+        var plan = MachineSchedulePlannerSelectionPlanner.ResolveSelection(
+            SelectedWorkOrder, windowResolved, window, PeriodStart, ViewDuration, CurrentView);
+        ApplySelectionPlan(plan);
+        await ReloadAsync();
+    }
+
+    private async Task GoToWorkOrderScheduleAsync()
+    {
+        if (_disposed || string.IsNullOrWhiteSpace(SelectedWorkOrder))
+            return;
+
+        MachineSchedulePlannerWorkOrderWindow? window = null;
+        var windowResolved = false;
+        try
+        {
+            var result = await Planner.GetWorkOrderMachineScheduleWindowAsync(SelectedWorkOrder);
+            if (result.Succeeded && result.Data is not null)
+            {
+                window = result.Data;
+                windowResolved = true;
+            }
+        }
+        catch
+        {
+            // Fall through to a single reload with the current period.
+        }
+
+        var plan = MachineSchedulePlannerSelectionPlanner.ResolveGoToSchedule(
+            windowResolved, window, PeriodStart, ViewDuration, CurrentView);
+        ApplySelectionPlan(plan);
+        await ReloadAsync();
+    }
+
+    private void ApplySelectionPlan(MachineSchedulePlannerSelectionPlan plan)
+    {
+        if (plan.ShouldMovePeriod)
+            PeriodStart = plan.PeriodStart;
+        if (plan.ClearStatus)
+            StatusMessage = null;
+        else if (plan.StatusMessage is not null)
+            StatusMessage = plan.StatusMessage;
     }
 
     private async Task OnSearchTextChangedAsync(string? value)
@@ -334,7 +547,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         if (IsRescheduleDialogOpen)
             return;
 
-        IsDetailsOpen = SelectedJob is not null;
+        IsDetailsOpen = SelectedJob is not null || SelectedExternalCapacityAppointment is not null;
         ReschedulePreview = null;
         await Task.CompletedTask;
     }
@@ -369,6 +582,13 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
             return;
         }
 
+        if (IsExternalCapacityAppointment(args.Appointment))
+        {
+            args.Cancel = true;
+            StatusMessage = MachineSchedulePlannerAppointmentRules.ExternalCapacityDragMessage;
+            return;
+        }
+
         var job = FindJob(args.Appointment);
         if (job is null)
         {
@@ -387,6 +607,12 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         // Never let the scheduler persist proposed dates. Convert the drag into the same
         // server Preview flow used by Change Schedule and cancel the default collection update.
         args.Cancel = true;
+        if (IsExternalCapacityAppointment(args.Appointment))
+        {
+            StatusMessage = MachineSchedulePlannerAppointmentRules.ExternalCapacityDragMessage;
+            return Task.CompletedTask;
+        }
+
         if (!CanDragAppointments)
         {
             StatusMessage = "Drag rescheduling is unavailable because planner readiness or edit permission is missing.";
@@ -412,15 +638,16 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         return Task.CompletedTask;
     }
 
+    private static bool IsExternalCapacityAppointment(DxSchedulerAppointmentItem appointment) =>
+        MachineSchedulePlannerAppointmentRules.IsExternalCapacity(appointment.Location);
+
     private void OnAppointmentFormShowing(SchedulerAppointmentFormEventArgs args) => args.Cancel = true;
 
     private MachineSchedulePlannerJob? FindJob(DxSchedulerAppointmentItem appointment)
     {
-        var location = appointment.Location;
-        if (string.IsNullOrWhiteSpace(location) || !location.StartsWith("operation:", StringComparison.Ordinal)
-            || !long.TryParse(location.AsSpan("operation:".Length), out var operationId))
-            return null;
-        return Board?.Jobs.FirstOrDefault(x => x.OperationId == operationId);
+        return MachineSchedulePlannerAppointmentRules.TryGetOperationId(appointment.Location, out var operationId)
+            ? Board?.Jobs.FirstOrDefault(x => x.OperationId == operationId)
+            : null;
     }
 
     private bool CanReschedule(MachineSchedulePlannerJob? job) => IsReschedulingEnabled
@@ -441,7 +668,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private async Task PreviewAllocationBackfillAsync()
     {
-        if (!CanEditSchedule)
+        if (!CanManageAllocationBackfill)
             return;
 
         IsBackfillBusy = true;
@@ -479,7 +706,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private async Task ApplyAllocationBackfillAsync()
     {
-        if (!CanEditSchedule || BackfillReport is not { CanApply: true, MissingAllocationCount: > 0 } report)
+        if (!CanManageAllocationBackfill || BackfillReport is not { CanApply: true, MissingAllocationCount: > 0 } report)
             return;
 
         var operationCount = report.MissingAllocationCount;
@@ -684,10 +911,9 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         get
         {
             var location = SelectedAppointment?.Location;
-            return location is not null && location.StartsWith("operation:", StringComparison.Ordinal)
-                && long.TryParse(location.AsSpan("operation:".Length), out var operationId)
-                    ? operationId
-                    : null;
+            return MachineSchedulePlannerAppointmentRules.TryGetOperationId(location, out var operationId)
+                ? operationId
+                : null;
         }
     }
 
@@ -800,9 +1026,11 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private static readonly IReadOnlyList<PlannerAppointmentLabel> PlannerLabels =
     [
-        new(1, "Scheduled", "pr-machine-schedule-label--scheduled", "pr-machine-schedule-label__text"),
-        new(2, "Execution locked", "pr-machine-schedule-label--locked", "pr-machine-schedule-label__text"),
-        new(3, "Preventive maintenance", "pr-machine-schedule-label--maintenance", "pr-machine-schedule-label__text")
+        new(MachineSchedulePlannerLabelIds.Scheduled, "Scheduled", "pr-machine-schedule-label--scheduled", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.ExecutionLocked, "Execution locked", "pr-machine-schedule-label--locked", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.PreventiveMaintenance, "Preventive maintenance", "pr-machine-schedule-label--maintenance", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.LateToRequiredDate, "Late vs DR date", "pr-machine-schedule-label--late", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.ReservedOtherBranch, "Reserved · other branch", "pr-machine-schedule-label--external", "pr-machine-schedule-label__text")
     ];
 
     private static DateTime StartOfWeek(DateTime date)
@@ -826,7 +1054,141 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private sealed record PlannerFilterOption(string Key, string Name);
     private sealed record PlannerAppointmentLabel(int Id, string Caption, string BackgroundCssClass, string TextCssClass);
-    private enum PlannerView { Day, Week, Month }
+}
+
+internal enum PlannerView { Day, Week, Month }
+
+/// <summary>
+/// Testable period-navigation rules for the Machine Schedule planner. Auto-jump only runs on
+/// initial Work Order selection; manual period navigation is never forced back.
+/// </summary>
+internal static class MachineSchedulePlannerPeriodNavigation
+{
+    internal static bool IsInPeriod(DateTime periodStart, TimeSpan duration, DateTime value) =>
+        value >= periodStart && value < periodStart.Add(duration);
+
+    internal static DateTime PeriodStartFor(DateTime value, PlannerView view)
+    {
+        var date = DateTime.SpecifyKind(value.Date, DateTimeKind.Unspecified);
+        return view switch
+        {
+            PlannerView.Day => date,
+            PlannerView.Month => new DateTime(date.Year, date.Month, 1),
+            _ => StartOfWeek(date)
+        };
+    }
+
+    internal static DateTime ResolveAnchor(
+        DateTime? earliestMachineStart,
+        DateTime workOrderPlannedStart) =>
+        earliestMachineStart ?? workOrderPlannedStart;
+
+    private static DateTime StartOfWeek(DateTime date)
+    {
+        var offset = ((int)date.DayOfWeek + 6) % 7;
+        return DateTime.SpecifyKind(date.Date.AddDays(-offset), DateTimeKind.Unspecified);
+    }
+}
+
+/// <summary>
+/// The single decision point for Work Order selection. Every selection path produces exactly one
+/// plan and therefore exactly one board reload; manual period navigation never produces a plan,
+/// so it can never force the planner back to a previously selected Work Order.
+/// </summary>
+internal sealed record MachineSchedulePlannerSelectionPlan(
+    bool ShouldReload,
+    bool ShouldMovePeriod,
+    DateTime PeriodStart,
+    string? StatusMessage,
+    bool ClearStatus);
+
+internal static class MachineSchedulePlannerSelectionPlanner
+{
+    internal static MachineSchedulePlannerSelectionPlan ResolveSelection(
+        string? selectedWorkOrder,
+        bool windowResolved,
+        MachineSchedulePlannerWorkOrderWindow? window,
+        DateTime currentPeriodStart,
+        TimeSpan currentViewDuration,
+        PlannerView view)
+    {
+        var clearStatus = string.IsNullOrWhiteSpace(selectedWorkOrder);
+        return MoveWhenOutsidePeriod(
+            windowResolved, window, currentPeriodStart, currentViewDuration, view, announce: true)
+            with { ClearStatus = clearStatus };
+    }
+
+    /// <summary>Explicit `Go to WO schedule` re-anchors without re-announcing the move.</summary>
+    internal static MachineSchedulePlannerSelectionPlan ResolveGoToSchedule(
+        bool windowResolved,
+        MachineSchedulePlannerWorkOrderWindow? window,
+        DateTime currentPeriodStart,
+        TimeSpan currentViewDuration,
+        PlannerView view) =>
+        MoveWhenOutsidePeriod(
+            windowResolved, window, currentPeriodStart, currentViewDuration, view, announce: false);
+
+    private static MachineSchedulePlannerSelectionPlan MoveWhenOutsidePeriod(
+        bool windowResolved,
+        MachineSchedulePlannerWorkOrderWindow? window,
+        DateTime currentPeriodStart,
+        TimeSpan currentViewDuration,
+        PlannerView view,
+        bool announce)
+    {
+        if (windowResolved && window?.AnchorStart is { } anchor
+            && !MachineSchedulePlannerPeriodNavigation.IsInPeriod(currentPeriodStart, currentViewDuration, anchor))
+        {
+            return new MachineSchedulePlannerSelectionPlan(
+                ShouldReload: true,
+                ShouldMovePeriod: true,
+                PeriodStart: MachineSchedulePlannerPeriodNavigation.PeriodStartFor(anchor, view),
+                StatusMessage: announce ? $"Moved to {window.WorkOrderNo} scheduled period." : null,
+                ClearStatus: false);
+        }
+
+        // No move, but the selection still needs its single reload.
+        return new MachineSchedulePlannerSelectionPlan(
+            ShouldReload: true,
+            ShouldMovePeriod: false,
+            PeriodStart: currentPeriodStart,
+            StatusMessage: null,
+            ClearStatus: false);
+    }
+}
+
+/// <summary>
+/// Scheduler location prefixes. External-capacity bars must never fall through to the generic
+/// maintenance message or open current-branch Work Order details.
+/// </summary>
+internal static class MachineSchedulePlannerAppointmentRules
+{
+    internal const string OperationPrefix = "operation:";
+    internal const string MaintenancePrefix = "maintenance:";
+    internal const string ExternalCapacityPrefix = "external-capacity:";
+
+    internal const string ExternalCapacityDragMessage =
+        "This reserved capacity belongs outside the current branch and cannot be moved here.";
+
+    internal static bool IsExternalCapacity(string? location) =>
+        location?.StartsWith(ExternalCapacityPrefix, StringComparison.Ordinal) == true;
+
+    internal static bool IsMaintenance(string? location) =>
+        location?.StartsWith(MaintenancePrefix, StringComparison.Ordinal) == true;
+
+    internal static bool TryGetOperationId(string? location, out long operationId)
+    {
+        operationId = 0;
+        return location?.StartsWith(OperationPrefix, StringComparison.Ordinal) == true
+            && long.TryParse(location.AsSpan(OperationPrefix.Length), out operationId);
+    }
+
+    /// <summary>Only current-branch operation bars may open Work Order details.</summary>
+    internal static bool CanOpenWorkOrder(string? location) =>
+        TryGetOperationId(location, out _);
+
+    internal static bool CanChangeSchedule(string? location) =>
+        TryGetOperationId(location, out _);
 }
 
 internal static class MachineSchedulePlannerInputParser

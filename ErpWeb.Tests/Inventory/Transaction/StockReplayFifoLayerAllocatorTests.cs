@@ -183,6 +183,64 @@ public sealed class StockReplayFifoLayerAllocatorTests
     }
 
     [Fact]
+    public void Inserted_and_removed_transfer_preserve_the_fifo_pool_and_later_issue()
+    {
+        var first = Layer(1, Day, 1, 5m, 15m) with
+        {
+            RemainingQuantity = 0m,
+            RemainingValue = 0m,
+            CurrentUnitCost = 0m,
+            Status = StockFifoLayerStatuses.Closed,
+            ReceiptKey = IssueKey(Day, 1)
+        };
+        var second = Layer(2, Day.AddDays(1), 2, 10m, 40m) with
+        {
+            RemainingQuantity = 7m,
+            RemainingValue = 28m,
+            ReceiptKey = IssueKey(Day.AddDays(1), 2)
+        };
+        var transferKey = IssueKey(Day.AddDays(2), 3);
+        var issueKey = IssueKey(Day.AddDays(3), 4);
+        StockReplayFifoConsumptionPosition[] issue =
+        [
+            new(10, 20, 1, 5m, 15m, 0, true, issueKey),
+            new(11, 21, 2, 3m, 12m, 1, true, issueKey)
+        ];
+        var before = new StockReplayFifoActiveLayerSnapshot("C", "B", "A",
+            7m, 28m, [first, second], issue, "verified");
+
+        var inserted = StockReplayFifoTailProjector.InsertTransfer(
+            before, transferKey, 8m);
+        var candidate = Assert.Single(inserted.Issues.Where(i => i.IsCandidate));
+        Assert.False(candidate.DepletesPool);
+        Assert.Equal(27m, candidate.Value);
+        Assert.Equal([5m, 3m], candidate.Allocations.Select(a => a.Quantity));
+        Assert.Equal(27m, Assert.Single(inserted.Issues.Where(i => !i.IsCandidate)).Value);
+        Assert.Equal(7m, inserted.FinalQuantity);
+        Assert.Equal(28m, inserted.FinalValue);
+
+        StockReplayFifoConsumptionPosition[] transfer =
+        [
+            new(12, 22, 1, 5m, 15m, 0, false, transferKey),
+            new(13, 23, 2, 3m, 12m, 1, false, transferKey)
+        ];
+        var withTransfer = before with
+        {
+            ActiveConsumptions = transfer.Concat(issue).ToArray()
+        };
+        var removed = StockReplayFifoTailProjector.RemoveTransfer(
+            withTransfer, transferKey);
+        Assert.True(removed.IsRemoval);
+        Assert.Equal(27m, Assert.Single(removed.Issues).Value);
+        Assert.Equal(7m, removed.FinalQuantity);
+        Assert.Equal(28m, removed.FinalValue);
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            Assert.Throws<StockLedgerException>(() =>
+                StockReplayFifoTailProjector.RemoveIssue(
+                    withTransfer, transferKey)).Error.Code);
+    }
+
+    [Fact]
     public void Projection_refuses_a_tail_that_did_not_follow_fifo_order()
     {
         var first = Layer(1, Day, 1, 5m, 15m) with

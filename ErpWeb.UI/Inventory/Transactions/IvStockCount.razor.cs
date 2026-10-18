@@ -791,6 +791,8 @@ public sealed class IvStockCountLineVm
     public decimal? Variance { get; set; }
     public string? Direction { get; set; }
     public bool IsStale { get; set; }
+    public IvStockCountCostBasisDto? FrozenCostBasis { get; set; }
+    public IvStockCountActiveAdjustmentDto? ActiveAdjustment { get; set; }
 
     public string UiKey => BalLocId.ToString();
 
@@ -798,6 +800,29 @@ public sealed class IvStockCountLineVm
         $"{WHCode ?? "—"}/{(string.IsNullOrWhiteSpace(LocCode) ? "—" : LocCode)}/{(string.IsNullOrWhiteSpace(LotNo) ? "—" : LotNo)}";
 
     public string StaleText => PhysicalQty is null ? string.Empty : IsStale ? "moved" : "ok";
+
+    public string FrozenCostText => FrozenCostBasis is null
+        ? string.Empty
+        : $"{FrozenCostBasis.Kind}: {FrozenCostBasis.UnitCost:n6}";
+
+    public string ActiveAdjustmentText => ActiveAdjustment is null
+        ? string.Empty
+        : ActiveAdjustment.IsRemoval ? "Removed"
+        : $"{ActiveAdjustment.SignedQuantity:+0.0000;-0.0000;0.0000}"
+            + (ActiveAdjustment.BatchNo is int batch ? $" (batch {batch})" : string.Empty);
+
+    public string FrozenCostEvidence => FrozenCostBasis is null
+        ? string.Empty
+        : string.Join(" · ", new[]
+        {
+            FrozenCostBasis.Reason,
+            FrozenCostBasis.ApprovedBy is null ? null
+                : $"Approved by {FrozenCostBasis.ApprovedBy} at {FrozenCostBasis.ApprovedAtUtc:yyyy-MM-dd HH:mm} UTC",
+            FrozenCostBasis.StandardCostRevisionId is null ? null
+                : $"Standard revision {FrozenCostBasis.StandardCostRevisionId}",
+            FrozenCostBasis.Watermark is null ? null
+                : $"V2 watermark {FrozenCostBasis.Watermark}; hash {FrozenCostBasis.EvidenceHash}"
+        }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
     public static IvStockCountLineVm FromDto(IvStockCountLineDto dto) => new()
     {
@@ -817,7 +842,9 @@ public sealed class IvStockCountLineVm
         LiveQty = dto.LiveQty,
         Variance = dto.Variance,
         Direction = dto.Direction,
-        IsStale = dto.IsStale
+        IsStale = dto.IsStale,
+        FrozenCostBasis = dto.FrozenCostBasis,
+        ActiveAdjustment = dto.ActiveAdjustment
     };
 
     /// <summary>Recomputes the live columns after the operator edits the counted quantity.</summary>

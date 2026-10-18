@@ -21,7 +21,9 @@ public static class StockCountInitialGenerationWriter
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
         context.EnsureUnsealed();
-        if (permit.CountStatus != "COUNTED" || context.Posting.DocumentRevision != 0
+        if (permit.CountStatus is not ("COUNTED" or "ROLLED_BACK")
+            || (permit.CountStatus == "COUNTED")
+                != (context.Posting.DocumentRevision == 0)
             || context.Posting.Id != permit.RootPostingId
             || context.Posting.PostingSequence != permit.PostingSequence
             || context.Posting.EffectiveAt != permit.EffectiveAt
@@ -45,18 +47,43 @@ public static class StockCountInitialGenerationWriter
             .SingleOrDefaultAsync(cancellationToken);
         if (header is null || header.Status != "POSTED"
             || header.CountDate.Date != permit.EffectiveAt.Date
-            || header.PostedBatchNo != adjustmentBatchNo
+            || permit.CountStatus == "COUNTED"
+                && header.PostedBatchNo != adjustmentBatchNo
             || context.Posting.SourceDocumentNo != header.CountNo)
             throw Invalid($"Count {permit.CountHeaderId} is not posted under its original anchor.");
 
         var lineIds = permit.Lines.Select(l => l.LineId).ToArray();
         if (lineIds.Distinct().Count() != lineIds.Length
-            || permit.Lines.Select(l => l.BalLocId).Distinct().Count() != lineIds.Length
-            || await db.StockCountReplayGenerations.AsNoTracking()
-                .AnyAsync(g => g.CompanyCode == permit.CompanyCode
-                    && g.BranchCode == permit.BranchCode
-                    && lineIds.Contains(g.StockCountLineId), cancellationToken))
-            throw Invalid("The count already has a generation or duplicate pile identity.");
+            || permit.Lines.Select(l => l.BalLocId).Distinct().Count() != lineIds.Length)
+            throw Invalid("The count has duplicate line or pile identity.");
+        var priorRows = await db.StockCountReplayGenerations.AsNoTracking()
+            .Where(g => g.CompanyCode == permit.CompanyCode
+                && g.BranchCode == permit.BranchCode
+                && lineIds.Contains(g.StockCountLineId))
+            .ToArrayAsync(cancellationToken);
+        IReadOnlyDictionary<int, StockCountReplayGeneration> previous;
+        if (permit.CountStatus == "COUNTED")
+        {
+            if (priorRows.Length != 0)
+                throw Invalid("A first count post already has generations.");
+            previous = new Dictionary<int, StockCountReplayGeneration>();
+        }
+        else
+        {
+            previous = StockCountGenerationResolver.ResolveActive(priorRows);
+            var firstBatches = priorRows.Where(g =>
+                    g.PreviousGenerationId is null
+                    && g.AdjustmentBatchNo.HasValue)
+                .Select(g => g.AdjustmentBatchNo!.Value).Distinct().ToArray();
+            if (previous.Count != lineIds.Length
+                || previous.Values.Any(g => !g.IsRemoval
+                    || g.AnchorPostingId == context.Posting.Id
+                    || g.AnchorPostingSequence >= permit.PostingSequence)
+                || firstBatches.Length > 1
+                || header.PostedBatchNo != (firstBatches.Length == 0
+                    ? null : firstBatches[0]))
+                throw Invalid("The repost has no complete removed generation or first batch pointer.");
+        }
         var lines = await db.IvStockCountLines.AsNoTracking()
             .Where(l => l.StockCountId == permit.CountHeaderId
                 && l.PhysicalQty != null)
@@ -151,7 +178,8 @@ public static class StockCountInitialGenerationWriter
                     || history.LedgerVersion != 2
                     || history.LedgerEpochId != permit.LedgerEpochId
                     || history.StockPostingId != context.Posting.Id
-                    || history.DocumentRevision != 0
+                    || history.DocumentRevision
+                        != context.Posting.DocumentRevision
                     || history.EntryRole != "ORIGINAL"
                     || history.ReversesHistoryId is not null
                     || projection.SignedAdjustmentQty > 0m
@@ -168,6 +196,8 @@ public static class StockCountInitialGenerationWriter
                 StockCountLineId = line.Id,
                 AnchorPostingId = context.Posting.Id,
                 WritePostingId = context.Posting.Id,
+                PreviousGenerationId = previous.TryGetValue(line.Id,
+                    out var prior) ? prior.Id : null,
                 EffectiveAt = permit.EffectiveAt,
                 AnchorPostingSequence = permit.PostingSequence,
                 SignedAdjustmentQty = projection.SignedAdjustmentQty,

@@ -1,4 +1,5 @@
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Inventory;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
@@ -78,6 +79,7 @@ public static class StockReplayWacCountSheetPostingWriter
         var plan = new StockReplayWacCountSheetPostingPlan(sheet, items.ToArray(),
             Hash(sheet, items));
         ValidatePreparedPlan(plan);
+        await ValidateDependentCostTailAsync(db, plan, cancellationToken);
         return plan;
     }
 
@@ -118,6 +120,8 @@ public static class StockReplayWacCountSheetPostingWriter
     {
         ArgumentNullException.ThrowIfNull(context);
         ValidatePreparedPlan(plan);
+        await ValidateDependentCostTailAsync(context.Db, plan,
+            cancellationToken);
         var countPermit = await StockReplayPhysicalPlanner
             .PrepareCountSheetWithinRootAsync(context, plan.PhysicalSheet,
                 cancellationToken);
@@ -144,6 +148,8 @@ public static class StockReplayWacCountSheetPostingWriter
         ArgumentNullException.ThrowIfNull(numbers);
         context.EnsureUnsealed();
         ValidatePreparedPlan(prepared.Plan);
+        await ValidateDependentCostTailAsync(context.Db, prepared.Plan,
+            cancellationToken);
         var sheet = prepared.Plan.PhysicalSheet;
         var countPermit = prepared.CountPermit;
         if (context.Db.Database.CurrentTransaction is null
@@ -195,8 +201,8 @@ public static class StockReplayWacCountSheetPostingWriter
                 ? physical.Candidate.Key.EffectiveAt
                 : physical.LaterEvents.MaxBy(e => e.Key)!.Key.EffectiveAt;
         }
-        db.StockCountCostBases.AddRange(bases);
-        await db.SaveChangesAsync(cancellationToken);
+        await StockCountRepostBasisWriter.PersistOrVerifyAsync(db,
+            countPermit, bases, cancellationToken);
 
         var history = await StockCountInitialHistoryWriter.AppendAsync(
             context, countPermit, numbers, cancellationToken);
@@ -241,6 +247,52 @@ public static class StockReplayWacCountSheetPostingWriter
         return new StockReplayWacCountSheetPostResult(history, initialFacts,
             repricedHistoryIds.Order().ToArray(),
             repricedCountLineIds.Order().ToArray(), required.Order().ToArray());
+    }
+
+    private static async Task ValidateDependentCostTailAsync(
+        AppDbContext db,
+        StockReplayWacCountSheetPostingPlan plan,
+        CancellationToken cancellationToken)
+    {
+        // A changed issue amount can be written to Inventory valuation here,
+        // but Sales, Procurement and Production also own derived cost records.
+        // Until those correction writers share this root, only Inventory-owned
+        // MI and Scrap issues may be repriced by an initial count.
+        var changedIssueIds = plan.Items.SelectMany(item =>
+        {
+            var steps = item.Projection.LaterSteps.ToDictionary(s => s.EventId);
+            return item.Tail.LaterEvents
+                .Where(e => e.EventId > 0 && e.EventId <= int.MaxValue
+                    && e.OldSignedQuantity < 0m
+                    && steps.TryGetValue(e.EventId, out var step)
+                    && step.SignedValue != e.OldSignedValue)
+                .Select(e => checked((int)e.EventId));
+        }).Distinct().ToArray();
+        if (changedIssueIds.Length == 0)
+            return;
+
+        var histories = await db.IvTrxHistories.AsNoTracking()
+            .Where(h => changedIssueIds.Contains(h.Id)
+                && h.CompanyCode == plan.PhysicalSheet.CompanyCode
+                && h.BranchCode == plan.PhysicalSheet.BranchCode)
+            .Select(h => new { h.Id, h.TrxType, h.StockPostingId })
+            .ToArrayAsync(cancellationToken);
+        var ownerIds = histories.Where(h => h.StockPostingId.HasValue)
+            .Select(h => h.StockPostingId!.Value).Distinct().ToArray();
+        var owners = await db.StockPostings.AsNoTracking()
+            .Where(p => ownerIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+        if (histories.Length != changedIssueIds.Length
+            || histories.Any(h => h.TrxType is not
+                (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.Scrap)
+                || h.StockPostingId is not long ownerId
+                || !owners.TryGetValue(ownerId, out var owner)
+                || owner.CompanyCode != plan.PhysicalSheet.CompanyCode
+                || owner.BranchCode != plan.PhysicalSheet.BranchCode
+                || owner.SourceModule != "INVENTORY"))
+            throw new StockLedgerException(new StockLedgerError(
+                StockLedgerErrorCodes.ValuationRequired,
+                "The WAC count would change a later Sales, Procurement, or Production cost without a dependent correction writer."));
     }
 
     private static string Hash(StockCountSheetPhysicalPlan sheet,

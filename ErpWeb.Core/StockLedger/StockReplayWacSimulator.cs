@@ -51,6 +51,59 @@ public sealed record StockReplayWacRemovalResult(
 /// </summary>
 public static class StockReplayWacSimulator
 {
+    public static StockReplayWacRemovalResult SimulateCountSheetRemoval(
+        decimal currentQuantity, decimal currentValue,
+        IReadOnlyCollection<StockReplayWacEvent> removedActiveEvents,
+        IReadOnlyCollection<StockReplayWacEvent> laterActiveEvents)
+    {
+        ArgumentNullException.ThrowIfNull(removedActiveEvents);
+        ArgumentNullException.ThrowIfNull(laterActiveEvents);
+        var removed = removedActiveEvents.OrderBy(e => e.Key).ToArray();
+        if (removed.Length == 0)
+            throw new ArgumentException("The count sheet has no active WAC events.",
+                nameof(removedActiveEvents));
+        var ids = new HashSet<long>();
+        for (var i = 0; i < removed.Length; i++)
+        {
+            var movement = removed[i];
+            Validate(movement);
+            if (!ids.Add(movement.EventId)
+                || i > 0 && movement.Key == removed[i - 1].Key
+                || movement.AbsoluteCountQty is null
+                || movement.Key.ClassPriority != StockReplayEventKey.CountClass
+                || movement.Key.EffectiveAt != removed[0].Key.EffectiveAt
+                || movement.Key.OriginalPostingSequence
+                    != removed[0].Key.OriginalPostingSequence
+                || IvQty.Round(movement.AbsoluteCountQty.Value
+                    - movement.CountPreQuantity!.Value)
+                    != movement.OldSignedQuantity)
+                throw Invalid(movement.EventId,
+                    "does not belong to the same active count sheet");
+        }
+        EnsureState(currentQuantity, currentValue, removed[0].EventId,
+            "current");
+        var later = OrderAndValidateLater(removed[^1], laterActiveEvents);
+        if (later.Any(e => ids.Contains(e.EventId)))
+            throw Invalid(removed[^1].EventId,
+                "repeats an active count identity in its later tail");
+        var quantity = currentQuantity;
+        var value = currentValue;
+        Rewind(later, ref quantity, ref value);
+        for (var i = removed.Length - 1; i >= 0; i--)
+        {
+            quantity = IvQty.Round(quantity - removed[i].OldSignedQuantity);
+            value = StockLedgerPrecision.Money(value - removed[i].OldSignedValue);
+            EnsureState(quantity, value, removed[i].EventId, "removing");
+        }
+        var historicalQuantity = quantity;
+        var historicalValue = value;
+        var steps = new List<StockReplayWacStep>(later.Length);
+        foreach (var movement in later)
+            steps.Add(Apply(movement, ref quantity, ref value));
+        return new(historicalQuantity, historicalValue, steps,
+            quantity, value);
+    }
+
     public static StockReplayWacRemovalResult SimulateRemoval(
         decimal currentQuantity,
         decimal currentValue,

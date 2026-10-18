@@ -1,5 +1,7 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
@@ -171,6 +173,75 @@ public static class StockReplayFifoActiveLayerReader
                 || f.CostAmount != prior.CostAmount
                 || f.ValuationStatus != StockValuationStatuses.Reversed))
             throw Invalid($"Item {itemCode} has duplicate FIFO fact reversals.");
+        var reversalOwnerIds = factReversals.Select(f => f.StockPostingId)
+            .Distinct().ToArray();
+        var reversalOwners = await db.StockPostings.AsNoTracking()
+            .Where(p => reversalOwnerIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+        if (reversalOwners.Count != reversalOwnerIds.Length
+            || factReversals.Any(f =>
+                !reversalOwners.TryGetValue(f.StockPostingId, out var owner)
+                || owner.SealedAtUtc is null
+                || owner.CompanyCode != companyCode
+                || owner.BranchCode != branchCode
+                || owner.LedgerEpochId != f.LedgerEpochId))
+            throw Invalid($"Item {itemCode} has an unsealed FIFO fact reversal.");
+        var reversedLayerIds = layers
+            .Where(l => reversedFactIds.Contains(l.OriginValuationFactId))
+            .Select(l => l.Id).ToHashSet();
+        if (reversedLayerIds.Count > 0)
+        {
+            var reversedLayers = layers.Where(l =>
+                reversedLayerIds.Contains(l.Id)).ToArray();
+            var reversedOriginIds = reversedLayers.Select(l =>
+                l.OriginValuationFactId).ToHashSet();
+            var receiptReversals = factReversals.Where(f =>
+                f.ReversesValuationFactId is long id
+                && reversedOriginIds.Contains(id))
+                .ToDictionary(f => f.ReversesValuationFactId!.Value);
+            var receiptHistoryIds = reversedLayers.SelectMany(l =>
+                new int?[]
+                {
+                    facts[l.OriginValuationFactId].InventoryHistoryId,
+                    receiptReversals[l.OriginValuationFactId].InventoryHistoryId
+                }).Where(id => id.HasValue).Select(id => id!.Value)
+                .Distinct().ToArray();
+            var receiptHistories = await db.IvTrxHistories.AsNoTracking()
+                .Where(h => receiptHistoryIds.Contains(h.Id))
+                .ToDictionaryAsync(h => h.Id, cancellationToken);
+            if (receiptHistoryIds.Length != reversedLayers.Length * 2
+                || receiptHistories.Count != receiptHistoryIds.Length
+                || reversedLayers.Any(l =>
+                {
+                    var origin = facts[l.OriginValuationFactId];
+                    var reversal = receiptReversals[l.OriginValuationFactId];
+                    return origin.InventoryHistoryId is not int originalId
+                        || reversal.InventoryHistoryId is not int reversalId
+                        || !receiptHistories.TryGetValue(originalId,
+                            out var originalHistory)
+                        || !receiptHistories.TryGetValue(reversalId,
+                            out var reversalHistory)
+                        || !reversalOwners.TryGetValue(
+                            reversal.StockPostingId, out var reversalOwner)
+                        || originalHistory.EntryRole != "ORIGINAL"
+                        || originalHistory.TrxType != IvTrxTypes.MiscellaneousReceipt
+                        || originalHistory.StockPostingId != l.OriginStockPostingId
+                        || reversalHistory.EntryRole != "REVERSAL"
+                        || reversalHistory.ReversesHistoryId != originalId
+                        || reversalHistory.StockPostingId != reversalOwner.Id
+                        || reversalHistory.ValuationStatus
+                            != StockValuationStatuses.Reversed
+                        || reversalOwner.PostingRole != "REVERSAL"
+                        || reversalOwner.ReversesPostingId
+                            != l.OriginStockPostingId
+                        || reversal.MovementCode != origin.MovementCode
+                        || reversal.ValuationSource
+                            != StockValuationSources.OriginalReversal;
+                }))
+                throw Invalid($"Item {itemCode} has an invalid FIFO receipt reversal lineage.");
+        }
+        if (active.Any(c => reversedLayerIds.Contains(c.FifoLayerId)))
+            throw Invalid($"Item {itemCode} still consumes a reversed FIFO receipt.");
 
         var activeIssueFacts = active.Select(c => facts[c.IssueValuationFactId])
             .DistinctBy(f => f.Id).ToArray();
@@ -234,24 +305,12 @@ public static class StockReplayFifoActiveLayerReader
             throw Invalid($"Item {itemCode} has a transfer without history evidence.");
         var transferHistoryIds = activeTransferFacts
             .Select(f => f.InventoryHistoryId!.Value).Distinct().ToArray();
-        var transferFacts = await db.StockValuationFacts.AsNoTracking()
-            .Where(f => f.InventoryHistoryId.HasValue
-                && transferHistoryIds.Contains(f.InventoryHistoryId.Value))
-            .ToArrayAsync(cancellationToken);
-        var transferInIds = transferFacts.Where(f => f.MovementCode == "TRANSFER_IN")
-            .Select(f => f.Id).ToArray();
-        var reversedTransferIns = await db.StockValuationFacts.AsNoTracking()
-            .Where(f => f.ReversesValuationFactId.HasValue
-                && transferInIds.Contains(f.ReversesValuationFactId.Value))
-            .Select(f => f.ReversesValuationFactId!.Value)
-            .ToArrayAsync(cancellationToken);
         foreach (var transferGroup in activeTransferFacts.GroupBy(f => f.InventoryHistoryId))
         {
-            var companion = transferFacts.Where(f =>
-                f.InventoryHistoryId == transferGroup.Key).ToArray();
+            var companion = activeGenerations[transferGroup.Key!.Value];
             var inbound = companion.Where(f => f.MovementCode == "TRANSFER_IN")
                 .ToArray();
-            if (inbound.Length != 1 || companion.Length != transferGroup.Count() + 1
+            if (inbound.Length != 1 || companion.Count != transferGroup.Count() + 1
                 || companion.Any(f => f.CompanyCode != companyCode
                     || f.BranchCode != branchCode || f.ItemCode != itemCode
                     || f.CostMethod != StockCostMethods.Fifo
@@ -262,8 +321,7 @@ public static class StockReplayFifoActiveLayerReader
                     != transferGroup.Count()
                 || inbound[0].Direction != 1
                 || inbound[0].BaseQty != transferGroup.Sum(f => f.BaseQty)
-                || inbound[0].CostAmount != transferGroup.Sum(f => f.CostAmount)
-                || reversedTransferIns.Contains(inbound[0].Id))
+                || inbound[0].CostAmount != transferGroup.Sum(f => f.CostAmount))
                 throw Invalid($"FIFO transfer history {transferGroup.Key} has no matching receipt.");
         }
 
@@ -286,12 +344,21 @@ public static class StockReplayFifoActiveLayerReader
                 || origin.BaseUom != layer.BaseUom
                 || origin.ValuationStatus != StockValuationStatuses.Valued
                 || layer.OriginalQty <= 0m || layer.OriginalValue < 0m
-                || layer.AccumulatedAdjustment != 0m
-                || layer.RemainingQty < 0m || layer.RemainingValue < 0m
+                || layer.AccumulatedAdjustment != 0m)
+                throw Invalid($"FIFO layer {layer.Id} has an invalid origin.");
+            if (reversedLayerIds.Contains(layer.Id))
+            {
+                if (layer.Status != StockFifoLayerStatuses.Closed
+                    || layer.RemainingQty != 0m
+                    || layer.RemainingValue != 0m
+                    || layer.CurrentUnitCost != 0m)
+                    throw Invalid($"Reversed FIFO layer {layer.Id} still has active stock.");
+                continue;
+            }
+            if (layer.RemainingQty < 0m || layer.RemainingValue < 0m
                 || layer.Status != (layer.RemainingQty == 0m
                     ? StockFifoLayerStatuses.Closed
                     : StockFifoLayerStatuses.Open)
-                || reversedFactIds.Contains(origin.Id)
                 || activeByLayer.GetValueOrDefault(layer.Id) is { } allocations
                     && (StockLedgerPrecision.Quantity(layer.OriginalQty
                             - allocations.Sum(c => c.ConsumedQty))
@@ -367,7 +434,8 @@ public static class StockReplayFifoActiveLayerReader
             layers.Sum(l => l.RemainingValue));
         if (quantity != state.OnHandBaseQty || value != state.InventoryValue)
             throw Invalid($"Item {itemCode} FIFO layers differ from its cost state.");
-        var positions = layers.Select(l => new StockReplayFifoLayerPosition(
+        var positions = layers.Where(l => !reversedLayerIds.Contains(l.Id))
+            .Select(l => new StockReplayFifoLayerPosition(
             l.Id, l.OriginValuationFactId, l.OriginStockPostingId,
             postings[l.OriginStockPostingId].PostingSequence,
             l.ReceiptEffectiveAt, l.OriginalQty, l.OriginalValue,

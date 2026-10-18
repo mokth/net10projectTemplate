@@ -123,6 +123,343 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Fifo_transfer_draft_binds_to_two_existing_piles()
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+            });
+            await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+            [
+                new FifoLayerSeed(5m, 3m, new DateTime(2026, 2, 1)),
+                new FifoLayerSeed(10m, 4m, new DateTime(2026, 3, 1))
+            ]);
+            await db.SaveChangesAsync();
+        }
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday);
+        var saved = await transfer.SaveNewAsync(Request(sourceId, 1m));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var destinationId = await verify.IvBalLocs.AsNoTracking()
+            .Where(b => b.LocCode == "BIN2")
+            .Select(b => b.Id).SingleAsync();
+        var authority = await StockReplayFifoTransferDraftAuthorityReader.ReadAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, saved.BatchNo,
+            sourceId, destinationId);
+        Assert.Equal(1m, authority.Quantity);
+        var nextSequence = await verify.StockPostingBranchSequences
+            .Select(s => s.LastSequence).SingleAsync() + 1;
+        var key = new StockReplayEventKey(FixedToday,
+            StockReplayEventKey.OrdinaryClass, nextSequence,
+            "H9999999999", 0);
+        var source = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, sourceId,
+            new StockReplayPhysicalEvent(999_999, key, -1m));
+        var destination = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, destinationId,
+            new StockReplayPhysicalEvent(999_999, key, 1m));
+        var plan = await StockReplayFifoTransferInsertionPlanner.BuildDraftAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, saved.BatchNo,
+            source, destination);
+        StockReplayFifoTransferInsertionPlanner.ValidatePreparedPlan(plan);
+        Assert.Equal(authority, plan.DraftAuthority);
+        Assert.Equal(14m, plan.Source.Projection.FinalQuantity);
+        Assert.Equal(1m, plan.Destination.Projection.FinalQuantity);
+        Assert.Equal(15m, plan.Projection.FinalQuantity);
+        Assert.Equal(55m, plan.Projection.FinalValue);
+        await using (var rootDb = await _factory.CreateDbContextAsync())
+        await using (var transaction = await rootDb.Database.BeginTransactionAsync())
+        {
+            var command = await InventoryStockPostingCommandFactory.CreateAsync(
+                rootDb, InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, saved.BatchNo,
+                false, FixedToday, CancellationToken.None);
+            var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+            var begin = await coordinator.BeginInTransactionAsync(rootDb, command);
+            Assert.NotNull(begin.Context);
+            try
+            {
+                await StockReplayFifoTransferInsertionPlanner.ValidateWithinRootAsync(
+                    begin.Context!, plan);
+                var changedDetail = await rootDb.IvTrxBatchDetails
+                    .SingleAsync(d => d.BatchId == authority.BatchId);
+                changedDetail.FrStdQty = 2m;
+                changedDetail.ToStdQty = 2m;
+                await rootDb.SaveChangesAsync();
+                Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+                    (await Assert.ThrowsAsync<StockLedgerException>(() =>
+                        StockReplayFifoTransferInsertionPlanner
+                            .ValidateWithinRootAsync(begin.Context!, plan)))
+                    .Error.Code);
+            }
+            finally
+            {
+                await coordinator.AbortInTransactionAsync(begin.Context!);
+                await transaction.RollbackAsync();
+            }
+        }
+        var wrongSource = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, sourceId,
+            new StockReplayPhysicalEvent(999_999, key, -2m));
+        var wrongDestination = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, destinationId,
+            new StockReplayPhysicalEvent(999_999, key, 2m));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            (await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayFifoTransferInsertionPlanner.BuildDraftAsync(
+                    verify, InventoryLedgerTestFixture.CompanyCode,
+                    InventoryLedgerTestFixture.BranchCode, saved.BatchNo,
+                    wrongSource, wrongDestination))).Error.Code);
+        await using (var rootDb = await _factory.CreateDbContextAsync())
+        await using (var transaction = await rootDb.Database.BeginTransactionAsync())
+        {
+            var command = await InventoryStockPostingCommandFactory.CreateAsync(
+                rootDb, InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, saved.BatchNo,
+                false, FixedToday, CancellationToken.None);
+            var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+            var begin = await coordinator.BeginInTransactionAsync(rootDb, command);
+            Assert.NotNull(begin.Context);
+            var committed = false;
+            try
+            {
+                var written = await StockReplayFifoTransferRootWriter.InsertAsync(
+                    begin.Context!, plan, saved.BatchNo);
+                var history = await rootDb.IvTrxHistories.AsNoTracking()
+                    .SingleAsync(h => h.Id == written.RootHistoryId);
+                Assert.Equal(sourceId, history.FromBalLocId);
+                Assert.Equal(destinationId, history.ToBalLocId);
+                Assert.Equal(begin.Context!.Posting.Id, history.StockPostingId);
+                Assert.Equal(14m, (await rootDb.IvBalLocs.AsNoTracking()
+                    .SingleAsync(b => b.Id == sourceId)).StdQty);
+                Assert.Equal(1m, (await rootDb.IvBalLocs.AsNoTracking()
+                    .SingleAsync(b => b.Id == destinationId)).StdQty);
+                await rootDb.SaveChangesAsync();
+                var facts = await rootDb.StockValuationFacts.AsNoTracking()
+                    .Where(f => f.InventoryHistoryId == written.RootHistoryId)
+                    .ToArrayAsync();
+                Assert.Equal(3m, facts.Single(f =>
+                    f.MovementCode == "TRANSFER_OUT").CostAmount);
+                Assert.Equal(3m, facts.Single(f =>
+                    f.MovementCode == "TRANSFER_IN").CostAmount);
+                Assert.Equal(1, await rootDb.StockFifoLayerConsumptions
+                    .CountAsync(c => c.IssueValuationFact
+                        .InventoryHistoryId == written.RootHistoryId));
+                await coordinator.CompleteReplayInTransactionAsync(
+                    begin.Context!, written.RequiredActiveHistoryIds);
+                await StockReplayFifoTransferReconciliationGate
+                    .VerifySealedWithinRootAsync(
+                        begin.Context!, plan, written.RootHistoryId);
+                var sealedSnapshot = await StockReplayFifoActiveLayerReader
+                    .ReadAsync(rootDb, InventoryLedgerTestFixture.CompanyCode,
+                        InventoryLedgerTestFixture.BranchCode, "A100");
+                Assert.Equal(15m, sealedSnapshot.CurrentQuantity);
+                Assert.Equal(55m, sealedSnapshot.CurrentValue);
+                Assert.Equal(3m, Assert.Single(sealedSnapshot.ActiveConsumptions
+                    .Where(c => c.IssueKey.LineIdentity ==
+                        $"H{written.RootHistoryId:D10}")).Value);
+                await transaction.CommitAsync();
+                committed = true;
+            }
+            finally
+            {
+                if (!committed)
+                {
+                    await coordinator.AbortInTransactionAsync(begin.Context!);
+                    await transaction.RollbackAsync();
+                }
+            }
+        }
+        await using var committedDb = await _factory.CreateDbContextAsync();
+        var committedSnapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+            committedDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100");
+        Assert.Equal(15m, committedSnapshot.CurrentQuantity);
+        Assert.Equal(55m, committedSnapshot.CurrentValue);
+        Assert.Single(committedSnapshot.ActiveConsumptions);
+        var postedHistoryId = await committedDb.IvTrxHistories.AsNoTracking()
+            .Where(h => h.BatchNo == saved.BatchNo && h.EntryRole == "ORIGINAL")
+            .Select(h => h.Id).SingleAsync();
+        var postedKey = committedSnapshot.ActiveConsumptions[0].IssueKey;
+        var sourceRemoval = await StockReplayPhysicalPlanner.BuildRemovalAsync(
+            committedDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, sourceId,
+            new StockReplayPhysicalEvent(postedHistoryId, postedKey, -1m));
+        var destinationRemoval = await StockReplayPhysicalPlanner.BuildRemovalAsync(
+            committedDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, destinationId,
+            new StockReplayPhysicalEvent(postedHistoryId, postedKey, 1m));
+        var removalPlan = await StockReplayFifoTransferRemovalPlanner.BuildAsync(
+            committedDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100", sourceRemoval,
+            destinationRemoval);
+        await using (var removalDb = await _factory.CreateDbContextAsync())
+        await using (var transaction = await removalDb.Database.BeginTransactionAsync())
+        {
+            var command = await InventoryStockPostingCommandFactory.CreateAsync(
+                removalDb, InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, saved.BatchNo,
+                true, FixedToday, CancellationToken.None);
+            var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+            var begin = await coordinator.BeginInTransactionAsync(removalDb, command);
+            Assert.NotNull(begin.Context);
+            var committed = false;
+            try
+            {
+                var written = await StockReplayFifoTransferRemovalRootWriter
+                    .RemoveAsync(begin.Context!, removalPlan, saved.BatchNo);
+                Assert.Empty(written.RequiredActiveHistoryIds);
+                await removalDb.SaveChangesAsync();
+                await coordinator.CompleteReplayInTransactionAsync(
+                    begin.Context!, written.RequiredActiveHistoryIds);
+                await StockReplayFifoTransferReconciliationGate
+                    .VerifySealedWithinRootAsync(begin.Context!, removalPlan);
+                await transaction.CommitAsync();
+                committed = true;
+            }
+            finally
+            {
+                if (!committed)
+                {
+                    await coordinator.AbortInTransactionAsync(begin.Context!);
+                    await transaction.RollbackAsync();
+                }
+            }
+        }
+        await using var restoredDb = await _factory.CreateDbContextAsync();
+        var restoredSnapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+            restoredDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100");
+        Assert.Equal(15m, restoredSnapshot.CurrentQuantity);
+        Assert.Equal(55m, restoredSnapshot.CurrentValue);
+        Assert.Empty(restoredSnapshot.ActiveConsumptions);
+        Assert.Equal(15m, (await restoredDb.IvBalLocs.AsNoTracking()
+            .SingleAsync(b => b.Id == sourceId)).StdQty);
+        Assert.Equal(0m, (await restoredDb.IvBalLocs.AsNoTracking()
+            .SingleAsync(b => b.Id == destinationId)).StdQty);
+    }
+
+    [Fact]
+    public async Task Fifo_backdated_transfer_preserves_a_later_transfer_and_both_piles()
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+            });
+            await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+            [
+                new FifoLayerSeed(5m, 3m, new DateTime(2026, 2, 1)),
+                new FifoLayerSeed(10m, 4m, new DateTime(2026, 3, 1))
+            ]);
+            await db.SaveChangesAsync();
+        }
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday);
+        var later = await transfer.SaveNewAsync(Request(sourceId, 8m));
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        var laterPost = await transfer.PostAsync([later.BatchNo]);
+        Assert.True(laterPost.Succeeded, laterPost.ErrorMessage);
+        var earlierRequest = Request(sourceId, 1m);
+        earlierRequest.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await transfer.SaveNewAsync(earlierRequest);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        await using var before = await _factory.CreateDbContextAsync();
+        var destinationId = await before.IvBalLocs.AsNoTracking()
+            .Where(b => b.LocCode == "BIN2")
+            .Select(b => b.Id).SingleAsync();
+        var nextSequence = await before.StockPostingBranchSequences
+            .Select(s => s.LastSequence).SingleAsync() + 1;
+        var key = new StockReplayEventKey(earlierRequest.TrxDate,
+            StockReplayEventKey.OrdinaryClass, nextSequence,
+            "H9999999999", 0);
+        var source = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            before, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, sourceId,
+            new StockReplayPhysicalEvent(999_999, key, -1m));
+        var destination = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            before, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, destinationId,
+            new StockReplayPhysicalEvent(999_999, key, 1m));
+        var plan = await StockReplayFifoTransferInsertionPlanner.BuildDraftAsync(
+            before, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, earlier.BatchNo,
+            source, destination);
+        Assert.Equal(6m, plan.Source.Projection.FinalQuantity);
+        Assert.Equal(9m, plan.Destination.Projection.FinalQuantity);
+        Assert.Equal(15m, plan.Projection.FinalQuantity);
+        Assert.Equal(55m, plan.Projection.FinalValue);
+        Assert.Empty(StockReplayFifoMiRootWriter.ChangedIssues(plan.Projection));
+        await using var rootDb = await _factory.CreateDbContextAsync();
+        await using var transaction = await rootDb.Database.BeginTransactionAsync();
+        var command = await InventoryStockPostingCommandFactory.CreateAsync(
+            rootDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, earlier.BatchNo,
+            false, earlierRequest.TrxDate, CancellationToken.None);
+        var coordinator = InventoryLedgerTestFixture.CreateCoordinator(_factory);
+        var begin = await coordinator.BeginInTransactionAsync(rootDb, command);
+        Assert.NotNull(begin.Context);
+        var committed = false;
+        try
+        {
+            var written = await StockReplayFifoTransferRootWriter.InsertAsync(
+                begin.Context!, plan, earlier.BatchNo);
+            await rootDb.SaveChangesAsync();
+            await coordinator.CompleteReplayInTransactionAsync(
+                begin.Context!, written.RequiredActiveHistoryIds);
+            await StockReplayFifoTransferReconciliationGate
+                .VerifySealedWithinRootAsync(
+                    begin.Context!, plan, written.RootHistoryId);
+            await transaction.CommitAsync();
+            committed = true;
+        }
+        finally
+        {
+            if (!committed)
+            {
+                await coordinator.AbortInTransactionAsync(begin.Context!);
+                await transaction.RollbackAsync();
+            }
+        }
+        await using var after = await _factory.CreateDbContextAsync();
+        Assert.Equal(6m, (await after.IvBalLocs.AsNoTracking()
+            .SingleAsync(b => b.Id == sourceId)).StdQty);
+        Assert.Equal(9m, (await after.IvBalLocs.AsNoTracking()
+            .SingleAsync(b => b.Id == destinationId)).StdQty);
+        var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+            after, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100");
+        Assert.Equal(15m, snapshot.CurrentQuantity);
+        Assert.Equal(55m, snapshot.CurrentValue);
+        Assert.Equal(2, snapshot.ActiveConsumptions
+            .Select(c => c.IssueKey).Distinct().Count());
+        Assert.All(snapshot.ActiveConsumptions,
+            c => Assert.False(c.DepletesPool));
+    }
+
+    [Fact]
     public async Task Fifo_transfer_moves_exact_layer_value()
     {
         var balId = await SeedBalanceAsync(15m);
@@ -172,6 +509,54 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
         var physical = await StockReplayPhysicalPlanner.BuildInsertionAsync(
             verify, InventoryLedgerTestFixture.CompanyCode,
             InventoryLedgerTestFixture.BranchCode, balId, candidate);
+        var originalTransfer = await verify.IvTrxHistories.AsNoTracking()
+            .Where(h => h.BatchNo == save.BatchNo && h.EntryRole == "ORIGINAL")
+            .SingleAsync();
+        var transferHistoryId = originalTransfer.Id;
+        var destinationId = originalTransfer.ToBalLocId!.Value;
+        var destinationPhysical = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, destinationId,
+            candidate with { SignedDelta = 1m });
+        var paired = await StockReplayFifoTransferInsertionPlanner.BuildAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100", physical,
+            destinationPhysical);
+        StockReplayFifoTransferInsertionPlanner.ValidatePreparedPlan(paired);
+        Assert.Equal(6m, paired.Source.Projection.FinalQuantity);
+        Assert.Equal(9m, paired.Destination.Projection.FinalQuantity);
+        Assert.Equal(15m, paired.Projection.FinalQuantity);
+        Assert.Equal(55m, paired.Projection.FinalValue);
+        Assert.Equal(3m, Assert.Single(paired.Projection.Issues
+            .Where(i => i.IsCandidate)).Value);
+        var wrongDestination = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, destinationId,
+            candidate with { SignedDelta = 2m });
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            (await Assert.ThrowsAsync<StockLedgerException>(() =>
+                StockReplayFifoTransferInsertionPlanner.BuildAsync(
+                    verify, InventoryLedgerTestFixture.CompanyCode,
+                    InventoryLedgerTestFixture.BranchCode, "A100", physical,
+                    wrongDestination))).Error.Code);
+        var transferKey = snapshot.ActiveConsumptions[0].IssueKey;
+        var sourceRemoval = await StockReplayPhysicalPlanner.BuildRemovalAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, balId,
+            new StockReplayPhysicalEvent(transferHistoryId, transferKey, -8m));
+        var destinationRemoval = await StockReplayPhysicalPlanner.BuildRemovalAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, destinationId,
+            new StockReplayPhysicalEvent(transferHistoryId, transferKey, 8m));
+        var pairedRemoval = await StockReplayFifoTransferRemovalPlanner.BuildAsync(
+            verify, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100", sourceRemoval,
+            destinationRemoval);
+        StockReplayFifoTransferRemovalPlanner.ValidatePreparedPlan(pairedRemoval);
+        Assert.Equal(15m, pairedRemoval.Source.Projection.FinalQuantity);
+        Assert.Equal(0m, pairedRemoval.Destination.Projection.FinalQuantity);
+        Assert.Equal(15m, pairedRemoval.Projection.FinalQuantity);
+        Assert.Equal(55m, pairedRemoval.Projection.FinalValue);
         var financial = await StockReplayFifoInsertionPlanner.BuildAsync(
             verify, InventoryLedgerTestFixture.CompanyCode,
             InventoryLedgerTestFixture.BranchCode, "A100", physical);
@@ -230,6 +615,13 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
             Assert.Equal(52m, issuePermit.FinalValue);
             Assert.Equal(16m, receiptPermit.FinalQuantity);
             Assert.Equal(57m, receiptPermit.FinalValue);
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+                (await Assert.ThrowsAsync<StockLedgerException>(() =>
+                    StockReplayFifoMiRootWriter.InsertAsync(
+                        begin.Context!, financial, issuePermit, 999_999)))
+                    .Error.Code);
+            Assert.Equal(physical.CurrentQuantity, (await rootDb.IvBalLocs.SingleAsync(
+                b => b.Id == balId)).StdQty);
         }
         finally
         {
@@ -237,6 +629,193 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
                 await coordinator.AbortInTransactionAsync(begin.Context);
             await transaction.RollbackAsync();
         }
+        var mi = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+        var earlier = await mi.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = candidate.Key.EffectiveAt,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = balId, ICode = "A100",
+                FrWarehouse = "MAIN", FrLocation = "BIN1",
+                FrLotNo = string.Empty, Quantity = 1m, Uom = "EA",
+                IClassCode = "RAW", IStatus = "ACTIVE",
+                UnitPrice = TamperPrice
+            }]
+        });
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        await using var replayDb = await _factory.CreateDbContextAsync();
+        await using var replayTransaction =
+            await replayDb.Database.BeginTransactionAsync();
+        var replayCommand = await InventoryStockPostingCommandFactory.CreateAsync(
+            replayDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, earlier.BatchNo,
+            false, candidate.Key.EffectiveAt, CancellationToken.None);
+        var replayBegin = await coordinator.BeginInTransactionAsync(
+            replayDb, replayCommand);
+        Assert.NotNull(replayBegin.Context);
+        var replayCommitted = false;
+        int insertedHistoryId = 0;
+        try
+        {
+            var permit = await StockReplayFifoInsertionPlanner
+                .PrepareWithinRootAsync(replayBegin.Context!, financial);
+            var written = await StockReplayFifoMiRootWriter.InsertAsync(
+                replayBegin.Context!, financial, permit, earlier.BatchNo);
+            insertedHistoryId = written.RootHistoryId;
+            Assert.Contains(transferHistoryId,
+                written.RequiredActiveHistoryIds);
+            await coordinator.CompleteReplayInTransactionAsync(
+                replayBegin.Context!, written.RequiredActiveHistoryIds);
+            await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
+                replayBegin.Context!, financial, permit);
+            await replayTransaction.CommitAsync();
+            replayCommitted = true;
+        }
+        finally
+        {
+            if (!replayCommitted)
+            {
+                await coordinator.AbortInTransactionAsync(replayBegin.Context!);
+                await replayTransaction.RollbackAsync();
+            }
+        }
+        await using var afterReplay = await _factory.CreateDbContextAsync();
+        var replayed = await StockReplayFifoActiveLayerReader.ReadAsync(
+            afterReplay, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100");
+        Assert.Equal(14m, replayed.CurrentQuantity);
+        Assert.Equal(52m, replayed.CurrentValue);
+        Assert.Equal(28m, replayed.ActiveConsumptions
+            .Where(c => c.IssueKey.LineIdentity ==
+                $"H{transferHistoryId:D10}").Sum(c => c.Value));
+        var activeTransfer = await StockReplayValuationGenerationResolver.ResolveAsync(
+            afterReplay, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode,
+            [await afterReplay.IvTrxHistories.AsNoTracking()
+                .SingleAsync(h => h.Id == transferHistoryId)],
+            CancellationToken.None);
+        Assert.Equal(28m, activeTransfer[transferHistoryId]
+            .Where(f => f.MovementCode == "TRANSFER_OUT")
+            .Sum(f => f.CostAmount));
+        var activeInbound = activeTransfer[transferHistoryId]
+            .Single(f => f.MovementCode == "TRANSFER_IN");
+        Assert.Equal(28m, activeInbound.CostAmount);
+        Assert.Equal(88m, activeInbound.TransactionCostAmount);
+        Assert.Equal(0.31818182m, activeInbound.ExchangeRate);
+        var insertedKey = replayed.ActiveConsumptions.Single(c =>
+            c.IssueKey.LineIdentity == $"H{insertedHistoryId:D10}").IssueKey;
+        var removalPhysical = await StockReplayPhysicalPlanner.BuildRemovalAsync(
+            afterReplay, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, balId,
+            new StockReplayPhysicalEvent(insertedHistoryId,
+                insertedKey, -1m));
+        var removalPlan = await StockReplayFifoRemovalPlanner.BuildAsync(
+            afterReplay, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100", removalPhysical);
+        await using var removalDb = await _factory.CreateDbContextAsync();
+        await using var removalTransaction =
+            await removalDb.Database.BeginTransactionAsync();
+        var removalCommand = await InventoryStockPostingCommandFactory.CreateAsync(
+            removalDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, earlier.BatchNo,
+            true, insertedKey.EffectiveAt, CancellationToken.None);
+        var removalBegin = await coordinator.BeginInTransactionAsync(
+            removalDb, removalCommand);
+        Assert.NotNull(removalBegin.Context);
+        var removalCommitted = false;
+        try
+        {
+            var permit = await StockReplayFifoRemovalPlanner
+                .PrepareWithinRootAsync(removalBegin.Context!, removalPlan);
+            var removed = await StockReplayFifoMiRootWriter.RemoveAsync(
+                removalBegin.Context!, removalPlan, permit, earlier.BatchNo);
+            Assert.Equal([transferHistoryId],
+                removed.RequiredActiveHistoryIds);
+            await coordinator.CompleteReplayInTransactionAsync(
+                removalBegin.Context!, removed.RequiredActiveHistoryIds);
+            await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
+                removalBegin.Context!, removalPlan, permit);
+            await removalTransaction.CommitAsync();
+            removalCommitted = true;
+        }
+        finally
+        {
+            if (!removalCommitted)
+            {
+                await coordinator.AbortInTransactionAsync(removalBegin.Context!);
+                await removalTransaction.RollbackAsync();
+            }
+        }
+        await using var restoredDb = await _factory.CreateDbContextAsync();
+        var restored = await StockReplayFifoActiveLayerReader.ReadAsync(
+            restoredDb, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100");
+        Assert.Equal(15m, restored.CurrentQuantity);
+        Assert.Equal(55m, restored.CurrentValue);
+        Assert.Equal(27m, restored.ActiveConsumptions
+            .Where(c => c.IssueKey.LineIdentity ==
+                $"H{transferHistoryId:D10}").Sum(c => c.Value));
+        var activeTransferKey = restored.ActiveConsumptions.Single(c =>
+            c.IssueKey.LineIdentity ==
+                $"H{transferHistoryId:D10}" && c.SplitOrdinal == 0).IssueKey;
+        var transferSourceRemoval = await StockReplayPhysicalPlanner
+            .BuildRemovalAsync(restoredDb,
+                InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, balId,
+                new StockReplayPhysicalEvent(
+                    transferHistoryId, activeTransferKey, -8m));
+        var transferDestinationRemoval = await StockReplayPhysicalPlanner
+            .BuildRemovalAsync(restoredDb,
+                InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, destinationId,
+                new StockReplayPhysicalEvent(
+                    transferHistoryId, activeTransferKey, 8m));
+        var transferRemoval = await StockReplayFifoTransferRemovalPlanner
+            .BuildAsync(restoredDb,
+                InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, "A100",
+                transferSourceRemoval, transferDestinationRemoval);
+        await using var transferRemovalDb = await _factory.CreateDbContextAsync();
+        await using var transferRemovalTransaction =
+            await transferRemovalDb.Database.BeginTransactionAsync();
+        var transferRemovalCommand =
+            await InventoryStockPostingCommandFactory.CreateAsync(
+                transferRemovalDb, InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, save.BatchNo,
+                true, activeTransferKey.EffectiveAt, CancellationToken.None);
+        var transferRemovalBegin = await coordinator.BeginInTransactionAsync(
+            transferRemovalDb, transferRemovalCommand);
+        Assert.NotNull(transferRemovalBegin.Context);
+        var transferRemovalCommitted = false;
+        try
+        {
+            var removed = await StockReplayFifoTransferRemovalRootWriter.RemoveAsync(
+                transferRemovalBegin.Context!, transferRemoval, save.BatchNo);
+            await transferRemovalDb.SaveChangesAsync();
+            await coordinator.CompleteReplayInTransactionAsync(
+                transferRemovalBegin.Context!, removed.RequiredActiveHistoryIds);
+            await StockReplayFifoTransferReconciliationGate
+                .VerifySealedWithinRootAsync(
+                    transferRemovalBegin.Context!, transferRemoval);
+            await transferRemovalTransaction.CommitAsync();
+            transferRemovalCommitted = true;
+        }
+        finally
+        {
+            if (!transferRemovalCommitted)
+            {
+                await coordinator.AbortInTransactionAsync(
+                    transferRemovalBegin.Context!);
+                await transferRemovalTransaction.RollbackAsync();
+            }
+        }
+        await using var afterTransferRemoval = await _factory.CreateDbContextAsync();
+        var noTransfer = await StockReplayFifoActiveLayerReader.ReadAsync(
+            afterTransferRemoval, InventoryLedgerTestFixture.CompanyCode,
+            InventoryLedgerTestFixture.BranchCode, "A100");
+        Assert.Equal(15m, noTransfer.CurrentQuantity);
+        Assert.Equal(55m, noTransfer.CurrentValue);
+        Assert.Empty(noTransfer.ActiveConsumptions);
     }
 
     [Fact]

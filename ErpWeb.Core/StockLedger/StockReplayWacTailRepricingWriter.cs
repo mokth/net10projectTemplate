@@ -164,6 +164,85 @@ public static class StockReplayWacTailRepricingWriter
             null, null, cancellationToken);
     }
 
+    public static void ValidatePreparedRemovalTail(
+        StockReplayWacRemovalPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ValidateTail(plan.Tail.LaterEvents, plan.Projection.LaterSteps,
+            null, null);
+    }
+
+    public static void ValidateProjectedCountSheetRemovalTail(
+        IReadOnlyList<StockReplayWacEvent> laterEvents,
+        IReadOnlyList<StockReplayWacStep> laterSteps) =>
+        ValidateTail(laterEvents, laterSteps, null, null);
+
+    /// <summary>
+    /// Applies a sheet-level projection after every count adjustment has been
+    /// reversed. Its complete source fingerprint was checked before mutation.
+    /// </summary>
+    public static Task<StockReplayWacTailRepricingResult>
+        AppendPreparedCountSheetRemovalTailAsync(
+            StockPostingContext context, StockReplayWacWritePermit permit,
+            StockReplayWacCountSheetRemovalItem item,
+            int firstRootPostingLineNo,
+            CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(permit);
+        ArgumentNullException.ThrowIfNull(item);
+        context.EnsureUnsealed();
+        if (item.Repricing is not { } projection
+            || firstRootPostingLineNo <= 0
+            || permit.RootPostingId != context.Posting.Id
+            || permit.RootPostingSequence != context.Posting.PostingSequence
+            || permit.LedgerEpochId != context.Epoch.Id
+            || permit.CompanyCode != context.CompanyCode
+            || permit.BranchCode != context.BranchCode
+            || permit.ItemCode != item.ItemCode
+            || permit.PlanHash != item.PlanHash
+            || permit.CurrentQuantity != item.Tail.CurrentQuantity
+            || permit.CurrentValue != item.Tail.CurrentValue
+            || permit.FinalQuantity != projection.FinalQuantity
+            || permit.FinalValue != projection.FinalValue
+            || permit.ChangedPiles.Count != item.CountLineIds.Count)
+            throw Invalid("The prepared WAC count removal tail has no matching root permit.");
+        var removedIds = item.RemovedEvents.Select(e => e.EventId).ToHashSet();
+        var later = item.Tail.LaterEvents.Where(e =>
+            !removedIds.Contains(e.EventId)).ToArray();
+        return AppendTailAsync(context, permit, later,
+            projection.LaterSteps, firstRootPostingLineNo,
+            null, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Uses a removal permit validated before the root wrote its count reversal.
+    /// The sealed old tail cannot be re-read after that mutation.
+    /// </summary>
+    public static Task<StockReplayWacTailRepricingResult> AppendPreparedRemovalTailAsync(
+        StockPostingContext context, StockReplayWacWritePermit permit,
+        StockReplayWacRemovalPlan plan, int firstRootPostingLineNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(permit);
+        ArgumentNullException.ThrowIfNull(plan);
+        context.EnsureUnsealed();
+        if (firstRootPostingLineNo <= 0
+            || permit.RootPostingId != context.Posting.Id
+            || permit.RootPostingSequence != context.Posting.PostingSequence
+            || permit.LedgerEpochId != context.Epoch.Id
+            || permit.CompanyCode != context.CompanyCode
+            || permit.BranchCode != context.BranchCode
+            || permit.ItemCode != plan.ItemCode
+            || permit.PlanHash != plan.PlanHash
+            || permit.ChangedPileId != plan.PhysicalPlan.BalLocId)
+            throw Invalid("The prepared WAC removal tail has no matching root permit.");
+        return AppendTailAsync(context, permit, plan.Tail.LaterEvents,
+            plan.Projection.LaterSteps, firstRootPostingLineNo,
+            null, null, cancellationToken);
+    }
+
     private static async Task<StockReplayWacTailRepricingResult> AppendTailAsync(
         StockPostingContext context,
         StockReplayWacWritePermit permit,

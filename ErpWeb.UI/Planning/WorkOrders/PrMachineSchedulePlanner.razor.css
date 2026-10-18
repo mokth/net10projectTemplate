@@ -24,6 +24,75 @@
     white-space: nowrap;
 }
 
+.pr-machine-schedule-hero-meta {
+    display: grid;
+    justify-items: end;
+    align-self: center;
+    gap: .35rem;
+}
+
+.pr-machine-schedule-period-chip {
+    padding: .3rem .65rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: .8rem;
+    white-space: nowrap;
+}
+
+.pr-machine-schedule-capacity-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: .8rem;
+    padding: .8rem 1rem;
+    border: 1px solid var(--danger);
+    border-left: 4px solid var(--danger);
+    border-radius: .75rem;
+    background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+
+.pr-machine-schedule-capacity-warning i {
+    padding-top: .15rem;
+    color: var(--danger);
+}
+
+.pr-machine-schedule-capacity-warning div {
+    display: grid;
+    gap: .15rem;
+}
+
+.pr-machine-schedule-capacity-warning span {
+    color: var(--muted);
+}
+
+.pr-machine-schedule-period-note {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .6rem;
+    padding: .7rem 1rem;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    border-radius: .65rem;
+    background: var(--surface);
+    color: var(--muted);
+}
+
+.pr-machine-schedule-period-note > i {
+    color: var(--accent);
+}
+
+.pr-machine-schedule-idle-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    min-height: 2.1rem;
+    color: var(--text);
+    font-size: .85rem;
+    font-weight: 500;
+}
+
 .pr-machine-schedule-mode i,
 .pr-machine-schedule-readonly > i {
     color: var(--accent);
@@ -137,6 +206,10 @@
 
 .pr-machine-schedule-filter--status {
     flex-basis: 135px;
+}
+
+.pr-machine-schedule-filter--idle {
+    flex-basis: 175px;
 }
 
 .pr-machine-schedule-filter--search {
@@ -387,6 +460,14 @@
     background: var(--danger);
 }
 
+.pr-machine-schedule-legend__swatch--late {
+    background: #d97706;
+}
+
+.pr-machine-schedule-legend__swatch--external {
+    background: #7c3aed;
+}
+
 .pr-machine-schedule-legend__swatch--maintenance {
     background: var(--muted);
 }
@@ -422,6 +503,14 @@
 
 .pr-machine-schedule-label--maintenance {
     background: var(--muted) !important;
+}
+
+.pr-machine-schedule-label--late {
+    background: #d97706 !important;
+}
+
+.pr-machine-schedule-label--external {
+    background: #7c3aed !important;
 }
 
 .pr-machine-schedule-label__text {
@@ -570,6 +659,68 @@
     color: var(--muted);
 }
 
+.pr-machine-schedule-preview__advisory span {
+    color: #d97706;
+    font-weight: 600;
+}
+
+.pr-machine-schedule-external-note {
+    margin: 0 0 .9rem;
+    padding: .75rem;
+    border-radius: .55rem;
+    background: color-mix(in srgb, #7c3aed 10%, var(--surface));
+    color: var(--text);
+    font-size: .88rem;
+}
+
+.pr-machine-schedule-diagnostics {
+    padding: 0;
+    overflow: hidden;
+}
+
+.pr-machine-schedule-diagnostics > summary {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: .5rem;
+    padding: .8rem 1rem;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.pr-machine-schedule-diagnostics > summary small {
+    color: var(--muted);
+}
+
+.pr-machine-schedule-diagnostics__body {
+    display: grid;
+    gap: .75rem;
+    padding: 0 1rem 1rem;
+    border-top: 1px solid var(--line);
+}
+
+.pr-machine-schedule-diagnostics__status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 1rem;
+    padding-top: .75rem;
+    color: var(--muted);
+    font-size: .84rem;
+}
+
+.pr-machine-schedule-diagnostics__reasons {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--muted);
+    font-size: .84rem;
+}
+
+.pr-machine-schedule-diagnostics__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+
 .pr-machine-schedule-preview__messages--blocked {
     color: var(--danger);
 }
@@ -600,6 +751,10 @@
 @media (max-width: 620px) {
     .pr-machine-schedule-mode {
         align-self: start;
+    }
+
+    .pr-machine-schedule-hero-meta {
+        justify-items: start;
     }
 
     .pr-machine-schedule-toolbar__nav,

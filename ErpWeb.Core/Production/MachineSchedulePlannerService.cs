@@ -21,6 +21,9 @@ public sealed class MachineSchedulePlannerQuery
     public string? ProductCode { get; set; }
     public string? WorkOrderStatus { get; set; }
     public string? SearchText { get; set; }
+    public string? Priority { get; set; }
+    public bool LateOnly { get; set; }
+    public bool ShowIdleMachines { get; set; }
 }
 
 public enum MachineSchedulePlannerLookupKind
@@ -101,11 +104,55 @@ public sealed class MachineSchedulePlannerJob
     public decimal QueueSeconds { get; init; }
     public decimal PlannedRunMinutes { get; init; }
     public decimal ProductiveDurationMinutes { get; init; }
+
+    /// <summary>Work Order header planned start projected by the main board query.</summary>
+    public DateTime WorkOrderPlannedStart { get; init; }
+
+    /// <summary>
+    /// Work Order header planned completion projected by the main board query. This is the
+    /// schedule-alignment anchor; it is intentionally not the operation completion.
+    /// </summary>
+    public DateTime WorkOrderPlannedCompletion { get; init; }
+
     public bool IsLocked { get; set; }
     public string? LockReason { get; set; }
     public string ExecutionStatus { get; set; } = "NOT STARTED";
+
+    // Demand context is populated after the bounded board query has materialized. These members
+    // must remain mutable because they are enriched in memory from a batched DR lookup.
+    public long? DeliveryRequestId { get; set; }
+    public string? DeliveryRequestNo { get; set; }
+    public string? DeliveryRequestStatus { get; set; }
+    public DateTime? RequiredDate { get; set; }
+    public string? Priority { get; set; }
+    public string? ProjectCode { get; set; }
+    public string? WarehouseCode { get; set; }
+    public bool DemandAllocationIsActive { get; set; }
+
+    public bool HasActiveDemandContext => DemandAllocationIsActive
+        && DeliveryRequestStatus is MachineSchedulePlannerDemandStatuses.Released
+            or MachineSchedulePlannerDemandStatuses.InProduction;
+
+    public bool IsLateToRequiredDate => HasActiveDemandContext
+        && RequiredDate.HasValue
+        && WorkOrderPlannedCompletion.Date > RequiredDate.Value.Date;
+
+    public int LateDays => IsLateToRequiredDate
+        ? (WorkOrderPlannedCompletion.Date - RequiredDate.Value.Date).Days
+        : 0;
+
     public bool IsBackwardScheduled =>
         string.Equals(SchedulingDirection, ProductionSchedulingDirections.Backward, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// Active demand context uses the DR header lifecycle only as a planner-attention gate.
+/// It is never interpreted as a customer-fulfilment fact.
+/// </summary>
+public static class MachineSchedulePlannerDemandStatuses
+{
+    public const string Released = "RELEASED";
+    public const string InProduction = "IN_PRODUCTION";
 }
 
 public sealed class MachineSchedulePlannerAppointment
@@ -119,6 +166,17 @@ public sealed class MachineSchedulePlannerAppointment
     public string ResourceId { get; init; } = string.Empty;
     public int LabelId { get; init; }
     public bool IsMaintenance { get; init; }
+    public bool IsExternalCapacity { get; init; }
+}
+
+/// <summary>Frozen scheduler label IDs. Never reuse these numbers dynamically.</summary>
+public static class MachineSchedulePlannerLabelIds
+{
+    public const int Scheduled = 1;
+    public const int ExecutionLocked = 2;
+    public const int PreventiveMaintenance = 3;
+    public const int LateToRequiredDate = 4;
+    public const int ReservedOtherBranch = 5;
 }
 
 public sealed class MachineSchedulePlannerBoard
@@ -130,9 +188,42 @@ public sealed class MachineSchedulePlannerBoard
     public IReadOnlyList<MachineSchedulePlannerAppointment> Appointments { get; init; } = [];
     public int LockedJobCount { get; init; }
     public int UnverifiedJobCount { get; init; }
+    public int LateWorkOrderCount { get; init; }
+    public int DueThisWindowWorkOrderCount { get; init; }
+    public int VisibleMaintenanceMachineCount { get; init; }
+    public int ExternalCapacityMachineCount { get; init; }
+    public bool AttentionCountsArePartial { get; init; }
+    public bool ShowIdleMachines { get; init; }
     public bool HasMoreJobsThanLimit { get; init; }
     public bool HasMoreIdleMachinesThanLimit { get; init; }
     public MachineSchedulePlannerReadiness Readiness { get; init; } = new();
+
+    /// <summary>
+    /// True when readiness reports a machine-capacity integrity finding. This is a human-facing
+    /// gate only; raw codes stay in diagnostics.
+    /// </summary>
+    public bool NeedsCapacityAttention => !Readiness.AllocationSchemaReady
+        || Readiness.UnverifiedActiveAllocations > 0
+        || Readiness.StaleAllocations > 0
+        || Readiness.UnexplainedActiveMachineOverlaps > 0;
+}
+
+public sealed class MachineSchedulePlannerWorkOrderWindow
+{
+    public long WorkOrderId { get; init; }
+    public string WorkOrderNo { get; init; } = string.Empty;
+    public string WorkOrderStatus { get; init; } = string.Empty;
+    public DateTime? EarliestMachineStart { get; init; }
+    public DateTime? LatestMachineCompletion { get; init; }
+    public DateTime WorkOrderPlannedStart { get; init; }
+    public DateTime WorkOrderPlannedCompletion { get; init; }
+
+    public bool IsMachineScheduled => EarliestMachineStart.HasValue && LatestMachineCompletion.HasValue;
+
+    /// <summary>Machine time is preferred; the WO header is only a fallback.</summary>
+    public DateTime? AnchorStart => EarliestMachineStart ?? (WorkOrderPlannedStart == default ? null : WorkOrderPlannedStart);
+
+    public DateTime? AnchorCompletion => LatestMachineCompletion ?? (WorkOrderPlannedCompletion == default ? null : WorkOrderPlannedCompletion);
 }
 
 public sealed class MachineSchedulePlannerReadiness
@@ -167,6 +258,10 @@ public interface IMachineSchedulePlannerService
 
     Task<IvMasterOperationResult<MachineSchedulePlannerLookupPage>> GetFilterLookupAsync(
         MachineSchedulePlannerLookupQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<IvMasterOperationResult<MachineSchedulePlannerWorkOrderWindow>> GetWorkOrderMachineScheduleWindowAsync(
+        string workOrderNo,
         CancellationToken cancellationToken = default);
 }
 
@@ -588,6 +683,9 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         var workOrderFilter = Normalize(query.WorkOrderNo);
         var productFilter = Normalize(query.ProductCode);
         var statusFilter = Normalize(query.WorkOrderStatus);
+        var priorityFilter = Normalize(query.Priority);
+        var lateOnly = query.LateOnly;
+        var showIdleMachines = query.ShowIdleMachines;
         var search = Normalize(query.SearchText);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -616,23 +714,50 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             queryRows = queryRows.Where(o => o.WorkOrder!.WorkOrderNo == workOrderFilter);
         if (productFilter is not null)
             queryRows = queryRows.Where(o => o.WorkOrder!.ProductCode == productFilter);
+        if (priorityFilter is not null)
+            queryRows = queryRows.Where(o => o.WorkOrder!.DemandAllocations.Any(a =>
+                a.IsActive
+                && a.DeliveryRequest != null
+                && (a.DeliveryRequest.Status == MachineSchedulePlannerDemandStatuses.Released
+                    || a.DeliveryRequest.Status == MachineSchedulePlannerDemandStatuses.InProduction)
+                && a.DeliveryRequest.Priority == priorityFilter));
+        if (lateOnly)
+        {
+            // Schedule alignment, not fulfilment risk: WO header completion after the current DR
+            // required date. Date-only comparison matches the read-model late rule.
+            queryRows = queryRows.Where(o => o.WorkOrder!.DemandAllocations.Any(a =>
+                a.IsActive
+                && a.DeliveryRequest != null
+                && (a.DeliveryRequest.Status == MachineSchedulePlannerDemandStatuses.Released
+                    || a.DeliveryRequest.Status == MachineSchedulePlannerDemandStatuses.InProduction)
+                && o.WorkOrder.PlannedCompletionDateTime.Date > a.DeliveryRequest.RequiredDate.Date));
+        }
         if (search is not null)
+        {
             queryRows = queryRows.Where(o => o.WorkOrder!.WorkOrderNo.Contains(search)
                 || o.WorkOrder.ProductCode.Contains(search)
                 || (o.RouteStep!.OutputItemCode != null && o.RouteStep.OutputItemCode.Contains(search))
-                || o.OperationCode.Contains(search));
+                || o.OperationCode.Contains(search)
+                || o.WorkOrder.DemandAllocations.Any(a =>
+                    a.DeliveryRequest != null && a.DeliveryRequest.DeliveryRequestNo.Contains(search)));
+        }
 
-        var selected = queryRows.SelectMany(o => o.Machines.Where(m => m.IsSelected).Select(m => new
+        // Explicit join instead of SelectMany over the navigation collection. The latter compiles to
+        // CROSS APPLY, which SQLite cannot execute, and this shape is a plain INNER JOIN on both.
+        var selected = from m in db.ProductionWorkOrderMachines.AsNoTracking()
+            join o in queryRows on m.OperationId equals o.Uid
+            where m.IsSelected
+                && m.PlannedStartDateTime != null
+                && m.PlannedCompletionDateTime != null
+                && m.PlannedStartDateTime < windowEnd
+                && m.PlannedCompletionDateTime > windowStart
+            select new
             {
                 Order = o.WorkOrder!,
                 Step = o.RouteStep!,
                 Operation = o,
                 Machine = m
-            }))
-            .Where(x => x.Machine.PlannedStartDateTime != null
-                && x.Machine.PlannedCompletionDateTime != null
-                && x.Machine.PlannedStartDateTime < windowEnd
-                && x.Machine.PlannedCompletionDateTime > windowStart);
+            };
 
         var jobs = await selected
             .OrderBy(x => x.Machine.MachineCode)
@@ -649,6 +774,8 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 SchedulingDirection = x.Order.SchedulingDirection,
                 ScheduleRevision = x.Order.ScheduleRevision,
                 WorkOrderRowVersion = x.Order.RowVersion,
+                WorkOrderPlannedStart = x.Order.PlannedStartDateTime,
+                WorkOrderPlannedCompletion = x.Order.PlannedCompletionDateTime,
                 OperationId = x.Operation.Uid,
                 StageSequence = x.Step.StageSequence,
                 ProcessSequence = x.Operation.ProcessSequence,
@@ -682,6 +809,10 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         var hasMoreJobsThanLimit = jobs.Count > MaxBoardJobs;
         if (hasMoreJobsThanLimit)
             jobs = jobs.Take(MaxBoardJobs).ToList();
+
+        // Demand context is advisory planner information. It is loaded from a bounded, batched
+        // lookup after the board query so no per-job database query is issued.
+        await EnrichDemandContextAsync(db, scope, jobs, cancellationToken);
 
         var operationIds = jobs.Select(x => x.OperationId).Distinct().ToList();
         var outputStates = new List<(long OperationId, string Status)>();
@@ -732,22 +863,58 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             }
         }
 
-        var machineRows = await db.PrMachines.AsNoTracking()
-            .Where(x => x.CompCode == scope.CompanyCode && x.Active
-                && (machineFilter == null || x.MachineCd == machineFilter))
-            .OrderBy(x => x.MachineCd)
-            .Select(x => new { x.MachineCd, x.MachineDes })
-            .Take(501)
-            .ToListAsync(cancellationToken);
-        var hasMoreIdleMachinesThanLimit = machineRows.Count > 500;
-        if (hasMoreIdleMachinesThanLimit)
-            machineRows = machineRows.Take(500).ToList();
+        var machineRows = new List<MachineMasterRow>();
+        var hasMoreIdleMachinesThanLimit = false;
+        if (showIdleMachines)
+        {
+            var idleQuery = db.PrMachines.AsNoTracking()
+                .Where(x => x.CompCode == scope.CompanyCode && x.Active
+                    && (x.BranchCode == null || x.BranchCode == scope.BranchCode));
+            if (machineFilter is not null)
+                idleQuery = idleQuery.Where(x => x.MachineCd == machineFilter);
+            var idleRows = await idleQuery
+                .OrderBy(x => x.MachineCd)
+                .Select(x => new MachineMasterRow { MachineCode = x.MachineCd, Description = x.MachineDes })
+                .Take(501)
+                .ToListAsync(cancellationToken);
+            hasMoreIdleMachinesThanLimit = idleRows.Count > 500;
+            machineRows.AddRange(hasMoreIdleMachinesThanLimit ? idleRows.Take(500) : idleRows);
+        }
+        else if (machineFilter is not null)
+        {
+            // A selected machine must be inspectable even when it currently has zero jobs. Load
+            // only that eligible master instead of the whole idle-master set.
+            var selectedMaster = await db.PrMachines.AsNoTracking()
+                .Where(x => x.CompCode == scope.CompanyCode && x.Active
+                    && (x.BranchCode == null || x.BranchCode == scope.BranchCode)
+                    && x.MachineCd == machineFilter)
+                .Select(x => new MachineMasterRow { MachineCode = x.MachineCd, Description = x.MachineDes })
+                .Take(1)
+                .ToListAsync(cancellationToken);
+            machineRows.AddRange(selectedMaster);
+        }
 
-        var machineCodes = machineRows.Select(x => x.MachineCd)
+        var machineCodes = machineRows.Select(x => x.MachineCode)
             .Concat(jobs.Select(x => x.MachineCode))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        // Scheduled-job machines must still show their master description even when idle masters
+        // were skipped or the current master eligibility changed.
+        var loadedMasterCodes = machineRows
+            .Select(x => x.MachineCode)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missingMasterCodes = machineCodes
+            .Where(code => !loadedMasterCodes.Contains(code))
+            .ToList();
+        foreach (var masterBatch in missingMasterCodes.Chunk(800))
+        {
+            machineRows.AddRange(await db.PrMachines.AsNoTracking()
+                .Where(x => x.CompCode == scope.CompanyCode && masterBatch.Contains(x.MachineCd))
+                .Select(x => new MachineMasterRow { MachineCode = x.MachineCd, Description = x.MachineDes })
+                .ToListAsync(cancellationToken));
+        }
 
         var calendars = await LoadMachineCalendarsAsync(
             db,
@@ -757,15 +924,18 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             DateOnly.FromDateTime(windowEnd).AddDays(1),
             cancellationToken);
 
+        var mastersByCode = machineRows
+            .GroupBy(x => x.MachineCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
         var resources = machineCodes.Select(code =>
         {
-            var master = machineRows.FirstOrDefault(x => string.Equals(x.MachineCd, code, StringComparison.OrdinalIgnoreCase));
+            mastersByCode.TryGetValue(code, out var master);
             calendars.TryGetValue(code, out var calendar);
             return new MachineSchedulePlannerResource
             {
                 MachineCode = code,
-                DisplayName = string.IsNullOrWhiteSpace(master?.MachineDes) ? code : $"{code} · {master.MachineDes}",
-                MachineDescription = master?.MachineDes,
+                DisplayName = string.IsNullOrWhiteSpace(master?.Description) ? code : $"{code} · {master.Description}",
+                MachineDescription = master?.Description,
                 UsableIntervals = calendar?.GlobalUsableIntervals.Select(ToInterval).ToList() ?? [],
                 MaintenanceIntervals = calendar?.PreventiveWindows.Select(x => new MachineSchedulePlannerInterval
                 {
@@ -799,14 +969,27 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             }
         }
 
-        var preventiveRows = await db.PrPreventives.AsNoTracking()
-            .Where(x => x.CompCode == scope.CompanyCode
-                && machineCodes.Contains(x.MachineCd)
-                && x.Status == PreventiveStatuses.Planned
-                && x.DownDt >= windowStart.Date.AddDays(-1)
-                && x.DownDt < windowEnd.Date.AddDays(1))
-            .Select(x => new { x.Uid, x.MachineCd, x.DownDt, x.StartTm, x.EndTm, x.ReasonCd, x.Remark })
-            .ToListAsync(cancellationToken);
+        var preventiveRows = new List<PreventiveRow>();
+        foreach (var machineBatch in machineCodes.Chunk(800))
+        {
+            preventiveRows.AddRange(await db.PrPreventives.AsNoTracking()
+                .Where(x => x.CompCode == scope.CompanyCode
+                    && machineBatch.Contains(x.MachineCd)
+                    && x.Status == PreventiveStatuses.Planned
+                    && x.DownDt >= windowStart.Date.AddDays(-1)
+                    && x.DownDt < windowEnd.Date.AddDays(1))
+                .Select(x => new PreventiveRow
+                {
+                    Uid = x.Uid,
+                    MachineCode = x.MachineCd,
+                    DownDt = x.DownDt,
+                    StartTm = x.StartTm,
+                    EndTm = x.EndTm,
+                    ReasonCd = x.ReasonCd,
+                    Remark = x.Remark
+                })
+                .ToListAsync(cancellationToken));
+        }
 
         foreach (var row in preventiveRows)
         {
@@ -823,13 +1006,39 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 Location = $"maintenance:{row.Uid}",
                 Start = DateTime.SpecifyKind(normalized.WindowStart, DateTimeKind.Unspecified),
                 End = DateTime.SpecifyKind(normalized.WindowEnd, DateTimeKind.Unspecified),
-                ResourceId = row.MachineCd,
-                LabelId = 3,
+                ResourceId = row.MachineCode,
+                LabelId = MachineSchedulePlannerLabelIds.PreventiveMaintenance,
                 IsMaintenance = true
             });
         }
 
+        // Readiness is loaded before any external allocation query. Older databases may not have
+        // the allocation schema installed, and the allocation DbSet must not be touched in that case.
         var readiness = await _readiness.GetReadinessAsync(cancellationToken);
+        var externalMachineCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (readiness.AllocationSchemaReady && machineCodes.Count > 0)
+            await AddExternalCapacityAppointmentsAsync(
+                db,
+                scope,
+                machineCodes,
+                windowStart,
+                windowEnd,
+                appointments,
+                externalMachineCodes,
+                cancellationToken);
+
+        var lateWorkOrderCount = jobs.Where(x => x.IsLateToRequiredDate)
+            .Select(x => x.WorkOrderId)
+            .Distinct()
+            .Count();
+        var dueThisWindowCount = jobs.Where(x => x.HasActiveDemandContext
+                && x.RequiredDate.HasValue
+                && x.RequiredDate.Value.Date >= windowStart.Date
+                && x.RequiredDate.Value.Date < windowEnd.Date)
+            .Select(x => x.WorkOrderId)
+            .Distinct()
+            .Count();
+
         var board = new MachineSchedulePlannerBoard
         {
             WindowStart = windowStart,
@@ -839,12 +1048,80 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             Appointments = appointments,
             LockedJobCount = jobs.Count(x => x.IsLocked),
             UnverifiedJobCount = unverified,
+            LateWorkOrderCount = lateWorkOrderCount,
+            DueThisWindowWorkOrderCount = dueThisWindowCount,
+            VisibleMaintenanceMachineCount = resources.Count(x =>
+                x.MaintenanceIntervals.Any(interval => interval.Start < windowEnd && interval.End > windowStart)),
+            ExternalCapacityMachineCount = externalMachineCodes.Count,
+            AttentionCountsArePartial = hasMoreJobsThanLimit,
+            ShowIdleMachines = showIdleMachines,
             HasMoreJobsThanLimit = hasMoreJobsThanLimit,
             HasMoreIdleMachinesThanLimit = hasMoreIdleMachinesThanLimit,
             Readiness = readiness
         };
 
         return IvMasterOperationResult<MachineSchedulePlannerBoard>.Ok(board);
+    }
+
+    public async Task<IvMasterOperationResult<MachineSchedulePlannerWorkOrderWindow>> GetWorkOrderMachineScheduleWindowAsync(
+        string workOrderNo,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await _access.CanAsync(MenuCodes.PlanningMachineSchedulePlanner, PermissionCodes.Access, cancellationToken))
+            return IvMasterOperationResult<MachineSchedulePlannerWorkOrderWindow>.Fail(
+                IvMasterErrorCode.AccessDenied, "Access denied.");
+
+        var scope = _tenant.TryBranchScope();
+        if (scope is null)
+            return IvMasterOperationResult<MachineSchedulePlannerWorkOrderWindow>.Fail(
+                IvMasterErrorCode.InvalidScope, "A company and branch scope is required.");
+
+        var normalizedNo = Normalize(workOrderNo);
+        if (normalizedNo is null)
+            return IvMasterOperationResult<MachineSchedulePlannerWorkOrderWindow>.Fail(
+                IvMasterErrorCode.Validation, "A Work Order number is required.");
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var row = await db.ProductionWorkOrders.AsNoTracking()
+            .Where(order => order.CompanyCode == scope.CompanyCode
+                && order.BranchCode == scope.BranchCode
+                && order.WorkOrderNo == normalizedNo)
+            .Select(order => new
+            {
+                order.Uid,
+                order.WorkOrderNo,
+                order.Status,
+                order.PlannedStartDateTime,
+                order.PlannedCompletionDateTime,
+                EarliestMachineStart = order.Operations
+                    .SelectMany(operation => operation.Machines)
+                    .Where(machine => machine.IsSelected && machine.PlannedStartDateTime != null)
+                    .Min(machine => (DateTime?)machine.PlannedStartDateTime),
+                LatestMachineCompletion = order.Operations
+                    .SelectMany(operation => operation.Machines)
+                    .Where(machine => machine.IsSelected && machine.PlannedCompletionDateTime != null)
+                    .Max(machine => (DateTime?)machine.PlannedCompletionDateTime)
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (row is null)
+            return IvMasterOperationResult<MachineSchedulePlannerWorkOrderWindow>.Fail(
+                IvMasterErrorCode.NotFound, "The Work Order was not found in the current company and branch scope.");
+
+        return IvMasterOperationResult<MachineSchedulePlannerWorkOrderWindow>.Ok(new MachineSchedulePlannerWorkOrderWindow
+        {
+            WorkOrderId = row.Uid,
+            WorkOrderNo = row.WorkOrderNo,
+            WorkOrderStatus = row.Status,
+            EarliestMachineStart = row.EarliestMachineStart is { } start
+                ? DateTime.SpecifyKind(start, DateTimeKind.Unspecified)
+                : null,
+            LatestMachineCompletion = row.LatestMachineCompletion is { } completion
+                ? DateTime.SpecifyKind(completion, DateTimeKind.Unspecified)
+                : null,
+            WorkOrderPlannedStart = DateTime.SpecifyKind(row.PlannedStartDateTime, DateTimeKind.Unspecified),
+            WorkOrderPlannedCompletion = DateTime.SpecifyKind(row.PlannedCompletionDateTime, DateTimeKind.Unspecified)
+        });
     }
 
     public async Task<IvMasterOperationResult<MachineSchedulePlannerLookupPage>> GetFilterLookupAsync(
@@ -884,6 +1161,133 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         return IvMasterOperationResult<MachineSchedulePlannerLookupPage>.Ok(page);
     }
 
+    private static async Task EnrichDemandContextAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        IReadOnlyList<MachineSchedulePlannerJob> jobs,
+        CancellationToken cancellationToken)
+    {
+        if (jobs.Count == 0)
+            return;
+
+        var branchCode = scope.BranchCode ?? string.Empty;
+        var workOrderIds = jobs.Select(x => x.WorkOrderId).Distinct().ToList();
+        var rows = new List<MachineSchedulePlannerDemandRow>();
+        foreach (var workOrderBatch in workOrderIds.Chunk(800))
+        {
+            rows.AddRange(await db.PrWorkOrderDemandAllocations.AsNoTracking()
+                .Where(allocation => allocation.CompanyCode == scope.CompanyCode
+                    && allocation.BranchCode == branchCode
+                    && workOrderBatch.Contains(allocation.WorkOrderId)
+                    && allocation.DeliveryRequest != null)
+                .Select(allocation => new MachineSchedulePlannerDemandRow
+                {
+                    WorkOrderId = allocation.WorkOrderId,
+                    IsActive = allocation.IsActive,
+                    DeliveryRequestId = allocation.DeliveryRequestId,
+                    DeliveryRequestNo = allocation.DeliveryRequest!.DeliveryRequestNo,
+                    DeliveryRequestStatus = allocation.DeliveryRequest.Status,
+                    RequiredDate = allocation.DeliveryRequest.RequiredDate,
+                    Priority = allocation.DeliveryRequest.Priority,
+                    ProjectCode = allocation.DeliveryRequest.ProjectCode,
+                    WarehouseCode = allocation.DeliveryRequest.WarehouseCode
+                })
+                .ToListAsync(cancellationToken));
+        }
+
+        // The unique WorkOrderId bridge should produce one row per Work Order. Ordering is a
+        // defensive tie-break only if legacy data contains more than one row.
+        var byWorkOrder = rows
+            .GroupBy(x => x.WorkOrderId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(x => x.IsActive)
+                    .ThenByDescending(x => x.RequiredDate)
+                    .First());
+
+        foreach (var job in jobs)
+        {
+            if (!byWorkOrder.TryGetValue(job.WorkOrderId, out var demand))
+                continue;
+            job.DeliveryRequestId = demand.DeliveryRequestId;
+            job.DeliveryRequestNo = demand.DeliveryRequestNo;
+            job.DeliveryRequestStatus = demand.DeliveryRequestStatus;
+            job.RequiredDate = demand.RequiredDate;
+            job.Priority = demand.Priority;
+            job.ProjectCode = demand.ProjectCode;
+            job.WarehouseCode = demand.WarehouseCode;
+            job.DemandAllocationIsActive = demand.IsActive;
+        }
+    }
+
+    /// <summary>
+    /// Adds anonymous, non-interactive bars for company-wide physical capacity already reserved by
+    /// another branch. This method must only be called after readiness confirms the allocation
+    /// schema exists. No external Work Order, product, customer, DR, or quantity detail is exposed.
+    /// </summary>
+    private static async Task AddExternalCapacityAppointmentsAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        IReadOnlyList<string> machineCodes,
+        DateTime windowStart,
+        DateTime windowEnd,
+        List<MachineSchedulePlannerAppointment> appointments,
+        HashSet<string> externalMachineCodes,
+        CancellationToken cancellationToken)
+    {
+        var branchCode = scope.BranchCode ?? string.Empty;
+        foreach (var machineBatch in machineCodes.Chunk(800))
+        {
+            var rows = await db.ProductionMachineScheduleAllocations.AsNoTracking()
+                .Where(allocation => allocation.CompanyCode == scope.CompanyCode
+                    && machineBatch.Contains(allocation.MachineCode)
+                    && allocation.BranchCode != branchCode
+                    && allocation.StartDateTime < windowEnd
+                    && allocation.EndDateTime > windowStart)
+                .Join(db.ProductionWorkOrderMachines.AsNoTracking(),
+                    allocation => allocation.WorkOrderMachineId,
+                    machine => machine.Uid,
+                    (allocation, machine) => new { Allocation = allocation, Machine = machine })
+                .Where(x => x.Machine.IsSelected
+                    && x.Machine.Operation != null
+                    && x.Machine.Operation.WorkOrder != null
+                    && x.Machine.Operation.WorkOrder.CompanyCode == scope.CompanyCode
+                    && (x.Machine.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.Released
+                        || x.Machine.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress)
+                    && x.Machine.ScheduleRevision == x.Allocation.ScheduleRevision
+                    && x.Machine.MachineCode == x.Allocation.MachineCode
+                    && x.Machine.OperationId == x.Allocation.WorkOrderOperationId
+                    && x.Machine.Operation.WorkOrder.Uid == x.Allocation.WorkOrderId
+                    && x.Machine.Operation.WorkOrder.BranchCode == x.Allocation.BranchCode)
+                .Select(x => new
+                {
+                    x.Allocation.Uid,
+                    x.Allocation.MachineCode,
+                    x.Allocation.StartDateTime,
+                    x.Allocation.EndDateTime
+                })
+                .ToListAsync(cancellationToken);
+
+            foreach (var row in rows)
+            {
+                appointments.Add(new MachineSchedulePlannerAppointment
+                {
+                    Id = $"external-capacity-{row.Uid}",
+                    Subject = "Reserved · other branch",
+                    Description = "This physical machine capacity is already reserved outside the current branch.",
+                    Location = $"external-capacity:{row.Uid}",
+                    Start = DateTime.SpecifyKind(row.StartDateTime, DateTimeKind.Unspecified),
+                    End = DateTime.SpecifyKind(row.EndDateTime, DateTimeKind.Unspecified),
+                    ResourceId = row.MachineCode,
+                    LabelId = MachineSchedulePlannerLabelIds.ReservedOtherBranch,
+                    IsMaintenance = false,
+                    IsExternalCapacity = true
+                });
+                externalMachineCodes.Add(row.MachineCode);
+            }
+        }
+    }
+
     private static async Task<MachineSchedulePlannerLookupPage> GetWorkCentreLookupPageAsync(
         AppDbContext db, string companyCode, string branchCode, string? search, int skip, int take, CancellationToken ct)
     {
@@ -892,7 +1296,11 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 && step.WorkOrder.CompanyCode == companyCode
                 && step.WorkOrder.BranchCode == branchCode
                 && (step.WorkOrder.Status == ProductionWorkOrderStatuses.Released
-                    || step.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress))
+                    || step.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress)
+                && step.Operations.Any(operation => operation.Machines.Any(machine =>
+                    machine.IsSelected
+                    && machine.PlannedStartDateTime != null
+                    && machine.PlannedCompletionDateTime != null)))
             .GroupBy(step => step.WorkCentreCode)
             .Select(group => new { Key = group.Key, Description = group.Max(step => step.WorkCentreDescription) });
         if (search is not null)
@@ -936,7 +1344,11 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 && operation.RouteStep.WorkOrder.CompanyCode == companyCode
                 && operation.RouteStep.WorkOrder.BranchCode == branchCode
                 && (operation.RouteStep.WorkOrder.Status == ProductionWorkOrderStatuses.Released
-                    || operation.RouteStep.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress))
+                    || operation.RouteStep.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress)
+                && operation.Machines.Any(machine =>
+                    machine.IsSelected
+                    && machine.PlannedStartDateTime != null
+                    && machine.PlannedCompletionDateTime != null))
             .GroupBy(operation => operation.OperationCode)
             .Select(group => new { Key = group.Key, Description = group.Max(operation => operation.OperationDescription) });
         if (search is not null)
@@ -955,7 +1367,11 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         var rows = db.ProductionWorkOrders.AsNoTracking()
             .Where(order => order.CompanyCode == companyCode && order.BranchCode == branchCode
                 && (order.Status == ProductionWorkOrderStatuses.Released
-                    || order.Status == ProductionWorkOrderStatuses.InProgress));
+                    || order.Status == ProductionWorkOrderStatuses.InProgress)
+                && order.Operations.Any(operation => operation.Machines.Any(machine =>
+                    machine.IsSelected
+                    && machine.PlannedStartDateTime != null
+                    && machine.PlannedCompletionDateTime != null)));
         if (search is not null)
             rows = rows.Where(order => order.WorkOrderNo.Contains(search)
                 || order.ProductCode.Contains(search)
@@ -963,14 +1379,30 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
 
         var total = await rows.CountAsync(ct);
         var items = await rows.OrderBy(order => order.WorkOrderNo).Skip(skip).Take(take)
-            .Select(order => new MachineSchedulePlannerLookupOption
+            .Select(order => new
+            {
+                order.WorkOrderNo,
+                order.ProductCode,
+                order.ProductDescription,
+                order.Status,
+                EarliestMachineStart = order.Operations
+                    .SelectMany(operation => operation.Machines)
+                    .Where(machine => machine.IsSelected && machine.PlannedStartDateTime != null)
+                    .Min(machine => (DateTime?)machine.PlannedStartDateTime)
+            })
+            .ToListAsync(ct);
+
+        return new MachineSchedulePlannerLookupPage
+        {
+            Items = items.Select(order => new MachineSchedulePlannerLookupOption
             {
                 Key = order.WorkOrderNo,
                 Description = order.ProductCode + " · " + order.Status
                     + (order.ProductDescription == null ? string.Empty : " · " + order.ProductDescription)
-            })
-            .ToListAsync(ct);
-        return new MachineSchedulePlannerLookupPage { Items = items, TotalCount = total };
+                    + (order.EarliestMachineStart is { } earliest ? $" · {earliest:dd MMM yyyy}" : string.Empty)
+            }).ToList(),
+            TotalCount = total
+        };
     }
 
     private static async Task<MachineSchedulePlannerLookupPage> GetProductLookupPageAsync(
@@ -979,7 +1411,11 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         var rows = db.ProductionWorkOrders.AsNoTracking()
             .Where(order => order.CompanyCode == companyCode && order.BranchCode == branchCode
                 && (order.Status == ProductionWorkOrderStatuses.Released
-                    || order.Status == ProductionWorkOrderStatuses.InProgress))
+                    || order.Status == ProductionWorkOrderStatuses.InProgress)
+                && order.Operations.Any(operation => operation.Machines.Any(machine =>
+                    machine.IsSelected
+                    && machine.PlannedStartDateTime != null
+                    && machine.PlannedCompletionDateTime != null)))
             .GroupBy(order => order.ProductCode)
             .Select(group => new { Key = group.Key, Description = group.Max(order => order.ProductDescription) });
         if (search is not null)
@@ -1008,8 +1444,21 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             + $"\nPlanned start: {job.PlannedStart:dd MMM yyyy HH:mm}"
             + $"\nPlanned completion: {job.PlannedCompletion:dd MMM yyyy HH:mm}"
             + $"\nWork Order status: {job.WorkOrderStatus}"
-            + $"\nExecution: {job.ExecutionStatus}"
-            + (job.LockReason is null ? string.Empty : $"\nRescheduling blocked: {job.LockReason}");
+            + $"\nExecution: {job.ExecutionStatus}";
+        if (job.HasActiveDemandContext)
+        {
+            details += $"\nDR: {job.DeliveryRequestNo}"
+                + $"\nDR required date: {job.RequiredDate:dd MMM yyyy}"
+                + $"\nPriority: {job.Priority ?? "—"}";
+            if (job.IsLateToRequiredDate)
+                details += $"\nLate vs DR date: {job.LateDays} calendar day(s)";
+        }
+        else
+        {
+            details += "\nDemand source: Manual / no active Delivery Request";
+        }
+        if (job.LockReason is not null)
+            details += $"\nRescheduling blocked: {job.LockReason}";
 
         return new MachineSchedulePlannerAppointment
         {
@@ -1020,7 +1469,11 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             Start = start,
             End = end,
             ResourceId = job.MachineCode,
-            LabelId = job.IsLocked ? 2 : 1,
+            LabelId = job.IsLocked
+                ? MachineSchedulePlannerLabelIds.ExecutionLocked
+                : job.IsLateToRequiredDate
+                    ? MachineSchedulePlannerLabelIds.LateToRequiredDate
+                    : MachineSchedulePlannerLabelIds.Scheduled,
             IsMaintenance = false
         };
     }
@@ -1065,11 +1518,17 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
 
         // Load all visible machine calendars in batches. The read model must not issue a query per bar
         // or per resource, and the only date span is the visible window plus overnight ownership.
+        // Every IN list is chunked so a 3,000-operation board never exceeds SQL parameter limits.
         var start = horizonStart.ToDateTime(TimeOnly.MinValue);
         var end = horizonEnd.ToDateTime(TimeOnly.MaxValue);
-        var calendars = await db.PrShiftCalendars.AsNoTracking()
-            .Where(x => x.CompCode == companyCode && machineCodes.Contains(x.MachineCode) && x.Dt >= start && x.Dt <= end)
-            .ToListAsync(ct);
+        var calendars = new List<PrShiftCalendar>();
+        foreach (var machineBatch in machineCodes.Chunk(800))
+        {
+            calendars.AddRange(await db.PrShiftCalendars.AsNoTracking()
+                .Where(x => x.CompCode == companyCode && machineBatch.Contains(x.MachineCode)
+                    && x.Dt >= start && x.Dt <= end)
+                .ToListAsync(ct));
+        }
         var groupCodes = calendars.Where(x => CalendarYearFingerprint.NormalizeDateCd(x.DateCd) == "W"
                 && !string.IsNullOrWhiteSpace(x.ShfGrpCd))
             .Select(x => x.ShfGrpCd!)
@@ -1078,16 +1537,25 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         var shiftsByGroup = new Dictionary<string, ShiftGroupSource>(StringComparer.OrdinalIgnoreCase);
         if (groupCodes.Count != 0)
         {
-            var groupRows = await db.PrShiftGroups.AsNoTracking()
-                .Where(x => x.CompCode == companyCode && groupCodes.Contains(x.ShfGrpCd))
-                .ToListAsync(ct);
+            var groupRows = new List<PrShiftGroup>();
+            foreach (var groupBatch in groupCodes.Chunk(800))
+            {
+                groupRows.AddRange(await db.PrShiftGroups.AsNoTracking()
+                    .Where(x => x.CompCode == companyCode && groupBatch.Contains(x.ShfGrpCd))
+                    .ToListAsync(ct));
+            }
             var shiftCodes = groupRows.Select(x => x.ShiftCd).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var shiftRows = await db.PrShifts.AsNoTracking()
-                .Where(x => x.CompCode == companyCode && shiftCodes.Contains(x.ShiftCd))
-                .ToListAsync(ct);
-            var breaks = await db.PrShiftBreaks.AsNoTracking()
-                .Where(x => x.CompCode == companyCode && shiftCodes.Contains(x.ShiftCd))
-                .ToListAsync(ct);
+            var shiftRows = new List<PrShift>();
+            var breaks = new List<PrShiftBreak>();
+            foreach (var shiftBatch in shiftCodes.Chunk(800))
+            {
+                shiftRows.AddRange(await db.PrShifts.AsNoTracking()
+                    .Where(x => x.CompCode == companyCode && shiftBatch.Contains(x.ShiftCd))
+                    .ToListAsync(ct));
+                breaks.AddRange(await db.PrShiftBreaks.AsNoTracking()
+                    .Where(x => x.CompCode == companyCode && shiftBatch.Contains(x.ShiftCd))
+                    .ToListAsync(ct));
+            }
             var shiftByCode = shiftRows.ToDictionary(x => x.ShiftCd, StringComparer.OrdinalIgnoreCase);
             var breaksByCode = breaks.GroupBy(x => x.ShiftCd, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => (IReadOnlyList<PrShiftBreak>)x.ToList(), StringComparer.OrdinalIgnoreCase);
@@ -1114,11 +1582,15 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
 
         var maintenanceStart = horizonStart.ToDateTime(TimeOnly.MinValue).AddDays(-1);
         var maintenanceEnd = horizonEnd.ToDateTime(TimeOnly.MaxValue).AddDays(1);
-        var preventives = await db.PrPreventives.AsNoTracking()
-            .Where(x => x.CompCode == companyCode && machineCodes.Contains(x.MachineCd)
-                && x.Status == PreventiveStatuses.Planned
-                && x.DownDt >= maintenanceStart && x.DownDt <= maintenanceEnd)
-            .ToListAsync(ct);
+        var preventives = new List<PrPreventive>();
+        foreach (var machineBatch in machineCodes.Chunk(800))
+        {
+            preventives.AddRange(await db.PrPreventives.AsNoTracking()
+                .Where(x => x.CompCode == companyCode && machineBatch.Contains(x.MachineCd)
+                    && x.Status == PreventiveStatuses.Planned
+                    && x.DownDt >= maintenanceStart && x.DownDt <= maintenanceEnd)
+                .ToListAsync(ct));
+        }
 
         var results = new Dictionary<string, ScheduleMachineData>(StringComparer.OrdinalIgnoreCase);
         foreach (var machineCode in machineCodes)
@@ -1193,4 +1665,34 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
 
     private static string Suffix(string? value) =>
         string.IsNullOrWhiteSpace(value) ? string.Empty : $" — {value}";
+
+    private sealed class MachineMasterRow
+    {
+        public string MachineCode { get; init; } = string.Empty;
+        public string? Description { get; init; }
+    }
+
+    private sealed class PreventiveRow
+    {
+        public long Uid { get; init; }
+        public string MachineCode { get; init; } = string.Empty;
+        public DateTime DownDt { get; init; }
+        public DateTime StartTm { get; init; }
+        public DateTime EndTm { get; init; }
+        public string? ReasonCd { get; init; }
+        public string? Remark { get; init; }
+    }
+
+    private sealed class MachineSchedulePlannerDemandRow
+    {
+        public long WorkOrderId { get; init; }
+        public bool IsActive { get; init; }
+        public long DeliveryRequestId { get; init; }
+        public string DeliveryRequestNo { get; init; } = string.Empty;
+        public string DeliveryRequestStatus { get; init; } = string.Empty;
+        public DateTime RequiredDate { get; init; }
+        public string? Priority { get; init; }
+        public string? ProjectCode { get; init; }
+        public string? WarehouseCode { get; init; }
+    }
 }

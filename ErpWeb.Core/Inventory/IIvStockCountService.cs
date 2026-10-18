@@ -183,6 +183,12 @@ public sealed class IvStockCountLineDto
     public string? CountedBy { get; init; }
     public DateTime? CountedOn { get; init; }
 
+    /// <summary>Immutable V2 cost authority captured at the first count POST, when present.</summary>
+    public IvStockCountCostBasisDto? FrozenCostBasis { get; init; }
+
+    /// <summary>The active V2 count correction leaf, when this sheet has replay generations.</summary>
+    public IvStockCountActiveAdjustmentDto? ActiveAdjustment { get; init; }
+
     /// <summary>Live quantity for the count / preview screens (not part of the stored evidence).</summary>
     public decimal? LiveQty { get; init; }
 
@@ -197,6 +203,21 @@ public sealed class IvStockCountLineDto
 
     public byte[] RowVersion { get; init; } = [];
 }
+
+public sealed record IvStockCountCostBasisDto(
+    string Kind,
+    decimal UnitCost,
+    long? StandardCostRevisionId,
+    long? Watermark,
+    string? EvidenceHash,
+    string? Reason,
+    string? ApprovedBy,
+    DateTime? ApprovedAtUtc);
+
+public sealed record IvStockCountActiveAdjustmentDto(
+    decimal SignedQuantity,
+    int? BatchNo,
+    bool IsRemoval);
 
 public sealed class IvStockCountSaveRequest
 {

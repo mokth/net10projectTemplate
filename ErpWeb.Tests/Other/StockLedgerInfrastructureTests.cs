@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.StockLedger;
@@ -9,6 +10,7 @@ using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Moq;
 
 namespace ErpWeb.Tests.Other;
 [Trait(TestCategories.Name, TestCategories.Shared)]
@@ -151,6 +153,141 @@ public sealed class StockLedgerInfrastructureTests : IAsyncDisposable
             db, "DEMO", "HQ", header.Id, [basis]);
         Assert.Equal(first.RequestId, changed.RequestId);
         Assert.NotEqual(first.Evidence.RequestFingerprint, changed.Evidence.RequestFingerprint);
+    }
+
+    [Fact]
+    public async Task Count_cost_approval_proposals_require_permission_and_cover_positive_lines()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var now = new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc);
+        db.StockCostPolicyRevisions.Add(new StockCostPolicyRevision
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            CostMethod = StockCostMethods.MovingAverage,
+            EffectiveFrom = new DateTime(2026, 10, 1),
+            Status = StockCostPolicyStatuses.Active,
+            ApprovedBy = "TEST", ApprovedAtUtc = now,
+            CreatedAtUtc = now, CreatedBy = "TEST"
+        });
+        var header = new IvStockCountHdr
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "CC-APPROVAL",
+            CountDate = new DateTime(2026, 10, 10), Status = IvStockCountStatuses.Counted
+        };
+        var manual = new IvStockCountLine
+        {
+            Header = header, LineNumber = 1, BalLocId = 7,
+            ICode = "RM1", IStatus = "ACTIVE", PhysicalQty = 4m
+        };
+        var zero = new IvStockCountLine
+        {
+            Header = header, LineNumber = 2, BalLocId = 8,
+            ICode = "RM2", IStatus = "ACTIVE", PhysicalQty = 1m
+        };
+        var uncounted = new IvStockCountLine
+        {
+            Header = header, LineNumber = 3, BalLocId = 9,
+            ICode = "RM3", IStatus = "ACTIVE", PhysicalQty = 0m
+        };
+        db.IvStockCountLines.AddRange(manual, zero, uncounted);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var approvals = new[]
+        {
+            new StockCountCostApprovalRequest(manual.Id, "MANUAL_APPROVED", 1.234567m, "Count manager approved"),
+            new StockCountCostApprovalRequest(zero.Id, "ZERO_COST_APPROVED", 0m, "Sample stock at no cost")
+        };
+        var access = new Mock<IAccessRightService>();
+        var denied = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockCountCostBasisProposalFactory.CreateAsync(db, access.Object,
+                "DEMO", "HQ", header.Id, approvals, "manager", now));
+        Assert.Equal(StockLedgerErrorCodes.ValuationRequired, denied.Error.Code);
+        access.Setup(a => a.CanAsync(MenuCodes.InventoryStockCount,
+                PermissionCodes.PriceOverride, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var missingCost = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockCountCostBasisProposalFactory.CreateAsync(db, access.Object,
+                "DEMO", "HQ", header.Id, [approvals[0]], "manager", now));
+        Assert.Equal(StockLedgerErrorCodes.ValuationRequired, missingCost.Error.Code);
+
+        var bases = await StockCountCostBasisProposalFactory.CreateAsync(db,
+            access.Object, "DEMO", "HQ", header.Id, approvals, "manager", now);
+        Assert.Equal(2, bases.Count);
+        Assert.Equal(1.234567m, bases.Single(b => b.StockCountLineId == manual.Id).FrozenFallbackUnitCost);
+        Assert.Equal(StockCountCostBasisKinds.ZeroCostApproved,
+            bases.Single(b => b.StockCountLineId == zero.Id).CostBasisKind);
+        Assert.All(bases, b => Assert.Equal("manager", b.CostApprovedBy));
+        Assert.Empty(db.ChangeTracker.Entries<StockCountCostBasis>());
+        var command = await StockCountAnchorCommandFactory.CreateAsync(
+            db, "DEMO", "HQ", header.Id, bases);
+        Assert.Equal("IV_STOCK_COUNT", command.SourceDocumentType);
+
+        var invalid = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockCountCostBasisProposalFactory.CreateAsync(db, access.Object,
+                "DEMO", "HQ", header.Id,
+                [new StockCountCostApprovalRequest(uncounted.Id, "ZERO_COST_APPROVED", 0m, "Invalid line")],
+                "manager", now));
+        Assert.Equal(StockLedgerErrorCodes.ValuationRequired, invalid.Error.Code);
+        var imprecise = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockCountCostBasisProposalFactory.CreateAsync(db, access.Object,
+                "DEMO", "HQ", header.Id,
+                [new StockCountCostApprovalRequest(manual.Id, "MANUAL_APPROVED", 1.2345678m, "Too precise"),
+                 approvals[1]], "manager", now));
+        Assert.Equal(StockLedgerErrorCodes.ValuationRequired, imprecise.Error.Code);
+    }
+
+    [Fact]
+    public async Task Count_cost_proposal_uses_event_date_standard_revision_without_override()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var now = new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc);
+        db.StockCostPolicyRevisions.Add(new StockCostPolicyRevision
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            CostMethod = StockCostMethods.Standard,
+            EffectiveFrom = new DateTime(2026, 10, 1),
+            Status = StockCostPolicyStatuses.Active,
+            ApprovedBy = "TEST", ApprovedAtUtc = now,
+            CreatedAtUtc = now, CreatedBy = "TEST"
+        });
+        var revision = new ItemStandardCostRevision
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", ItemCode = "RM1",
+            EffectiveFrom = new DateTime(2026, 10, 1),
+            MaterialCost = 2.123456m, TotalStandardCost = 2.123456m,
+            Revision = 1, ApprovedBy = "TEST", ApprovedAtUtc = now,
+            CreatedAtUtc = now, CreatedBy = "TEST"
+        };
+        db.ItemStandardCostRevisions.Add(revision);
+        var header = new IvStockCountHdr
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "CC-STANDARD-BASIS",
+            CountDate = new DateTime(2026, 10, 10), Status = IvStockCountStatuses.Counted
+        };
+        var line = new IvStockCountLine
+        {
+            Header = header, LineNumber = 1, BalLocId = 7,
+            ICode = "RM1", IStatus = "ACTIVE", PhysicalQty = 4m
+        };
+        db.IvStockCountLines.Add(line);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var access = new Mock<IAccessRightService>(MockBehavior.Strict);
+        var bases = await StockCountCostBasisProposalFactory.CreateAsync(db,
+            access.Object, "DEMO", "HQ", header.Id, [], "unused", now);
+        var basis = Assert.Single(bases);
+        Assert.Equal(StockCountCostBasisKinds.StandardRevision, basis.CostBasisKind);
+        Assert.Equal(revision.Id, basis.StandardCostRevisionId);
+        Assert.Equal(2.123456m, basis.FrozenFallbackUnitCost);
+        Assert.Null(basis.CostApprovedBy);
+        Assert.Empty(db.ChangeTracker.Entries<StockCountCostBasis>());
+
+        var command = await StockCountAnchorCommandFactory.CreateAsync(
+            db, "DEMO", "HQ", header.Id, bases);
+        Assert.Equal("IV_STOCK_COUNT", command.SourceDocumentType);
     }
 
     [Fact]

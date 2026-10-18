@@ -4,6 +4,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -802,6 +803,45 @@ public class IvStockCountServiceTests : IAsyncLifetime
         var stored = await db.IvStockCountLines.SingleAsync();
         Assert.Equal(80m, stored.PhysicalQty);
         Assert.Equal(100m, stored.SystemQty);
+    }
+
+    [Fact]
+    public async Task Get_exposes_frozen_count_cost_without_using_snapshot_display_price()
+    {
+        await SeedBalLocAsync("A100", 100m);
+        var svc = CreateService();
+        var sheet = await NewSheetAsync(svc, Scope());
+        var line = Assert.Single(sheet.Lines);
+        Assert.True((await svc.SaveCountsAsync(sheet.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = 80m }],
+            null)).Succeeded);
+        Assert.True((await svc.PostAsync(sheet.Id)).Succeeded);
+
+        var approvedAt = new DateTime(2026, 9, 24, 8, 0, 0, DateTimeKind.Utc);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.StockCountCostBases.Add(new StockCountCostBasis
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ",
+                StockCountLineId = line.Id,
+                FrozenFallbackUnitCost = 1.234567m,
+                CostBasisKind = StockCountCostBasisKinds.ManualApproved,
+                CostEvidenceType = StockCountCostBasisKinds.ManualApproved,
+                CostOverrideReason = "Count manager approved",
+                CostApprovedBy = "manager", CostApprovedAtUtc = approvedAt,
+                CreatedAtUtc = approvedAt
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var loaded = await LoadAsync(svc, sheet.CountNo);
+        var evidence = Assert.Single(loaded.Lines).FrozenCostBasis;
+        Assert.NotNull(evidence);
+        Assert.Equal(1.234567m, evidence.UnitCost);
+        Assert.Equal(StockCountCostBasisKinds.ManualApproved, evidence.Kind);
+        Assert.Equal("Count manager approved", evidence.Reason);
+        Assert.Equal("manager", evidence.ApprovedBy);
+        Assert.Null(Assert.Single(loaded.Lines).ActiveAdjustment);
     }
 
     // ── Recover (D8) ─────────────────────────────────────────────────────────────────────────────

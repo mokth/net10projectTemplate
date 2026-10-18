@@ -27,6 +27,26 @@ public sealed class StockReplayStandardWritePermit
             p => p.BalLocId, p => p.Projection.FinalQuantity);
     }
 
+    internal StockReplayStandardWritePermit(
+        StockPostingContext context, string itemCode, string planHash,
+        decimal currentQuantity, decimal currentValue,
+        decimal finalQuantity, decimal finalValue,
+        ImmutableDictionary<int, decimal> changedPiles)
+    {
+        CompanyCode = context.CompanyCode;
+        BranchCode = context.BranchCode;
+        LedgerEpochId = context.Epoch.Id;
+        RootPostingId = context.Posting.Id;
+        RootPostingSequence = context.Posting.PostingSequence;
+        ItemCode = itemCode;
+        PlanHash = planHash;
+        CurrentQuantity = currentQuantity;
+        CurrentValue = currentValue;
+        FinalQuantity = finalQuantity;
+        FinalValue = finalValue;
+        ChangedPiles = changedPiles;
+    }
+
     public string CompanyCode { get; }
     public string BranchCode { get; }
     public long LedgerEpochId { get; }

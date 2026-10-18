@@ -209,8 +209,8 @@ public static class StockReplayStandardCountSheetPostingWriter
                 ? physical.Candidate.Key.EffectiveAt
                 : physical.LaterEvents.MaxBy(e => e.Key)!.Key.EffectiveAt;
         }
-        db.StockCountCostBases.AddRange(bases);
-        await db.SaveChangesAsync(cancellationToken);
+        await StockCountRepostBasisWriter.PersistOrVerifyAsync(db,
+            countPermit, bases, cancellationToken);
         var history = await StockCountInitialHistoryWriter.AppendAsync(
             context, countPermit, numbers, cancellationToken);
         var facts = new List<StockValuationFact>();

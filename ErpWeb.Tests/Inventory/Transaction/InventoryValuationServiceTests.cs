@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Menus;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -6,6 +7,7 @@ using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace ErpWeb.Tests.Inventory.Transaction;
 
@@ -346,6 +348,42 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
             StockCountAnchorCommandFactory.CreateAsync(
                 db, "DEMO", "HQ", line.StockCountId, [basis]));
         Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, forged.Error.Code);
+    }
+
+    [Fact]
+    public async Task Count_basis_proposal_captures_sealed_WAC_at_original_watermark()
+    {
+        await PostReceiptAsync(2m, 1m, new DateTime(2026, 10, 1, 8, 0, 0));
+        await PostReceiptAsync(1m, 2m, new DateTime(2026, 10, 2, 8, 0, 0));
+        await using var db = await _factory.CreateDbContextAsync();
+        var countDate = new DateTime(2026, 10, 3);
+        var line = new IvStockCountLine
+        {
+            Header = new IvStockCountHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "CC-WAC-PROPOSAL",
+                CountDate = countDate, Status = IvStockCountStatuses.Counted
+            },
+            LineNumber = 1, BalLocId = (await BalanceIdsAsync())[0],
+            ICode = "ITEM-1", IStatus = "ACTIVE", PhysicalQty = 3m
+        };
+        db.IvStockCountLines.Add(line);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var access = new Mock<IAccessRightService>(MockBehavior.Strict);
+        var bases = await StockCountCostBasisProposalFactory.CreateAsync(db,
+            access.Object, "DEMO", "HQ", line.StockCountId, [], "unused", DateTime.UtcNow);
+        var basis = Assert.Single(bases);
+        Assert.Equal(StockCountCostBasisKinds.LedgerWac, basis.CostBasisKind);
+        Assert.Equal(1.333333m, basis.FrozenFallbackUnitCost);
+        Assert.Equal(2, basis.CostBasisWatermark);
+        Assert.Equal(64, basis.CostBasisHash!.Length);
+        Assert.Null(basis.CostApprovedBy);
+        Assert.Empty(db.ChangeTracker.Entries<StockCountCostBasis>());
+        var command = await StockCountAnchorCommandFactory.CreateAsync(
+            db, "DEMO", "HQ", line.StockCountId, bases);
+        Assert.Equal("IV_STOCK_COUNT", command.SourceDocumentType);
     }
 
     [Fact]

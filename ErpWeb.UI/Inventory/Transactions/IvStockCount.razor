@@ -275,6 +275,21 @@
                             <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.Variance)" Caption="Variance" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.Direction)" Caption="Direction" Width="100px" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.StaleText)" Caption="Changed?" Width="110px" />
+                            @if (Lines.Any(l => l.FrozenCostBasis is not null))
+                            {
+                                <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.FrozenCostText)" Caption="Frozen cost basis" Width="260px">
+                                    <CellDisplayTemplate>
+                                        @{
+                                            var line = (IvStockCountLineVm)context.DataItem;
+                                        }
+                                        <span title="@line.FrozenCostEvidence">@line.FrozenCostText</span>
+                                    </CellDisplayTemplate>
+                                </DxGridDataColumn>
+                            }
+                            @if (Lines.Any(l => l.ActiveAdjustment is not null))
+                            {
+                                <DxGridDataColumn FieldName="@nameof(IvStockCountLineVm.ActiveAdjustmentText)" Caption="Active V2 adjustment" Width="175px" />
+                            }
                         </Columns>
                     </DxGrid>
                 }

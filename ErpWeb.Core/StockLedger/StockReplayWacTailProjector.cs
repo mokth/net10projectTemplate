@@ -10,6 +10,122 @@ namespace ErpWeb.Core.StockLedger;
 public static class StockReplayWacTailProjector
 {
     /// <summary>
+    /// Removes every count event for one item together, then replays the
+    /// unchanged physical descendants through the shared WAC pool.
+    /// </summary>
+    public static StockReplayWacRemovalResult SimulateCountSheetRemoval(
+        StockReplayWacFinancialTail tail,
+        IReadOnlyCollection<StockReplayPhysicalRemovalPlan> physicalPlans,
+        IReadOnlyCollection<StockReplayWacEvent> removedEvents)
+    {
+        ArgumentNullException.ThrowIfNull(tail);
+        ArgumentNullException.ThrowIfNull(physicalPlans);
+        ArgumentNullException.ThrowIfNull(removedEvents);
+        if (physicalPlans.Count == 0
+            || physicalPlans.Count != removedEvents.Count
+            || tail.PhysicalByPile.Count != tail.CurrentQuantityByPile.Count
+            || tail.CurrentQuantityByPile.Sum(p => p.Value) != tail.CurrentQuantity)
+            throw Corrupt("The count removal has incomplete item-level WAC evidence.");
+
+        var plans = physicalPlans.OrderBy(p => p.RemovedActiveEvent.Key).ToArray();
+        var first = plans[0];
+        var firstKey = first.RemovedActiveEvent.Key;
+        var lastKey = plans[^1].RemovedActiveEvent.Key;
+        var byPile = new Dictionary<int, StockReplayPhysicalRemovalPlan>();
+        foreach (var plan in plans)
+        {
+            var key = plan.RemovedActiveEvent.Key;
+            if (plan.CompanyCode != first.CompanyCode
+                || plan.BranchCode != first.BranchCode
+                || plan.LedgerEpochId != first.LedgerEpochId
+                || plan.BranchWatermark != first.BranchWatermark
+                || key.ClassPriority != StockReplayEventKey.CountClass
+                || key.EffectiveAt != firstKey.EffectiveAt
+                || key.OriginalPostingSequence
+                    != firstKey.OriginalPostingSequence
+                || key.AttachedSuborder != 0
+                || key.EffectiveAt != StockReplayEventKey.CountEndOfDay(
+                    key.EffectiveAt)
+                || plan.RemovedActiveEvent.EventId >= 0
+                || plan.RemovedActiveEvent.AbsoluteCountQty is null
+                || !byPile.TryAdd(plan.BalLocId, plan))
+                throw Corrupt("The removed count lines do not share one item anchor.");
+        }
+        var removedById = new Dictionary<long, StockReplayWacEvent>();
+        foreach (var removed in removedEvents)
+            if (!removedById.TryAdd(removed.EventId, removed))
+                throw Corrupt("A WAC count removal repeats an event identity.");
+        if (tail.LaterEvents.Count(e => removedById.ContainsKey(e.EventId))
+                != plans.Length
+            || tail.LaterEvents.Any(e => !removedById.ContainsKey(e.EventId)
+                && e.Key.CompareTo(lastKey) <= 0))
+            throw Corrupt("The WAC item tail overlaps the removed count sheet.");
+
+        var physicalSteps = new Dictionary<long, List<StockReplayPhysicalStep>>();
+        var boundRemoved = new List<StockReplayWacEvent>(plans.Length);
+        decimal historicalQuantity = 0m;
+        decimal finalQuantity = 0m;
+        foreach (var pile in tail.PhysicalByPile)
+        {
+            if (!tail.CurrentQuantityByPile.TryGetValue(pile.Key,
+                    out var current))
+                throw Corrupt($"Physical pile {pile.Key} has no current quantity.");
+            StockReplayPhysicalTailResult projection;
+            if (byPile.TryGetValue(pile.Key, out var plan))
+            {
+                if (!removedById.TryGetValue(
+                        plan.RemovedActiveEvent.EventId, out var removed)
+                    || removed.Key != plan.RemovedActiveEvent.Key
+                    || removed.OldSignedQuantity
+                        != plan.RemovedActiveEvent.SignedDelta
+                    || removed.AbsoluteCountQty
+                        != plan.RemovedActiveEvent.AbsoluteCountQty
+                    || plan.CurrentQuantity != current
+                    || pile.Value.Count != plan.LaterEvents.Count + 1
+                    || pile.Value[0] != plan.RemovedActiveEvent
+                    || !pile.Value.Skip(1).SequenceEqual(plan.LaterEvents))
+                    throw Corrupt($"Count event on pile {pile.Key} differs from its WAC tail.");
+                boundRemoved.Add(
+                    StockReplayWacCountEventFactory.BindProjectedPhysicalStep(
+                        removed, new StockReplayPhysicalStep(
+                            removed.EventId,
+                            plan.Projection.HistoricalQuantityBeforeRemovedEvent,
+                            plan.RemovedActiveEvent.SignedDelta,
+                            plan.RemovedActiveEvent.AbsoluteCountQty!.Value)));
+                projection = new StockReplayPhysicalTailResult(
+                    plan.Projection.HistoricalQuantityBeforeRemovedEvent,
+                    plan.Projection.LaterSteps,
+                    plan.Projection.FinalQuantity);
+            }
+            else
+                projection = StockReplayPhysicalSimulator.ProjectUnchangedTail(
+                    current, lastKey, pile.Value);
+            historicalQuantity = IvQty.Round(historicalQuantity
+                + projection.HistoricalQuantityBeforeTail);
+            finalQuantity = IvQty.Round(finalQuantity
+                + projection.FinalQuantity);
+            foreach (var step in projection.LaterSteps)
+            {
+                if (!physicalSteps.TryGetValue(step.EventId, out var steps))
+                    physicalSteps.Add(step.EventId, steps = []);
+                steps.Add(step);
+            }
+        }
+        if (byPile.Count != plans.Length)
+            throw Corrupt("A counted pile is missing from the WAC item tail.");
+        var later = tail.LaterEvents.Where(e =>
+            !removedById.ContainsKey(e.EventId)).ToArray();
+        var bound = BindFinancialEvents(later, physicalSteps);
+        var projected = StockReplayWacSimulator.SimulateCountSheetRemoval(
+            tail.CurrentQuantity, tail.CurrentValue, boundRemoved, bound);
+        if (projected.HistoricalQuantityBeforeRemovedEvent
+                != historicalQuantity
+            || projected.FinalQuantity != finalQuantity)
+            throw Corrupt("The removed WAC count pool does not reconcile to its piles.");
+        return projected;
+    }
+
+    /// <summary>
     /// Projects all counted piles of one item through one shared WAC pool.
     /// Count candidates are applied in their canonical line-key order, with
     /// later sealed movements bound to each pile's projected physical step.

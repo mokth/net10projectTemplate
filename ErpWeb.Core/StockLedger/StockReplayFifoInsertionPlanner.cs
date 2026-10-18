@@ -1,3 +1,4 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +20,52 @@ public sealed record StockReplayFifoInsertionPlan(
 /// </summary>
 public static class StockReplayFifoInsertionPlanner
 {
+    public static async Task<StockReplayFifoInsertionPlan> BuildMiscReceiptAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        int batchNo, StockReplayPhysicalPlan physicalPlan,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(physicalPlan);
+        var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
+            db, companyCode, branchCode, batchNo, physicalPlan.BalLocId,
+            cancellationToken);
+        if (physicalPlan.Candidate.SignedDelta != authority.Quantity
+            || physicalPlan.Candidate.Key.EffectiveAt != authority.EffectiveAt)
+            throw Invalid("The physical MR candidate differs from its approved cost line.");
+        return await BuildAsync(db, companyCode, branchCode,
+            authority.ItemCode, physicalPlan, authority.Value,
+            authority.BaseUom, cancellationToken);
+    }
+
+    public static async Task<StockReplayFifoWritePermit>
+        PrepareMiscReceiptWithinRootAsync(
+            StockPostingContext context, StockReplayFifoInsertionPlan plan,
+            int batchNo, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(plan);
+        var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
+            context.Db, context.CompanyCode, context.BranchCode,
+            batchNo, plan.PhysicalPlan.BalLocId, cancellationToken);
+        if (context.Posting.SourceModule != "INVENTORY"
+            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || context.Posting.PostingRole != "PRIMARY"
+            || context.Posting.SourceDocumentId != authority.BatchId.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+            || context.Posting.SourceDocumentNo != batchNo.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+            || context.Posting.DocumentRevision != authority.DocumentRevision
+            || plan.ItemCode != authority.ItemCode
+            || plan.PhysicalPlan.Candidate.SignedDelta != authority.Quantity
+            || plan.PhysicalPlan.Candidate.Key.EffectiveAt != authority.EffectiveAt
+            || plan.ReceiptValue != authority.Value
+            || plan.ReceiptBaseUom != authority.BaseUom)
+            throw Invalid("The prepared FIFO MR root lost its approved cost authority.");
+        await StockReplayFifoIssueRepricingWriter.ValidateFifoPolicyAsync(
+            context, plan, cancellationToken);
+        return await PrepareWithinRootAsync(context, plan, cancellationToken);
+    }
+
     public static async Task<StockReplayFifoWritePermit> PrepareWithinRootAsync(
         StockPostingContext context, StockReplayFifoInsertionPlan plan,
         CancellationToken cancellationToken = default)

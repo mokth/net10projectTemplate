@@ -1,4 +1,6 @@
 using ErpWeb.Model.Data;
+using ErpWeb.Core.StockLedger;
+using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Inventory;
@@ -16,6 +18,17 @@ public sealed class InventoryAsOfStockService : IInventoryAsOfStockService
     {
         if (balanceIds.Count == 0)
             return new Dictionary<int, InventoryAsOfStock>();
+
+        var hasV2Epoch = await db.StockLedgerEpochs.AsNoTracking()
+            .AnyAsync(e => e.CompanyCode == companyCode
+                && e.BranchCode == branchCode
+                && e.Status == StockLedgerEpochStatuses.Active
+                && e.Version == 2 && e.EffectiveFrom <= asOf,
+                cancellationToken);
+        if (hasV2Epoch)
+            return await StockReplayPhysicalAsOfReader.ReadAsync(db,
+                companyCode, branchCode, balanceIds, asOf,
+                cancellationToken);
 
         var ids = balanceIds.Distinct().ToArray();
         var current = await db.IvBalLocs.AsNoTracking()

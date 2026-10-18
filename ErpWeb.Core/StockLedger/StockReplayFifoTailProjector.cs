@@ -42,6 +42,20 @@ public static class StockReplayFifoTailProjector
         return Project(snapshot, candidateKey, candidateQuantity, null);
     }
 
+    public static StockReplayFifoTailProjection InsertTransfer(
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayEventKey candidateKey, decimal candidateQuantity)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (candidateKey.ClassPriority != StockReplayEventKey.OrdinaryClass
+            || candidateKey.OriginalPostingSequence <= 0
+            || candidateQuantity <= 0m
+            || StockLedgerPrecision.Quantity(candidateQuantity) != candidateQuantity)
+            throw Invalid("FIFO transfer insertion requires a positive ordinary event.");
+        return Project(snapshot, candidateKey, candidateQuantity, null,
+            candidateDepletesPool: false);
+    }
+
     public static StockReplayFifoTailProjection InsertReceipt(
         StockReplayFifoActiveLayerSnapshot snapshot,
         StockReplayEventKey candidateKey, decimal candidateQuantity,
@@ -115,6 +129,8 @@ public static class StockReplayFifoTailProjector
             && e.Consumptions is not null);
         if (target?.Consumptions is not { } removed)
             throw Invalid("FIFO issue removal needs one active canonical issue.");
+        if (!removed[0].DepletesPool)
+            throw Invalid("A FIFO transfer requires paired physical removal.");
         ValidateBaseline(snapshot, before, events);
         var projected = Replay(before.Layers,
             events.Where(e => e != target), 0m);
@@ -140,10 +156,41 @@ public static class StockReplayFifoTailProjector
             finalQuantity, finalValue, null, IsRemoval: true);
     }
 
+    public static StockReplayFifoTailProjection RemoveTransfer(
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayEventKey transferKey)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var before = StockReplayFifoLayerRewinder.RewindBefore(
+            snapshot, transferKey);
+        var events = BuildEvents(before);
+        var target = events.SingleOrDefault(e => e.Key == transferKey
+            && e.Consumptions is not null);
+        if (target?.Consumptions is not { } removed
+            || removed.Count == 0 || removed[0].DepletesPool)
+            throw Invalid("FIFO transfer removal needs one active nondepleting allocation.");
+        ValidateBaseline(snapshot, before, events);
+        var projected = Replay(before.Layers,
+            events.Where(e => e != target), 0m);
+        var finalQuantity = StockLedgerPrecision.Quantity(
+            projected.Layers.Sum(l => l.RemainingQuantity));
+        var finalValue = StockLedgerPrecision.Money(
+            projected.Layers.Sum(l => l.RemainingValue));
+        if (finalQuantity != snapshot.CurrentQuantity
+            || finalValue != snapshot.CurrentValue
+            || projected.Issues.Any(i => i.DepletesPool
+                && i.Value != StockLedgerPrecision.Money(
+                    i.PreviousConsumptions.Sum(c => c.Value))))
+            throw Invalid("FIFO transfer removal changed the item pool.");
+        return new(before, projected.Issues, projected.Layers,
+            finalQuantity, finalValue, null, IsRemoval: true);
+    }
+
     private static StockReplayFifoTailProjection Project(
         StockReplayFifoActiveLayerSnapshot snapshot,
         StockReplayEventKey candidateKey, decimal candidateQuantity,
-        StockReplayFifoLayerPosition? candidateReceipt)
+        StockReplayFifoLayerPosition? candidateReceipt,
+        bool candidateDepletesPool = true)
     {
         var before = StockReplayFifoLayerRewinder.RewindBefore(
             snapshot, candidateKey);
@@ -154,15 +201,16 @@ public static class StockReplayFifoTailProjector
         ValidateBaseline(snapshot, before,
             events.Where(e => !e.Candidate));
 
-        var projected = Replay(before.Layers, events, candidateQuantity);
+        var projected = Replay(before.Layers, events, candidateQuantity,
+            candidateDepletesPool);
         var finalQuantity = StockLedgerPrecision.Quantity(
             projected.Layers.Sum(l => l.RemainingQuantity));
         var finalValue = StockLedgerPrecision.Money(
             projected.Layers.Sum(l => l.RemainingValue));
         if (finalQuantity != StockLedgerPrecision.Quantity(
                 snapshot.CurrentQuantity
-                + (candidateReceipt is null ? -candidateQuantity
-                    : candidateQuantity)))
+                + (candidateReceipt is not null ? candidateQuantity
+                    : candidateDepletesPool ? -candidateQuantity : 0m)))
             throw Invalid("FIFO insertion projection does not conserve final quantity.");
         var candidateIssueValue = projected.Issues
             .Where(i => i.IsCandidate).Sum(i => i.Value);
@@ -172,7 +220,8 @@ public static class StockReplayFifoTailProjector
         if (finalValue != StockLedgerPrecision.Money(
                 snapshot.CurrentValue
                 + (candidateReceipt?.OriginalValue ?? 0m)
-                - candidateIssueValue - changedLaterIssueValue))
+                - (candidateDepletesPool ? candidateIssueValue : 0m)
+                - changedLaterIssueValue))
             throw Invalid("FIFO insertion projection does not conserve final value.");
         return new(before, projected.Issues, projected.Layers,
             finalQuantity, finalValue, candidateReceipt);
@@ -221,7 +270,8 @@ public static class StockReplayFifoTailProjector
     private static (List<StockReplayFifoLayerPosition> Layers,
         List<StockReplayFifoProjectedIssue> Issues) Replay(
         IReadOnlyList<StockReplayFifoLayerPosition> opening,
-        IEnumerable<TailEvent> events, decimal candidateQuantity)
+        IEnumerable<TailEvent> events, decimal candidateQuantity,
+        bool candidateDepletesPool = true)
     {
         var layers = opening.ToList();
         var projectedIssues = new List<StockReplayFifoProjectedIssue>();
@@ -237,7 +287,8 @@ public static class StockReplayFifoTailProjector
             var previous = @event.Consumptions ?? [];
             var quantity = @event.Candidate ? candidateQuantity
                 : StockLedgerPrecision.Quantity(previous.Sum(c => c.Quantity));
-            var depletes = @event.Candidate || previous[0].DepletesPool;
+            var depletes = @event.Candidate
+                ? candidateDepletesPool : previous[0].DepletesPool;
             var allocation = StockReplayFifoLayerAllocator.AllocateIssue(
                 layers, @event.Key, quantity);
             projectedIssues.Add(new(@event.Key, @event.Candidate,
