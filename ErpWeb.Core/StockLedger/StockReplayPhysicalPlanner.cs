@@ -542,7 +542,8 @@ public static class StockReplayPhysicalPlanner
             && plan.Candidate.AbsoluteCountQty is null;
         var initialCount = plan.Candidate.Key.ClassPriority
             == StockReplayEventKey.CountClass
-            && plan.CountStatus == IvStockCountStatuses.Counted
+            && plan.CountStatus is
+                (IvStockCountStatuses.Counted or IvStockCountStatuses.RolledBack)
             && plan.CountLineId is > 0
             && plan.Candidate.AbsoluteCountQty is not null;
         if (!ordinary && !initialCount)

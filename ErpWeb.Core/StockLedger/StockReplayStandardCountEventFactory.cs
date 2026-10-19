@@ -122,7 +122,7 @@ public static class StockReplayStandardCountEventFactory
         ArgumentNullException.ThrowIfNull(revision);
         var candidate = physicalPlan.Candidate;
         var step = physicalPlan.Projection.Candidate;
-        if (physicalPlan.CountStatus != "COUNTED"
+        if (physicalPlan.CountStatus is not ("COUNTED" or "ROLLED_BACK")
             || physicalPlan.CountLineId is not int lineId || lineId <= 0
             || physicalPlan.CountHeaderId is not > 0
             || candidate.EventId != -long.MaxValue + lineId

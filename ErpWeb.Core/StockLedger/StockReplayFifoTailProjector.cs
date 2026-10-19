@@ -1,3 +1,4 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger.Costing;
 
 namespace ErpWeb.Core.StockLedger;
@@ -17,7 +18,7 @@ public sealed record StockReplayFifoTailProjection(
     bool IsRemoval = false);
 
 /// <summary>
-/// Pure insertion/removal projection for ordinary FIFO issues and receipts. Reprices
+/// Pure insertion/removal projection for FIFO issues, receipts, and count adjustments. Reprices
 /// every later active issue and transfer OUT allocation in canonical order.
 /// It does not write facts, layers, cost state, or dependent module amounts.
 /// </summary>
@@ -83,6 +84,58 @@ public static class StockReplayFifoTailProjector
             "PROJECTED", candidateKey);
         return Project(snapshot, candidateKey, candidateQuantity,
             candidateLayer);
+    }
+
+    public static StockReplayFifoTailProjection InsertCountAdjustment(
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayEventKey countKey, decimal signedAdjustmentQuantity,
+        decimal? frozenFallbackUnitCost, string baseUom)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (countKey.ClassPriority != StockReplayEventKey.CountClass
+            || countKey.EffectiveAt != StockReplayEventKey.CountEndOfDay(countKey.EffectiveAt)
+            || countKey.OriginalPostingSequence <= 0
+            || string.IsNullOrWhiteSpace(countKey.LineIdentity)
+            || countKey.AttachedSuborder != 0
+            || IvQty.Round(signedAdjustmentQuantity)
+                != signedAdjustmentQuantity
+            || frozenFallbackUnitCost is < 0m
+            || frozenFallbackUnitCost is { } fallback
+                && StockLedgerPrecision.Money(fallback) != fallback
+            || string.IsNullOrWhiteSpace(baseUom)
+            || snapshot.Layers.Any(l => l.BaseUom != baseUom)
+            || snapshot.Layers.Any(l => l.LayerId == long.MaxValue
+                || l.OriginFactId == long.MaxValue))
+            throw Invalid("FIFO count needs an exact end-of-day key, quantity, UOM and approved fallback.");
+
+        var before = StockReplayFifoLayerRewinder.RewindBefore(snapshot, countKey);
+        if (signedAdjustmentQuantity > 0m)
+        {
+            if (frozenFallbackUnitCost is null)
+                throw Invalid("Positive FIFO count adjustment has no frozen cost basis.");
+            var unitCost = before.Quantity > 0m
+                ? StockLedgerPrecision.Money(before.Value / before.Quantity)
+                : frozenFallbackUnitCost.Value;
+            var value = StockLedgerPrecision.Money(
+                signedAdjustmentQuantity * unitCost);
+            var layer = new StockReplayFifoLayerPosition(
+                long.MaxValue, long.MaxValue, long.MaxValue,
+                countKey.OriginalPostingSequence, countKey.EffectiveAt,
+                signedAdjustmentQuantity, value, 0m,
+                signedAdjustmentQuantity, value,
+                StockLedgerPrecision.Money(value / signedAdjustmentQuantity), baseUom,
+                ErpWeb.Model.Entities.StockLedger.StockFifoLayerStatuses.Open,
+                "PROJECTED", countKey);
+            return Project(snapshot, countKey, signedAdjustmentQuantity, layer);
+        }
+        if (signedAdjustmentQuantity < 0m)
+            return Project(snapshot, countKey, -signedAdjustmentQuantity, null);
+
+        var events = BuildEvents(before);
+        ValidateBaseline(snapshot, before, events);
+        var projected = Replay(before.Layers, events, 0m);
+        return new(before, projected.Issues, projected.Layers,
+            snapshot.CurrentQuantity, snapshot.CurrentValue, null);
     }
 
     public static StockReplayFifoTailProjection RemoveReceipt(

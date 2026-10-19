@@ -28,7 +28,7 @@ public static class StockReplayStandardCountSheetProjector
         var byPile = new Dictionary<int, StockReplayPhysicalPlan>();
         foreach (var plan in plans)
         {
-            if (plan.CountStatus != "COUNTED"
+            if (plan.CountStatus is not ("COUNTED" or "ROLLED_BACK")
                 || plan.CountHeaderId != first.CountHeaderId
                 || plan.CountHeaderId is not > 0
                 || plan.CountLineId is not > 0

@@ -50,6 +50,27 @@ public sealed class StockReplayFifoWritePermit
         RemovedHistoryId = checked((int)plan.PhysicalPlan.RemovedActiveEvent.EventId);
     }
 
+    internal StockReplayFifoWritePermit(
+        StockPostingContext context,
+        StockReplayFifoCountSheetInsertionPlan plan)
+    {
+        Operation = "COUNT";
+        CompanyCode = context.CompanyCode;
+        BranchCode = context.BranchCode;
+        LedgerEpochId = context.Epoch.Id;
+        RootPostingId = context.Posting.Id;
+        RootPostingSequence = context.Posting.PostingSequence;
+        ItemCode = plan.ItemCode;
+        PlanHash = plan.PlanHash;
+        SnapshotHash = plan.Snapshot.SnapshotHash;
+        CurrentQuantity = plan.Snapshot.CurrentQuantity;
+        CurrentValue = plan.Snapshot.CurrentValue;
+        FinalQuantity = plan.Projection.FinalQuantity;
+        FinalValue = plan.Projection.FinalValue;
+        ChangedPileId = 0;
+        ChangedPileFinalQuantity = 0m;
+    }
+
     public string Operation { get; }
     public string CompanyCode { get; }
     public string BranchCode { get; }

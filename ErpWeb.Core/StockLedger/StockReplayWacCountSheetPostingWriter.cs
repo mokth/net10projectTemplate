@@ -181,6 +181,8 @@ public static class StockReplayWacCountSheetPostingWriter
             throw Invalid("The WAC count sheet lacks its exact frozen cost bases.");
 
         var db = context.Db;
+        await StockCountRepostBasisWriter.StageOrVerifyAsync(db,
+            countPermit, bases, cancellationToken);
         var pileIds = countPermit.Lines.Select(p => p.BalLocId).ToArray();
         var piles = await db.IvBalLocs
             .Where(b => b.CompanyCode == context.CompanyCode
@@ -201,8 +203,7 @@ public static class StockReplayWacCountSheetPostingWriter
                 ? physical.Candidate.Key.EffectiveAt
                 : physical.LaterEvents.MaxBy(e => e.Key)!.Key.EffectiveAt;
         }
-        await StockCountRepostBasisWriter.PersistOrVerifyAsync(db,
-            countPermit, bases, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
 
         var history = await StockCountInitialHistoryWriter.AppendAsync(
             context, countPermit, numbers, cancellationToken);

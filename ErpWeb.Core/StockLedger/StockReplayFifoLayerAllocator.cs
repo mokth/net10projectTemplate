@@ -23,7 +23,8 @@ public static class StockReplayFifoLayerAllocator
         StockReplayEventKey issueKey, decimal quantity)
     {
         ArgumentNullException.ThrowIfNull(source);
-        if (issueKey.ClassPriority != StockReplayEventKey.OrdinaryClass
+        if (issueKey.ClassPriority is not (StockReplayEventKey.OrdinaryClass
+                or StockReplayEventKey.CountClass)
             || issueKey.OriginalPostingSequence <= 0
             || quantity <= 0m
             || StockLedgerPrecision.Quantity(quantity) != quantity)
@@ -35,6 +36,13 @@ public static class StockReplayFifoLayerAllocator
             || layers.Any(l => l.LayerId <= 0 || l.OriginFactId <= 0
                 || l.OriginPostingSequence <= 0
                 || l.OriginalQuantity <= 0m || l.OriginalValue < 0m
+                || l.ReceiptKey is { } receiptKey
+                    && (receiptKey.EffectiveAt != l.ReceiptEffectiveAt
+                        || receiptKey.OriginalPostingSequence
+                            != l.OriginPostingSequence
+                        || receiptKey.ClassPriority is not
+                            (StockReplayEventKey.OrdinaryClass
+                                or StockReplayEventKey.CountClass))
                 || l.RemainingQuantity < 0m || l.RemainingValue < 0m
                 || l.RemainingQuantity > l.OriginalQuantity
                 || l.RemainingQuantity == 0m && l.RemainingValue != 0m
@@ -60,8 +68,7 @@ public static class StockReplayFifoLayerAllocator
         foreach (var layer in layers
             .Where(l => AvailableAt(l, issueKey)
                 && l.RemainingQuantity > 0m)
-            .OrderBy(l => l.ReceiptEffectiveAt)
-            .ThenBy(l => l.OriginPostingSequence)
+            .OrderBy(ReceiptOrderKey)
             .ThenBy(l => l.OriginFactId)
             .ThenBy(l => l.LayerId))
         {
@@ -110,10 +117,19 @@ public static class StockReplayFifoLayerAllocator
 
     private static bool AvailableAt(StockReplayFifoLayerPosition layer,
         StockReplayEventKey issueKey) =>
-        layer.ReceiptEffectiveAt < issueKey.EffectiveAt
-        || layer.ReceiptEffectiveAt == issueKey.EffectiveAt
-            && layer.OriginPostingSequence
-                < issueKey.OriginalPostingSequence;
+        layer.ReceiptKey is { } receiptKey
+            ? receiptKey.CompareTo(issueKey) < 0
+            : layer.ReceiptEffectiveAt < issueKey.EffectiveAt
+                || layer.ReceiptEffectiveAt == issueKey.EffectiveAt
+                    && (issueKey.ClassPriority == StockReplayEventKey.CountClass
+                        || layer.OriginPostingSequence
+                            < issueKey.OriginalPostingSequence);
+
+    private static StockReplayEventKey ReceiptOrderKey(
+        StockReplayFifoLayerPosition layer) =>
+        layer.ReceiptKey ?? new StockReplayEventKey(
+            layer.ReceiptEffectiveAt, StockReplayEventKey.OrdinaryClass,
+            layer.OriginPostingSequence, string.Empty, 0);
 
     private static StockLedgerException Invalid(string message) =>
         new(new StockLedgerError(StockLedgerErrorCodes.LedgerMismatch, message));

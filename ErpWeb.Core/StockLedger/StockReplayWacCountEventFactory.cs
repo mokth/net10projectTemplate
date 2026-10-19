@@ -21,7 +21,7 @@ public static class StockReplayWacCountEventFactory
     {
         ArgumentNullException.ThrowIfNull(physicalPlan);
         var candidate = physicalPlan.Candidate;
-        if (physicalPlan.CountStatus != "COUNTED"
+        if (physicalPlan.CountStatus is not ("COUNTED" or "ROLLED_BACK")
             || physicalPlan.CountLineId is not int lineId || lineId <= 0
             || physicalPlan.CountHeaderId is not > 0
             || candidate.EventId != -long.MaxValue + lineId

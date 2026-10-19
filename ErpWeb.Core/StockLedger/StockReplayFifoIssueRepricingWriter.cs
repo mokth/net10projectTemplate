@@ -27,7 +27,7 @@ public static class StockReplayFifoIssueRepricingWriter
         StockReplayFifoReceiptLayerBinding.Validate(plan, receiptLayerId);
         await ValidateFifoPolicyAsync(context, plan, cancellationToken);
         return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
-            plan.Projection, plan.PlanHash, "INSERT", permit, issueKey,
+            plan.Projection.Issues, plan.PlanHash, "INSERT", permit, issueKey,
             reversalPostingLineNo, replacementPostingLineNo,
             receiptLayerId, cancellationToken);
     }
@@ -49,7 +49,7 @@ public static class StockReplayFifoIssueRepricingWriter
             throw Invalid("FIFO receipt issue correction needs its saved layer identity.");
         await ValidateFifoPolicyAsync(context, plan, cancellationToken);
         return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
-            plan.Projection, plan.PlanHash, "INSERT", permit, issueKey,
+            plan.Projection.Issues, plan.PlanHash, "INSERT", permit, issueKey,
             reversalPostingLineNo, replacementPostingLineNo, null, cancellationToken);
     }
 
@@ -76,14 +76,50 @@ public static class StockReplayFifoIssueRepricingWriter
                 .Append(plan.PhysicalPlan.RemovedActiveEvent.Key.EffectiveAt.Date).Max(),
             cancellationToken);
         return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
-            plan.Projection, plan.PlanHash, "REMOVE", permit, issueKey,
+            plan.Projection.Issues, plan.PlanHash, "REMOVE", permit, issueKey,
             reversalPostingLineNo, replacementPostingLineNo, null, cancellationToken);
+    }
+
+    internal static async Task<IReadOnlyList<StockValuationFact>> AppendCountAsync(
+        StockPostingContext context,
+        StockReplayFifoCountSheetInsertionPlan plan,
+        StockReplayFifoCountSheetWritePermit countPermit,
+        StockReplayEventKey issueKey,
+        int reversalPostingLineNo,
+        int replacementPostingLineNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(countPermit);
+        StockReplayFifoCountSheetInsertionPlanner.ValidatePreparedPlan(plan);
+        if (context.Posting.SourceDocumentType != "IV_STOCK_COUNT"
+            || countPermit.RootPostingId != context.Posting.Id
+            || countPermit.ItemCode != plan.ItemCode
+            || countPermit.PlanHash != plan.PlanHash
+            || countPermit.SnapshotHash != plan.Snapshot.SnapshotHash
+            || countPermit.FinalQuantity != plan.Projection.FinalQuantity
+            || countPermit.FinalValue != plan.Projection.FinalValue
+            || plan.Projection.Counts.Any(c =>
+                c.SignedAdjustmentQuantity > 0m)
+            || plan.Projection.LaterIssues.Any(i => !i.DepletesPool))
+            throw Invalid("FIFO count correction needs a nonpositive count and its root permit.");
+        await ValidateFifoPolicyAsync(context,
+            plan.PhysicalSheet.EffectiveAt.Date,
+            plan.Projection.LaterIssues.Select(i => i.Key.EffectiveAt.Date)
+                .Append(plan.PhysicalSheet.EffectiveAt.Date).Max(),
+            cancellationToken);
+        return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
+            plan.Projection.LaterIssues, plan.PlanHash, "COUNT",
+            new StockReplayFifoWritePermit(context, plan), issueKey,
+            reversalPostingLineNo, replacementPostingLineNo, null,
+            cancellationToken);
     }
 
     private static async Task<IReadOnlyList<StockValuationFact>> AppendCoreAsync(
         StockPostingContext context, string itemCode,
         StockReplayFifoActiveLayerSnapshot snapshot,
-        StockReplayFifoTailProjection projection, string planHash,
+        IReadOnlyList<StockReplayFifoProjectedIssue> issues, string planHash,
         string operation, StockReplayFifoWritePermit permit,
         StockReplayEventKey issueKey, int reversalPostingLineNo,
         int replacementPostingLineNo, long? receiptLayerId,
@@ -105,7 +141,7 @@ public static class StockReplayFifoIssueRepricingWriter
             || reversalPostingLineNo == replacementPostingLineNo)
             throw Invalid("FIFO issue correction needs its validated root permit and unique lines.");
 
-        var issue = projection.Issues.SingleOrDefault(i =>
+        var issue = issues.SingleOrDefault(i =>
             i.Key == issueKey && !i.IsCandidate && i.DepletesPool);
         if (issue is null || issueKey.LineIdentity.Length != 11
             || issueKey.LineIdentity[0] != 'H'

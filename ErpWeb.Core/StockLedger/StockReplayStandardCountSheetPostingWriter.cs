@@ -189,6 +189,8 @@ public static class StockReplayStandardCountSheetPostingWriter
                 context, bases))
             throw Invalid("The Standard sheet lacks its exact frozen revisions.");
         var db = context.Db;
+        await StockCountRepostBasisWriter.StageOrVerifyAsync(db,
+            countPermit, bases, cancellationToken);
         var pileIds = countPermit.Lines.Select(p => p.BalLocId).ToArray();
         var piles = await db.IvBalLocs
             .Where(b => b.CompanyCode == context.CompanyCode
@@ -209,8 +211,7 @@ public static class StockReplayStandardCountSheetPostingWriter
                 ? physical.Candidate.Key.EffectiveAt
                 : physical.LaterEvents.MaxBy(e => e.Key)!.Key.EffectiveAt;
         }
-        await StockCountRepostBasisWriter.PersistOrVerifyAsync(db,
-            countPermit, bases, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
         var history = await StockCountInitialHistoryWriter.AppendAsync(
             context, countPermit, numbers, cancellationToken);
         var facts = new List<StockValuationFact>();

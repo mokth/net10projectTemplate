@@ -33,7 +33,8 @@ public static class StockReplayStandardInitialCountSheetValuationWriter
             .ToDictionary(s => s.EventId);
         var prepared = countPermit.Lines.ToDictionary(l => l.LineId);
         if (context.CostMethod != StockCostMethods.Standard
-            || countPermit.CountStatus != IvStockCountStatuses.Counted
+            || countPermit.CountStatus is not
+                (IvStockCountStatuses.Counted or IvStockCountStatuses.RolledBack)
             || context.Posting.SourceDocumentType != "IV_STOCK_COUNT"
             || context.Posting.SourceDocumentId != countPermit.CountHeaderId.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
@@ -80,11 +81,15 @@ public static class StockReplayStandardInitialCountSheetValuationWriter
             .Where(l => selectedLineIds.Contains(l.Id))
             .Include(l => l.Header)
             .ToDictionaryAsync(l => l.Id, cancellationToken);
-        var generations = await db.StockCountReplayGenerations.AsNoTracking()
+        var allGenerations = await db.StockCountReplayGenerations.AsNoTracking()
             .Where(g => selectedLineIds.Contains(g.StockCountLineId)
                 && g.CompanyCode == context.CompanyCode
                 && g.BranchCode == context.BranchCode)
             .ToArrayAsync(cancellationToken);
+        var activeGenerations = StockCountGenerationResolver.ResolveActive(
+            allGenerations);
+        var generations = allGenerations.Where(g =>
+            g.WritePostingId == context.Posting.Id).ToArray();
         var bases = await db.StockCountCostBases.AsNoTracking()
             .Where(b => allLineIds.Contains(b.StockCountLineId))
             .ToArrayAsync(cancellationToken);
@@ -92,6 +97,8 @@ public static class StockReplayStandardInitialCountSheetValuationWriter
             || generations.Length != selected.Length
             || generations.Select(g => g.StockCountLineId).Distinct().Count()
                 != selected.Length
+            || generations.Any(g => !activeGenerations.TryGetValue(
+                    g.StockCountLineId, out var leaf) || leaf.Id != g.Id)
             || !StockCountAnchorCommandFactory.MatchesPersistedBasisSnapshot(
                 context, bases))
             throw Invalid("The Standard count lacks exact lines, generations, or frozen bases.");
@@ -184,7 +191,8 @@ public static class StockReplayStandardInitialCountSheetValuationWriter
                 || history.TrxType != IvTrxTypes.StockAdjustment
                 || history.BatchStatus != IvBatchStatuses.Posted
                 || history.EntryRole != "ORIGINAL"
-                || history.DocumentRevision != 0
+                || history.DocumentRevision
+                    != context.Posting.DocumentRevision
                 || history.ValuationStatus != StockValuationStatuses.Unvalued
                 || (direction > 0
                     ? history.ToBalLocId != physical.BalLocId

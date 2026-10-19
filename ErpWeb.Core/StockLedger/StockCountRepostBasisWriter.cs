@@ -5,10 +5,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.StockLedger;
 
-/// <summary>Persists first-post bases and verifies immutable bases on repost.</summary>
+/// <summary>Stages first-post bases and verifies immutable bases on repost.</summary>
 internal static class StockCountRepostBasisWriter
 {
-    public static async Task PersistOrVerifyAsync(AppDbContext db,
+    public static async Task StageOrVerifyAsync(AppDbContext db,
         StockCountSheetWritePermit permit,
         IReadOnlyCollection<StockCountCostBasis> proposed,
         CancellationToken cancellationToken)
@@ -27,7 +27,6 @@ internal static class StockCountRepostBasisWriter
             if (existing.Length != 0 || proposed.Any(b => b.Id != 0))
                 throw Invalid("A first count post already has immutable cost bases.");
             db.StockCountCostBases.AddRange(proposed);
-            await db.SaveChangesAsync(cancellationToken);
             return;
         }
         if (permit.CountStatus != IvStockCountStatuses.RolledBack

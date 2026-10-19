@@ -119,6 +119,14 @@ public static class StockReplayFifoActiveLayerReader
         var facts = await db.StockValuationFacts.AsNoTracking()
             .Where(f => factIds.Contains(f.Id))
             .ToDictionaryAsync(f => f.Id, cancellationToken);
+        var factHistoryIds = facts.Values.Where(f => f.InventoryHistoryId.HasValue)
+            .Select(f => f.InventoryHistoryId!.Value).Distinct().ToArray();
+        var countKeys = await ReadInitialCountKeysAsync(db, companyCode,
+            branchCode, factHistoryIds, cancellationToken);
+        if (facts.Values.Any(f => f.SourceDocumentType == "IV_STOCK_COUNT"
+                && f.InventoryHistoryId is int historyId
+                && !countKeys.ContainsKey(historyId)))
+            throw Invalid($"Item {itemCode} has a FIFO count fact without active canonical lineage.");
         var issueHistoryIds = active.Select(c =>
                 facts.TryGetValue(c.IssueValuationFactId, out var fact)
                     ? fact.InventoryHistoryId : null)
@@ -153,7 +161,8 @@ public static class StockReplayFifoActiveLayerReader
         if (histories.Values.Any(h => !postings.TryGetValue(
                     h.StockPostingId!.Value, out var owner)
                 || owner.LedgerEpochId != h.LedgerEpochId
-                || owner.EffectiveAt != h.TrxDtTime))
+                || !countKeys.ContainsKey(h.Id)
+                    && owner.EffectiveAt != h.TrxDtTime))
             throw Invalid($"Item {itemCode} has an unsealed FIFO issue owner.");
         var factReversals = await db.StockValuationFacts.AsNoTracking()
             .Where(f => f.ReversesValuationFactId.HasValue
@@ -435,30 +444,42 @@ public static class StockReplayFifoActiveLayerReader
         if (quantity != state.OnHandBaseQty || value != state.InventoryValue)
             throw Invalid($"Item {itemCode} FIFO layers differ from its cost state.");
         var positions = layers.Where(l => !reversedLayerIds.Contains(l.Id))
-            .Select(l => new StockReplayFifoLayerPosition(
-            l.Id, l.OriginValuationFactId, l.OriginStockPostingId,
-            postings[l.OriginStockPostingId].PostingSequence,
-            l.ReceiptEffectiveAt, l.OriginalQty, l.OriginalValue,
-            l.AccumulatedAdjustment, l.RemainingQty, l.RemainingValue,
-            l.CurrentUnitCost, l.BaseUom, l.Status,
-            Convert.ToHexString(l.RowVersion),
-            new StockReplayEventKey(l.ReceiptEffectiveAt,
-                StockReplayEventKey.OrdinaryClass,
-                postings[l.OriginStockPostingId].PostingSequence,
-                OriginLine(facts[l.OriginValuationFactId]), 0))).ToArray();
+            .Select(l =>
+        {
+            var originFact = facts[l.OriginValuationFactId];
+            var key = originFact.InventoryHistoryId is int historyId
+                && countKeys.TryGetValue(historyId, out var countKey)
+                    ? countKey
+                    : new StockReplayEventKey(l.ReceiptEffectiveAt,
+                        StockReplayEventKey.OrdinaryClass,
+                        postings[l.OriginStockPostingId].PostingSequence,
+                        OriginLine(originFact), 0);
+            if (key.EffectiveAt != l.ReceiptEffectiveAt)
+                throw Invalid($"FIFO layer {l.Id} differs from its canonical receipt key.");
+            return new StockReplayFifoLayerPosition(
+                l.Id, l.OriginValuationFactId, l.OriginStockPostingId,
+                key.OriginalPostingSequence,
+                l.ReceiptEffectiveAt, l.OriginalQty, l.OriginalValue,
+                l.AccumulatedAdjustment, l.RemainingQty, l.RemainingValue,
+                l.CurrentUnitCost, l.BaseUom, l.Status,
+                Convert.ToHexString(l.RowVersion), key);
+        }).ToArray();
         var consumptions = active.Select(c =>
             new StockReplayFifoConsumptionPosition(c.Id,
                 c.IssueValuationFactId, c.FifoLayerId,
                 c.ConsumedQty, c.ConsumedValue, c.SplitOrdinal,
                 facts[c.IssueValuationFactId].MovementCode != "TRANSFER_OUT",
-                new StockReplayEventKey(
-                    facts[c.IssueValuationFactId].EffectiveAt,
-                    StockReplayEventKey.OrdinaryClass,
-                    postings[histories[facts[c.IssueValuationFactId]
-                        .InventoryHistoryId!.Value].StockPostingId!.Value]
-                        .PostingSequence,
-                    $"H{facts[c.IssueValuationFactId].InventoryHistoryId!.Value:D10}",
-                    0)))
+                countKeys.TryGetValue(facts[c.IssueValuationFactId]
+                        .InventoryHistoryId!.Value, out var countKey)
+                    ? countKey
+                    : new StockReplayEventKey(
+                        facts[c.IssueValuationFactId].EffectiveAt,
+                        StockReplayEventKey.OrdinaryClass,
+                        postings[histories[facts[c.IssueValuationFactId]
+                            .InventoryHistoryId!.Value].StockPostingId!.Value]
+                            .PostingSequence,
+                        $"H{facts[c.IssueValuationFactId].InventoryHistoryId!.Value:D10}",
+                        0)))
             .ToArray();
         var hash = StockPostingFingerprint.Create(new
         {
@@ -473,6 +494,42 @@ public static class StockReplayFifoActiveLayerReader
 
     private static StockLedgerException Invalid(string message) =>
         new(new StockLedgerError(StockLedgerErrorCodes.LedgerMismatch, message));
+
+    private static async Task<IReadOnlyDictionary<int, StockReplayEventKey>>
+        ReadInitialCountKeysAsync(AppDbContext db, string companyCode,
+            string branchCode, IReadOnlyCollection<int> factHistoryIds,
+            CancellationToken cancellationToken)
+    {
+        if (factHistoryIds.Count == 0)
+            return new Dictionary<int, StockReplayEventKey>();
+        var generations = await db.StockCountReplayGenerations.AsNoTracking()
+            .Where(g => g.CompanyCode == companyCode
+                && g.BranchCode == branchCode
+                && g.AdjustmentHistoryId.HasValue
+                && factHistoryIds.Contains(g.AdjustmentHistoryId.Value))
+            .ToArrayAsync(cancellationToken);
+        if (generations.Length == 0)
+            return new Dictionary<int, StockReplayEventKey>();
+        var lineIds = generations.Select(g => g.StockCountLineId)
+            .Distinct().ToArray();
+        var active = await StockCountGenerationResolver.ResolveActiveAsync(db,
+            companyCode, branchCode, lineIds, cancellationToken);
+        // Corrections, removals, and reposts need their own FIFO origin and
+        // consumption adapters; only an unchanged initial generation is readable.
+        if (generations.Select(g => g.AdjustmentHistoryId)
+                .Distinct().Count() != generations.Length
+            || generations.Any(g => !active.TryGetValue(g.StockCountLineId,
+                    out var leaf)
+                || leaf.Id != g.Id || leaf.IsRemoval
+                || g.PreviousGenerationId is not null
+                || g.WritePostingId != g.AnchorPostingId
+                || g.SignedAdjustmentQty == 0m))
+            throw Invalid("FIFO count layer needs one active initial adjustment generation.");
+        return generations.ToDictionary(g => g.AdjustmentHistoryId!.Value,
+            g => new StockReplayEventKey(g.EffectiveAt,
+                StockReplayEventKey.CountClass, g.AnchorPostingSequence,
+                $"C{g.StockCountLineId:D10}", 0));
+    }
 
     private static string OriginLine(StockValuationFact fact) =>
         fact.InventoryHistoryId is int historyId
