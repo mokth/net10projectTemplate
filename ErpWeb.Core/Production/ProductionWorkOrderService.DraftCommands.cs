@@ -1155,18 +1155,69 @@ public sealed partial class ProductionWorkOrderService
             .Where(machine => machine.IsSelected)
             .Select(machine => machine.MachineCode)
             .ToList();
+
+        // Seed locks with the union of selected machines and every machine that still owns an
+        // allocation for this Work Order (plan §15.1). Deleting an old-machine fragment without
+        // holding its physical-machine lock would race a concurrent planner placement.
+        var ownedAllocationMachineCodes = await db.ProductionMachineScheduleAllocations.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.WorkOrderId == entity.Uid)
+            .Select(x => x.MachineCode)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var releaseMachineCodes = selectedMachineCodes
+            .Concat(ownedAllocationMachineCodes)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(Normalize)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
         try
         {
             // Keep the global order compatible with planner commits: physical machines first,
             // scheduling-source shared lock second, Work Order execution lock third.
             await ProductionMachineScheduleLock.AcquireManyAsync(
-                db, scope.CompanyCode, selectedMachineCodes, cancellationToken);
+                db, scope.CompanyCode, releaseMachineCodes, cancellationToken);
         }
         catch (ProductionMachineScheduleLockException ex)
         {
             throw new WorkOrderCommandException(IvMasterErrorCode.Concurrency, ex.Message);
         }
         await WorkOrderSchedulingLock.AcquireAsync(db, scope.CompanyCode, exclusive: false, cancellationToken);
+
+        // Re-read after locks. A code that appeared since the seed means another command wrote
+        // an allocation on a machine we do not hold; abort and let the caller retry.
+        var lockedCodes = releaseMachineCodes.ToHashSet(StringComparer.Ordinal);
+        var currentAllocationCodes = await db.ProductionMachineScheduleAllocations.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.WorkOrderId == entity.Uid)
+            .Select(x => x.MachineCode)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var unlockedAllocationCode = currentAllocationCodes
+            .Select(Normalize)
+            .FirstOrDefault(code => !lockedCodes.Contains(code));
+        if (unlockedAllocationCode is not null)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Concurrency,
+                $"Work Order {entity.WorkOrderNo} gained an allocation on unlocked machine {unlockedAllocationCode}. "
+                + "Retry the release.");
+        }
+
+        // Execution lock is the third step of the Release lock order. Everything below re-reads
+        // state while planner commits and Daily Production are excluded (plan §15.1).
+        try
+        {
+            await ProductionWorkOrderExecutionLock.AcquireAsync(
+                db, scope.CompanyCode, scope.BranchCode!, entity.Uid, cancellationToken);
+        }
+        catch (ProductionWorkOrderExecutionLockException ex)
+        {
+            throw new WorkOrderCommandException(IvMasterErrorCode.Concurrency, ex.Message);
+        }
 
         // A Draft saved from a local planner date stored a kind-sensitive hash. SQL datetime2
         // reloads the same clock time as Unspecified, so adopt the canonical hash before release.
@@ -1262,133 +1313,95 @@ public sealed partial class ProductionWorkOrderService
             .OrderBy(x => x, StringComparer.Ordinal)
             .ToList();
 
-        try
-        {
-            await ProductionWorkOrderExecutionLock.AcquireAsync(
-                db, scope.CompanyCode, scope.BranchCode!, entity.Uid, cancellationToken);
-        }
-        catch (ProductionWorkOrderExecutionLockException ex)
-        {
-            throw new WorkOrderCommandException(IvMasterErrorCode.Concurrency, ex.Message);
-        }
-
         if (selectedMachines.Count == 0)
             return 0;
 
-        // The reservation key is company + physical machine code, so include active Work Orders
-        // from every branch when checking capacity for a release.
-        var currentMachineCodes = machineCodes;
-        var activeRows = await db.ProductionWorkOrderMachines.AsNoTracking()
-            .Where(machine => machine.IsSelected
-                && currentMachineCodes.Contains(machine.MachineCode)
-                && machine.Operation != null
-                && machine.Operation.WorkOrder != null
-                && machine.Operation.WorkOrder.CompanyCode == scope.CompanyCode
-                && (machine.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.Released
-                    || machine.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress))
-            .Select(machine => new MachineScheduleCapacityProbe
-            {
-                WorkOrderId = machine.Operation!.WorkOrder!.Uid,
-                WorkOrderNo = machine.Operation.WorkOrder.WorkOrderNo,
-                SchedulingDirection = machine.Operation.WorkOrder.SchedulingDirection,
-                OperationId = machine.OperationId,
-                OperationStart = machine.Operation.PlannedStartDateTime,
-                OperationCompletion = machine.Operation.PlannedCompletionDateTime,
-                MachineId = machine.Uid,
-                MachineCode = machine.MachineCode,
-                ScheduleRevision = machine.ScheduleRevision,
-                ScheduleSourceHash = machine.ScheduleSourceHash,
-                PlannedStart = machine.PlannedStartDateTime,
-                PlannedCompletion = machine.PlannedCompletionDateTime,
-                CalendarHorizonStart = machine.CalendarHorizonStart,
-                CalendarHorizonEnd = machine.CalendarHorizonEnd,
-                SetupSeconds = machine.SetupSeconds,
-                ConversionSeconds = machine.ConversionSeconds,
-                QueueSeconds = machine.QueueSeconds,
-                PlannedRunMinutes = machine.PlannedRunMinutes
-            })
-            .ToListAsync(cancellationToken);
-
-        var occupied = new List<MachineScheduleCapacityReservation>();
-        foreach (var row in activeRows)
+        // Allocation-authoritative capacity (plan §9/§14). Active jobs are never reconstructed
+        // from the raw calendar: a Released job may have been deliberately rescheduled, and
+        // rebuilding it would fabricate a conflict. Legacy empty zero-duration rows contribute
+        // nothing; corrupt rows fail closed instead of being silently ignored.
+        var evidence = await _capacity.LoadAsync(
+            db,
+            scope.CompanyCode,
+            machineCodes,
+            excludedWorkOrderId: entity.Uid,
+            cancellationToken: cancellationToken);
+        if (evidence.HasBlockers)
         {
-            var schedule = await ReconstructMachineScheduleAsync(
-                scope.CompanyCode,
-                row.MachineCode,
-                row.PlannedStart,
-                row.PlannedCompletion,
-                row.OperationStart,
-                row.OperationCompletion,
-                row.CalendarHorizonStart,
-                row.CalendarHorizonEnd,
-                row.ScheduleSourceHash,
-                row.SetupSeconds,
-                row.ConversionSeconds,
-                row.QueueSeconds,
-                row.PlannedRunMinutes,
-                row.SchedulingDirection,
-                $"Work Order {row.WorkOrderNo}",
-                cancellationToken);
-            occupied.AddRange(schedule.Result.ConsumedIntervals.Select(interval =>
-                new MachineScheduleCapacityReservation(row.MachineCode, row.WorkOrderId, row.OperationId, interval)));
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Validation,
+                ProductionReadinessErrorCodes.MachineCapacityInvalid + ": "
+                + string.Join("; ", evidence.Blockers));
         }
 
-        RejectOverlappingCapacity(occupied, "Existing active Work Orders have overlapping machine reservations.");
+        var prior = selectedMachines.ToDictionary(
+            x => x.Machine,
+            x => new
+            {
+                MachineStart = x.Machine.PlannedStartDateTime,
+                MachineCompletion = x.Machine.PlannedCompletionDateTime,
+                OperationStart = x.Operation.PlannedStartDateTime,
+                OperationCompletion = x.Operation.PlannedCompletionDateTime
+            });
 
-        var pending = new List<(ProductionWorkOrderOperation Operation, ProductionWorkOrderMachine Machine,
-            CanonicalMachineSchedule Schedule)>();
+        // Canonical revalidation under the caller's transaction and machine locks: the identical
+        // engine that produced the Draft placement decides whether the saved dates still hold.
+        var provider = new TransactionalMachineCapacityWindowProvider(
+            _capacity, db, scope.CompanyCode, excludedWorkOrderId: entity.Uid);
+        var scheduled = await _scheduler.ScheduleAsync(entity, provider, cancellationToken);
+        if (!scheduled.Succeeded)
+        {
+            throw new WorkOrderCommandException(
+                IvMasterErrorCode.Validation,
+                scheduled.FailureCode + ": " + scheduled.FailureMessage);
+        }
+
         foreach (var (operation, machine) in selectedMachines)
         {
-            var schedule = await ReconstructMachineScheduleAsync(
-                scope.CompanyCode,
-                machine.MachineCode,
-                machine.PlannedStartDateTime,
-                machine.PlannedCompletionDateTime,
-                operation.PlannedStartDateTime,
-                operation.PlannedCompletionDateTime,
-                machine.CalendarHorizonStart,
-                machine.CalendarHorizonEnd,
-                machine.ScheduleSourceHash,
-                machine.SetupSeconds,
-                machine.ConversionSeconds,
-                machine.QueueSeconds,
-                machine.PlannedRunMinutes,
-                entity.SchedulingDirection,
-                $"Work Order {entity.WorkOrderNo}",
-                cancellationToken);
-
-            foreach (var interval in schedule.Result.ConsumedIntervals)
+            var before = prior[machine];
+            if (before.MachineStart != machine.PlannedStartDateTime
+                || before.MachineCompletion != machine.PlannedCompletionDateTime
+                || before.OperationStart != operation.PlannedStartDateTime
+                || before.OperationCompletion != operation.PlannedCompletionDateTime)
             {
-                if (occupied.Any(existing => string.Equals(existing.MachineCode, machine.MachineCode, StringComparison.OrdinalIgnoreCase)
-                    && IntervalsOverlap(existing.Interval, interval)))
-                {
-                    throw new WorkOrderCommandException(
-                        IvMasterErrorCode.Validation,
-                        $"Work Order {entity.WorkOrderNo} overlaps an existing reservation on machine {machine.MachineCode}. "
-                        + "Recalculate the Draft for available machine time before release.");
-                }
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    ProductionReleaseErrorCodes.MachineCapacityStale
+                    + $": Machine {machine.MachineCode} capacity changed after this Draft was calculated. "
+                    + "Recalculate the Draft before release.");
+            }
+        }
+
+        var pending = new List<(ProductionWorkOrderOperation Operation, ProductionWorkOrderMachine Machine,
+            IReadOnlyList<TimeInterval> Fragments)>();
+        foreach (var (operation, machine) in selectedMachines)
+        {
+            if (!scheduled.ConsumedByOperation.TryGetValue(operation, out var fragments) || fragments.Count == 0)
+            {
+                throw new WorkOrderCommandException(
+                    IvMasterErrorCode.Validation,
+                    ProductionReleaseErrorCodes.MachineCapacityStale
+                    + $": Machine {machine.MachineCode} produced no capacity fragments. Recalculate the Draft.");
             }
 
-            pending.Add((operation, machine, schedule));
-            occupied.AddRange(schedule.Result.ConsumedIntervals.Select(interval =>
-                new MachineScheduleCapacityReservation(machine.MachineCode, entity.Uid, operation.Uid, interval)));
+            pending.Add((operation, machine, fragments));
         }
 
         var fragmentCount = 0;
         var createdBy = scope.UserId.Length > 10 ? scope.UserId[..10] : scope.UserId;
-        var currentMachineIds = selectedMachines.Select(x => x.Machine.Uid).ToHashSet();
+        // Replacement boundary is the whole current Work Order in this company/branch
+        // (plan §15.2). Old-machine fragments are removed under their machine lock.
         var superseded = await db.ProductionMachineScheduleAllocations
             .Where(x => x.CompanyCode == scope.CompanyCode
                 && x.BranchCode == scope.BranchCode
-                && x.WorkOrderId == entity.Uid
-                && currentMachineIds.Contains(x.WorkOrderMachineId))
+                && x.WorkOrderId == entity.Uid)
             .ToListAsync(cancellationToken);
         db.ProductionMachineScheduleAllocations.RemoveRange(superseded);
 
-        foreach (var (operation, machine, schedule) in pending)
+        foreach (var (operation, machine, fragments) in pending)
         {
             var fragmentNo = 1;
-            foreach (var interval in schedule.Result.ConsumedIntervals)
+            foreach (var interval in fragments)
             {
                 db.ProductionMachineScheduleAllocations.Add(new ProductionMachineScheduleAllocation
                 {
@@ -1402,7 +1415,7 @@ public sealed partial class ProductionWorkOrderService
                     FragmentNo = fragmentNo++,
                     StartDateTime = interval.Start,
                     EndDateTime = interval.End,
-                    ScheduleSourceHash = schedule.SourceHash,
+                    ScheduleSourceHash = machine.ScheduleSourceHash,
                     CreatedDate = DateTime.UtcNow,
                     CreatedBy = createdBy,
                     RowVersion = IsSqlite(db) ? Guid.NewGuid().ToByteArray() : []
@@ -1413,156 +1426,6 @@ public sealed partial class ProductionWorkOrderService
 
         return fragmentCount;
     }
-
-    private async Task<CanonicalMachineSchedule> ReconstructMachineScheduleAsync(
-        string companyCode,
-        string machineCode,
-        DateTime? plannedStart,
-        DateTime? plannedCompletion,
-        DateTime? operationStart,
-        DateTime? operationCompletion,
-        DateTime? calendarHorizonStart,
-        DateTime? calendarHorizonEnd,
-        string? savedSourceHash,
-        decimal setupSeconds,
-        decimal conversionSeconds,
-        decimal queueSeconds,
-        decimal plannedRunMinutes,
-        string? schedulingDirection,
-        string owner,
-        CancellationToken cancellationToken)
-    {
-        if (plannedStart is null || plannedCompletion is null
-            || operationStart is null || operationCompletion is null
-            || calendarHorizonStart is null || calendarHorizonEnd is null
-            || string.IsNullOrWhiteSpace(savedSourceHash)
-            || plannedCompletion <= plannedStart
-            || operationStart != plannedStart
-            || operationCompletion != plannedCompletion)
-        {
-            throw new WorkOrderCommandException(
-                IvMasterErrorCode.Validation,
-                $"{owner} has an incomplete or inconsistent saved machine schedule. Recalculate or investigate it before release.");
-        }
-
-        var start = DateOnly.FromDateTime(calendarHorizonStart.Value);
-        var end = DateOnly.FromDateTime(calendarHorizonEnd.Value);
-        if (end < start)
-        {
-            throw new WorkOrderCommandException(IvMasterErrorCode.Validation,
-                $"{owner} has an invalid machine calendar horizon.");
-        }
-
-        ScheduleMachineData data;
-        ScheduleMachineResult result;
-        string sourceHash;
-        try
-        {
-            data = await _calendarLoader.LoadAsync(
-                Normalize(companyCode), Normalize(machineCode), start, end, cancellationToken);
-            sourceHash = WorkOrderScheduleSourceHasher.Compute(data, start, end);
-            if (!string.Equals(sourceHash, savedSourceHash, StringComparison.Ordinal))
-            {
-                throw new WorkOrderCommandException(
-                    IvMasterErrorCode.Validation,
-                    $"{owner} uses a changed calendar for machine {machineCode}. Recalculate it before release.");
-            }
-
-            var direction = string.Equals(schedulingDirection, ProductionSchedulingDirections.Backward, StringComparison.OrdinalIgnoreCase)
-                ? ScheduleDirection.Backward
-                : ScheduleDirection.Forward;
-            var duration = TimeSpan.FromSeconds((double)(setupSeconds + conversionSeconds + queueSeconds))
-                + TimeSpan.FromMinutes((double)plannedRunMinutes);
-            if (duration <= TimeSpan.Zero)
-                throw new WorkOrderCommandException(IvMasterErrorCode.Validation,
-                    $"{owner} has no positive productive duration on machine {machineCode}.");
-
-            var anchor = direction == ScheduleDirection.Backward ? plannedCompletion.Value : plannedStart.Value;
-            result = ProductionCalendarScheduler.ScheduleMachine(data, anchor, duration, direction);
-        }
-        catch (ScheduleFailureException ex)
-        {
-            throw new WorkOrderCommandException(
-                IvMasterErrorCode.Validation,
-                $"{owner} cannot be reconstructed on machine {machineCode}'s current calendar. {ex.Message}");
-        }
-
-        if (result.ActualStart != plannedStart || result.ActualCompletion != plannedCompletion
-            || result.ConsumedIntervals.Count == 0)
-        {
-            throw new WorkOrderCommandException(
-                IvMasterErrorCode.Validation,
-                $"{owner} cannot be reproduced from its saved machine schedule and calendar. Resolve it before release.");
-        }
-
-        return new CanonicalMachineSchedule(data, result, sourceHash);
-    }
-
-    private static void RejectOverlappingCapacity(
-        IReadOnlyList<MachineScheduleCapacityReservation> reservations,
-        string message)
-    {
-        var ordered = reservations
-            .OrderBy(x => x.MachineCode, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.Interval.Start)
-            .ToList();
-        string? currentMachine = null;
-        var occupiedUntil = DateTime.MinValue;
-        foreach (var current in ordered)
-        {
-            if (!string.Equals(currentMachine, current.MachineCode, StringComparison.OrdinalIgnoreCase))
-            {
-                currentMachine = current.MachineCode;
-                occupiedUntil = DateTime.MinValue;
-            }
-
-            if (current.Interval.Start < occupiedUntil)
-            {
-                throw new WorkOrderCommandException(
-                    IvMasterErrorCode.Validation,
-                    $"{message} Machine {current.MachineCode} has conflicting active reservations.");
-            }
-
-            if (current.Interval.End > occupiedUntil)
-                occupiedUntil = current.Interval.End;
-        }
-    }
-
-    private static bool IntervalsOverlap(TimeInterval left, TimeInterval right) =>
-        left.Start < right.End && left.End > right.Start;
-
-    private sealed class MachineScheduleCapacityProbe
-    {
-        public long WorkOrderId { get; init; }
-        public string WorkOrderNo { get; init; } = string.Empty;
-        public string SchedulingDirection { get; init; } = ProductionSchedulingDirections.Forward;
-        public long OperationId { get; init; }
-        public DateTime? OperationStart { get; init; }
-        public DateTime? OperationCompletion { get; init; }
-        public long MachineId { get; init; }
-        public string MachineCode { get; init; } = string.Empty;
-        public int ScheduleRevision { get; init; }
-        public string? ScheduleSourceHash { get; init; }
-        public DateTime? PlannedStart { get; init; }
-        public DateTime? PlannedCompletion { get; init; }
-        public DateTime? CalendarHorizonStart { get; init; }
-        public DateTime? CalendarHorizonEnd { get; init; }
-        public decimal SetupSeconds { get; init; }
-        public decimal ConversionSeconds { get; init; }
-        public decimal QueueSeconds { get; init; }
-        public decimal PlannedRunMinutes { get; init; }
-    }
-
-    private sealed record MachineScheduleCapacityReservation(
-        string MachineCode,
-        long WorkOrderId,
-        long OperationId,
-        TimeInterval Interval);
-
-    private sealed record CanonicalMachineSchedule(
-        ScheduleMachineData Data,
-        ScheduleMachineResult Result,
-        string SourceHash);
 
     private sealed record DraftHeaderMutationResult(
         bool Changed,

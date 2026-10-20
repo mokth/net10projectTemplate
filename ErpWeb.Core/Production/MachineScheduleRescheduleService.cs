@@ -94,6 +94,7 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
     private readonly IMachineSchedulePlannerReadinessService _readiness;
     private readonly IProductionCalendarScheduleDataLoader _machineCalendars;
     private readonly IWorkOrderCalendarProvider _calendarProvider;
+    private readonly IProductionMachineCapacityService _capacity;
 
     public MachineScheduleRescheduleService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -101,7 +102,8 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
         IAccessRightService access,
         IMachineSchedulePlannerReadinessService readiness,
         IProductionCalendarScheduleDataLoader machineCalendars,
-        IWorkOrderCalendarProvider calendarProvider)
+        IWorkOrderCalendarProvider calendarProvider,
+        IProductionMachineCapacityService? capacity = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -109,6 +111,7 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
         _readiness = readiness;
         _machineCalendars = machineCalendars;
         _calendarProvider = calendarProvider;
+        _capacity = capacity ?? new ProductionMachineCapacityService(dbFactory);
     }
 
     public async Task<IvMasterOperationResult<MachineScheduleReschedulePreview>> PreviewRescheduleAsync(
@@ -607,190 +610,25 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
         IReadOnlySet<long> excludedMachineIds,
         CancellationToken cancellationToken)
     {
-        var normalizedCodes = machineCodes.Select(Normalize).Where(x => x.Length > 0)
-            .Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        // Allocation-authoritative occupancy (plan §14/§16): active jobs contribute exactly
+        // their verified allocation fragments. Planner preview must never rebuild an active job
+        // from the raw calendar — a deliberately rescheduled job would look like a conflict.
         var result = new CapacityLoad();
-        foreach (var machineCode in normalizedCodes)
-            result.OccupiedByMachine[machineCode] = [];
-        if (normalizedCodes.Count == 0)
-            return result;
-
-        var activeRows = await db.ProductionWorkOrderMachines.AsNoTracking()
-            .Where(machine => machine.IsSelected
-                && normalizedCodes.Contains(machine.MachineCode)
-                && machine.Operation != null
-                && machine.Operation.WorkOrder != null
-                && machine.Operation.WorkOrder.CompanyCode == companyCode
-                && (machine.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.Released
-                    || machine.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress)
-                && (machine.SetupSeconds + machine.ConversionSeconds + machine.QueueSeconds
-                    + machine.PlannedRunMinutes * 60m) > 0m)
-            .Select(machine => new ActiveMachineSchedule
-            {
-                CompanyCode = machine.Operation!.WorkOrder!.CompanyCode,
-                WorkOrderId = machine.Operation!.WorkOrder!.Uid,
-                WorkOrderNo = machine.Operation.WorkOrder.WorkOrderNo,
-                BranchCode = machine.Operation.WorkOrder.BranchCode,
-                SchedulingDirection = machine.Operation.WorkOrder.SchedulingDirection,
-                MachineId = machine.Uid,
-                MachineCode = machine.MachineCode,
-                OperationId = machine.OperationId,
-                OperationCode = machine.Operation.OperationCode,
-                OperationStart = machine.Operation.PlannedStartDateTime,
-                OperationCompletion = machine.Operation.PlannedCompletionDateTime,
-                ScheduleRevision = machine.ScheduleRevision,
-                ScheduleSourceHash = machine.ScheduleSourceHash,
-                PlannedStart = machine.PlannedStartDateTime,
-                PlannedCompletion = machine.PlannedCompletionDateTime,
-                CalendarHorizonStart = machine.CalendarHorizonStart,
-                CalendarHorizonEnd = machine.CalendarHorizonEnd,
-                SetupSeconds = machine.SetupSeconds,
-                ConversionSeconds = machine.ConversionSeconds,
-                QueueSeconds = machine.QueueSeconds,
-                PlannedRunMinutes = machine.PlannedRunMinutes
-            })
-            .ToListAsync(cancellationToken);
-
-        var activeMachineIds = activeRows.Select(x => x.MachineId).ToList();
-        var allocationRows = new List<ProductionMachineScheduleAllocation>();
-        foreach (var idBatch in activeMachineIds.Chunk(800))
+        var evidence = await _capacity.LoadAsync(
+            db,
+            companyCode,
+            machineCodes,
+            excludedWorkOrderMachineIds: excludedMachineIds,
+            cancellationToken: cancellationToken);
+        foreach (var pair in evidence.OccupiedByMachine)
         {
-            allocationRows.AddRange(await db.ProductionMachineScheduleAllocations.AsNoTracking()
-                .Where(x => x.CompanyCode == companyCode && idBatch.Contains(x.WorkOrderMachineId))
-                .ToListAsync(cancellationToken));
-        }
-        var allocationsByMachineRevision = allocationRows
-            .GroupBy(x => (x.WorkOrderMachineId, x.ScheduleRevision))
-            .ToDictionary(x => x.Key, x => x.OrderBy(y => y.FragmentNo).ToList());
-
-        var preservedIntervals = new List<CapacityInterval>();
-        foreach (var row in activeRows.OrderBy(x => x.MachineCode, StringComparer.Ordinal)
-                     .ThenBy(x => x.PlannedStart).ThenBy(x => x.MachineId))
-        {
-            allocationsByMachineRevision.TryGetValue((row.MachineId, row.ScheduleRevision), out var savedAllocations);
-            var savedStamp = savedAllocations is null
-                ? "missing"
-                : string.Join(",", savedAllocations.Select(x =>
-                    $"{x.Uid}:{x.FragmentNo}:{x.StartDateTime:O}:{x.EndDateTime:O}:{x.BranchCode}:{x.WorkOrderOperationId}:{x.ScheduleSourceHash}"));
-            result.SourceStamps.Add(
-                $"M:{row.MachineId}:{row.ScheduleRevision}:{row.MachineCode}:{row.PlannedStart:O}:{row.PlannedCompletion:O}:{row.ScheduleSourceHash}:{savedStamp}");
-
-            // The current Work Order's affected operations are being replaced by this preview.
-            // Their old fragments do not consume capacity in the proposed placement.
-            if (excludedMachineIds.Contains(row.MachineId))
-                continue;
-
-            var rowLabel = string.Equals(row.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase)
-                ? $"Work Order {row.WorkOrderNo}"
-                : "An active Work Order in another branch";
-            var reconstructed = await ReconstructActiveScheduleAsync(row, cancellationToken);
-            if (reconstructed.Error is not null)
-            {
-                result.Blockers.Add(string.Equals(row.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase)
-                    ? reconstructed.Error
-                    : $"{rowLabel} cannot be verified on machine {row.MachineCode}; resolve its saved schedule or calendar provenance first.");
-                continue;
-            }
-
-            var expected = reconstructed.Result!.ConsumedIntervals.OrderBy(x => x.Start).ThenBy(x => x.End).ToList();
-            if (savedAllocations is { Count: > 0 })
-            {
-                var stored = savedAllocations.Select(x => new TimeInterval(x.StartDateTime, x.EndDateTime))
-                    .OrderBy(x => x.Start).ThenBy(x => x.End).ToList();
-                if (!IntervalsEqual(stored, expected)
-                    || savedAllocations.Any(x => x.ScheduleSourceHash != row.ScheduleSourceHash
-                        || !string.Equals(x.CompanyCode, row.CompanyCode, StringComparison.OrdinalIgnoreCase)
-                        || !string.Equals(x.BranchCode, row.BranchCode, StringComparison.OrdinalIgnoreCase)
-                        || x.WorkOrderId != row.WorkOrderId
-                        || x.WorkOrderOperationId != row.OperationId
-                        || x.WorkOrderMachineId != row.MachineId
-                        || x.ScheduleRevision != row.ScheduleRevision
-                        || !string.Equals(Normalize(x.MachineCode), Normalize(row.MachineCode), StringComparison.Ordinal)))
-                {
-                    result.Blockers.Add($"{rowLabel} has allocation fragments that do not match its saved calendar schedule on {row.MachineCode}.");
-                    continue;
-                }
-            }
-            else
-            {
-                result.Warnings.Add($"{rowLabel} has no saved allocation fragments; preview reconstructed its current schedule. Backfill is required before commit.");
-            }
-
-            foreach (var interval in expected)
-            {
-                var key = Normalize(row.MachineCode);
-                if (!result.OccupiedByMachine.ContainsKey(key))
-                    result.OccupiedByMachine[key] = [];
-                preservedIntervals.Add(new CapacityInterval(key, row.WorkOrderId, row.MachineId, interval));
-                result.OccupiedByMachine[key].Add(interval);
-            }
+            result.OccupiedByMachine[pair.Key] = [.. pair.Value];
         }
 
-        foreach (var machineGroup in preservedIntervals.GroupBy(x => x.MachineCode, StringComparer.Ordinal))
-        {
-            var ordered = machineGroup.OrderBy(x => x.Interval.Start).ThenBy(x => x.Interval.End).ToList();
-            if (ordered.Count == 0)
-                continue;
-            var furthestEnding = ordered[0];
-            for (var i = 1; i < ordered.Count; i++)
-            {
-                var current = ordered[i];
-                if (furthestEnding.Interval.End > current.Interval.Start)
-                {
-                    result.Blockers.Add($"Existing active Work Orders overlap on machine {machineGroup.Key}; resolve the overlap before previewing a move.");
-                    break;
-                }
-                if (current.Interval.End > furthestEnding.Interval.End)
-                    furthestEnding = current;
-            }
-        }
-
+        result.Blockers.AddRange(evidence.Blockers);
+        result.SourceStamps.AddRange(evidence.SourceStamps);
         result.SourceStamps.Sort(StringComparer.Ordinal);
         return result;
-    }
-
-    private async Task<(ScheduleMachineResult? Result, string? Error)> ReconstructActiveScheduleAsync(
-        ActiveMachineSchedule row,
-        CancellationToken cancellationToken)
-    {
-        if (row.PlannedStart is null || row.PlannedCompletion is null
-            || row.OperationStart is null || row.OperationCompletion is null
-            || row.CalendarHorizonStart is null || row.CalendarHorizonEnd is null
-            || string.IsNullOrWhiteSpace(row.ScheduleSourceHash)
-            || row.PlannedCompletion <= row.PlannedStart
-            || row.OperationStart != row.PlannedStart
-            || row.OperationCompletion != row.PlannedCompletion)
-        {
-            return (null, $"Work Order {row.WorkOrderNo} has incomplete or inconsistent saved schedule provenance on {row.MachineCode}.");
-        }
-
-        try
-        {
-            var start = DateOnly.FromDateTime(row.CalendarHorizonStart.Value);
-            var end = DateOnly.FromDateTime(row.CalendarHorizonEnd.Value);
-            if (end < start)
-                return (null, $"Work Order {row.WorkOrderNo} has an invalid calendar horizon on {row.MachineCode}.");
-            var data = await _machineCalendars.LoadAsync(row.CompanyCode, row.MachineCode, start, end, cancellationToken);
-            var hash = WorkOrderScheduleSourceHasher.Compute(data, start, end);
-            if (!string.Equals(hash, row.ScheduleSourceHash, StringComparison.Ordinal))
-                return (null, $"Work Order {row.WorkOrderNo} uses changed calendar inputs on {row.MachineCode}; resolve the calendar impact first.");
-            var direction = string.Equals(row.SchedulingDirection, ProductionSchedulingDirections.Backward, StringComparison.OrdinalIgnoreCase)
-                ? ScheduleDirection.Backward
-                : ScheduleDirection.Forward;
-            var duration = TimeSpan.FromSeconds((double)(row.SetupSeconds + row.ConversionSeconds + row.QueueSeconds))
-                + TimeSpan.FromMinutes((double)row.PlannedRunMinutes);
-            if (duration <= TimeSpan.Zero)
-                return (null, $"Work Order {row.WorkOrderNo} has no positive productive duration on {row.MachineCode}.");
-            var anchor = direction == ScheduleDirection.Backward ? row.PlannedCompletion.Value : row.PlannedStart.Value;
-            var scheduled = ProductionCalendarScheduler.ScheduleMachine(data, anchor, duration, direction);
-            if (scheduled.ActualStart != row.PlannedStart || scheduled.ActualCompletion != row.PlannedCompletion)
-                return (null, $"Work Order {row.WorkOrderNo} cannot be reproduced from its saved calendar on {row.MachineCode}.");
-            return (scheduled, null);
-        }
-        catch (ScheduleFailureException ex)
-        {
-            return (null, $"Work Order {row.WorkOrderNo} schedule cannot be reconstructed on {row.MachineCode}: {ex.Message}");
-        }
     }
 
     private async Task<Placement> PlaceOperationAsync(
@@ -1104,6 +942,8 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
     private static bool IntervalsEqual(IReadOnlyList<TimeInterval> left, IReadOnlyList<TimeInterval> right) =>
         left.Count == right.Count && left.Zip(right).All(x => x.First.Start == x.Second.Start && x.First.End == x.Second.End);
 
+    // Retained for allocation-integrity diagnostics in tests and tooling.
+
     private static string ComputePreviewToken(
         ProductionWorkOrder order,
         ProductionWorkOrderOperation targetOperation,
@@ -1204,33 +1044,6 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
         public List<string> Warnings { get; } = [];
         public List<string> Blockers { get; } = [];
     }
-
-    private sealed class ActiveMachineSchedule
-    {
-        public string CompanyCode { get; init; } = string.Empty;
-        public long WorkOrderId { get; init; }
-        public string WorkOrderNo { get; init; } = string.Empty;
-        public string BranchCode { get; init; } = string.Empty;
-        public string SchedulingDirection { get; init; } = ProductionSchedulingDirections.Forward;
-        public long MachineId { get; init; }
-        public string MachineCode { get; init; } = string.Empty;
-        public long OperationId { get; init; }
-        public string OperationCode { get; init; } = string.Empty;
-        public DateTime? OperationStart { get; init; }
-        public DateTime? OperationCompletion { get; init; }
-        public int ScheduleRevision { get; init; }
-        public string? ScheduleSourceHash { get; init; }
-        public DateTime? PlannedStart { get; init; }
-        public DateTime? PlannedCompletion { get; init; }
-        public DateTime? CalendarHorizonStart { get; init; }
-        public DateTime? CalendarHorizonEnd { get; init; }
-        public decimal SetupSeconds { get; init; }
-        public decimal ConversionSeconds { get; init; }
-        public decimal QueueSeconds { get; init; }
-        public decimal PlannedRunMinutes { get; init; }
-    }
-
-    private sealed record CapacityInterval(string MachineCode, long WorkOrderId, long WorkOrderMachineId, TimeInterval Interval);
 
     private sealed class OperationPlacement
     {

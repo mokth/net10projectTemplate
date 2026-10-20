@@ -187,6 +187,26 @@ public sealed class WorkOrderReadinessValidator : IWorkOrderReadinessValidator
                     + $"but has {selected}.",
                     target);
             }
+            else
+            {
+                // Only the selected machine consumes physical capacity. An unselected legacy
+                // alternate with zero time must not fail the Draft.
+                var selectedMachine = operation.Machines.Single(m => m.IsSelected);
+                var machineTarget = $"PrWorkOrderMachine/{selectedMachine.MachineCode}";
+                if (ProductionMachineScheduleDuration.HasNegativeComponent(selectedMachine))
+                {
+                    report.Add(ProductionReadinessErrorCodes.DurationBasisInvalid,
+                        $"Operation {operation.OperationCode} / Machine {selectedMachine.MachineCode} has a negative machine timing component.",
+                        machineTarget);
+                }
+                else if (ProductionMachineScheduleDuration.ComputeSeconds(selectedMachine) <= 0m)
+                {
+                    report.Add(ProductionReadinessErrorCodes.MachineDurationRequired,
+                        $"Operation {operation.OperationCode} / Machine {selectedMachine.MachineCode} has no positive machine duration. "
+                        + "Correct the Product Definition and use Update from Product Definition on this Draft.",
+                        machineTarget);
+                }
+            }
         }
         else
         {

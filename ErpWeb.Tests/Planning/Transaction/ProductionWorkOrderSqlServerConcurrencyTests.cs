@@ -1149,7 +1149,280 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
         Assert.Equal(stockPostingCount, await verify.StockPostings.CountAsync());
     }
 
+    // ── Machine capacity concurrency (plan §28) ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task Concurrent_releases_on_the_same_machine_commit_no_overlapping_allocations()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        await host.EnableMachineRouteAsync("MC-RACE-RELEASE");
+
+        var draftA = await host.CreateDraftAsync();
+        var draftB = await host.CreateDraftAsync();
+        Assert.True(draftA.Succeeded, draftA.Message);
+        Assert.True(draftB.Succeeded, draftB.Message);
+
+        var gate = new ManualResetEventSlim(false);
+        async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseAsync(ProductionWorkOrderDetail detail)
+        {
+            var sut = host.CreateService();
+            gate.Wait();
+            return await sut.ReleaseCurrentAsync(new ProductionWorkOrderReleaseRequest
+            {
+                WorkOrderNo = detail.WorkOrderNo,
+                RowVersion = detail.RowVersion,
+                SnapshotRevision = detail.SnapshotRevision,
+                SnapshotHash = detail.SnapshotHash,
+                SourceProductDefinitionRevisionId = detail.SourceProductDefinitionRevisionId
+            });
+        }
+
+        var taskA = Task.Run(() => ReleaseAsync(draftA.Data!));
+        var taskB = Task.Run(() => ReleaseAsync(draftB.Data!));
+        gate.Set();
+        var results = await Task.WhenAll(taskA, taskB);
+
+        // Both Drafts hold the same saved placement on one physical machine. The machine lock
+        // serializes them; the loser revalidates under the winner's committed allocations and must
+        // fail as MACHINE_CAPACITY_STALE rather than write a second overlapping reservation.
+        var winner = results.SingleOrDefault(x => x.Succeeded);
+        var loser = results.SingleOrDefault(x => !x.Succeeded);
+        Assert.NotNull(winner);
+        Assert.NotNull(loser);
+        Assert.Equal(IvMasterErrorCode.Validation, loser.ErrorCode);
+        Assert.Contains(ProductionReleaseErrorCodes.MachineCapacityStale, loser.Message, StringComparison.Ordinal);
+
+        await AssertNoOverlappingActiveAllocationsAsync(host.Factory);
+    }
+
+    [Fact]
+    public async Task Reopen_racing_release_into_freed_machine_capacity_leaves_a_consistent_state()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        await host.EnableMachineRouteAsync("MC-RACE-REOPEN");
+
+        var first = await host.CreateService().CreateAndReleaseAsync(host.DraftRequest());
+        Assert.True(first.Succeeded, first.Message);
+
+        // Created after the first release: its saved placement conflicts with the live allocation.
+        var secondDraft = await host.CreateDraftAsync();
+        Assert.True(secondDraft.Succeeded, secondDraft.Message);
+
+        var gate = new ManualResetEventSlim(false);
+
+        async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReopenAsync()
+        {
+            var sut = host.CreateService();
+            gate.Wait();
+            return await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+            {
+                WorkOrderNo = first.Data!.WorkOrderNo,
+                RowVersion = first.Data.RowVersion,
+                Reason = "release freed machine capacity race"
+            });
+        }
+
+        async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseSecondAsync()
+        {
+            var sut = host.CreateService();
+            gate.Wait();
+            return await sut.ReleaseCurrentAsync(new ProductionWorkOrderReleaseRequest
+            {
+                WorkOrderNo = secondDraft.Data!.WorkOrderNo,
+                RowVersion = secondDraft.Data.RowVersion,
+                SnapshotRevision = secondDraft.Data.SnapshotRevision,
+                SnapshotHash = secondDraft.Data.SnapshotHash,
+                SourceProductDefinitionRevisionId = secondDraft.Data.SourceProductDefinitionRevisionId
+            });
+        }
+
+        var reopenTask = Task.Run(ReopenAsync);
+        var releaseTask = Task.Run(ReleaseSecondAsync);
+        gate.Set();
+        var reopen = await reopenTask;
+        var released = await releaseTask;
+        Assert.True(reopen.Succeeded, reopen.Message);
+
+        await using var verify = await host.Factory.CreateDbContextAsync();
+        var firstStored = await verify.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == first.Data!.WorkOrderNo);
+        var secondStored = await verify.ProductionWorkOrders
+            .SingleAsync(x => x.WorkOrderNo == secondDraft.Data!.WorkOrderNo);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, firstStored.Status);
+        Assert.Empty(await verify.ProductionMachineScheduleAllocations
+            .Where(x => x.WorkOrderId == firstStored.Uid)
+            .ToListAsync());
+
+        if (released.Succeeded)
+        {
+            Assert.Equal(ProductionWorkOrderStatuses.Released, secondStored.Status);
+            Assert.NotEmpty(await verify.ProductionMachineScheduleAllocations
+                .Where(x => x.WorkOrderId == secondStored.Uid)
+                .ToListAsync());
+        }
+        else
+        {
+            Assert.Equal(IvMasterErrorCode.Validation, released.ErrorCode);
+            Assert.Equal(ProductionWorkOrderStatuses.Draft, secondStored.Status);
+            Assert.Empty(await verify.ProductionMachineScheduleAllocations
+                .Where(x => x.WorkOrderId == secondStored.Uid)
+                .ToListAsync());
+        }
+
+        await AssertNoOverlappingActiveAllocationsAsync(host.Factory);
+    }
+
+    [Fact]
+    public async Task Release_racing_planner_reschedule_on_the_same_machine_stays_consistent()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+        {
+            return;
+        }
+
+        await using var host = await Host.CreateAsync(cs);
+        await host.EnableMachineRouteAsync("MC-RACE-RESCHEDULE");
+
+        var first = await host.CreateService().CreateAndReleaseAsync(host.DraftRequest());
+        Assert.True(first.Succeeded, first.Message);
+
+        MachineScheduleRescheduleRequest request;
+        await using (var db = await host.Factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders
+                .Include(x => x.RouteSteps).ThenInclude(x => x.Operations).ThenInclude(x => x.Machines)
+                .AsSplitQuery()
+                .SingleAsync(x => x.WorkOrderNo == first.Data!.WorkOrderNo);
+            var step = order.RouteSteps.Single();
+            var operation = step.Operations.Single();
+            var machine = operation.Machines.Single(x => x.IsSelected);
+            request = new MachineScheduleRescheduleRequest
+            {
+                WorkOrderId = order.Uid,
+                OperationId = operation.Uid,
+                WorkOrderMachineId = machine.Uid,
+                MachineCode = machine.MachineCode,
+                RequestedStart = new DateTime(2026, 10, 5, 8, 0, 0),
+                ExpectedWorkOrderScheduleRevision = order.ScheduleRevision,
+                ExpectedWorkOrderRowVersion = order.RowVersion.ToArray(),
+                ExpectedMachineScheduleRevision = machine.ScheduleRevision,
+                ExpectedMachineRowVersion = machine.RowVersion.ToArray(),
+                Reason = "race the release of a competing Work Order"
+            };
+        }
+
+        var planner = host.CreateRescheduleService();
+        var preview = await planner.PreviewRescheduleAsync(request);
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(
+            preview.Data!.CanCommit,
+            "Preview blockers: " + string.Join(" | ", preview.Data.Blockers));
+
+        var commitRequest = new MachineScheduleRescheduleRequest
+        {
+            WorkOrderId = request.WorkOrderId,
+            OperationId = request.OperationId,
+            WorkOrderMachineId = request.WorkOrderMachineId,
+            MachineCode = request.MachineCode,
+            RequestedStart = request.RequestedStart,
+            ExpectedWorkOrderScheduleRevision = request.ExpectedWorkOrderScheduleRevision,
+            ExpectedWorkOrderRowVersion = request.ExpectedWorkOrderRowVersion,
+            ExpectedMachineScheduleRevision = request.ExpectedMachineScheduleRevision,
+            ExpectedMachineRowVersion = request.ExpectedMachineRowVersion,
+            Reason = request.Reason,
+            PreviewToken = preview.Data.PreviewToken
+        };
+
+        var secondDraft = await host.CreateDraftAsync();
+        Assert.True(secondDraft.Succeeded, secondDraft.Message);
+
+        var gate = new ManualResetEventSlim(false);
+        async Task<IvMasterOperationResult<MachineScheduleRescheduleCommitResult>> CommitRescheduleAsync()
+        {
+            var service = host.CreateRescheduleService();
+            gate.Wait();
+            return await service.CommitRescheduleAsync(commitRequest);
+        }
+
+        async Task<IvMasterOperationResult<ProductionWorkOrderDetail>> ReleaseSecondAsync()
+        {
+            var sut = host.CreateService();
+            gate.Wait();
+            return await sut.ReleaseCurrentAsync(new ProductionWorkOrderReleaseRequest
+            {
+                WorkOrderNo = secondDraft.Data!.WorkOrderNo,
+                RowVersion = secondDraft.Data.RowVersion,
+                SnapshotRevision = secondDraft.Data.SnapshotRevision,
+                SnapshotHash = secondDraft.Data.SnapshotHash,
+                SourceProductDefinitionRevisionId = secondDraft.Data.SourceProductDefinitionRevisionId
+            });
+        }
+
+        var rescheduleTask = Task.Run(CommitRescheduleAsync);
+        var releaseTask = Task.Run(ReleaseSecondAsync);
+        gate.Set();
+        var rescheduled = await rescheduleTask;
+        var released = await releaseTask;
+
+        // Whichever command wins the machine lock, the other must observe the committed evidence
+        // and fail without writing a partial status/allocation mutation.
+        Assert.True(rescheduled.Succeeded, rescheduled.Message);
+        if (!released.Succeeded)
+        {
+            Assert.Equal(IvMasterErrorCode.Validation, released.ErrorCode);
+        }
+
+        await using var verify = await host.Factory.CreateDbContextAsync();
+        var secondStored = await verify.ProductionWorkOrders
+            .SingleAsync(x => x.WorkOrderNo == secondDraft.Data!.WorkOrderNo);
+        Assert.Equal(
+            released.Succeeded ? ProductionWorkOrderStatuses.Released : ProductionWorkOrderStatuses.Draft,
+            secondStored.Status);
+
+        await AssertNoOverlappingActiveAllocationsAsync(host.Factory);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Plan §28 post-condition: no two committed active positive allocations may overlap on
+    /// CompanyCode + MachineCode. Half-open adjacency is allowed.
+    /// </summary>
+    private static async Task AssertNoOverlappingActiveAllocationsAsync(IDbContextFactory<AppDbContext> factory)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var allocations = await db.ProductionMachineScheduleAllocations
+            .AsNoTracking()
+            .OrderBy(x => x.CompanyCode)
+            .ThenBy(x => x.MachineCode)
+            .ThenBy(x => x.StartDateTime)
+            .ToListAsync();
+
+        foreach (var group in allocations.GroupBy(x => (x.CompanyCode, Machine: x.MachineCode.Trim().ToUpperInvariant())))
+        {
+            var ordered = group.OrderBy(x => x.StartDateTime).ThenBy(x => x.EndDateTime).ToList();
+            for (var i = 1; i < ordered.Count; i++)
+            {
+                Assert.True(
+                    ordered[i].StartDateTime >= ordered[i - 1].EndDateTime,
+                    $"Active allocations overlap on {group.Key.CompanyCode}/{group.Key.Machine}: "
+                    + $"[{ordered[i - 1].StartDateTime:O}..{ordered[i - 1].EndDateTime:O}] and "
+                    + $"[{ordered[i].StartDateTime:O}..{ordered[i].EndDateTime:O}].");
+            }
+        }
+    }
 
     private static ProductionWorkOrderMaterial ValidMaterial(
         HierarchyIds graph,
@@ -1297,6 +1570,9 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
                 {
                     CompanyCode = Company,
                     ProdCode = productCode,
+                    DefinitionCode = PrProductDefinitionCodes.Standard,
+                    DefinitionName = PrProductDefinitionCodes.StandardName,
+                    IsDefaultDefinition = true,
                     Version = 1,
                     Status = PrBomStatuses.Active,
                     EffectiveFrom = new DateTime(2026, 1, 1),
@@ -1475,6 +1751,56 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
 
         public Task<IvMasterOperationResult<ProductionWorkOrderDetail>> CreateDraftAsync() =>
             CreateService().CreateDraftAsync(DraftRequest());
+
+        /// <summary>
+        /// Converts the seeded definition's only operation into a machine operation with one
+        /// positive-duration option, so Release must reserve physical capacity on that machine.
+        /// </summary>
+        public async Task EnableMachineRouteAsync(string machineCode)
+        {
+            await using var db = await Factory.CreateDbContextAsync();
+            var header = await db.PrBomHdrs
+                .Include(x => x.RouteSteps).ThenInclude(x => x.Operations).ThenInclude(x => x.Machines)
+                .AsSplitQuery()
+                .SingleAsync(x => x.Uid == BomHdrId);
+            var operation = header.RouteSteps.SelectMany(x => x.Operations).First();
+            operation.ProcessType = PrProcessTypes.Machine;
+            operation.StandardDurationMinutes = 0m;
+            operation.Machines.Add(new PrBomMachineOption
+            {
+                MachineCode = machineCode,
+                MachineDescription = "SQL capacity race machine",
+                IsPrimary = true,
+                Priority = 1,
+                CycleSeconds = 30m,
+                OutputPerCycle = 1m,
+                ParallelMachineCount = 1,
+                RowVersion = [1]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        public MachineScheduleRescheduleService CreateRescheduleService()
+        {
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(
+                    MenuCodes.PlanningMachineSchedulePlanner,
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+
+            var readiness = new Mock<IMachineSchedulePlannerReadinessService>();
+            readiness.Setup(x => x.GetReadinessAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new MachineSchedulePlannerReadiness { IsWriteReady = true });
+
+            return new MachineScheduleRescheduleService(
+                Factory,
+                InventoryTenantTestHelper.CreateTenantContext(branch: Branch, location: "SITE"),
+                access.Object,
+                readiness.Object,
+                new FakeProductionCalendarScheduleDataLoader(),
+                new AlwaysOpenWorkOrderCalendarProvider());
+        }
 
         public async Task<HierarchyIds> SeedHierarchyAsync(bool includeMachine, bool includeOperationLabour)
         {

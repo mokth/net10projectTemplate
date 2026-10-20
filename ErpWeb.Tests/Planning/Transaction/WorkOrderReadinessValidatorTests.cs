@@ -131,9 +131,62 @@ public sealed class WorkOrderReadinessValidatorTests
     }
 
     [Fact]
-    public void Fixed_duration_process_without_a_standard_duration_blocks_release()
+    public void Selected_machine_with_zero_duration_blocks_release()
+    {
+        // Plan §8.1 / §22: a machine operation with no positive combined duration must never be
+        // released as a zero-length capacity reservation.
+        var order = ValidOrder();
+        var machine = order.RouteSteps.Single().Operations.Single().Machines.Single();
+        machine.CycleSeconds = 0m;
+        machine.PlannedRunMinutes = 0m;
+        machine.SetupSeconds = 0m;
+        machine.ConversionSeconds = 0m;
+        machine.QueueSeconds = 0m;
+
+        var report = Sut().Validate(order, Ready());
+
+        var error = Assert.Single(
+            report.Errors.Where(e => e.Code == ProductionReadinessErrorCodes.MachineDurationRequired));
+        Assert.Contains("MC01", error.Message, StringComparison.Ordinal);
+        Assert.False(report.IsReady);
+    }
+
+    [Fact]
+    public void Negative_machine_duration_component_blocks_release()
     {
         var order = ValidOrder();
+        var machine = order.RouteSteps.Single().Operations.Single().Machines.Single();
+        machine.SetupSeconds = -60m;
+
+        var report = Sut().Validate(order, Ready());
+
+        Assert.Contains(report.Errors, e => e.Code == ProductionReadinessErrorCodes.DurationBasisInvalid);
+        Assert.DoesNotContain(report.Errors, e => e.Code == ProductionReadinessErrorCodes.MachineDurationRequired);
+    }
+
+    [Fact]
+    public void Unselected_zero_duration_alternate_machine_does_not_block_release()
+    {
+        var order = ValidOrder();
+        var operation = order.RouteSteps.Single().Operations.Single();
+        operation.Machines.Add(new ProductionWorkOrderMachine
+        {
+            MachineCode = "MC-LEGACY",
+            IsSelected = false,
+            CycleQuantityMode = ProductionMachineCycleQuantityModes.Discrete,
+            OutputPerCycle = 1m,
+            ParallelMachineCount = 1
+        });
+
+        var report = Sut().Validate(order, Ready());
+
+        Assert.DoesNotContain(report.Errors, e => e.Code == ProductionReadinessErrorCodes.MachineDurationRequired);
+        Assert.True(report.IsReady, report.Summary);
+    }
+
+    [Fact]
+    public void Fixed_duration_process_without_a_standard_duration_blocks_release()
+    {        var order = ValidOrder();
         var operation = order.RouteSteps.Single().Operations.Single();
         operation.ProcessType = "MANUAL";
         operation.Machines.Clear();
@@ -388,6 +441,8 @@ public sealed class WorkOrderReadinessValidatorTests
             IsDefault = true,
             IsSelected = true,
             CycleQuantityMode = ProductionMachineCycleQuantityModes.Discrete,
+            CycleSeconds = 60m,
+            PlannedRunMinutes = 2m,
             OutputPerCycle = 5m,
             ParallelMachineCount = 1
         });

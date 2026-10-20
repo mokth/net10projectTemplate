@@ -87,12 +87,15 @@ public static class StockReplayFifoIssueRepricingWriter
         StockReplayEventKey issueKey,
         int reversalPostingLineNo,
         int replacementPostingLineNo,
+        IReadOnlyDictionary<long, StockFifoLayer> countLayers,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(countPermit);
-        StockReplayFifoCountSheetInsertionPlanner.ValidatePreparedPlan(plan);
+        ArgumentNullException.ThrowIfNull(countLayers);
+        // The caller validates the prepared plan before writing. Staging a new
+        // frozen basis assigns its Id, which changes the original plan hash.
         if (context.Posting.SourceDocumentType != "IV_STOCK_COUNT"
             || countPermit.RootPostingId != context.Posting.Id
             || countPermit.ItemCode != plan.ItemCode
@@ -100,10 +103,21 @@ public static class StockReplayFifoIssueRepricingWriter
             || countPermit.SnapshotHash != plan.Snapshot.SnapshotHash
             || countPermit.FinalQuantity != plan.Projection.FinalQuantity
             || countPermit.FinalValue != plan.Projection.FinalValue
-            || plan.Projection.Counts.Any(c =>
-                c.SignedAdjustmentQuantity > 0m)
             || plan.Projection.LaterIssues.Any(i => !i.DepletesPool))
-            throw Invalid("FIFO count correction needs a nonpositive count and its root permit.");
+            throw Invalid("FIFO count correction needs its root permit and supported issue tail.");
+        var projectedReceipts = plan.Projection.Counts
+            .Where(c => c.Receipt is not null)
+            .Select(c => c.Receipt!).ToArray();
+        if (projectedReceipts.Length != countLayers.Count
+            || projectedReceipts.Any(receipt =>
+                !countLayers.TryGetValue(receipt.LayerId, out var layer)
+                || layer.Id <= 0
+                || layer.OriginStockPostingId != context.Posting.Id
+                || layer.OriginValuationFactId <= 0
+                || layer.ItemCode != plan.ItemCode
+                || layer.OriginalQty != receipt.OriginalQuantity
+                || layer.OriginalValue != receipt.OriginalValue))
+            throw Invalid("FIFO count correction lost a count-created layer.");
         await ValidateFifoPolicyAsync(context,
             plan.PhysicalSheet.EffectiveAt.Date,
             plan.Projection.LaterIssues.Select(i => i.Key.EffectiveAt.Date)
@@ -113,7 +127,8 @@ public static class StockReplayFifoIssueRepricingWriter
             plan.Projection.LaterIssues, plan.PlanHash, "COUNT",
             new StockReplayFifoWritePermit(context, plan), issueKey,
             reversalPostingLineNo, replacementPostingLineNo, null,
-            cancellationToken);
+            cancellationToken, countLayers.ToDictionary(p => p.Key,
+                p => p.Value.Id));
     }
 
     private static async Task<IReadOnlyList<StockValuationFact>> AppendCoreAsync(
@@ -123,7 +138,8 @@ public static class StockReplayFifoIssueRepricingWriter
         string operation, StockReplayFifoWritePermit permit,
         StockReplayEventKey issueKey, int reversalPostingLineNo,
         int replacementPostingLineNo, long? receiptLayerId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<long, long>? countLayerIds = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
@@ -317,8 +333,12 @@ public static class StockReplayFifoIssueRepricingWriter
                 CompanyCode = context.CompanyCode,
                 BranchCode = context.BranchCode,
                 IssueValuationFact = replacements[i],
-                FifoLayerId = StockReplayFifoReceiptLayerBinding.Map(
-                    allocation.LayerId, receiptLayerId),
+                FifoLayerId = countLayerIds is not null
+                    && countLayerIds.TryGetValue(allocation.LayerId,
+                        out var savedCountLayerId)
+                        ? savedCountLayerId
+                        : StockReplayFifoReceiptLayerBinding.Map(
+                            allocation.LayerId, receiptLayerId),
                 ConsumedQty = allocation.Quantity,
                 ConsumedValue = allocation.Value,
                 SplitOrdinal = i,

@@ -92,6 +92,54 @@ public sealed partial class ProductionWorkOrderService
                     IvMasterErrorCode.InUse, preflightBlocker);
             }
 
+            // Physical machine app locks follow the demand bridge and precede the Work Order
+            // aggregate, matching Release and planner commit. Holding them while the released
+            // Work Order returns to Draft makes removing its capacity allocations atomic with
+            // any concurrent placement on the same machine (plan §15.2).
+            var reopenMachineCodes = await db.ProductionWorkOrderMachines.AsNoTracking()
+                .Where(x => x.Operation != null
+                    && x.Operation.WorkOrderId == identity.Uid
+                    && x.IsSelected)
+                .Select(x => x.MachineCode)
+                .ToListAsync(cancellationToken);
+            var reopenOwnedAllocationCodes = await db.ProductionMachineScheduleAllocations.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.WorkOrderId == identity.Uid)
+                .Select(x => x.MachineCode)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            var reopenLockCodes = reopenMachineCodes
+                .Concat(reopenOwnedAllocationCodes)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(Normalize)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(x => x, StringComparer.Ordinal)
+                .ToList();
+            try
+            {
+                await ProductionMachineScheduleLock.AcquireManyAsync(
+                    db, scope.CompanyCode, reopenLockCodes, cancellationToken);
+            }
+            catch (ProductionMachineScheduleLockException ex)
+            {
+                return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                    IvMasterErrorCode.Concurrency, ex.Message);
+            }
+
+            await WorkOrderSchedulingLock.AcquireAsync(
+                db, scope.CompanyCode, exclusive: false, cancellationToken);
+            try
+            {
+                await ProductionWorkOrderExecutionLock.AcquireAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, identity.Uid, cancellationToken);
+            }
+            catch (ProductionWorkOrderExecutionLockException ex)
+            {
+                return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                    IvMasterErrorCode.Concurrency, ex.Message);
+            }
+
             var order = await LockWorkOrderForLifecycleAsync(
                 db, scope.CompanyCode, scope.BranchCode!, number, cancellationToken);
             if (order is null
@@ -123,6 +171,38 @@ public sealed partial class ProductionWorkOrderService
             {
                 return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
                     IvMasterErrorCode.InUse, blocker);
+            }
+
+            // Removing the released capacity reservation is part of the same transaction that
+            // returns the Work Order to Draft: a Draft must never keep active allocations that
+            // would block releases on the same physical machine (plan §17).
+            var lockedReopenCodes = reopenLockCodes.ToHashSet(StringComparer.Ordinal);
+            var allocationCodesNow = await db.ProductionMachineScheduleAllocations.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.WorkOrderId == order.Uid)
+                .Select(x => x.MachineCode)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            var unlockedReopenCode = allocationCodesNow
+                .Select(Normalize)
+                .FirstOrDefault(code => !lockedReopenCodes.Contains(code));
+            if (unlockedReopenCode is not null)
+            {
+                return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                    IvMasterErrorCode.Concurrency,
+                    $"Work Order {order.WorkOrderNo} gained an allocation on unlocked machine {unlockedReopenCode}. "
+                    + "Retry the reopen.");
+            }
+
+            var reopenAllocations = await db.ProductionMachineScheduleAllocations
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.WorkOrderId == order.Uid)
+                .ToListAsync(cancellationToken);
+            if (reopenAllocations.Count > 0)
+            {
+                db.ProductionMachineScheduleAllocations.RemoveRange(reopenAllocations);
             }
 
             // Lifecycle transition only — do not RequireCurrentSnapshot or rebuild/upgrade snapshot.

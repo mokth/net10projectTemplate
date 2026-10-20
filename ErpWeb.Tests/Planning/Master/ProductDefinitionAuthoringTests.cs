@@ -418,6 +418,66 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         Assert.Equal("BOX", accepted.Data!.Lines[0].StdUom);
     }
 
+    [Fact]
+    public async Task Machine_activation_requires_a_positive_representable_one_slot_duration()
+    {
+        await SeedMastersAsync();
+        var sut = CreateSut();
+        var operationKey = Guid.NewGuid();
+
+        PrProductDefEditVm Build(decimal setupSeconds, decimal cycleSeconds) => new()
+        {
+            ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
+            BaseQty = 5m,
+            BaseUom = "PCS",
+            Lines = [new PrProductDefLineVm { OperationKey = operationKey, ICode = "RM001", StdQty = 1m, Warehouse = "WH01" }],
+            Operations =
+            [
+                new PrProductDefOperationVm
+                {
+                    OperationKey = operationKey,
+                    WorkCentreCode = "WC01",
+                    OutputItemCode = "FG001",
+                    CentralSequence = 10,
+                    OutputBaseQty = 5m,
+                    OutputUom = "PCS",
+                    OperationCode = "MIX",
+                    ProcessSequence = 10,
+                    ProcessType = PrProcessTypes.Machine,
+                    IsFinalOperation = true,
+                    Machines =
+                    [
+                        new PrProductDefMachineVm
+                        {
+                            MachineCode = "MX01",
+                            ResourceSequence = 10,
+                            IsPrimary = true,
+                            Priority = 1,
+                            OutputPerCycle = 1m,
+                            CycleSeconds = cycleSeconds,
+                            SetupSeconds = setupSeconds,
+                            Labours = [new PrProductDefLabourVm { LabourCode = "LAB01", CostPerOutputUnit = 1m }]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var allZero = await sut.SaveAsync(Build(0m, 0m), isNew: true, activate: true);
+        Assert.False(allZero.Succeeded);
+        Assert.Contains("Operations[0].Machines", allZero.ValidationErrors.Keys);
+
+        // Positive but a single slot rounds to zero PlannedRunMinutes: no usable basis.
+        var tiny = await sut.SaveAsync(Build(0m, 0.001m), isNew: true, activate: true);
+        Assert.False(tiny.Succeeded);
+        Assert.Contains("Operations[0].Machines", tiny.ValidationErrors.Keys);
+
+        // Setup-only steps remain valid when the fixed component is positive.
+        var setupOnly = await sut.SaveAsync(Build(30m, 0m), isNew: true, activate: true);
+        Assert.True(setupOnly.Succeeded, setupOnly.Message);
+    }
+
     private async Task SeedMastersAsync()
     {
         await using var db = await _factory.CreateDbContextAsync();

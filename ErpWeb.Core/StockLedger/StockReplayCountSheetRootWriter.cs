@@ -11,12 +11,14 @@ public sealed record StockReplayCountSheetRootPlan(
     IReadOnlyList<StockCountCostBasis> FrozenBases,
     string CostMethod,
     StockReplayWacCountSheetPostingPlan? Wac,
-    StockReplayStandardCountSheetPostingPlan? Standard);
+    StockReplayStandardCountSheetPostingPlan? Standard,
+    StockReplayFifoCountSheetPostingPlan? Fifo);
 
 public sealed record StockReplayCountSheetRootResult(
     IReadOnlyList<int> RequiredActiveHistoryIds,
     StockReplayWacCountSheetPostResult? Wac,
-    StockReplayStandardCountSheetPostResult? Standard);
+    StockReplayStandardCountSheetPostResult? Standard,
+    StockReplayFifoInitialCountSheetResult? Fifo);
 
 /// <summary>
 /// Connects initial count approvals, physical planning, cost planning, and the
@@ -45,6 +47,7 @@ public static class StockReplayCountSheetRootWriter
             companyCode, branchCode, sheet.EffectiveAt, cancellationToken);
         StockReplayWacCountSheetPostingPlan? wac = null;
         StockReplayStandardCountSheetPostingPlan? standard = null;
+        StockReplayFifoCountSheetPostingPlan? fifo = null;
         switch (method)
         {
             case StockCostMethods.MovingAverage:
@@ -55,14 +58,18 @@ public static class StockReplayCountSheetRootWriter
                 standard = await StockReplayStandardCountSheetPostingWriter.BuildAsync(
                     db, sheet, bases, cancellationToken);
                 break;
+            case StockCostMethods.Fifo:
+                fifo = await StockReplayFifoCountSheetPostingPlanner.BuildAsync(
+                    db, sheet, bases, cancellationToken);
+                break;
             default:
-                throw Invalid($"Count {countId} needs a FIFO count sheet writer before replay.");
+                throw Invalid($"Count {countId} has no supported costing policy.");
         }
         var command = await StockCountAnchorCommandFactory.CreateAsync(db,
             companyCode, branchCode, countId, bases, cancellationToken);
         if (command.EffectiveAt != sheet.EffectiveAt)
             throw Invalid($"Count {countId} anchor and physical sheet have different event keys.");
-        return new(command, sheet, bases, method, wac, standard);
+        return new(command, sheet, bases, method, wac, standard, fifo);
     }
 
     public static async Task<StockReplayCountSheetRootResult> AppendWithinRootAsync(
@@ -84,7 +91,8 @@ public static class StockReplayCountSheetRootWriter
             || context.BranchCode != plan.PhysicalSheet.BranchCode
             || context.Epoch.Id != plan.PhysicalSheet.LedgerEpochId
             || context.Posting.PostingSequence != plan.PhysicalSheet.BranchWatermark + 1
-            || (plan.Wac is null) == (plan.Standard is null))
+            || new object?[] { plan.Wac, plan.Standard, plan.Fifo }
+                .Count(x => x is not null) != 1)
             throw Invalid("The count sheet plan does not match its unsealed root.");
         var method = await new StockCostMethodResolver().ResolveAsync(context.Db,
             context.CompanyCode, context.BranchCode, context.Posting.EffectiveAt,
@@ -100,7 +108,7 @@ public static class StockReplayCountSheetRootWriter
             var result = await StockReplayWacCountSheetPostingWriter
                 .AppendWithinRootAsync(context, prepared, plan.FrozenBases,
                     numbers, cancellationToken);
-            return new(result.RequiredActiveHistoryIds, result, null);
+            return new(result.RequiredActiveHistoryIds, result, null, null);
         }
         if (plan.CostMethod == StockCostMethods.Standard
             && plan.Standard is { } standardPlan && plan.Wac is null)
@@ -110,7 +118,18 @@ public static class StockReplayCountSheetRootWriter
             var result = await StockReplayStandardCountSheetPostingWriter
                 .AppendWithinRootAsync(context, prepared, plan.FrozenBases,
                     numbers, cancellationToken);
-            return new(result.RequiredActiveHistoryIds, null, result);
+            return new(result.RequiredActiveHistoryIds, null, result, null);
+        }
+        if (plan.CostMethod == StockCostMethods.Fifo
+            && plan.Fifo is { } fifoPlan
+            && plan.Wac is null && plan.Standard is null)
+        {
+            var prepared = await StockReplayFifoCountSheetPostingPlanner
+                .PrepareWithinRootAsync(context, fifoPlan, cancellationToken);
+            var result = await StockReplayFifoInitialCountSheetWriter
+                .AppendWithinRootAsync(context, prepared, numbers,
+                    cancellationToken);
+            return new(result.RequiredActiveHistoryIds, null, null, result);
         }
         throw Invalid("The count sheet has no supported financial writer.");
     }

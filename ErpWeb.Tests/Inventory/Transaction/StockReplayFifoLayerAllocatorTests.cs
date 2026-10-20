@@ -621,6 +621,112 @@ public sealed class StockReplayFifoLayerAllocatorTests
             invalidQuantity.Error.Code);
     }
 
+    [Fact]
+    public void Removing_whole_fifo_count_sheet_reprices_later_issue_from_remaining_pool()
+    {
+        var count = CountKey(Day.AddDays(1), 2);
+        var secondCount = count with { LineIdentity = "C0000000002" };
+        var laterIssue = IssueKey(Day.AddDays(2), 3);
+        var opening = Layer(1, Day, 1, 10m, 30m) with
+        {
+            RemainingQuantity = 5m, RemainingValue = 15m,
+            ReceiptKey = IssueKey(Day, 1)
+        };
+        var countReceipt = Layer(2, count.EffectiveAt, 2, 2m, 6m) with
+        {
+            ReceiptKey = count
+        };
+        var snapshot = new StockReplayFifoActiveLayerSnapshot("C", "B", "A",
+            7m, 21m, [opening, countReceipt],
+            [
+                new(10, 20, 1, 1m, 3m, 0, true, secondCount),
+                new(11, 21, 1, 4m, 12m, 0, true, laterIssue)
+            ], "verified");
+
+        var removal = StockReplayFifoCountSheetProjector.Remove(snapshot,
+            [secondCount, count]);
+
+        Assert.Equal(10m, removal.BeforeFirstCount.Quantity);
+        Assert.Equal(2m, removal.RemovedCounts[0].SignedAdjustmentQuantity);
+        Assert.Equal(-1m, removal.RemovedCounts[1].SignedAdjustmentQuantity);
+        Assert.Equal(12m, Assert.Single(removal.LaterIssues).Value);
+        Assert.Equal(6m, removal.FinalQuantity);
+        Assert.Equal(18m, removal.FinalValue);
+        Assert.Equal(6m, Assert.Single(removal.FinalLayers).RemainingQuantity);
+        Assert.Equal(2, snapshot.Layers.Count);
+
+        var missing = Assert.Throws<StockLedgerException>(() =>
+            StockReplayFifoCountSheetProjector.Remove(snapshot,
+                [count, count with { LineIdentity = "C0000000003" }]));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            missing.Error.Code);
+    }
+
+    [Fact]
+    public void Removing_fifo_count_receipt_fails_when_later_issue_needs_that_layer()
+    {
+        var count = CountKey(Day.AddDays(1), 2);
+        var laterIssue = IssueKey(Day.AddDays(2), 3);
+        var opening = Layer(1, Day, 1, 1m, 3m) with
+        {
+            RemainingQuantity = 0m, RemainingValue = 0m,
+            CurrentUnitCost = 0m, Status = StockFifoLayerStatuses.Closed,
+            ReceiptKey = IssueKey(Day, 1)
+        };
+        var countReceipt = Layer(2, count.EffectiveAt, 2, 2m, 6m) with
+        {
+            RemainingQuantity = 1m, RemainingValue = 3m,
+            ReceiptKey = count
+        };
+        var snapshot = new StockReplayFifoActiveLayerSnapshot("C", "B", "A",
+            1m, 3m, [opening, countReceipt],
+            [
+                new(10, 20, 1, 1m, 3m, 0, true, laterIssue),
+                new(11, 21, 2, 1m, 3m, 1, true, laterIssue)
+            ], "verified");
+
+        Assert.Equal(StockLedgerErrorCodes.InsufficientBaseQty,
+            Assert.Throws<StockLedgerException>(() =>
+                StockReplayFifoCountSheetProjector.Remove(snapshot,
+                    [count])).Error.Code);
+    }
+
+    [Fact]
+    public void Removing_negative_fifo_count_changes_later_issue_cost()
+    {
+        var count = CountKey(Day.AddDays(1), 3);
+        var laterIssue = IssueKey(Day.AddDays(2), 4);
+        var first = Layer(1, Day, 1, 2m, 6m) with
+        {
+            RemainingQuantity = 0m, RemainingValue = 0m,
+            CurrentUnitCost = 0m, Status = StockFifoLayerStatuses.Closed,
+            ReceiptKey = IssueKey(Day, 1)
+        };
+        var second = Layer(2, Day, 2, 2m, 8m) with
+        {
+            RemainingQuantity = 1m, RemainingValue = 4m,
+            ReceiptKey = IssueKey(Day, 2)
+        };
+        var snapshot = new StockReplayFifoActiveLayerSnapshot("C", "B", "A",
+            1m, 4m, [first, second],
+            [
+                new(10, 20, 1, 1m, 3m, 0, true, count),
+                new(11, 21, 1, 1m, 3m, 0, true, laterIssue),
+                new(12, 22, 2, 1m, 4m, 1, true, laterIssue)
+            ], "verified");
+
+        var removal = StockReplayFifoCountSheetProjector.Remove(snapshot,
+            [count]);
+
+        Assert.Equal(-1m,
+            Assert.Single(removal.RemovedCounts).SignedAdjustmentQuantity);
+        Assert.Equal(6m, Assert.Single(removal.LaterIssues).Value);
+        Assert.Equal(2m, removal.FinalQuantity);
+        Assert.Equal(8m, removal.FinalValue);
+        Assert.Equal(0m, removal.FinalLayers[0].RemainingQuantity);
+        Assert.Equal(2m, removal.FinalLayers[1].RemainingQuantity);
+    }
+
     private static StockReplayEventKey CountKey(DateTime day, long sequence) =>
         new(StockReplayEventKey.CountEndOfDay(day),
             StockReplayEventKey.CountClass, sequence, "C0000000001", 0);

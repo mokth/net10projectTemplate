@@ -47,6 +47,14 @@ public sealed class WorkOrderScheduleResult
     public string? Trace { get; init; }
     public bool Succeeded => Errors.Count == 0;
 
+    /// <summary>
+    /// Exact consumed calendar fragments per operation. Release persists these as
+    /// <c>PrMachineScheduleAllocation</c> without rescheduling, so the allocation always reflects
+    /// the canonical placement that was validated (plan §11.2).
+    /// </summary>
+    public IReadOnlyDictionary<ProductionWorkOrderOperation, IReadOnlyList<TimeInterval>> ConsumedByOperation { get; init; }
+        = new Dictionary<ProductionWorkOrderOperation, IReadOnlyList<TimeInterval>>();
+
     public string FailureCode => Errors.Count > 0 ? Errors[0].Code : string.Empty;
     public string FailureMessage => Errors.Count > 0 ? Errors[0].Message : string.Empty;
 }
@@ -67,6 +75,17 @@ public interface IWorkOrderScheduleCalculator
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Runs the canonical placement engine against caller-supplied capacity evidence. Release and
+    /// Planner Commit use this overload so the placement they validate is byte-for-byte the same
+    /// engine the Draft used (plan §12/§14), while the capacity read stays inside the caller's
+    /// transaction and machine locks.
+    /// </summary>
+    Task<WorkOrderScheduleResult> ScheduleAsync(
+        ProductionWorkOrder workOrder,
+        IProductionMachineCapacityWindowProvider? capacityProvider,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Recomputes the schedule-source hash over each saved horizon without moving timestamps.
     /// Release compares these with the stored hashes to detect a stale calendar (plan §9.2).
     /// </summary>
@@ -78,11 +97,36 @@ public interface IWorkOrderScheduleCalculator
 public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
 {
     private readonly IWorkOrderCalendarProvider _calendars;
+    private readonly IProductionMachineCapacityService? _capacity;
 
-    public WorkOrderScheduleCalculator(IWorkOrderCalendarProvider calendars) => _calendars = calendars;
+    public WorkOrderScheduleCalculator(
+        IWorkOrderCalendarProvider calendars,
+        IProductionMachineCapacityService? capacity = null)
+    {
+        _calendars = calendars;
+        _capacity = capacity;
+    }
+
+    public Task<WorkOrderScheduleResult> ScheduleAsync(
+        ProductionWorkOrder workOrder,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(workOrder);
+        IProductionMachineCapacityWindowProvider? provider = null;
+        if (_capacity is not null)
+        {
+            provider = new PreviewMachineCapacityWindowProvider(
+                _capacity,
+                workOrder.CompanyCode,
+                excludedWorkOrderId: workOrder.Uid > 0 ? workOrder.Uid : null);
+        }
+
+        return ScheduleAsync(workOrder, provider, cancellationToken);
+    }
 
     public async Task<WorkOrderScheduleResult> ScheduleAsync(
         ProductionWorkOrder workOrder,
+        IProductionMachineCapacityWindowProvider? capacityProvider,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workOrder);
@@ -107,6 +151,12 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
             $"anchor={anchor:O}",
         };
 
+        // Local capacity: operations already placed in this same Work Order calculation occupy
+        // the physical machine until this calculation finishes (plan §12.1). Equal sequence is a
+        // parallelism permission, not a second machine.
+        var localOccupiedByMachine = new Dictionary<string, List<TimeInterval>>(StringComparer.Ordinal);
+        var consumedByOperation = new Dictionary<ProductionWorkOrderOperation, IReadOnlyList<TimeInterval>>();
+
         var completions = new Dictionary<ProductionWorkOrderRouteStep, DateTime>();
         var starts = new Dictionary<ProductionWorkOrderRouteStep, DateTime>();
         var groups = direction == ScheduleDirection.Forward
@@ -117,7 +167,7 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
         foreach (var group in groups)
         {
             DateTime? slowest = null;
-            foreach (var step in group.OrderBy(s => s.WorkCentreCode, StringComparer.Ordinal).ThenBy(s => s.OutputItemCode, StringComparer.Ordinal))
+            foreach (var step in DeterministicStepOrder(group))
             {
                 var earliest = groupAnchor;
                 foreach (var predecessor in Predecessors(workOrder, step))
@@ -128,7 +178,9 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
                     }
                 }
 
-                var placed = await ScheduleRouteStepAsync(workOrder, step, earliest, direction, trace, cancellationToken);
+                var placed = await ScheduleRouteStepAsync(
+                    workOrder, step, earliest, direction, trace, capacityProvider,
+                    localOccupiedByMachine, consumedByOperation, cancellationToken);
                 if (placed.Error is not null)
                 {
                     return new WorkOrderScheduleResult { Errors = [placed.Error], Trace = string.Join('\n', trace) };
@@ -156,8 +208,25 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
         }
 
         workOrder.ScheduleCalculationTrace = string.Join('\n', trace);
-        return new WorkOrderScheduleResult { Trace = workOrder.ScheduleCalculationTrace };
+        return new WorkOrderScheduleResult
+        {
+            Trace = workOrder.ScheduleCalculationTrace,
+            ConsumedByOperation = consumedByOperation
+        };
     }
+
+    private static IEnumerable<ProductionWorkOrderRouteStep> DeterministicStepOrder(
+        IEnumerable<ProductionWorkOrderRouteStep> steps) =>
+        steps.OrderBy(s => s.WorkCentreCode, StringComparer.Ordinal)
+            .ThenBy(s => s.OutputItemCode, StringComparer.Ordinal)
+            .ThenBy(s => s.SourceRouteStepKey ?? Guid.Empty)
+            .ThenBy(s => s.Uid);
+
+    private static IEnumerable<ProductionWorkOrderOperation> DeterministicOperationOrder(
+        IEnumerable<ProductionWorkOrderOperation> operations) =>
+        operations.OrderBy(o => o.OperationCode, StringComparer.Ordinal)
+            .ThenBy(o => o.SourceOperationKey ?? Guid.Empty)
+            .ThenBy(o => o.Uid);
 
     public async Task<IReadOnlyDictionary<string, string>> CurrentScheduleHashesAsync(
         ProductionWorkOrder workOrder,
@@ -212,6 +281,9 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
         DateTime earliest,
         ScheduleDirection direction,
         List<string> trace,
+        IProductionMachineCapacityWindowProvider? capacityProvider,
+        Dictionary<string, List<TimeInterval>> localOccupiedByMachine,
+        Dictionary<ProductionWorkOrderOperation, IReadOnlyList<TimeInterval>> consumedByOperation,
         CancellationToken cancellationToken)
     {
         var groups = direction == ScheduleDirection.Forward
@@ -225,9 +297,11 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
         foreach (var group in groups)
         {
             DateTime? slowest = null;
-            foreach (var operation in group.OrderBy(o => o.OperationCode, StringComparer.Ordinal))
+            foreach (var operation in DeterministicOperationOrder(group))
             {
-                var placed = await PlaceOperationAsync(workOrder, operation, cursor, direction, trace, cancellationToken);
+                var placed = await PlaceOperationAsync(
+                    workOrder, operation, cursor, direction, trace, capacityProvider,
+                    localOccupiedByMachine, consumedByOperation, cancellationToken);
                 if (placed.Error is not null)
                 {
                     return (default, default, placed.Error);
@@ -261,6 +335,9 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
         DateTime anchor,
         ScheduleDirection direction,
         List<string> trace,
+        IProductionMachineCapacityWindowProvider? capacityProvider,
+        Dictionary<string, List<TimeInterval>> localOccupiedByMachine,
+        Dictionary<ProductionWorkOrderOperation, IReadOnlyList<TimeInterval>> consumedByOperation,
         CancellationToken cancellationToken)
     {
         var machine = PrProcessTypes.SupportsMachine(operation.ProcessType)
@@ -277,29 +354,52 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
 
         var duration = machine is null
             ? TimeSpan.FromMinutes((double)operation.StandardDurationMinutes)
-            : TimeSpan.FromSeconds((double)(machine.SetupSeconds + machine.ConversionSeconds + machine.QueueSeconds))
-              + TimeSpan.FromMinutes((double)machine.PlannedRunMinutes);
+            : ProductionMachineScheduleDuration.ToTimeSpan(machine);
 
-        var (slice, horizonStart, horizonEnd, error) = await PlaceOnCalendarAsync(
+        // A selected machine operation consumes physical capacity. A zero-length reservation can
+        // never overlap anything, so persisting one silently hides a broken Product Definition.
+        // Setup-only steps remain valid when their combined duration is positive. A negative
+        // component is corruption and must never be scheduled, even if other components offset it.
+        if (machine is not null && ProductionMachineScheduleDuration.HasNegativeComponent(machine))
+        {
+            return (default, default, new WorkOrderCalculationError(
+                ProductionReadinessErrorCodes.DurationBasisInvalid,
+                $"Operation {operation.OperationCode} / Machine {machine.MachineCode} has a negative machine timing component. "
+                + "Correct the Product Definition and use Update from Product Definition on this Draft.",
+                $"PrWorkOrderMachine/{machine.MachineCode}"));
+        }
+
+        if (machine is not null && duration <= TimeSpan.Zero)
+        {
+            return (default, default, new WorkOrderCalculationError(
+                ProductionReadinessErrorCodes.MachineDurationRequired,
+                $"Operation {operation.OperationCode} / Machine {machine.MachineCode} has no positive machine duration. "
+                + "Correct the Product Definition and use Update from Product Definition on this Draft.",
+                $"PrWorkOrderMachine/{machine.MachineCode}"));
+        }
+
+        var (data, slice, horizonStart, horizonEnd, error) = await PlaceOnCalendarAsync(
             workOrder,
             operation,
             machine,
             anchor,
             duration,
             direction,
+            capacityProvider,
+            localOccupiedByMachine,
             cancellationToken);
-        if (error is not null || slice is null)
+        if (error is not null || data is null || slice is null)
         {
             return (default, default, error);
         }
 
         var scheduled = ProductionCalendarScheduler.ScheduleMachine(
-            slice.Data,
+            data,
             anchor,
             duration,
             direction);
 
-        var hash = WorkOrderScheduleSourceHasher.Compute(slice.Data, horizonStart, horizonEnd);
+        var hash = WorkOrderScheduleSourceHasher.Compute(data, horizonStart, horizonEnd);
         if (machine is not null)
         {
             machine.PlannedStartDateTime = scheduled.ActualStart;
@@ -328,17 +428,38 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
 
         operation.PlannedStartDateTime = scheduled.ActualStart;
         operation.PlannedCompletionDateTime = scheduled.ActualCompletion;
+
+        if (machine is not null)
+        {
+            var key = ProductionMachineCapacityEvidence.Normalize(machine.MachineCode);
+            if (!localOccupiedByMachine.TryGetValue(key, out var intervals))
+            {
+                intervals = [];
+                localOccupiedByMachine[key] = intervals;
+            }
+
+            intervals.AddRange(scheduled.ConsumedIntervals);
+            consumedByOperation[operation] = scheduled.ConsumedIntervals;
+        }
+
         trace.Add($"op {operation.OperationCode} {scheduled.ActualStart:O} -> {scheduled.ActualCompletion:O} {hash[..8]}");
         return (scheduled.ActualStart, scheduled.ActualCompletion, null);
     }
 
-    private async Task<(WorkOrderCalendarSlice? Slice, DateOnly Start, DateOnly End, WorkOrderCalculationError? Error)> PlaceOnCalendarAsync(
+    private async Task<(
+        ScheduleMachineData? Data,
+        WorkOrderCalendarSlice? Slice,
+        DateOnly Start,
+        DateOnly End,
+        WorkOrderCalculationError? Error)> PlaceOnCalendarAsync(
         ProductionWorkOrder workOrder,
         ProductionWorkOrderOperation operation,
         ProductionWorkOrderMachine? machine,
         DateTime anchor,
         TimeSpan duration,
         ScheduleDirection direction,
+        IProductionMachineCapacityWindowProvider? capacityProvider,
+        Dictionary<string, List<TimeInterval>> localOccupiedByMachine,
         CancellationToken cancellationToken)
     {
         var anchorDate = DateOnly.FromDateTime(anchor);
@@ -357,8 +478,51 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
                 var slice = machine is null
                     ? await _calendars.LoadPlantAsync(workOrder.CompanyCode, workOrder.BranchCode, start, end, cancellationToken)
                     : await _calendars.LoadMachineAsync(workOrder.CompanyCode, machine.MachineCode, start, end, cancellationToken);
-                ProductionCalendarScheduler.ScheduleMachine(slice.Data, anchor, duration, direction);
-                return (slice, start, end, null);
+
+                var data = slice.Data;
+                if (machine is not null)
+                {
+                    var machineCode = ProductionMachineCapacityEvidence.Normalize(machine.MachineCode);
+                    var occupied = new List<TimeInterval>();
+
+                    // External capacity: authoritative current allocations of other Work Orders.
+                    if (capacityProvider is not null)
+                    {
+                        var window = await capacityProvider.LoadAsync(
+                            [machineCode],
+                            start.ToDateTime(TimeOnly.MinValue),
+                            end.AddDays(1).ToDateTime(TimeOnly.MinValue),
+                            cancellationToken);
+                        if (window.Blockers.Count > 0)
+                        {
+                            return (null, null, default, default, new WorkOrderCalculationError(
+                                ProductionReadinessErrorCodes.MachineCapacityInvalid,
+                                $"Machine {machineCode} has invalid capacity state: "
+                                + string.Join("; ", window.Blockers),
+                                $"PrWorkOrderMachine/{machineCode}"));
+                        }
+
+                        if (window.OccupiedByMachine.TryGetValue(machineCode, out var external))
+                        {
+                            occupied.AddRange(external);
+                        }
+                    }
+
+                    // Same-Draft self capacity: operations already placed on this physical machine
+                    // in this calculation. Equal sequence is parallelism, not extra capacity.
+                    if (localOccupiedByMachine.TryGetValue(machineCode, out var local))
+                    {
+                        occupied.AddRange(local);
+                    }
+
+                    if (occupied.Count > 0)
+                    {
+                        data = ProductionCalendarScheduler.ExcludeOccupiedIntervals(data, occupied);
+                    }
+                }
+
+                ProductionCalendarScheduler.ScheduleMachine(data, anchor, duration, direction);
+                return (data, slice, start, end, null);
             }
             catch (ScheduleFailureException) when (span < WorkOrderSchedulingHorizon.MaxDays)
             {
@@ -366,7 +530,7 @@ public sealed class WorkOrderScheduleCalculator : IWorkOrderScheduleCalculator
             }
             catch (ScheduleFailureException ex)
             {
-                return (null, default, default, new WorkOrderCalculationError(
+                return (null, null, default, default, new WorkOrderCalculationError(
                     ProductionReadinessErrorCodes.CalendarCoverageMissing,
                     $"Operation {operation.OperationCode} has no calendar coverage within "
                     + $"{WorkOrderSchedulingHorizon.MaxDays} days. {ex.Message}",

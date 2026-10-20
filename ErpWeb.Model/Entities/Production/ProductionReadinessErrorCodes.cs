@@ -119,6 +119,19 @@ public static class ProductionReadinessErrorCodes
     /// <summary>Sequence order contradicts a production dependency.</summary>
     public const string SequenceDependencyConflict = "WO_SEQUENCE_DEPENDENCY_CONFLICT";
 
+    /// <summary>
+    /// A selected machine operation has no positive schedulable duration under the current
+    /// duration contract. Setup-only steps with a positive fixed component remain valid; the
+    /// combined duration must be positive.
+    /// </summary>
+    public const string MachineDurationRequired = "WO_MACHINE_DURATION_REQUIRED";
+
+    /// <summary>
+    /// Active physical capacity data is corrupt or inconsistent (legacy zero-duration shape that
+    /// cannot prove an empty interval, mismatched timestamps, orphan/stale allocation provenance).
+    /// </summary>
+    public const string MachineCapacityInvalid = "WO_MACHINE_CAPACITY_INVALID";
+
     // ── Snapshot lifecycle and concurrency (plan §9.1) ────────────────────────────────────────
 
     /// <summary>The persisted snapshot hash does not match the recomputed hash.</summary>

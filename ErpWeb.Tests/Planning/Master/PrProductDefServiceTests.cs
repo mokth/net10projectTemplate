@@ -529,6 +529,8 @@ public class PrProductDefServiceTests : IAsyncLifetime
                 {
                     MachineCode = code,
                     ResourceSequence = 10,
+                    CycleSeconds = 60m,
+                    OutputPerCycle = 1m,
                     Labours = [new PrProductDefLabourVm { LabourCode = "LAB01" }]
                 }
             ]

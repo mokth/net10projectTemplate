@@ -15,7 +15,8 @@ public sealed record StockReplayFifoInitialCountSheetResult(
 
 /// <summary>
 /// Initial FIFO count adjustments against the verified current layer pool
-/// when later Inventory issues keep their exact FIFO allocations and value.
+/// with later Inventory issues. A changed issue receives an append-only
+/// correction, including one that consumes a count-created FIFO layer.
 /// Fixed-value later MR receipts retain their original layers. The caller owns the transaction
 /// and must run replay completion before committing.
 /// </summary>
@@ -65,9 +66,6 @@ public static class StockReplayFifoInitialCountSheetWriter
                         != issue.Quantity
                     || issue.Allocations.Sum(a => a.Value)
                         != issue.Value)
-                || item.Projection.Counts.Any(c =>
-                    c.SignedAdjustmentQuantity > 0m)
-                    && item.Projection.LaterIssues.Any(NeedsCorrection)
                 || item.Projection.Counts.Any(c =>
                     c.SignedAdjustmentQuantity > 0m && c.Receipt is null
                     || c.SignedAdjustmentQuantity < 0m && c.Issue is null
@@ -350,7 +348,8 @@ public static class StockReplayFifoInitialCountSheetWriter
                 var replacements = await StockReplayFifoIssueRepricingWriter
                     .AppendCountAsync(context, item,
                         prepared.ItemPermits[item.ItemCode], laterIssue.Key,
-                        reversalLine, replacementLine, cancellationToken);
+                        reversalLine, replacementLine, virtualLayers,
+                        cancellationToken);
                 if (replacements.Count == 0
                     || laterIssue.Key.LineIdentity.Length != 11
                     || !int.TryParse(
@@ -372,7 +371,8 @@ public static class StockReplayFifoInitialCountSheetWriter
                 hasFact = true;
             }
             if (item.Projection.Counts.Any(c =>
-                    c.SignedAdjustmentQuantity < 0m))
+                    c.SignedAdjustmentQuantity < 0m)
+                || item.Projection.LaterIssues.Any(NeedsCorrection))
                 await ApplyLayersAsync(db, item, virtualLayers,
                     cancellationToken);
             state.OnHandBaseQty = item.Projection.FinalQuantity;

@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Production;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
@@ -2092,6 +2093,22 @@ public sealed class PrProductDefService : IPrProductDefService
                     else if (machines.All(m => m.Labours.Count == 0))
                         errors[$"{prefix}.Machines"] =
                             $"Route {i + 1}: process {operation} requires a labour/operator on a machine option before activation.";
+                }
+
+                if (requiresMachine && machines.Count > 0)
+                {
+                    // Every selectable machine must be able to produce a positive scheduled
+                    // duration for a one-slot run at the scheduler's current precision. This is
+                    // an activation gate only: unfinished Draft definitions may still be authored.
+                    var unrepresentable = machines.FirstOrDefault(m =>
+                        !ProductionMachineScheduleDuration.CanProducePositiveOneSlotDuration(
+                            m.SetupSeconds, m.ConversionSeconds, m.QueueSeconds, m.CycleSeconds));
+                    if (unrepresentable is not null && !errors.ContainsKey($"{prefix}.Machines"))
+                    {
+                        errors[$"{prefix}.Machines"] =
+                            $"Route {i + 1}: machine {unrepresentable.MachineCode} has no timing basis that produces a positive scheduled duration "
+                            + "for a one-slot run. Set a setup/conversion/queue time or a cycle time that does not round to zero minutes.";
+                    }
                 }
 
                 if (requiresDuration && standardDuration <= 0m)

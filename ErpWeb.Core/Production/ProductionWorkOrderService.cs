@@ -30,6 +30,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
     private readonly IWorkOrderQuantityCalculator _quantities;
     private readonly IWorkOrderScheduleCalculator _scheduler;
     private readonly IWorkOrderReadinessValidator _readiness;
+    private readonly IProductionMachineCapacityService _capacity;
     private readonly ProductionWorkOrderOptions _options;
     private readonly IProductionMaterialReconciliationService _materialReconciliation;
     private readonly ISaDeliveryRequestFulfilmentService? _deliveryRequestFulfilment;
@@ -47,7 +48,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         IWorkOrderReadinessValidator readiness,
         Microsoft.Extensions.Options.IOptions<ProductionWorkOrderOptions> options,
         IProductionMaterialReconciliationService? materialReconciliation = null,
-        ISaDeliveryRequestFulfilmentService? deliveryRequestFulfilment = null)
+        ISaDeliveryRequestFulfilmentService? deliveryRequestFulfilment = null,
+        IProductionMachineCapacityService? capacity = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -59,6 +61,7 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         _quantities = quantities;
         _scheduler = scheduler;
         _readiness = readiness;
+        _capacity = capacity ?? new ProductionMachineCapacityService(dbFactory);
         _options = options.Value;
         _materialReconciliation = materialReconciliation ?? new ProductionMaterialReconciliationService();
         _deliveryRequestFulfilment = deliveryRequestFulfilment;

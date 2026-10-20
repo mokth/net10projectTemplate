@@ -105,6 +105,9 @@ public static class StockReplayZeroCountRemovalRootWriter
             || Dirty<IvBalLoc>(b => pileIds.Contains(b.Id))
             || Dirty<IvTrxHistory>(_ => true)
             || Dirty<StockValuationFact>(_ => true)
+            || Dirty<StockCostState>(_ => true)
+            || Dirty<StockFifoLayer>(_ => true)
+            || Dirty<StockFifoLayerConsumption>(_ => true)
             || Dirty<StockPosting>(p => p.Id != context.Posting.Id))
             throw Invalid("The count or its later stock evidence has pending edits.");
 
@@ -180,6 +183,38 @@ public static class StockReplayZeroCountRemovalRootWriter
         var method = await new StockCostMethodResolver().ResolveAsync(db,
             plan.CompanyCode, plan.BranchCode, plan.EffectiveAt,
             cancellationToken);
+        if (method == StockCostMethods.Fifo)
+        {
+            if (hasLaterPhysical)
+                throw Invalid("A later zero-count FIFO pile movement needs descendant replay.");
+            var fifoPileIds = plan.Lines.Select(l => l.BalLocId).ToArray();
+            var fifoPiles = await db.IvBalLocs.AsNoTracking()
+                .Where(b => b.CompanyCode == plan.CompanyCode
+                    && b.BranchCode == plan.BranchCode
+                    && fifoPileIds.Contains(b.Id))
+                .Select(b => new { b.Id, b.ICode })
+                .ToDictionaryAsync(b => b.Id, cancellationToken);
+            if (fifoPiles.Count != fifoPileIds.Length
+                || fifoPiles.Values.Any(p => string.IsNullOrWhiteSpace(p.ICode)))
+                throw Invalid("The zero-count FIFO piles changed items.");
+            var snapshots = new List<object>();
+            foreach (var itemCode in fifoPiles.Values.Select(p => p.ICode)
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+            {
+                var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+                    db, plan.CompanyCode, plan.BranchCode, itemCode,
+                    cancellationToken);
+                snapshots.Add(new
+                {
+                    ItemCode = itemCode, snapshot.SnapshotHash,
+                    snapshot.CurrentQuantity, snapshot.CurrentValue
+                });
+            }
+            return StockPostingFingerprint.Create(new
+            {
+                plan.PlanHash, method, snapshots
+            }, new { }).RequestFingerprint;
+        }
         if (method is not (StockCostMethods.MovingAverage
             or StockCostMethods.Standard))
         {

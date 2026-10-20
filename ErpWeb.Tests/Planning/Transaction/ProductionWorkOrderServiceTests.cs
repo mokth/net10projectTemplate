@@ -2046,7 +2046,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
 
         Assert.False(secondRelease.Succeeded);
         Assert.Equal(IvMasterErrorCode.Validation, secondRelease.ErrorCode);
-        Assert.Contains("overlaps an existing reservation", secondRelease.Message, StringComparison.Ordinal);
+        Assert.Contains(ProductionReleaseErrorCodes.MachineCapacityStale, secondRelease.Message, StringComparison.Ordinal);
 
         await using var verify = await _factory.CreateDbContextAsync();
         var firstStored = await verify.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == first.Data!.WorkOrderNo);
@@ -2056,6 +2056,203 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Equal(ProductionWorkOrderStatuses.Draft, secondStored.Status);
         Assert.Single(allocations.Where(x => x.WorkOrderId == firstStored.Uid));
         Assert.Empty(allocations.Where(x => x.WorkOrderId == secondStored.Uid));
+    }
+
+    [Fact]
+    public async Task Release_persists_exactly_the_plan_the_draft_capacity_engine_validates()
+    {
+        // Plan §26: for the same saved Draft and the same capacity evidence, the canonical Draft
+        // plan must equal the Release revalidation plan for start/completion, selected machine,
+        // source hash and total consumed productive time.
+        await SeedMachineCurrentRouteAsync();
+        var sut = CreateSut();
+
+        var created = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(created.Succeeded, created.Message);
+        var draft = created.Data!;
+
+        var scheduler = new WorkOrderScheduleCalculator(new AlwaysOpenWorkOrderCalendarProvider());
+        var capacity = new ProductionMachineCapacityService(_factory);
+
+        Dictionary<long, (DateTime? Start, DateTime? Completion, string? Hash)> savedPlacement;
+        Dictionary<long, DateTime?> savedOperationStarts;
+        Dictionary<string, List<TimeInterval>> previewConsumed;
+        DateTime previewStart;
+        DateTime previewCompletion;
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var aggregate = await LoadAggregateForTestAsync(db, draft.WorkOrderNo);
+            Assert.NotNull(aggregate);
+            var selectedMachines = aggregate!.RouteSteps
+                .SelectMany(step => step.Operations)
+                .SelectMany(operation => operation.Machines)
+                .Where(machine => machine.IsSelected)
+                .ToList();
+            var selectedMachine = Assert.Single(selectedMachines);
+            var operation = aggregate.RouteSteps
+                .SelectMany(step => step.Operations)
+                .Single(x => x.Machines.Any(m => m.Uid == selectedMachine.Uid));
+
+            savedPlacement = new Dictionary<long, (DateTime?, DateTime?, string?)>
+            {
+                [selectedMachine.Uid] =
+                    (selectedMachine.PlannedStartDateTime, selectedMachine.PlannedCompletionDateTime,
+                        selectedMachine.ScheduleSourceHash)
+            };
+            savedOperationStarts = new Dictionary<long, DateTime?>
+            {
+                [operation.Uid] = operation.PlannedStartDateTime
+            };
+
+            var provider = new PreviewMachineCapacityWindowProvider(
+                capacity, "DEMO", excludedWorkOrderId: aggregate.Uid);
+            var preview = await scheduler.ScheduleAsync(aggregate, provider);
+            Assert.True(preview.Succeeded, preview.FailureMessage);
+
+            previewStart = selectedMachine.PlannedStartDateTime!.Value;
+            previewCompletion = selectedMachine.PlannedCompletionDateTime!.Value;
+            previewConsumed = preview.ConsumedByOperation
+                .GroupBy(pair => pair.Key.Machines.Single(m => m.IsSelected).MachineCode, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.SelectMany(pair => pair.Value).OrderBy(x => x.Start).ToList(),
+                    StringComparer.Ordinal);
+
+            // The saved Draft must already equal the engine's deterministic placement.
+            Assert.Equal(
+                (savedPlacement[selectedMachine.Uid].Start, savedPlacement[selectedMachine.Uid].Completion),
+                (previewStart, previewCompletion));
+            Assert.Equal(savedOperationStarts[operation.Uid], operation.PlannedStartDateTime);
+        }
+
+        var released = await ReleaseCurrentAsync(sut, draft);
+        Assert.True(released.Succeeded, released.Message);
+
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            var stored = await LoadAggregateForTestAsync(verify, draft.WorkOrderNo);
+            Assert.NotNull(stored);
+            var machine = stored!.RouteSteps
+                .SelectMany(step => step.Operations)
+                .SelectMany(operation => operation.Machines)
+                .Single(x => x.IsSelected);
+
+            Assert.Equal(previewStart, machine.PlannedStartDateTime);
+            Assert.Equal(previewCompletion, machine.PlannedCompletionDateTime);
+            Assert.Equal(savedPlacement[machine.Uid].Hash, machine.ScheduleSourceHash);
+
+            var allocations = await verify.ProductionMachineScheduleAllocations
+                .Where(x => x.WorkOrderId == stored.Uid)
+                .OrderBy(x => x.MachineCode)
+                .ThenBy(x => x.FragmentNo)
+                .ToListAsync();
+            Assert.NotEmpty(allocations);
+            Assert.All(allocations, allocation =>
+            {
+                Assert.Equal("MC-CAPACITY", allocation.MachineCode);
+                Assert.Equal(machine.ScheduleSourceHash, allocation.ScheduleSourceHash);
+                Assert.True(allocation.EndDateTime > allocation.StartDateTime);
+            });
+
+            var allocationIntervals = allocations
+                .Select(x => new TimeInterval(x.StartDateTime, x.EndDateTime))
+                .OrderBy(x => x.Start)
+                .ToList();
+            var expected = previewConsumed["MC-CAPACITY"];
+            Assert.Equal(expected, allocationIntervals);
+
+            var expectedTicks = expected.Sum(interval => (interval.End - interval.Start).Ticks);
+            var actualTicks = allocationIntervals.Sum(interval => (interval.End - interval.Start).Ticks);
+            Assert.Equal(expectedTicks, actualTicks);
+        }
+    }
+
+    [Fact]
+    public async Task Release_after_capacity_changes_keeps_the_draft_and_writes_no_allocations()
+    {
+        // Plan §26: if capacity changed since the Draft was saved, Release must leave the Work
+        // Order in Draft with no partial allocations and tell the user to recalculate.
+        await SeedMachineCurrentRouteAsync();
+        var sut = CreateSut();
+
+        var blocker = await sut.CreateAndReleaseAsync(Request(10m));
+        Assert.True(blocker.Succeeded, blocker.Message);
+
+        var staleDraft = await sut.CreateDraftAsync(Request(10m));
+        Assert.True(staleDraft.Succeeded, staleDraft.Message);
+
+        // Free the machine, then allocate it again from another Work Order so the stale Draft's
+        // saved placement cannot be reproduced under revalidation.
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = blocker.Data!.WorkOrderNo,
+            RowVersion = blocker.Data.RowVersion,
+            Reason = "simulate capacity change after stale draft"
+        });
+        Assert.True(reopen.Succeeded, reopen.Message);
+
+        var replacement = await sut.CreateAndReleaseAsync(Request(10m));
+        Assert.True(replacement.Succeeded, replacement.Message);
+
+        var rejected = await ReleaseCurrentAsync(sut, staleDraft.Data!);
+        Assert.False(rejected.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, rejected.ErrorCode);
+        Assert.Contains(ProductionReleaseErrorCodes.MachineCapacityStale, rejected.Message, StringComparison.Ordinal);
+        Assert.Contains("Recalculate", rejected.Message, StringComparison.OrdinalIgnoreCase);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var staleOrder = await verify.ProductionWorkOrders
+            .SingleAsync(x => x.WorkOrderNo == staleDraft.Data!.WorkOrderNo);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, staleOrder.Status);
+        Assert.Empty(await verify.ProductionMachineScheduleAllocations
+            .Where(x => x.WorkOrderId == staleOrder.Uid)
+            .ToListAsync());
+        Assert.Single(await verify.ProductionMachineScheduleAllocations
+            .Where(x => x.WorkOrderId != staleOrder.Uid)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task Reopen_releases_machine_allocations_and_frees_capacity_for_another_work_order()
+    {
+        await SeedMachineCurrentRouteAsync();
+        var sut = CreateSut();
+
+        var first = await sut.CreateAndReleaseAsync(Request(10m));
+        Assert.True(first.Succeeded, first.Message);
+
+        long firstWorkOrderId;
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            firstWorkOrderId = await verify.ProductionWorkOrders
+                .Where(x => x.WorkOrderNo == first.Data!.WorkOrderNo)
+                .Select(x => x.Uid)
+                .SingleAsync();
+            Assert.NotEmpty(await verify.ProductionMachineScheduleAllocations
+                .Where(x => x.WorkOrderId == firstWorkOrderId)
+                .ToListAsync());
+        }
+
+        var reopen = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = first.Data!.WorkOrderNo,
+            RowVersion = first.Data.RowVersion,
+            Reason = "Free the machine for another order"
+        });
+        Assert.True(reopen.Succeeded, reopen.Message);
+        Assert.Equal(ProductionWorkOrderStatuses.Draft, reopen.Data!.Status);
+
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Empty(await verify.ProductionMachineScheduleAllocations
+                .Where(x => x.WorkOrderId == firstWorkOrderId)
+                .ToListAsync());
+        }
+
+        var second = await sut.CreateAndReleaseAsync(Request(10m));
+        Assert.True(second.Succeeded, second.Message);
+        Assert.Equal(ProductionWorkOrderStatuses.Released, second.Data!.Status);
     }
 
     [Fact]
@@ -3045,6 +3242,31 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Equal(before.Remark, reload.Data.Remark);
         Assert.DoesNotContain(reload.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Released);
         Assert.DoesNotContain(reload.Data.AuditEvents, x => x.EventType == ProductionAuditEventTypes.DraftUpdated);
+    }
+
+    private static async Task<ProductionWorkOrder?> LoadAggregateForTestAsync(
+        AppDbContext db,
+        string workOrderNo,
+        bool tracking = false)
+    {
+        IQueryable<ProductionWorkOrder> query = db.ProductionWorkOrders
+            .Include(x => x.Materials).ThenInclude(x => x.ProducingRouteStep)
+            .Include(x => x.Materials).ThenInclude(x => x.WorkOrderOperation)
+            .Include(x => x.Operations).ThenInclude(x => x.Resources)
+            .Include(x => x.Operations).ThenInclude(x => x.Machines).ThenInclude(x => x.Labours)
+            .Include(x => x.Operations).ThenInclude(x => x.Labours)
+            .Include(x => x.Operations).ThenInclude(x => x.Materials)
+            .Include(x => x.RouteSteps).ThenInclude(x => x.Operations).ThenInclude(x => x.Machines).ThenInclude(x => x.Labours)
+            .Include(x => x.RouteSteps).ThenInclude(x => x.Operations).ThenInclude(x => x.Labours)
+            .Include(x => x.RouteSteps).ThenInclude(x => x.Operations).ThenInclude(x => x.Materials)
+            .AsSplitQuery()
+            .Where(x => x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.WorkOrderNo == workOrderNo);
+        if (!tracking)
+        {
+            query = query.AsNoTracking();
+        }
+
+        return await query.SingleOrDefaultAsync();
     }
 
     private ProductionWorkOrderService CreateSut(

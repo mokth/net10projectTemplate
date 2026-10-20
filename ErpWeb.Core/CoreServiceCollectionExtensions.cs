@@ -225,6 +225,7 @@ public static class CoreServiceCollectionExtensions
 
 
         services.AddScoped<IPrProductDefService, PrProductDefService>();
+        services.AddScoped<IPrMachineDurationDiagnosticService, PrMachineDurationDiagnosticService>();
         services.AddScoped<BomExplosionService>();
         services.AddScoped<IBomExplosionService>(sp => sp.GetRequiredService<BomExplosionService>());
         services.AddScoped<IProductionWorkOrderService, ProductionWorkOrderService>();
@@ -258,6 +259,9 @@ public static class CoreServiceCollectionExtensions
         services.Configure<ProductionWorkOrderOptions>(
             configuration.GetSection(ProductionWorkOrderOptions.SectionName));
         services.AddScoped<IProductionCalendarScheduleDataLoader, ProductionCalendarScheduleDataLoader>();
+        // Allocation-authoritative physical machine capacity (plan §9–§12). The canonical
+        // placement engine and every Release/Commit path share this reader.
+        services.AddScoped<IProductionMachineCapacityService, ProductionMachineCapacityService>();
         services.AddScoped<IMachineSchedulePlannerService, MachineSchedulePlannerService>();
         services.AddScoped<IMachineSchedulePlannerReadinessService, MachineSchedulePlannerReadinessService>();
         services.AddScoped<IMachineScheduleRescheduleService, MachineScheduleRescheduleService>();
