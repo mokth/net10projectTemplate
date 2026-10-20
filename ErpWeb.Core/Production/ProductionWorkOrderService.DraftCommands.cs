@@ -1389,6 +1389,8 @@ public sealed partial class ProductionWorkOrderService
 
         var fragmentCount = 0;
         var createdBy = scope.UserId.Length > 10 ? scope.UserId[..10] : scope.UserId;
+        var now = DateTime.UtcNow;
+
         // Replacement boundary is the whole current Work Order in this company/branch
         // (plan §15.2). Old-machine fragments are removed under their machine lock.
         var superseded = await db.ProductionMachineScheduleAllocations
@@ -1398,9 +1400,35 @@ public sealed partial class ProductionWorkOrderService
             .ToListAsync(cancellationToken);
         db.ProductionMachineScheduleAllocations.RemoveRange(superseded);
 
+        // Metadata dual-write only: re-release supersedes the previous planning history and seeds
+        // one ORIGINAL business segment per selected machine. No quantity/hash/cost changes.
+        var supersededSegments = await db.ProductionMachineScheduleSegments
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.WorkOrderId == entity.Uid
+                && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+            .ToListAsync(cancellationToken);
+        MachineScheduleSegmentPersistence.Supersede(
+            supersededSegments, scope.UserId, now, "Re-release superseded the previous planning segments.");
+
+        var segmentByMachine = new Dictionary<long, ProductionMachineScheduleSegment>();
+        foreach (var (operation, machine, _) in pending)
+        {
+            var segment = MachineScheduleSegmentPersistence.BuildOriginalSegment(
+                entity, operation, machine, scope.UserId, now, db);
+            db.ProductionMachineScheduleSegments.Add(segment);
+            segmentByMachine[machine.Uid] = segment;
+        }
+
+        // The allocation's nullable segment identity needs the database-generated segment UID.
+        // This save stays inside the caller's transaction and is rolled back with the release.
+        if (segmentByMachine.Count > 0)
+            await db.SaveChangesAsync(cancellationToken);
+
         foreach (var (operation, machine, fragments) in pending)
         {
             var fragmentNo = 1;
+            var segment = segmentByMachine[machine.Uid];
             foreach (var interval in fragments)
             {
                 db.ProductionMachineScheduleAllocations.Add(new ProductionMachineScheduleAllocation
@@ -1411,6 +1439,7 @@ public sealed partial class ProductionWorkOrderService
                     WorkOrderId = entity.Uid,
                     WorkOrderOperationId = operation.Uid,
                     WorkOrderMachineId = machine.Uid,
+                    MachineScheduleSegmentId = segment.Uid,
                     ScheduleRevision = machine.ScheduleRevision,
                     FragmentNo = fragmentNo++,
                     StartDateTime = interval.Start,

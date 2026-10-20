@@ -133,7 +133,8 @@ public sealed class MachineSchedulePlannerJob
         && DeliveryRequestStatus is MachineSchedulePlannerDemandStatuses.Released
             or MachineSchedulePlannerDemandStatuses.InProduction;
 
-    public bool IsLateToRequiredDate => HasActiveDemandContext
+    public bool IsLateToRequiredDate => !HasUnscheduledRemaining
+        && HasActiveDemandContext
         && RequiredDate.HasValue
         && WorkOrderPlannedCompletion.Date > RequiredDate.Value.Date;
 
@@ -143,6 +144,62 @@ public sealed class MachineSchedulePlannerJob
 
     public bool IsBackwardScheduled =>
         string.Equals(SchedulingDirection, ProductionSchedulingDirections.Backward, StringComparison.OrdinalIgnoreCase);
+
+    public decimal RemainingQuantity { get; init; }
+
+    public bool HasSegmentData { get; set; }
+    public bool HasActiveHold { get; set; }
+    public string? ActiveHoldType { get; set; }
+    public DateTime? ResumeNotBefore { get; set; }
+
+    /// <summary>
+    /// True when an active open-ended hold intentionally leaves remaining quantity unscheduled.
+    /// No completion date is invented for this state.
+    /// </summary>
+    public bool HasUnscheduledRemaining { get; set; }
+
+    /// <summary>Null when the completion is genuinely unknown (held, unscheduled remaining).</summary>
+    public DateTime? ForecastCompletionDate { get; set; }
+
+    /// <summary>HELD_UNSCHEDULED | HELD | null.</summary>
+    public string? ScheduleAttention { get; set; }
+}
+
+/// <summary>
+/// Detailed planning segment shown to the planner alongside the operation-level job summary.
+/// </summary>
+public sealed class MachineSchedulePlannerSegment
+{
+    public long SegmentId { get; init; }
+    public long WorkOrderId { get; init; }
+    public string WorkOrderNo { get; init; } = string.Empty;
+    public long OperationId { get; init; }
+    public long WorkOrderMachineId { get; init; }
+    public string MachineCode { get; init; } = string.Empty;
+    public int SegmentSequence { get; init; }
+    public string SegmentKind { get; init; } = string.Empty;
+    public string SegmentStatus { get; init; } = string.Empty;
+    public decimal PlannedOutputQty { get; init; }
+    public string? OutputUom { get; init; }
+    public decimal Cycles { get; init; }
+    public decimal RunMinutes { get; init; }
+    public decimal SetupSeconds { get; init; }
+    public decimal ConversionSeconds { get; init; }
+    public DateTime Start { get; init; }
+    public DateTime Completion { get; init; }
+    public string? Reason { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+
+    public string Label => SegmentKind switch
+    {
+        ProductionMachineScheduleSegmentKinds.UrgentInsert => "URGENT",
+        ProductionMachineScheduleSegmentKinds.Resume => "Resume",
+        ProductionMachineScheduleSegmentKinds.HoldResume => "Hold resume",
+        ProductionMachineScheduleSegmentKinds.MaintenanceResume => "Maintenance resume",
+        ProductionMachineScheduleSegmentKinds.ManualSplit => SegmentSequence <= 1 ? "Part 1" : $"Part {SegmentSequence}",
+        ProductionMachineScheduleSegmentKinds.RemainingReplan => "Remaining",
+        _ => SegmentSequence <= 1 ? string.Empty : $"Part {SegmentSequence}"
+    };
 }
 
 /// <summary>
@@ -177,6 +234,12 @@ public static class MachineSchedulePlannerLabelIds
     public const int PreventiveMaintenance = 3;
     public const int LateToRequiredDate = 4;
     public const int ReservedOtherBranch = 5;
+    public const int ManualSplit = 6;
+    public const int UrgentInsert = 7;
+    public const int Resume = 8;
+    public const int HoldResume = 9;
+    public const int MaintenanceResume = 10;
+    public const int RemainingReplan = 11;
 }
 
 public sealed class MachineSchedulePlannerBoard
@@ -185,9 +248,11 @@ public sealed class MachineSchedulePlannerBoard
     public DateTime WindowEnd { get; init; }
     public IReadOnlyList<MachineSchedulePlannerResource> Machines { get; init; } = [];
     public IReadOnlyList<MachineSchedulePlannerJob> Jobs { get; init; } = [];
+    public IReadOnlyList<MachineSchedulePlannerSegment> Segments { get; init; } = [];
     public IReadOnlyList<MachineSchedulePlannerAppointment> Appointments { get; init; } = [];
     public int LockedJobCount { get; init; }
     public int UnverifiedJobCount { get; init; }
+    public int UnscheduledRemainingWorkOrderCount { get; init; }
     public int LateWorkOrderCount { get; init; }
     public int DueThisWindowWorkOrderCount { get; init; }
     public int VisibleMaintenanceMachineCount { get; init; }
@@ -230,6 +295,8 @@ public sealed class MachineSchedulePlannerReadiness
 {
     public bool IsWriteReady { get; init; }
     public bool WriteSettingEnabled { get; init; }
+    /// <summary>Independent switch for segment-aware advanced actions; simple moves stay available.</summary>
+    public bool SegmentWriteSettingEnabled { get; init; }
     public bool AllocationSchemaReady { get; init; }
     public bool ActiveAllocationBackfillComplete { get; init; }
     public int UnverifiedActiveAllocations { get; init; }
@@ -308,6 +375,10 @@ public sealed class MachineSchedulePlannerReadinessService : IMachineSchedulePla
             AppSettingModules.Planning,
             AppSettingCatalogue.PlanningKeys.MachineSchedulePlannerWriteEnabled,
             cancellationToken);
+        var segmentEnabled = await _settings.GetFlagAsync(
+            AppSettingModules.Planning,
+            AppSettingCatalogue.PlanningKeys.MachineScheduleSegmentWriteEnabled,
+            cancellationToken);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var schemaReady = await IsAllocationSchemaReadyAsync(db, cancellationToken);
@@ -336,6 +407,7 @@ public sealed class MachineSchedulePlannerReadinessService : IMachineSchedulePla
             return new MachineSchedulePlannerReadiness
             {
                 WriteSettingEnabled = enabled,
+                SegmentWriteSettingEnabled = segmentEnabled,
                 AllocationSchemaReady = false,
                 ActiveAllocationBackfillComplete = false,
                 UnverifiedActiveAllocations = unverified,
@@ -411,6 +483,7 @@ public sealed class MachineSchedulePlannerReadinessService : IMachineSchedulePla
         {
             IsWriteReady = enabled && schemaReady && missing == 0 && stale == 0 && overlaps == 0 && evidenceCurrent,
             WriteSettingEnabled = enabled,
+            SegmentWriteSettingEnabled = segmentEnabled,
             AllocationSchemaReady = true,
             ActiveAllocationBackfillComplete = missing == 0,
             UnverifiedActiveAllocations = missing,
@@ -791,6 +864,7 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 PlannedStart = x.Machine.PlannedStartDateTime!.Value,
                 PlannedCompletion = x.Machine.PlannedCompletionDateTime!.Value,
                 PlannedQuantity = x.Operation.PlannedOutputQty,
+                RemainingQuantity = x.Operation.RemainingQty,
                 OutputUom = x.Operation.PlannedOutputUom ?? x.Step.OutputUom,
                 SetupSeconds = x.Machine.SetupSeconds,
                 ConversionSeconds = x.Machine.ConversionSeconds,
@@ -945,17 +1019,144 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             };
         }).ToList();
 
+        // Segment-aware read model. A split job is never reconstructed from one outer range plus
+        // PlannedRunMinutes; the planner renders the persisted productive fragments and their
+        // business segment labels instead.
+        var jobMachineIds = jobs.Select(x => x.WorkOrderMachineId).Distinct().ToList();
+        var allocationsByMachine = new Dictionary<long, List<ProductionMachineScheduleAllocation>>();
+        var segmentsByMachine = new Dictionary<long, List<ProductionMachineScheduleSegment>>();
+        foreach (var machineBatch in jobMachineIds.Chunk(800))
+        {
+            foreach (var row in await db.ProductionMachineScheduleAllocations.AsNoTracking()
+                         .Where(x => machineBatch.Contains(x.WorkOrderMachineId))
+                         .OrderBy(x => x.WorkOrderMachineId)
+                         .ThenBy(x => x.ScheduleRevision)
+                         .ThenBy(x => x.FragmentNo)
+                         .ToListAsync(cancellationToken))
+            {
+                if (!allocationsByMachine.TryGetValue(row.WorkOrderMachineId, out var list))
+                    allocationsByMachine[row.WorkOrderMachineId] = list = [];
+                list.Add(row);
+            }
+
+            foreach (var row in await db.ProductionMachineScheduleSegments.AsNoTracking()
+                         .Where(x => machineBatch.Contains(x.WorkOrderMachineId)
+                             && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+                         .OrderBy(x => x.WorkOrderMachineId)
+                         .ThenBy(x => x.SegmentSequence)
+                         .ToListAsync(cancellationToken))
+            {
+                if (!segmentsByMachine.TryGetValue(row.WorkOrderMachineId, out var list))
+                    segmentsByMachine[row.WorkOrderMachineId] = list = [];
+                list.Add(row);
+            }
+        }
+
+        var activeHolds = new List<ProductionWorkOrderScheduleHold>();
+        foreach (var operationBatch in jobs.Select(x => x.OperationId).Distinct().Chunk(800))
+        {
+            activeHolds.AddRange(await db.ProductionWorkOrderScheduleHolds.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && operationBatch.Contains(x.WorkOrderOperationId)
+                    && x.Status == ProductionScheduleHoldStatuses.Active)
+                .OrderBy(x => x.HoldFrom)
+                .ToListAsync(cancellationToken));
+        }
+
+        var holdsByOperation = activeHolds
+            .GroupBy(x => x.WorkOrderOperationId)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(h => h.HoldFrom).First());
+
+        var plannerSegments = new List<MachineSchedulePlannerSegment>();
+        foreach (var job in jobs)
+        {
+            segmentsByMachine.TryGetValue(job.WorkOrderMachineId, out var machineSegments);
+            var currentSegments = (machineSegments ?? [])
+                .Where(x => x.MachineScheduleRevision == job.MachineScheduleRevision)
+                .OrderBy(x => x.SegmentSequence)
+                .ToList();
+            job.HasSegmentData = currentSegments.Count > 0;
+            foreach (var segment in currentSegments)
+            {
+                plannerSegments.Add(new MachineSchedulePlannerSegment
+                {
+                    SegmentId = segment.Uid,
+                    WorkOrderId = segment.WorkOrderId,
+                    WorkOrderNo = job.WorkOrderNo,
+                    OperationId = segment.WorkOrderOperationId,
+                    WorkOrderMachineId = segment.WorkOrderMachineId,
+                    MachineCode = segment.MachineCode,
+                    SegmentSequence = segment.SegmentSequence,
+                    SegmentKind = segment.SegmentKind,
+                    SegmentStatus = segment.SegmentStatus,
+                    PlannedOutputQty = segment.PlannedOutputQty,
+                    OutputUom = segment.OutputUom,
+                    Cycles = segment.PlannedCycleCount,
+                    RunMinutes = segment.ScheduledRunMinutes,
+                    SetupSeconds = segment.ScheduledSetupSeconds,
+                    ConversionSeconds = segment.ScheduledConversionSeconds,
+                    Start = segment.PlannedStartDateTime,
+                    Completion = segment.PlannedCompletionDateTime,
+                    Reason = segment.Reason,
+                    RowVersion = segment.RowVersion
+                });
+            }
+
+            if (holdsByOperation.TryGetValue(job.OperationId, out var hold))
+            {
+                job.HasActiveHold = true;
+                job.ActiveHoldType = hold.HoldType;
+                job.ResumeNotBefore = hold.ResumeNotBefore;
+                job.HasUnscheduledRemaining = hold.ResumeNotBefore is null && job.RemainingQuantity > 0m;
+                job.ForecastCompletionDate = job.HasUnscheduledRemaining ? null : job.WorkOrderPlannedCompletion;
+                job.ScheduleAttention = job.HasUnscheduledRemaining ? "HELD_UNSCHEDULED" : "HELD";
+                job.IsLocked = true;
+                job.LockReason = job.HasUnscheduledRemaining
+                    ? "Completion unknown — remaining quantity is held and not scheduled."
+                    : "An active schedule hold exists. Release the hold before moving this operation.";
+            }
+            else
+            {
+                job.ForecastCompletionDate = job.WorkOrderPlannedCompletion;
+            }
+        }
+
         var appointments = new List<MachineSchedulePlannerAppointment>();
         var unverified = 0;
         foreach (var job in jobs)
         {
+            allocationsByMachine.TryGetValue(job.WorkOrderMachineId, out var machineAllocations);
+            var currentAllocations = (machineAllocations ?? [])
+                .Where(x => x.ScheduleRevision == job.MachineScheduleRevision)
+                .OrderBy(x => x.FragmentNo)
+                .ToList();
+            if (currentAllocations.Count > 0)
+            {
+                var segmentById = (segmentsByMachine.TryGetValue(job.WorkOrderMachineId, out var machineSegments)
+                        ? machineSegments
+                        : [])
+                    .Where(x => x.MachineScheduleRevision == job.MachineScheduleRevision)
+                    .ToDictionary(x => x.Uid);
+                for (var fragmentNo = 0; fragmentNo < currentAllocations.Count; fragmentNo++)
+                {
+                    var allocation = currentAllocations[fragmentNo];
+                    if (allocation.StartDateTime >= windowEnd || allocation.EndDateTime <= windowStart)
+                        continue;
+                    segmentById.TryGetValue(allocation.MachineScheduleSegmentId ?? 0, out var segment);
+                    appointments.Add(ToJobAppointment(
+                        job, allocation.StartDateTime, allocation.EndDateTime, fragmentNo, segment));
+                }
+                continue;
+            }
+
             var fragments = TryResolveConsumedIntervals(job, calendars);
             if (fragments is null || fragments.Count == 0)
             {
                 unverified++;
                 if (job.PlannedStart < windowEnd && job.PlannedCompletion > windowStart)
                 {
-                    appointments.Add(ToJobAppointment(job, job.PlannedStart, job.PlannedCompletion, 0));
+                    appointments.Add(ToJobAppointment(job, job.PlannedStart, job.PlannedCompletion, 0, null));
                 }
                 continue;
             }
@@ -965,7 +1166,7 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 var interval = fragments[fragmentNo];
                 if (interval.Start >= windowEnd || interval.End <= windowStart)
                     continue;
-                appointments.Add(ToJobAppointment(job, interval.Start, interval.End, fragmentNo));
+                appointments.Add(ToJobAppointment(job, interval.Start, interval.End, fragmentNo, null));
             }
         }
 
@@ -1045,9 +1246,15 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             WindowEnd = windowEnd,
             Machines = resources,
             Jobs = jobs,
+            Segments = plannerSegments,
             Appointments = appointments,
             LockedJobCount = jobs.Count(x => x.IsLocked),
             UnverifiedJobCount = unverified,
+            UnscheduledRemainingWorkOrderCount = jobs
+                .Where(x => x.HasUnscheduledRemaining)
+                .Select(x => x.WorkOrderId)
+                .Distinct()
+                .Count(),
             LateWorkOrderCount = lateWorkOrderCount,
             DueThisWindowWorkOrderCount = dueThisWindowCount,
             VisibleMaintenanceMachineCount = resources.Count(x =>
@@ -1432,14 +1639,35 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         MachineSchedulePlannerJob job,
         DateTime start,
         DateTime end,
-        int fragmentNo)
+        int fragmentNo,
+        ProductionMachineScheduleSegment? segment)
     {
-        var subject = $"{job.WorkOrderNo} · {job.ProductCode}";
+        var segmentKind = segment?.SegmentKind ?? ProductionMachineScheduleSegmentKinds.Original;
+        var segmentLabel = segment is null || segment.SegmentSequence <= 1
+            && segmentKind is ProductionMachineScheduleSegmentKinds.Original
+            ? string.Empty
+            : segmentKind switch
+            {
+                ProductionMachineScheduleSegmentKinds.UrgentInsert => "URGENT",
+                ProductionMachineScheduleSegmentKinds.Resume => "Resume",
+                ProductionMachineScheduleSegmentKinds.HoldResume => "Hold resume",
+                ProductionMachineScheduleSegmentKinds.MaintenanceResume => "Maintenance resume",
+                ProductionMachineScheduleSegmentKinds.RemainingReplan => "Remaining",
+                _ => $"Part {segment.SegmentSequence}"
+            };
+        var subject = string.IsNullOrEmpty(segmentLabel)
+            ? $"{job.WorkOrderNo} · {job.ProductCode}"
+            : $"{job.WorkOrderNo} · {job.ProductCode} · {segmentLabel}";
         var details = $"Work Order: {job.WorkOrderNo}\nProduct: {job.ProductCode}{Suffix(job.ProductDescription)}"
             + $"\nWork Centre: {job.WorkCentreCode}{Suffix(job.WorkCentreDescription)}"
             + $"\nOperation: {job.OperationCode}{Suffix(job.OperationDescription)}"
             + $"\nMachine: {job.MachineCode}{Suffix(job.MachineDescription)}"
             + $"\nPlanned quantity: {job.PlannedQuantity:n4} {job.OutputUom}"
+            + (segment is null
+                ? string.Empty
+                : $"\nSegment: {segmentLabel} ({segment.SegmentKind})"
+                    + $"\nSegment quantity: {segment.PlannedOutputQty:n4} {segment.OutputUom}"
+                    + $"\nSegment cycles: {segment.PlannedCycleCount:n0}")
             + $"\nProductive duration: {job.ProductiveDurationMinutes:n1} min"
             + $"\nPlanned start: {job.PlannedStart:dd MMM yyyy HH:mm}"
             + $"\nPlanned completion: {job.PlannedCompletion:dd MMM yyyy HH:mm}"
@@ -1460,6 +1688,17 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         if (job.LockReason is not null)
             details += $"\nRescheduling blocked: {job.LockReason}";
 
+        var segmentLabelId = segmentKind switch
+        {
+            ProductionMachineScheduleSegmentKinds.ManualSplit => MachineSchedulePlannerLabelIds.ManualSplit,
+            ProductionMachineScheduleSegmentKinds.UrgentInsert => MachineSchedulePlannerLabelIds.UrgentInsert,
+            ProductionMachineScheduleSegmentKinds.Resume => MachineSchedulePlannerLabelIds.Resume,
+            ProductionMachineScheduleSegmentKinds.HoldResume => MachineSchedulePlannerLabelIds.HoldResume,
+            ProductionMachineScheduleSegmentKinds.MaintenanceResume => MachineSchedulePlannerLabelIds.MaintenanceResume,
+            ProductionMachineScheduleSegmentKinds.RemainingReplan => MachineSchedulePlannerLabelIds.RemainingReplan,
+            _ => MachineSchedulePlannerLabelIds.Scheduled
+        };
+
         return new MachineSchedulePlannerAppointment
         {
             Id = $"wo-{job.OperationId}-{fragmentNo}",
@@ -1469,11 +1708,15 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             Start = start,
             End = end,
             ResourceId = job.MachineCode,
+            // Execution lock is the strongest visual signal. Otherwise the business segment kind
+            // gets its permanent color, then lateness for a plain scheduled fragment.
             LabelId = job.IsLocked
                 ? MachineSchedulePlannerLabelIds.ExecutionLocked
-                : job.IsLateToRequiredDate
-                    ? MachineSchedulePlannerLabelIds.LateToRequiredDate
-                    : MachineSchedulePlannerLabelIds.Scheduled,
+                : segmentLabelId != MachineSchedulePlannerLabelIds.Scheduled
+                    ? segmentLabelId
+                    : job.IsLateToRequiredDate
+                        ? MachineSchedulePlannerLabelIds.LateToRequiredDate
+                        : MachineSchedulePlannerLabelIds.Scheduled,
             IsMaintenance = false
         };
     }
@@ -1592,6 +1835,9 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 .ToListAsync(ct));
         }
 
+        var downtimes = await MachineDowntimeWindowReader.LoadAsync(
+            db, companyCode, machineCodes, maintenanceStart, maintenanceEnd, ct);
+
         var results = new Dictionary<string, ScheduleMachineData>(StringComparer.OrdinalIgnoreCase);
         foreach (var machineCode in machineCodes)
         {
@@ -1622,6 +1868,14 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                     Start = DateTime.SpecifyKind(normalized.WindowStart, DateTimeKind.Unspecified),
                     End = DateTime.SpecifyKind(normalized.WindowEnd, DateTimeKind.Unspecified)
                 });
+            }
+
+            // Master maintenance downtime is blocking capacity, not decoration on the board.
+            // The board and the scheduler must agree on the same unavailable intervals.
+            foreach (var downtime in downtimes.Where(x => string.Equals(
+                x.MachineCode, machineCode, StringComparison.OrdinalIgnoreCase)))
+            {
+                windows.Add(new PreventiveWindow { Start = downtime.Start, End = downtime.End });
             }
 
             try

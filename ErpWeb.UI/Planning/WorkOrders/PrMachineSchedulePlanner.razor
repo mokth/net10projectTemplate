@@ -170,6 +170,10 @@
                 {
                     <span class="pr-machine-schedule-summary__warning"><strong>@board.UnverifiedJobCount</strong> scheduled operation(s) could not be verified against the current machine calendar.</span>
                 }
+                @if (board.UnscheduledRemainingWorkOrderCount > 0)
+                {
+                    <span class="pr-machine-schedule-summary__warning"><strong>@board.UnscheduledRemainingWorkOrderCount</strong> held Work Order(s) have unscheduled remaining quantity; completion is unknown.</span>
+                }
             </div>
 
             @if (!string.IsNullOrWhiteSpace(SelectedWorkOrder) && !IsSelectedWorkOrderVisibleInPeriod)
@@ -323,10 +327,58 @@
                                     <div><dt>Operation</dt><dd>@job.OperationCode @DescriptionSuffix(job.OperationDescription)</dd></div>
                                     <div><dt>Machine</dt><dd>@job.MachineCode @DescriptionSuffix(job.MachineDescription)</dd></div>
                                     <div><dt>Planned quantity</dt><dd>@job.PlannedQuantity.ToString("n4") @job.OutputUom</dd></div>
+                                    <div><dt>Remaining quantity</dt><dd>@job.RemainingQuantity.ToString("n4") @job.OutputUom</dd></div>
+                                    @if (job.HasActiveHold)
+                                    {
+                                        <div><dt>Schedule hold</dt><dd>@(job.ActiveHoldType ?? "Active")@(job.ResumeNotBefore is { } resume ? $" · resume not before {resume:dd MMM yyyy HH:mm}" : " · completion unknown")</dd></div>
+                                    }
+                                    @if (job.HasUnscheduledRemaining)
+                                    {
+                                        <div><dt>Forecast completion</dt><dd>Unknown — remaining quantity is not scheduled.</dd></div>
+                                    }
                                     <div><dt>Productive duration</dt><dd>@job.ProductiveDurationMinutes.ToString("n1") min</dd></div>
                                     <div><dt>Operation planned start</dt><dd>@job.PlannedStart.ToString("dd MMM yyyy HH:mm")</dd></div>
                                     <div><dt>Operation planned completion</dt><dd>@job.PlannedCompletion.ToString("dd MMM yyyy HH:mm")</dd></div>
                                 </dl>
+                                @{
+                                    var jobSegments = board.Segments
+                                        .Where(x => x.OperationId == job.OperationId)
+                                        .OrderBy(x => x.SegmentSequence)
+                                        .ToList();
+                                }
+                                @if (jobSegments.Count > 0)
+                                {
+                                    <div class="pr-machine-schedule-segments" aria-label="Scheduled business segments">
+                                        <h3>Scheduled segments</h3>
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th scope="col">Part</th>
+                                                    <th scope="col">Kind</th>
+                                                    <th scope="col">Qty</th>
+                                                    <th scope="col">Cycles</th>
+                                                    <th scope="col">Start</th>
+                                                    <th scope="col">Completion</th>
+                                                    <th scope="col">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var segment in jobSegments)
+                                                {
+                                                    <tr>
+                                                        <td>@segment.SegmentSequence</td>
+                                                        <td>@($"{segment.Label} ({segment.SegmentKind})".Trim())</td>
+                                                        <td>@segment.PlannedOutputQty.ToString("n4") @segment.OutputUom</td>
+                                                        <td>@segment.Cycles.ToString("n0")</td>
+                                                        <td>@segment.Start.ToString("dd MMM HH:mm")</td>
+                                                        <td>@segment.Completion.ToString("dd MMM HH:mm")</td>
+                                                        <td>@segment.SegmentStatus</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
                                 @if (job.IsLocked && !string.IsNullOrWhiteSpace(job.LockReason))
                                 {
                                     <p class="pr-machine-schedule-lock-reason"><i class="fa-solid fa-lock" aria-hidden="true"></i> @job.LockReason</p>
@@ -340,6 +392,36 @@
                                         <span>@RescheduleUnavailableReason</span>
                                     }
                                 </div>
+                                <div class="pr-machine-schedule-details__actions" aria-label="Advanced schedule actions">
+                                    <DxButton Text="Insert / Split Job" RenderStyle="ButtonRenderStyle.Secondary"
+                                              Click="@(() => OpenAdvancedDialog(MachineScheduleAdvancedAction.InsertSplit))"
+                                              Enabled="@CanInsertSplit" />
+                                    @if (job.HasActiveHold)
+                                    {
+                                        <DxButton Text="Resume" RenderStyle="ButtonRenderStyle.Primary"
+                                                  Click="@(() => OpenAdvancedDialog(MachineScheduleAdvancedAction.ReleaseHold))"
+                                                  Enabled="@CanResumeJob" />
+                                    }
+                                    else
+                                    {
+                                        <DxButton Text="Hold" RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Click="@(() => OpenAdvancedDialog(MachineScheduleAdvancedAction.Hold))"
+                                                  Enabled="@CanHoldJob" />
+                                    }
+                                    <DxButton Text="Replan Remaining" RenderStyle="ButtonRenderStyle.Secondary"
+                                              Click="@(() => OpenAdvancedDialog(MachineScheduleAdvancedAction.ReplanRemaining))"
+                                              Enabled="@CanReplanRemaining" />
+                                    <DxButton Text="Replan after maintenance" RenderStyle="ButtonRenderStyle.Secondary"
+                                              Click="@(() => OpenAdvancedDialog(MachineScheduleAdvancedAction.MaintenanceReplan))"
+                                              Enabled="@CanReplanMaintenance" />
+                                </div>
+                                @if (!AdvancedActionsEnabled)
+                                {
+                                    <p class="pr-machine-schedule-lock-reason">
+                                        <i class="fa-solid fa-lock" aria-hidden="true"></i>
+                                        Advanced split, hold and replan actions are disabled by the company setting or planner readiness.
+                                    </p>
+                                }
                             </div>
                         }
                         else if (SelectedExternalCapacityAppointment is { } external)
@@ -376,6 +458,11 @@
                 <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--locked"></i>Execution locked</span>
                 <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--maintenance"></i>Preventive maintenance</span>
                 <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--late"></i>Late vs DR date</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--split"></i>Part 1 / split</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--urgent"></i>URGENT insert</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--resume"></i>Resume</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--hold-resume"></i>Hold resume</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--remaining"></i>Remaining replan</span>
                 <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--external"></i>Reserved · other branch</span>
                 <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--off"></i>Nonworking</span>
             </section>
@@ -508,6 +595,209 @@
                     </section>
                 </div>
             }
+        }
+
+        @if (IsAdvancedDialogOpen && AdvancedDialogJob is { } advancedJob)
+        {
+            <div class="pr-machine-schedule-dialog-backdrop">
+                <section class="pr-machine-schedule-dialog iv-card" role="dialog" aria-modal="true"
+                         aria-labelledby="pr-machine-schedule-advanced-title">
+                    <header class="pr-machine-schedule-dialog__header">
+                        <div>
+                            <span class="iv-hero__eyebrow">@AdvancedEyebrow · server preview</span>
+                            <h2 id="pr-machine-schedule-advanced-title">@AdvancedTitle · @advancedJob.WorkOrderNo · @advancedJob.OperationCode</h2>
+                            <p>@advancedJob.MachineCode · @advancedJob.PlannedStart.ToString("dd MMM yyyy HH:mm") @(advancedJob.HasUnscheduledRemaining ? "· completion unknown" : $"to {advancedJob.PlannedCompletion:dd MMM yyyy HH:mm}")</p>
+                        </div>
+                        <button type="button" class="pr-machine-schedule-dialog__close" aria-label="Close"
+                                @onclick="CloseAdvancedDialog" disabled="@IsAdvancedBusy">×</button>
+                    </header>
+
+                    <div class="pr-machine-schedule-preview__summary">
+                        <strong>Remaining quantity</strong>
+                        <span>@advancedJob.RemainingQuantity.ToString("n4") @advancedJob.OutputUom · planned @advancedJob.PlannedQuantity.ToString("n4")</span>
+                    </div>
+
+                    <div class="pr-machine-schedule-dialog__inputs">
+                        @if (AdvancedNeedsStart)
+                        {
+                            <label>
+                                <span>Requested start date</span>
+                                <input type="date" value="@AdvancedDateText" @onchange="OnAdvancedDateChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                            <label>
+                                <span>Requested start time</span>
+                                <input type="time" step="60" value="@AdvancedTimeText" @onchange="OnAdvancedTimeChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                        }
+                        @if (AdvancedNeedsQuantity)
+                        {
+                            <label>
+                                <span>Partial quantity (blank = scheduled remaining)</span>
+                                <input type="number" min="0" step="any" value="@AdvancedPartialQuantityText"
+                                       @onchange="OnAdvancedPartialQuantityChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                        }
+                        @if (AdvancedNeedsHoldType)
+                        {
+                            <label>
+                                <span>Hold type</span>
+                                <select value="@AdvancedHoldType" @onchange="@((ChangeEventArgs e) => { AdvancedHoldType = e.Value?.ToString() ?? ProductionScheduleHoldTypes.Other; InvalidateAdvancedPreview(); })" disabled="@IsAdvancedBusy">
+                                    <option value="@ProductionScheduleHoldTypes.MaterialShortage">Material shortage</option>
+                                    <option value="@ProductionScheduleHoldTypes.QualityHold">Quality hold</option>
+                                    <option value="@ProductionScheduleHoldTypes.CustomerHold">Customer hold</option>
+                                    <option value="@ProductionScheduleHoldTypes.Other">Other</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span>Resume not before date (optional)</span>
+                                <input type="date" value="@AdvancedResumeDateText" @onchange="OnAdvancedResumeDateChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                            <label>
+                                <span>Resume not before time (optional)</span>
+                                <input type="time" step="60" value="@AdvancedResumeTimeText" @onchange="OnAdvancedResumeTimeChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                        }
+                        @if (AdvancedNeedsDowntime)
+                        {
+                            <label>
+                                <span>Downtime start date</span>
+                                <input type="date" value="@AdvancedDowntimeStartDateText" @onchange="OnAdvancedDowntimeStartDateChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                            <label>
+                                <span>Downtime start time</span>
+                                <input type="time" step="60" value="@AdvancedDowntimeStartTimeText" @onchange="OnAdvancedDowntimeStartTimeChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                            <label>
+                                <span>Downtime end date (blank = open-ended)</span>
+                                <input type="date" value="@AdvancedDowntimeEndDateText" @onchange="OnAdvancedDowntimeEndDateChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                            <label>
+                                <span>Downtime end time</span>
+                                <input type="time" step="60" value="@AdvancedDowntimeEndTimeText" @onchange="OnAdvancedDowntimeEndTimeChanged" disabled="@IsAdvancedBusy" />
+                            </label>
+                            <label>
+                                <span>Maintenance type</span>
+                                <input type="text" maxlength="40" value="@AdvancedMaintenanceType"
+                                       @onchange="@((ChangeEventArgs e) => { AdvancedMaintenanceType = e.Value?.ToString() ?? "BREAKDOWN"; InvalidateAdvancedPreview(); })"
+                                       disabled="@IsAdvancedBusy" />
+                            </label>
+                        }
+                        @if (AdvancedAction is MachineScheduleAdvancedAction.InsertSplit
+                            or MachineScheduleAdvancedAction.Hold
+                            or MachineScheduleAdvancedAction.ReplanRemaining
+                            or MachineScheduleAdvancedAction.MaintenanceReplan)
+                        {
+                            <label>
+                                <span>Include restart setup</span>
+                                <span class="pr-machine-schedule-idle-toggle">
+                                    <DxCheckBox Checked="AdvancedIncludeRestartSetup"
+                                                CheckedChanged="@((bool value) => { AdvancedIncludeRestartSetup = value; InvalidateAdvancedPreview(); })"
+                                                AllowIndeterminateState="false" />
+                                    <span>Repeat setup and conversion after the break</span>
+                                </span>
+                            </label>
+                        }
+                        <label class="pr-machine-schedule-dialog__reason">
+                            <span>Reason @(AdvancedNeedsReason ? "(required)" : "(optional)")</span>
+                            <textarea maxlength="500" rows="3" value="@AdvancedReason" @onchange="OnAdvancedReasonChanged"
+                                      placeholder="Why does this advanced schedule change need to happen?" disabled="@IsAdvancedBusy"></textarea>
+                        </label>
+                    </div>
+
+                    @if (AdvancedPreview is { } advancedPreview)
+                    {
+                        <div class="pr-machine-schedule-preview" aria-live="polite">
+                            <div class="pr-machine-schedule-preview__summary">
+                                <strong>@advancedPreview.TargetOperationCode · @advancedPreview.MachineCode</strong>
+                                <span>@advancedPreview.CurrentStart.ToString("dd MMM HH:mm") – @advancedPreview.CurrentCompletion.ToString("dd MMM HH:mm")
+                                    → @(advancedPreview.ProposedStart?.ToString("dd MMM HH:mm") ?? "—") – @(advancedPreview.ProposedCompletion?.ToString("dd MMM HH:mm") ?? "completion unknown")</span>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(advancedPreview.SplitExplanation))
+                            {
+                                <div class="pr-machine-schedule-preview__summary">
+                                    <strong>Split boundary</strong>
+                                    <span>@advancedPreview.SplitExplanation</span>
+                                </div>
+                            }
+                            @if (AdvancedAction is MachineScheduleAdvancedAction.InsertSplit)
+                            {
+                                <div class="pr-machine-schedule-preview__summary">
+                                    <strong>Quantity</strong>
+                                    <span>Requested @advancedPreview.RequestedQty.ToString("n4") · scheduled @advancedPreview.ScheduledQty.ToString("n4")
+                                        · @advancedPreview.CycleCount.ToString("n0") cycles · restart @advancedPreview.RestartOverheadSeconds.ToString("n0") s</span>
+                                </div>
+                            }
+                            @if (advancedPreview.HasUnscheduledRemaining)
+                            {
+                                <div class="pr-machine-schedule-preview__summary pr-machine-schedule-preview__advisory">
+                                    <strong>Completion unknown</strong>
+                                    <span>@advancedPreview.UnscheduledMessage</span>
+                                </div>
+                            }
+                            @if (AdvancedDemandAdvisory is { } advisory)
+                            {
+                                <div class="pr-machine-schedule-preview__summary pr-machine-schedule-preview__advisory">
+                                    <strong>DR required date comparison</strong>
+                                    <span>@advisory</span>
+                                </div>
+                            }
+                            @if (advancedPreview.Segments.Count > 0)
+                            {
+                                <div class="pr-machine-schedule-preview__changes">
+                                    <strong>Segments (@advancedPreview.Segments.Count)</strong>
+                                    <ul>
+                                        @foreach (var segment in advancedPreview.Segments)
+                                        {
+                                            <li>
+                                                <span>@(segment.IsExisting ? "Existing" : "Proposed") · @segment.Kind · @segment.MachineCode · @segment.WorkOrderNo</span>
+                                                <small>@segment.Start.ToString("dd MMM HH:mm") – @segment.Completion.ToString("dd MMM HH:mm")
+                                                    · qty @segment.PlannedOutputQty.ToString("n4") · @segment.CycleCount.ToString("n0") cycles</small>
+                                            </li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                            @if (advancedPreview.AffectedWorkOrders.Count > 0)
+                            {
+                                <div class="pr-machine-schedule-preview__changes">
+                                    <strong>Affected Work Orders (@advancedPreview.AffectedWorkOrders.Count)</strong>
+                                    <ul>
+                                        @foreach (var affected in advancedPreview.AffectedWorkOrders)
+                                        {
+                                            <li>
+                                                <span>@affected.WorkOrderNo · @affected.Priority</span>
+                                                <small>@affected.StartBefore.ToString("dd MMM HH:mm") – @affected.CompletionBefore.ToString("dd MMM HH:mm")
+                                                    → @(affected.StartAfter?.ToString("dd MMM HH:mm") ?? "—") – @(affected.CompletionAfter?.ToString("dd MMM HH:mm") ?? "completion unknown")</small>
+                                            </li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                            @if (advancedPreview.Warnings.Count > 0)
+                            {
+                                <div class="pr-machine-schedule-preview__messages">
+                                    <strong>Warnings</strong>
+                                    <ul>@foreach (var warning in advancedPreview.Warnings) { <li>@warning</li> }</ul>
+                                </div>
+                            }
+                            @if (advancedPreview.Blockers.Count > 0)
+                            {
+                                <div class="pr-machine-schedule-preview__messages pr-machine-schedule-preview__messages--blocked">
+                                    <strong>Cannot commit</strong>
+                                    <ul>@foreach (var blocker in advancedPreview.Blockers) { <li>@blocker</li> }</ul>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    <footer class="pr-machine-schedule-dialog__actions">
+                        <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="CloseAdvancedDialog" Enabled="@(!IsAdvancedBusy)" />
+                        <DxButton Text="Preview" RenderStyle="ButtonRenderStyle.Primary" Click="PreviewAdvancedActionAsync" Enabled="@(!IsAdvancedBusy)" />
+                        <DxButton Text="Commit change" RenderStyle="ButtonRenderStyle.Primary" Click="CommitAdvancedActionAsync"
+                                  Enabled="@(!IsAdvancedBusy && AdvancedPreview?.CanCommit == true)" />
+                    </footer>
+                </section>
+            </div>
         }
 
         @if (IsBackfillDialogOpen && BackfillReport is { } backfill)

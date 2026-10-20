@@ -173,6 +173,24 @@ public sealed partial class ProductionWorkOrderService
                     IvMasterErrorCode.InUse, blocker);
             }
 
+            // Reopen needs the full graph so a split schedule can be normalized back to the
+            // standard Draft one-span model before the snapshot hash is recomputed.
+            var aggregate = await LoadAggregateAsync(db, scope, order.WorkOrderNo, tracking: true, cancellationToken);
+            if (aggregate is not null)
+                order = aggregate;
+
+            var reopenSegments = await db.ProductionMachineScheduleSegments
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.WorkOrderId == order.Uid
+                    && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+                .ToListAsync(cancellationToken);
+            var hasAdvancedSegments = reopenSegments
+                .GroupBy(x => x.WorkOrderMachineId)
+                .Any(group => group.Count() > 1)
+                || reopenSegments.Any(x => !string.Equals(
+                    x.SegmentKind, ProductionMachineScheduleSegmentKinds.Original, StringComparison.Ordinal));
+
             // Removing the released capacity reservation is part of the same transaction that
             // returns the Work Order to Draft: a Draft must never keep active allocations that
             // would block releases on the same physical machine (plan §17).
@@ -205,8 +223,36 @@ public sealed partial class ProductionWorkOrderService
                 db.ProductionMachineScheduleAllocations.RemoveRange(reopenAllocations);
             }
 
-            // Lifecycle transition only — do not RequireCurrentSnapshot or rebuild/upgrade snapshot.
             var now = DateTime.UtcNow;
+
+            // A split Released placement must not survive into Draft: Draft is the standard
+            // one-span manufacturing snapshot, and its hash must describe the graph it stores.
+            // Rebuild the normal Draft schedule from the existing calculator.
+            if (hasAdvancedSegments)
+            {
+                var normalized = await _scheduler.ScheduleAsync(order, cancellationToken);
+                if (!normalized.Succeeded)
+                {
+                    return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                        IvMasterErrorCode.Validation,
+                        normalized.FailureCode + ": " + normalized.FailureMessage
+                        + " The Work Order could not be normalized back to a standard Draft schedule.");
+                }
+            }
+
+            MachineScheduleSegmentPersistence.Supersede(
+                reopenSegments, scope.UserId, now,
+                "Reopen returned the Work Order to the standard Draft schedule.");
+
+            // Reopen already guarantees no execution exists, so recomputing the hash cannot
+            // rewrite history. Freeze nothing here: Draft edit/release later expects the stored
+            // hash to match the current graph.
+            var oldHash = order.SnapshotHash;
+            var oldSnapshotRevision = order.SnapshotRevision;
+            order.SnapshotHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(order);
+            order.SnapshotRevision += 1;
+
+            // Lifecycle transition only — do not RequireCurrentSnapshot or rebuild/upgrade snapshot.
             order.Status = ProductionWorkOrderStatuses.Draft;
             order.ReleasedDate = null;
             order.ReleasedBy = null;
@@ -229,6 +275,15 @@ public sealed partial class ProductionWorkOrderService
                 ToStatus = ProductionWorkOrderStatuses.Draft,
                 SnapshotRevision = order.SnapshotRevision,
                 Reason = cleanReason,
+                DetailsJson = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    OldSnapshotRevision = oldSnapshotRevision,
+                    NewSnapshotRevision = order.SnapshotRevision,
+                    OldSnapshotHash = oldHash,
+                    NewSnapshotHash = order.SnapshotHash,
+                    NormalizedFromSegments = hasAdvancedSegments,
+                    SupersededSegmentCount = reopenSegments.Count
+                }),
                 OccurredDate = now,
                 ActorUserId = scope.UserId
             });
@@ -350,6 +405,17 @@ public sealed partial class ProductionWorkOrderService
         if (hasOpenChangeOrder)
         {
             return "An active or applied Change Order exists for this Work Order. Resolve it before reopening as Draft.";
+        }
+
+        var hasActiveHold = await db.ProductionWorkOrderScheduleHolds
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.WorkOrderId == order.Uid
+                    && x.Status == ProductionScheduleHoldStatuses.Active,
+                cancellationToken);
+        if (hasActiveHold)
+        {
+            return "An active schedule hold exists for this Work Order. Release or cancel the hold before reopening as Draft.";
         }
 
         return null;

@@ -50,6 +50,7 @@ public static class AppSettingCatalogue
     {
         public const string AllowCapacityOverride = "ALLOW_CAPACITY_OVERRIDE";
         public const string MachineSchedulePlannerWriteEnabled = "MACHINE_SCHEDULE_PLANNER_WRITE_ENABLED";
+        public const string MachineScheduleSegmentWriteEnabled = "MACHINE_SCHEDULE_SEGMENT_WRITE_ENABLED";
     }
 
     public static class ProductionKeys
@@ -169,6 +170,14 @@ public static class AppSettingCatalogue
         "false",
         Description: "Allow machine schedule planner commits only after allocation backfill, overlap, calendar, execution and release readiness checks pass.");
 
+    public static readonly AppSettingDefinition PlanningMachineScheduleSegmentWriteEnabled = new(
+        AppSettingModules.Planning,
+        PlanningKeys.MachineScheduleSegmentWriteEnabled,
+        AppSettingType.Flag,
+        AppSettingScope.Company,
+        "false",
+        Description: "Allow advanced segment writes (insert/split, hold, replan remaining, maintenance replan). Segment-aware reads remain available when disabled.");
+
     public static readonly AppSettingDefinition ProductionAllowPartialCompletion = new(
         AppSettingModules.Production,
         ProductionKeys.AllowPartialCompletion,
@@ -214,6 +223,7 @@ public static class AppSettingCatalogue
 
         PlanningAllowCapacityOverride,
         PlanningMachineSchedulePlannerWriteEnabled,
+        PlanningMachineScheduleSegmentWriteEnabled,
         ProductionAllowPartialCompletion,
         ProductionWipConsumptionPolicy,
         QaRequireInspectionOnReceipt

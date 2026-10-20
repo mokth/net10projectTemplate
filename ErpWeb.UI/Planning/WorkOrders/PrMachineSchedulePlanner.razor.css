@@ -393,6 +393,37 @@
     font-size: .85rem;
 }
 
+.pr-machine-schedule-segments {
+    margin: .2rem 0 .9rem;
+    overflow-x: auto;
+}
+
+.pr-machine-schedule-segments h3 {
+    margin: 0 0 .4rem;
+    color: var(--text);
+    font-size: .88rem;
+}
+
+.pr-machine-schedule-segments table {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--text);
+    font-size: .8rem;
+}
+
+.pr-machine-schedule-segments th,
+.pr-machine-schedule-segments td {
+    padding: .35rem .45rem;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.pr-machine-schedule-segments th {
+    color: var(--muted);
+    font-weight: 600;
+}
+
 .pr-machine-schedule-details__actions {
     display: flex;
     align-items: center;
@@ -468,6 +499,26 @@
     background: #7c3aed;
 }
 
+.pr-machine-schedule-legend__swatch--split {
+    background: #0891b2;
+}
+
+.pr-machine-schedule-legend__swatch--urgent {
+    background: #b91c1c;
+}
+
+.pr-machine-schedule-legend__swatch--resume {
+    background: #1d4ed8;
+}
+
+.pr-machine-schedule-legend__swatch--hold-resume {
+    background: #9333ea;
+}
+
+.pr-machine-schedule-legend__swatch--remaining {
+    background: #047857;
+}
+
 .pr-machine-schedule-legend__swatch--maintenance {
     background: var(--muted);
 }
@@ -511,6 +562,30 @@
 
 .pr-machine-schedule-label--external {
     background: #7c3aed !important;
+}
+
+.pr-machine-schedule-label--split {
+    background: #0891b2 !important;
+}
+
+.pr-machine-schedule-label--urgent {
+    background: #b91c1c !important;
+}
+
+.pr-machine-schedule-label--resume {
+    background: #1d4ed8 !important;
+}
+
+.pr-machine-schedule-label--hold-resume {
+    background: #9333ea !important;
+}
+
+.pr-machine-schedule-label--maintenance-resume {
+    background: #475569 !important;
+}
+
+.pr-machine-schedule-label--remaining {
+    background: #047857 !important;
 }
 
 .pr-machine-schedule-label__text {

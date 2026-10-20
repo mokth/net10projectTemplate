@@ -245,7 +245,7 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
                     IvMasterErrorCode.Concurrency, "Schedule inputs changed after preview. Refresh the preview before committing.");
             }
 
-            var audit = ApplyProposal(db, order, scope, request, proposal);
+            var audit = await ApplyProposalAsync(db, order, scope, request, proposal, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
 
@@ -410,6 +410,36 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
             .SelectMany(operation => operation.Machines.Where(machine => machine.IsSelected)
                 .Select(machine => (Operation: operation, Machine: machine)))
             .ToList();
+        var affectedMachineIds = affectedMachinePairs.Select(x => x.Machine.Uid).ToHashSet();
+
+        // Simple move is only valid while the machine revision is still one normal segment with
+        // no hold or execution structure. An advanced split must never be silently flattened.
+        if (affectedMachineIds.Count > 0)
+        {
+            var currentSegments = await db.ProductionMachineScheduleSegments.AsNoTracking()
+                .Where(x => affectedMachineIds.Contains(x.WorkOrderMachineId)
+                    && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+                .ToListAsync(cancellationToken);
+            var hasAdvancedSegment = currentSegments
+                .GroupBy(x => x.WorkOrderMachineId)
+                .Any(group => group.Count() > 1)
+                || currentSegments.Any(x =>
+                    !string.Equals(x.SegmentKind, ProductionMachineScheduleSegmentKinds.Original, StringComparison.Ordinal));
+            if (hasAdvancedSegment)
+            {
+                blockers.Add("This operation uses an advanced split/execution schedule. "
+                    + "Use Advanced Schedule / Replan Remaining.");
+            }
+
+            var hasActiveHold = await db.ProductionWorkOrderScheduleHolds.AsNoTracking()
+                .AnyAsync(x => affectedMachineIds.Contains(x.WorkOrderMachineId)
+                    && x.Status == ProductionScheduleHoldStatuses.Active, cancellationToken);
+            if (hasActiveHold)
+            {
+                blockers.Add("This operation has an active schedule hold. Release the hold before moving it.");
+            }
+        }
+
         var excludedMachineIds = affectedMachinePairs.Select(x => x.Machine.Uid).ToHashSet();
         var machineCodes = affectedMachinePairs.Select(x => x.Machine.MachineCode)
             .Append(target.Machine.MachineCode)
@@ -747,12 +777,13 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
         operation.ScheduleSourceHash = placement.SourceHash;
     }
 
-    private ProductionAuditEvent ApplyProposal(
+    private async Task<ProductionAuditEvent> ApplyProposalAsync(
         AppDbContext db,
         ProductionWorkOrder order,
         InventoryTenantScope scope,
         MachineScheduleRescheduleRequest request,
-        ScheduleProposal proposal)
+        ScheduleProposal proposal,
+        CancellationToken cancellationToken)
     {
         var affectedMachineIds = proposal.Placements
             .Where(x => x.Placement.Machine is not null)
@@ -788,6 +819,61 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
             step.ModifiedBy = scope.UserId;
         }
 
+        // Keep the business segment aligned with the simple placement. The BuildProposal guard
+        // guarantees this is one normal segment; legacy pre-backfill rows are seeded here.
+        var segments = await db.ProductionMachineScheduleSegments
+            .Where(x => affectedMachineIds.Contains(x.WorkOrderMachineId)
+                && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+            .ToListAsync(cancellationToken);
+        var segmentByMachine = new Dictionary<long, ProductionMachineScheduleSegment>();
+        var createdSegment = false;
+        foreach (var placement in proposal.Placements)
+        {
+            var machine = placement.Placement.Machine;
+            if (machine is null)
+                continue;
+
+            if (!segmentByMachine.TryGetValue(machine.Uid, out var segment))
+            {
+                segment = segments.FirstOrDefault(x => x.WorkOrderMachineId == machine.Uid);
+                if (segment is null)
+                {
+                    segment = MachineScheduleSegmentPersistence.BuildOriginalSegment(
+                        order, placement.Operation, machine, scope.UserId, modifiedAt, db);
+                    db.ProductionMachineScheduleSegments.Add(segment);
+                    createdSegment = true;
+                }
+
+                segmentByMachine[machine.Uid] = segment;
+            }
+
+            segment.WorkOrderOperationId = placement.Operation.Uid;
+            segment.WorkOrderMachineId = machine.Uid;
+            segment.MachineCode = machine.MachineCode;
+            segment.SegmentKind = ProductionMachineScheduleSegmentKinds.Original;
+            segment.SegmentStatus = ProductionMachineScheduleSegmentStatuses.Planned;
+            segment.PlannedOutputQty = placement.Operation.PlannedOutputQty;
+            segment.OutputUom = placement.Operation.PlannedOutputUom;
+            segment.PlannedCycleCount = machine.PlannedCycleCount;
+            segment.PlannedCycleSlots = machine.PlannedCycleSlots;
+            segment.ScheduledRunMinutes = machine.PlannedRunMinutes;
+            segment.ScheduledSetupSeconds = machine.SetupSeconds;
+            segment.ScheduledConversionSeconds = machine.ConversionSeconds;
+            segment.ScheduledQueueSeconds = machine.QueueSeconds;
+            segment.PlannedStartDateTime = placement.Placement.Start;
+            segment.PlannedCompletionDateTime = placement.Placement.Completion;
+            segment.CalendarHorizonStart = machine.CalendarHorizonStart;
+            segment.CalendarHorizonEnd = machine.CalendarHorizonEnd;
+            segment.SegmentScheduleSourceHash = placement.Placement.SourceHash;
+            segment.MachineScheduleRevision = machine.ScheduleRevision;
+            segment.Reason = MachineScheduleSegmentPersistence.TrimReason(request.Reason);
+            segment.ModifiedDate = modifiedAt;
+            segment.ModifiedBy = scope.UserId;
+        }
+
+        if (createdSegment)
+            await db.SaveChangesAsync(cancellationToken);
+
         var existing = db.ProductionMachineScheduleAllocations
             .Where(x => x.CompanyCode == scope.CompanyCode
                 && x.WorkOrderId == order.Uid
@@ -801,6 +887,7 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
             var machine = placement.Placement.Machine;
             if (machine is null)
                 continue;
+            var segment = segmentByMachine[machine.Uid];
             var fragmentNo = 1;
             foreach (var interval in placement.Placement.ConsumedIntervals)
             {
@@ -812,6 +899,7 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = placement.Operation.Uid,
                     WorkOrderMachineId = machine.Uid,
+                    MachineScheduleSegmentId = segment.Uid,
                     ScheduleRevision = machine.ScheduleRevision,
                     FragmentNo = fragmentNo++,
                     StartDateTime = interval.Start,

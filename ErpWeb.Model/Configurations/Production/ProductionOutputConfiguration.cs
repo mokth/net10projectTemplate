@@ -35,6 +35,7 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
         builder.Property(x => x.ShiftCode).HasMaxLength(20);
         builder.Property(x => x.PlannedMachineCode).HasMaxLength(30);
         builder.Property(x => x.ActualMachineCode).HasMaxLength(30);
+        builder.Property(x => x.MachineScheduleSegmentId).HasColumnName("MachineScheduleSegmentID");
         builder.Property(x => x.OperatorCode).HasMaxLength(30);
         builder.Property(x => x.GoodQty).HasPrecision(18, 4);
         builder.Property(x => x.ScrapQty).HasPrecision(18, 4);
@@ -76,6 +77,8 @@ public sealed class ProductionOutputConfiguration : IEntityTypeConfiguration<Pro
             .HasDatabaseName("IX_PrProductionOutput_WorkOrder_Date");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.ProductionDate, x.Status })
             .HasDatabaseName("IX_PrProductionOutput_Tenant_Date_Status");
+        builder.HasIndex(x => x.MachineScheduleSegmentId)
+            .HasDatabaseName("IX_PrProductionOutput_MachineScheduleSegment");
         builder.HasIndex(x => new { x.Uid, x.CompanyCode, x.BranchCode })
             .IsUnique()
             .HasDatabaseName("UQ_PrProductionOutput_Uid_Tenant");

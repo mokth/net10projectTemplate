@@ -162,9 +162,22 @@ public sealed class PrMachineMaintenanceService : IPrMachineMaintenanceService
             LocCode = write.LocationCode
         };
 
-        db.PrMacMaintenances.Add(entity);
-        await db.SaveChangesAsync(ct);
-        return PlanningServiceResult<int>.Ok(entity.Id);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            // Maintenance changes machine availability, so they share the scheduling-source lock
+            // with planner commits and calendar writes.
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            db.PrMacMaintenances.Add(entity);
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult<int>.Ok(entity.Id);
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult<int>.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
     }
 
     public async Task<PlanningServiceResult> UpdateAsync(PrMacMaintenance request, CancellationToken ct = default)
@@ -179,43 +192,57 @@ public sealed class PrMachineMaintenanceService : IPrMachineMaintenanceService
             return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, err);
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var entity = await db.PrMacMaintenances.FirstOrDefaultAsync(
-            x => x.Id == request.Id && x.CompCode == write.CompanyCode, ct);
-        if (entity is null)
-            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Maintenance not found.");
-
         var mac = PlanningCodeNormalizer.NormalizeCode(request.MacCode);
         if (!await db.PrMachines.AsNoTracking().AnyAsync(x => x.MachineCd == mac && x.CompCode == write.CompanyCode, ct))
             return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Machine {mac} not found.");
 
+        string? reasonCode = null;
         if (!string.IsNullOrWhiteSpace(request.ReasonCd))
         {
-            var rc = PlanningCodeNormalizer.NormalizeCode(request.ReasonCd);
-            if (!await db.PrMaintenanceReasons.AsNoTracking().AnyAsync(x => x.CompCode == write.CompanyCode && x.ReasonCd == rc && x.Active, ct))
-                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Reason {rc} is not active.");
-            entity.ReasonCd = rc;
+            reasonCode = PlanningCodeNormalizer.NormalizeCode(request.ReasonCd);
+            if (!await db.PrMaintenanceReasons.AsNoTracking().AnyAsync(x => x.CompCode == write.CompanyCode && x.ReasonCd == reasonCode && x.Active, ct))
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Reason {reasonCode} is not active.");
         }
-        else entity.ReasonCd = null;
 
-        entity.TrxDate = request.TrxDate?.Date;
-        entity.MacCode = mac;
-        entity.Description = request.Description;
-        entity.ActionTaken = request.ActionTaken;
-        entity.Status = NormalizeStatus(request.Status) ?? entity.Status;
-        entity.ReportBy = request.ReportBy;
-        entity.ActionBy = request.ActionBy;
-        entity.ActionOn = request.ActionOn;
-        entity.MType = NormalizeType(request.MType) ?? entity.MType;
-        entity.Name = request.Name;
-        entity.StartDateTime = request.StartDateTime;
-        entity.EndDateTime = request.EndDateTime;
-        entity.PartsCost = request.PartsCost;
-        entity.LabourCost = request.LabourCost;
-        entity.OtherCost = request.OtherCost;
-        entity.Remark = request.Remark;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            var entity = await db.PrMacMaintenances.FirstOrDefaultAsync(
+                x => x.Id == request.Id && x.CompCode == write.CompanyCode, ct);
+            if (entity is null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Maintenance not found.");
+            }
 
-        await db.SaveChangesAsync(ct);
-        return PlanningServiceResult.Ok("Maintenance updated.");
+            entity.ReasonCd = reasonCode;
+            entity.TrxDate = request.TrxDate?.Date;
+            entity.MacCode = mac;
+            entity.Description = request.Description;
+            entity.ActionTaken = request.ActionTaken;
+            entity.Status = NormalizeStatus(request.Status) ?? entity.Status;
+            entity.ReportBy = request.ReportBy;
+            entity.ActionBy = request.ActionBy;
+            entity.ActionOn = request.ActionOn;
+            entity.MType = NormalizeType(request.MType) ?? entity.MType;
+            entity.Name = request.Name;
+            entity.StartDateTime = request.StartDateTime;
+            entity.EndDateTime = request.EndDateTime;
+            entity.PartsCost = request.PartsCost;
+            entity.LabourCost = request.LabourCost;
+            entity.OtherCost = request.OtherCost;
+            entity.Remark = request.Remark;
+
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult.Ok("Maintenance updated.");
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
     }
 
     public async Task<PlanningServiceResult> CompleteAsync(int id, CancellationToken ct = default)
@@ -226,22 +253,42 @@ public sealed class PrMachineMaintenanceService : IPrMachineMaintenanceService
         if (write is null) return PlanningServiceResult.TenantRequired();
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var entity = await db.PrMacMaintenances.FirstOrDefaultAsync(
-            x => x.Id == id && x.CompCode == write.CompanyCode, ct);
-        if (entity is null)
-            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Maintenance not found.");
-        if (string.Equals(entity.Status, PrMaintenanceStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
-            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Cancelled maintenance cannot be completed.");
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            var entity = await db.PrMacMaintenances.FirstOrDefaultAsync(
+                x => x.Id == id && x.CompCode == write.CompanyCode, ct);
+            if (entity is null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Maintenance not found.");
+            }
+            if (string.Equals(entity.Status, PrMaintenanceStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Cancelled maintenance cannot be completed.");
+            }
 
-        entity.Status = PrMaintenanceStatuses.Completed;
-        entity.ActionBy ??= write.UserId;
-        entity.ActionOn ??= DateTime.Now;
-        var err = ValidateForStatus(entity, requireActiveMachine: false);
-        if (err is not null)
-            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, err);
+            entity.Status = PrMaintenanceStatuses.Completed;
+            entity.ActionBy ??= write.UserId;
+            entity.ActionOn ??= DateTime.Now;
+            var err = ValidateForStatus(entity, requireActiveMachine: false);
+            if (err is not null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, err);
+            }
 
-        await db.SaveChangesAsync(ct);
-        return PlanningServiceResult.Ok("Maintenance completed.");
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult.Ok("Maintenance completed.");
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
     }
 
     public async Task<PlanningServiceResult> CancelAsync(int id, CancellationToken ct = default)
@@ -252,14 +299,28 @@ public sealed class PrMachineMaintenanceService : IPrMachineMaintenanceService
         if (write is null) return PlanningServiceResult.TenantRequired();
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var entity = await db.PrMacMaintenances.FirstOrDefaultAsync(
-            x => x.Id == id && x.CompCode == write.CompanyCode, ct);
-        if (entity is null)
-            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Maintenance not found.");
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await WorkOrderSchedulingLock.AcquireAsync(db, write.CompanyCode, exclusive: true, ct);
+            var entity = await db.PrMacMaintenances.FirstOrDefaultAsync(
+                x => x.Id == id && x.CompCode == write.CompanyCode, ct);
+            if (entity is null)
+            {
+                await tx.RollbackAsync(ct);
+                return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Maintenance not found.");
+            }
 
-        entity.Status = PrMaintenanceStatuses.Cancelled;
-        await db.SaveChangesAsync(ct);
-        return PlanningServiceResult.Ok("Maintenance cancelled.");
+            entity.Status = PrMaintenanceStatuses.Cancelled;
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return PlanningServiceResult.Ok("Maintenance cancelled.");
+        }
+        catch (WorkOrderSchedulingLockException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, ex.Message);
+        }
     }
 
     public async Task<PlanningServiceResult<int>> CompletePreventiveAsync(int preventiveUid, CompletePreventiveRequest request, CancellationToken ct = default)

@@ -185,29 +185,54 @@ public static class StockReplayZeroCountRemovalRootWriter
             cancellationToken);
         if (method == StockCostMethods.Fifo)
         {
-            if (hasLaterPhysical)
-                throw Invalid("A later zero-count FIFO pile movement needs descendant replay.");
             var fifoPileIds = plan.Lines.Select(l => l.BalLocId).ToArray();
             var fifoPiles = await db.IvBalLocs.AsNoTracking()
                 .Where(b => b.CompanyCode == plan.CompanyCode
                     && b.BranchCode == plan.BranchCode
                     && fifoPileIds.Contains(b.Id))
-                .Select(b => new { b.Id, b.ICode })
+                .Select(b => new { b.Id, b.ICode, b.StdUom })
                 .ToDictionaryAsync(b => b.Id, cancellationToken);
             if (fifoPiles.Count != fifoPileIds.Length
-                || fifoPiles.Values.Any(p => string.IsNullOrWhiteSpace(p.ICode)))
+                || fifoPiles.Values.Any(p => string.IsNullOrWhiteSpace(p.ICode)
+                    || string.IsNullOrWhiteSpace(p.StdUom)))
                 throw Invalid("The zero-count FIFO piles changed items.");
             var snapshots = new List<object>();
             foreach (var itemCode in fifoPiles.Values.Select(p => p.ICode)
                 .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
             {
+                var itemLines = plan.Lines.Where(l =>
+                    fifoPiles[l.BalLocId].ICode == itemCode).ToArray();
                 var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
                     db, plan.CompanyCode, plan.BranchCode, itemCode,
                     cancellationToken);
+                string? tailHash = null;
+                if (itemLines.Any(l => l.Physical.LaterEvents.Count != 0))
+                {
+                    if (itemLines.Select(l =>
+                            fifoPiles[l.BalLocId].StdUom)
+                        .Distinct(StringComparer.Ordinal).Count() != 1)
+                        throw Invalid("A zero-count FIFO item has mixed base units.");
+                    var line = itemLines.OrderBy(l =>
+                        l.Physical.RemovedActiveEvent.Key).First();
+                    var tail = StockReplayFifoTailProjector
+                        .InsertCountAdjustment(snapshot,
+                            line.Physical.RemovedActiveEvent.Key, 0m,
+                            null, fifoPiles[line.BalLocId].StdUom);
+                    if (tail.FinalQuantity != snapshot.CurrentQuantity
+                        || tail.FinalValue != snapshot.CurrentValue)
+                        throw Invalid("A zero-count FIFO tail changes its active pool.");
+                    var proof = new StockReplayFifoCountSheetRemovalProjection(
+                        tail.BeforeCandidate, [], tail.Issues,
+                        tail.FinalLayers, tail.FinalQuantity, tail.FinalValue);
+                    tailHash = await StockReplayFifoCountRemovalTailEvidenceReader
+                        .ReadAsync(db, plan, itemCode, itemLines, snapshot,
+                            proof, cancellationToken);
+                }
                 snapshots.Add(new
                 {
                     ItemCode = itemCode, snapshot.SnapshotHash,
-                    snapshot.CurrentQuantity, snapshot.CurrentValue
+                    snapshot.CurrentQuantity, snapshot.CurrentValue,
+                    TailHash = tailHash
                 });
             }
             return StockPostingFingerprint.Create(new

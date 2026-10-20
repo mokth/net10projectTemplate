@@ -11,7 +11,8 @@ public sealed record StockReplayCountSheetRemovalRootPlan(
     string CostMethod,
     StockReplayZeroCountRemovalRootPlan? Zero,
     StockReplayWacCountSheetRemovalPlan? Wac,
-    StockReplayStandardCountSheetRemovalPlan? Standard);
+    StockReplayStandardCountSheetRemovalPlan? Standard,
+    StockReplayFifoCountSheetRemovalPlan? Fifo);
 
 public sealed record StockReplayCountSheetRemovalRootResult(
     IReadOnlyList<int> ReversalHistoryIds,
@@ -19,7 +20,7 @@ public sealed record StockReplayCountSheetRemovalRootResult(
     IReadOnlyList<int> RequiredActiveHistoryIds);
 
 /// <summary>
-/// Selects the bounded zero, WAC, or Standard count rollback path. The caller
+/// Selects the bounded zero, WAC, Standard, or FIFO count rollback path. The caller
 /// still owns the branch transaction, replay completion, and commit.
 /// </summary>
 public static class StockReplayCountSheetRemovalRootWriter
@@ -38,22 +39,29 @@ public static class StockReplayCountSheetRemovalRootWriter
         {
             var zero = await StockReplayZeroCountRemovalRootWriter.BuildAsync(
                 db, companyCode, branchCode, countId, cancellationToken);
-            return new(zero.Command, method, zero, null, null);
+            return new(zero.Command, method, zero, null, null, null);
         }
         if (method == StockCostMethods.MovingAverage)
         {
             var wac = await StockReplayWacCountSheetRemovalPlanner.BuildAsync(
                 db, companyCode, branchCode, countId, cancellationToken);
-            return new(wac.Command, method, null, wac, null);
+            return new(wac.Command, method, null, wac, null, null);
         }
         if (method == StockCostMethods.Standard)
         {
             var standard = await StockReplayStandardCountSheetRemovalPlanner
                 .BuildAsync(db, companyCode, branchCode, countId,
                     cancellationToken);
-            return new(standard.Command, method, null, null, standard);
+            return new(standard.Command, method, null, null, standard, null);
         }
-        throw Invalid("The count needs a FIFO rollback writer before replay.");
+        if (method == StockCostMethods.Fifo)
+        {
+            var fifo = await StockReplayFifoCountSheetRemovalPlanner.BuildAsync(
+                db, companyCode, branchCode, countId, cancellationToken);
+            StockReplayFifoCountSheetRemovalPlanner.RequireIsolatedAdjustment(fifo);
+            return new(fifo.Command, method, null, null, null, fifo);
+        }
+        throw Invalid("The count has no supported rollback cost policy.");
     }
 
     public static async Task<StockReplayCountSheetRemovalRootResult>
@@ -74,7 +82,7 @@ public static class StockReplayCountSheetRemovalRootWriter
             || context.Posting.SourceDocumentId
                 != plan.Command.SourceDocumentId
             || context.Posting.EffectiveAt != plan.Command.EffectiveAt
-            || new object?[] { plan.Zero, plan.Wac, plan.Standard }
+            || new object?[] { plan.Zero, plan.Wac, plan.Standard, plan.Fifo }
                 .Count(x => x is not null) != 1)
             throw Invalid("The count removal plan does not match its root.");
         var method = await new StockCostMethodResolver().ResolveAsync(
@@ -108,6 +116,14 @@ public static class StockReplayCountSheetRemovalRootWriter
                 .AppendWithinRootAsync(context, standard, numbers, reason,
                     now, cancellationToken);
             return new(result.ReversalHistoryIds,
+                result.RemovalGenerationIds, []);
+        }
+        if (plan.Fifo is { } fifo && method == StockCostMethods.Fifo)
+        {
+            var result = await StockReplayFifoIsolatedCountRemovalWriter
+                .AppendWithinRootAsync(context, fifo, numbers, reason, now,
+                    cancellationToken);
+            return new([result.ReversalHistoryId],
                 result.RemovalGenerationIds, []);
         }
         throw Invalid("The count removal has no matching financial writer.");

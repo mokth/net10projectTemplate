@@ -714,6 +714,467 @@ public sealed class MachineScheduleRescheduleServiceTests
     }
 
     [Fact]
+    public async Task Insert_split_rewrites_segments_and_allocations_without_changing_production_quantities()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        await fixture.SetMachineCycleSecondsAsync(seeded.Request.WorkOrderMachineId, 360m);
+        var backfill = fixture.CreateSegmentBackfillService();
+        var backfillPreview = await backfill.PreviewAsync();
+        Assert.True(backfillPreview.Succeeded, backfillPreview.Message);
+        var backfilled = await backfill.ApplyAsync(backfillPreview.Data!.PreviewToken);
+        Assert.True(backfilled.Succeeded, backfilled.Message);
+        var service = fixture.CreateAdvancedService();
+        var request = AdvancedRequest(
+            seeded.Request,
+            MachineScheduleAdvancedAction.InsertSplit,
+            requestedStart: new DateTime(2026, 10, 1, 7, 0, 0),
+            partialQuantity: 4m);
+
+        var preview = await service.PreviewInsertAsync(request);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanCommit, string.Join(" ", preview.Data.Blockers));
+        Assert.Contains(preview.Data.Segments,
+            segment => segment.Kind == ProductionMachineScheduleSegmentKinds.UrgentInsert);
+        Assert.Equal(4m, preview.Data.RequestedQty);
+
+        var committed = await service.CommitInsertAsync(
+            request with { PreviewToken = preview.Data.PreviewToken });
+
+        Assert.True(committed.Succeeded, committed.Message);
+        await using var verify = fixture.Factory.CreateDbContext();
+        var order = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == request.WorkOrderId);
+        var operation = await verify.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == request.OperationId);
+        var machine = await verify.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == request.WorkOrderMachineId);
+        var segments = await verify.ProductionMachineScheduleSegments
+            .Where(x => x.WorkOrderMachineId == machine.Uid
+                && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+            .OrderBy(x => x.SegmentSequence)
+            .ToListAsync();
+        var allocations = await verify.ProductionMachineScheduleAllocations
+            .Where(x => x.WorkOrderMachineId == machine.Uid && x.ScheduleRevision == machine.ScheduleRevision)
+            .ToListAsync();
+        var audit = await verify.ProductionAuditEvents.SingleAsync(x =>
+            x.WorkOrderId == order.Uid && x.EventType == ProductionAuditEventTypes.ScheduleJobInserted);
+
+        Assert.Equal(2, segments.Count);
+        Assert.Contains(segments, x => x.SegmentKind == ProductionMachineScheduleSegmentKinds.UrgentInsert);
+        Assert.Equal(10m, segments.Sum(x => x.PlannedOutputQty));
+        Assert.Equal(4m, segments.Single(x => x.SegmentKind == ProductionMachineScheduleSegmentKinds.UrgentInsert).PlannedOutputQty);
+        Assert.Equal(2, allocations.Count);
+        Assert.All(allocations, x => Assert.NotNull(x.MachineScheduleSegmentId));
+        Assert.All(segments, segment => Assert.Contains(allocations,
+            allocation => allocation.MachineScheduleSegmentId == segment.Uid));
+        Assert.Equal(seeded.SnapshotRevision, order.SnapshotRevision);
+        Assert.Equal(seeded.SnapshotHash, order.SnapshotHash);
+        Assert.Equal(1, order.ScheduleRevision);
+        Assert.Equal(1, machine.ScheduleRevision);
+        Assert.Equal(10m, order.PlannedQty);
+        Assert.Equal(10m, order.RemainingQty);
+        Assert.Equal(10m, operation.PlannedOutputQty);
+        Assert.Equal(0m, operation.GoodQty);
+        Assert.Equal(order.SnapshotRevision, audit.SnapshotRevision);
+
+        var capacity = await new ProductionMachineCapacityService(fixture.Factory)
+            .LoadAsync(verify, order.CompanyCode, [machine.MachineCode]);
+        Assert.Empty(capacity.Blockers);
+        var occupied = Assert.Single(capacity.OccupiedByMachine).Value;
+        Assert.Equal(2, occupied.Count);
+        // The machine calendar opens at 08:00, so the 07:00 request snaps forward to the first
+        // usable minute; the uninserted remainder keeps its later plan at 09:00.
+        Assert.Contains(occupied, interval =>
+            interval.Start == new DateTime(2026, 10, 1, 8, 0, 0)
+            && interval.End == new DateTime(2026, 10, 1, 8, 24, 0));
+        Assert.Contains(occupied, interval =>
+            interval.Start == new DateTime(2026, 10, 1, 9, 0, 0)
+            && interval.End == new DateTime(2026, 10, 1, 9, 36, 0));
+    }
+
+    [Fact]
+    public async Task Open_ended_hold_reports_unknown_completion_and_resume_reanchors_the_remaining_quantity()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        await fixture.SetMachineCycleSecondsAsync(seeded.Request.WorkOrderMachineId, 360m);
+        var backfill = fixture.CreateSegmentBackfillService();
+        var backfillPreview = await backfill.PreviewAsync();
+        Assert.True(backfillPreview.Succeeded, backfillPreview.Message);
+        var backfilled = await backfill.ApplyAsync(backfillPreview.Data!.PreviewToken);
+        Assert.True(backfilled.Succeeded, backfilled.Message);
+        var service = fixture.CreateAdvancedService();
+        // Hold mid-job so a real prefix segment remains before the unknown interruption.
+        var holdRequest = AdvancedRequest(
+            seeded.Request,
+            MachineScheduleAdvancedAction.Hold,
+            requestedStart: new DateTime(2026, 10, 1, 8, 30, 0),
+            holdType: ProductionScheduleHoldTypes.MaterialShortage);
+
+        var preview = await service.PreviewHoldAsync(holdRequest);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanCommit, string.Join(" ", preview.Data.Blockers));
+        Assert.True(preview.Data.HasUnscheduledRemaining);
+        Assert.Null(preview.Data.ProposedCompletion);
+
+        var committed = await service.CommitHoldAsync(
+            holdRequest with { PreviewToken = preview.Data.PreviewToken });
+        Assert.True(committed.Succeeded, committed.Message);
+        Assert.True(committed.Data!.HasUnscheduledRemaining);
+
+        await using var verify = fixture.Factory.CreateDbContext();
+        var order = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == holdRequest.WorkOrderId);
+        var machine = await verify.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == holdRequest.WorkOrderMachineId);
+        var activeHold = await verify.ProductionWorkOrderScheduleHolds.SingleAsync(x =>
+            x.WorkOrderId == order.Uid && x.Status == ProductionScheduleHoldStatuses.Active);
+        Assert.Equal(ProductionScheduleHoldTypes.MaterialShortage, activeHold.HoldType);
+        Assert.Null(activeHold.ResumeNotBefore);
+        Assert.Equal(seeded.SnapshotRevision, order.SnapshotRevision);
+        Assert.Equal(seeded.SnapshotHash, order.SnapshotHash);
+
+        // A known prefix may exist, but the outer dates stay on the last known plan.
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 0, 0), machine.PlannedStartDateTime);
+        Assert.Equal(new DateTime(2026, 10, 1, 9, 0, 0), machine.PlannedCompletionDateTime);
+        var heldSegments = await verify.ProductionMachineScheduleSegments
+            .Where(x => x.WorkOrderMachineId == machine.Uid
+                && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+            .ToListAsync();
+        var heldPrefix = Assert.Single(heldSegments);
+        Assert.Equal(5m, heldPrefix.PlannedOutputQty);
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 30, 0), heldPrefix.PlannedCompletionDateTime);
+
+        var releaseRequest = new MachineScheduleAdvancedRequest
+        {
+            Action = MachineScheduleAdvancedAction.ReleaseHold,
+            WorkOrderId = order.Uid,
+            OperationId = holdRequest.OperationId,
+            WorkOrderMachineId = machine.Uid,
+            MachineCode = machine.MachineCode,
+            ExpectedWorkOrderScheduleRevision = order.ScheduleRevision,
+            ExpectedWorkOrderRowVersion = order.RowVersion.ToArray(),
+            ExpectedMachineScheduleRevision = machine.ScheduleRevision,
+            ExpectedMachineRowVersion = machine.RowVersion.ToArray(),
+            RequestedStart = new DateTime(2026, 10, 1, 13, 0, 0),
+            HoldId = activeHold.Uid,
+            Reason = "Material received"
+        };
+
+        var releasePreview = await service.PreviewReleaseHoldAsync(releaseRequest);
+        Assert.True(releasePreview.Succeeded, releasePreview.Message);
+        Assert.True(releasePreview.Data!.CanCommit, string.Join(" ", releasePreview.Data.Blockers));
+        Assert.Equal(new DateTime(2026, 10, 1, 13, 0, 0), releasePreview.Data.ProposedStart);
+
+        var released = await service.CommitReleaseHoldAsync(
+            releaseRequest with { PreviewToken = releasePreview.Data.PreviewToken });
+        Assert.True(released.Succeeded, released.Message);
+
+        await using var verifyReleased = fixture.Factory.CreateDbContext();
+        var storedHold = await verifyReleased.ProductionWorkOrderScheduleHolds.SingleAsync(x => x.Uid == activeHold.Uid);
+        var currentSegments = await verifyReleased.ProductionMachineScheduleSegments
+            .Where(x => x.WorkOrderMachineId == machine.Uid
+                && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+            .ToListAsync();
+        var releasedOrder = await verifyReleased.ProductionWorkOrders.SingleAsync(x => x.Uid == order.Uid);
+        Assert.Equal(ProductionScheduleHoldStatuses.Released, storedHold.Status);
+        var resumeSegment = Assert.Single(currentSegments);
+        Assert.Equal(ProductionMachineScheduleSegmentKinds.HoldResume, resumeSegment.SegmentKind);
+        Assert.Equal(new DateTime(2026, 10, 1, 13, 0, 0), resumeSegment.PlannedStartDateTime);
+        Assert.Equal(10m, resumeSegment.PlannedOutputQty);
+        Assert.Equal(seeded.SnapshotRevision, releasedOrder.SnapshotRevision);
+        Assert.Equal(seeded.SnapshotHash, releasedOrder.SnapshotHash);
+        Assert.Equal(10m, releasedOrder.PlannedQty);
+    }
+
+    [Fact]
+    public async Task Replan_remaining_uses_only_unexecuted_quantity_and_keeps_execution_and_costing_facts()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        await fixture.SetMachineCycleSecondsAsync(seeded.Request.WorkOrderMachineId, 360m);
+        await using (var prepare = fixture.Factory.CreateDbContext())
+        {
+            var operation = await prepare.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == seeded.Request.OperationId);
+            var order = await prepare.ProductionWorkOrders.SingleAsync(x => x.Uid == seeded.Request.WorkOrderId);
+            operation.ProcessedQty = 6m;
+            operation.GoodQty = 6m;
+            operation.RemainingQty = 4m;
+            order.GoodQty = 6m;
+            order.RemainingQty = 4m;
+            await prepare.SaveChangesAsync();
+        }
+
+        var backfill = fixture.CreateSegmentBackfillService();
+        var backfillPreview = await backfill.PreviewAsync();
+        Assert.True(backfillPreview.Succeeded, backfillPreview.Message);
+        var backfilled = await backfill.ApplyAsync(backfillPreview.Data!.PreviewToken);
+        Assert.True(backfilled.Succeeded, backfilled.Message);
+
+        var service = fixture.CreateAdvancedService();
+        var request = AdvancedRequest(
+            seeded.Request,
+            MachineScheduleAdvancedAction.ReplanRemaining,
+            requestedStart: new DateTime(2026, 10, 1, 10, 0, 0));
+
+        var preview = await service.PreviewReplanRemainingAsync(request);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanCommit, string.Join(" ", preview.Data.Blockers));
+        Assert.Equal(4m, preview.Data.RequestedQty);
+
+        var committed = await service.CommitReplanRemainingAsync(
+            request with { PreviewToken = preview.Data.PreviewToken });
+        Assert.True(committed.Succeeded, committed.Message);
+
+        await using var verify = fixture.Factory.CreateDbContext();
+        var orderAfter = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == request.WorkOrderId);
+        var operationAfter = await verify.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == request.OperationId);
+        var machineAfter = await verify.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == request.WorkOrderMachineId);
+        var segment = await verify.ProductionMachineScheduleSegments.SingleAsync(x =>
+            x.WorkOrderMachineId == machineAfter.Uid
+            && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded);
+        var allocations = await verify.ProductionMachineScheduleAllocations
+            .Where(x => x.WorkOrderMachineId == machineAfter.Uid
+                && x.ScheduleRevision == machineAfter.ScheduleRevision)
+            .ToListAsync();
+        Assert.Equal(4m, segment.PlannedOutputQty);
+        Assert.Equal(ProductionMachineScheduleSegmentKinds.RemainingReplan, segment.SegmentKind);
+        Assert.NotEmpty(allocations);
+        Assert.All(allocations, x => Assert.NotNull(x.MachineScheduleSegmentId));
+        Assert.Equal(seeded.SnapshotRevision, orderAfter.SnapshotRevision);
+        Assert.Equal(seeded.SnapshotHash, orderAfter.SnapshotHash);
+        Assert.Equal(10m, orderAfter.PlannedQty);
+        Assert.Equal(6m, orderAfter.GoodQty);
+        Assert.Equal(4m, orderAfter.RemainingQty);
+        Assert.Equal(10m, operationAfter.PlannedOutputQty);
+        Assert.Equal(6m, operationAfter.GoodQty);
+        Assert.Equal(4m, operationAfter.RemainingQty);
+        Assert.Equal(47.50m, machineAfter.PlannedCostAmount);
+    }
+
+    [Fact]
+    public async Task Maintenance_replan_reanchors_the_unfinished_quantity_after_downtime_and_freezes_snapshot()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        await fixture.SetMachineCycleSecondsAsync(seeded.Request.WorkOrderMachineId, 360m);
+        var backfill = fixture.CreateSegmentBackfillService();
+        var backfillPreview = await backfill.PreviewAsync();
+        Assert.True(backfillPreview.Succeeded, backfillPreview.Message);
+        var backfilled = await backfill.ApplyAsync(backfillPreview.Data!.PreviewToken);
+        Assert.True(backfilled.Succeeded, backfilled.Message);
+
+        var service = fixture.CreateAdvancedService();
+        var request = new MachineScheduleAdvancedRequest
+        {
+            Action = MachineScheduleAdvancedAction.MaintenanceReplan,
+            WorkOrderId = seeded.Request.WorkOrderId,
+            OperationId = seeded.Request.OperationId,
+            WorkOrderMachineId = seeded.Request.WorkOrderMachineId,
+            MachineCode = seeded.Request.MachineCode,
+            ExpectedWorkOrderScheduleRevision = seeded.Request.ExpectedWorkOrderScheduleRevision,
+            ExpectedWorkOrderRowVersion = seeded.Request.ExpectedWorkOrderRowVersion,
+            ExpectedMachineScheduleRevision = seeded.Request.ExpectedMachineScheduleRevision,
+            ExpectedMachineRowVersion = seeded.Request.ExpectedMachineRowVersion,
+            DowntimeStart = new DateTime(2026, 10, 1, 8, 30, 0),
+            DowntimeEnd = new DateTime(2026, 10, 1, 10, 30, 0),
+            MaintenanceType = "BREAKDOWN",
+            Reason = "Bearing failure"
+        };
+
+        var preview = await service.PreviewMaintenanceReplanAsync(request);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanCommit, string.Join(" ", preview.Data.Blockers));
+        Assert.Equal(2, preview.Data.Segments.Count);
+        var resume = Assert.Single(preview.Data.Segments,
+            x => x.Kind == ProductionMachineScheduleSegmentKinds.MaintenanceResume);
+        Assert.Equal(new DateTime(2026, 10, 1, 10, 30, 0), resume.Start);
+        Assert.Equal(5m, resume.PlannedOutputQty);
+
+        var committed = await service.CommitMaintenanceReplanAsync(
+            request with { PreviewToken = preview.Data.PreviewToken });
+        Assert.True(committed.Succeeded, committed.Message);
+
+        await using var verify = fixture.Factory.CreateDbContext();
+        var order = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == request.WorkOrderId);
+        var machine = await verify.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == request.WorkOrderMachineId);
+        var segments = await verify.ProductionMachineScheduleSegments
+            .Where(x => x.WorkOrderMachineId == machine.Uid
+                && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+            .OrderBy(x => x.PlannedStartDateTime)
+            .ToListAsync();
+        Assert.Equal(2, segments.Count);
+        Assert.Equal(10m, segments.Sum(x => x.PlannedOutputQty));
+        Assert.Equal(new DateTime(2026, 10, 1, 10, 30, 0),
+            segments.Single(x => x.SegmentKind == ProductionMachineScheduleSegmentKinds.MaintenanceResume)
+                .PlannedStartDateTime);
+        Assert.Equal(seeded.SnapshotRevision, order.SnapshotRevision);
+        Assert.Equal(seeded.SnapshotHash, order.SnapshotHash);
+        Assert.Equal(10m, order.PlannedQty);
+    }
+
+    [Fact]
+    public async Task Open_ended_maintenance_never_invents_a_resume_date_or_moves_the_last_known_plan()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        await fixture.SetMachineCycleSecondsAsync(seeded.Request.WorkOrderMachineId, 360m);
+        var backfill = fixture.CreateSegmentBackfillService();
+        var backfillPreview = await backfill.PreviewAsync();
+        Assert.True(backfillPreview.Succeeded, backfillPreview.Message);
+        var backfilled = await backfill.ApplyAsync(backfillPreview.Data!.PreviewToken);
+        Assert.True(backfilled.Succeeded, backfilled.Message);
+
+        var service = fixture.CreateAdvancedService();
+        var request = new MachineScheduleAdvancedRequest
+        {
+            Action = MachineScheduleAdvancedAction.MaintenanceReplan,
+            WorkOrderId = seeded.Request.WorkOrderId,
+            OperationId = seeded.Request.OperationId,
+            WorkOrderMachineId = seeded.Request.WorkOrderMachineId,
+            MachineCode = seeded.Request.MachineCode,
+            ExpectedWorkOrderScheduleRevision = seeded.Request.ExpectedWorkOrderScheduleRevision,
+            ExpectedWorkOrderRowVersion = seeded.Request.ExpectedWorkOrderRowVersion,
+            ExpectedMachineScheduleRevision = seeded.Request.ExpectedMachineScheduleRevision,
+            ExpectedMachineRowVersion = seeded.Request.ExpectedMachineRowVersion,
+            DowntimeStart = new DateTime(2026, 10, 1, 8, 30, 0),
+            DowntimeEnd = null,
+            MaintenanceType = "BREAKDOWN",
+            Reason = "Repair end not yet known"
+        };
+
+        var preview = await service.PreviewMaintenanceReplanAsync(request);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanCommit, string.Join(" ", preview.Data.Blockers));
+        Assert.True(preview.Data.HasUnscheduledRemaining);
+        Assert.Null(preview.Data.ProposedCompletion);
+        Assert.Single(preview.Data.Segments);
+        Assert.DoesNotContain(preview.Data.Segments,
+            x => x.Kind == ProductionMachineScheduleSegmentKinds.MaintenanceResume);
+
+        var committed = await service.CommitMaintenanceReplanAsync(
+            request with { PreviewToken = preview.Data.PreviewToken });
+        Assert.True(committed.Succeeded, committed.Message);
+        Assert.True(committed.Data!.HasUnscheduledRemaining);
+
+        await using var verify = fixture.Factory.CreateDbContext();
+        var order = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == request.WorkOrderId);
+        var machine = await verify.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == request.WorkOrderMachineId);
+        var operation = await verify.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == request.OperationId);
+        var segments = await verify.ProductionMachineScheduleSegments
+            .Where(x => x.WorkOrderMachineId == machine.Uid
+                && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+            .ToListAsync();
+        var prefix = Assert.Single(segments);
+        Assert.Equal(5m, prefix.PlannedOutputQty);
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 30, 0), prefix.PlannedCompletionDateTime);
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 0, 0), order.PlannedStartDateTime);
+        Assert.Equal(new DateTime(2026, 10, 1, 9, 0, 0), order.PlannedCompletionDateTime);
+        Assert.Equal(new DateTime(2026, 10, 1, 9, 0, 0), machine.PlannedCompletionDateTime);
+        Assert.Equal(new DateTime(2026, 10, 1, 9, 0, 0), operation.PlannedCompletionDateTime);
+        Assert.Equal(seeded.SnapshotRevision, order.SnapshotRevision);
+        Assert.Equal(seeded.SnapshotHash, order.SnapshotHash);
+        Assert.Equal(10m, order.PlannedQty);
+    }
+
+    [Fact]
+    public async Task Advanced_commit_rejects_a_stale_preview_token()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        await fixture.SetMachineCycleSecondsAsync(seeded.Request.WorkOrderMachineId, 360m);
+        var backfill = fixture.CreateSegmentBackfillService();
+        var backfillPreview = await backfill.PreviewAsync();
+        Assert.True(backfillPreview.Succeeded, backfillPreview.Message);
+        var backfilled = await backfill.ApplyAsync(backfillPreview.Data!.PreviewToken);
+        Assert.True(backfilled.Succeeded, backfilled.Message);
+        var service = fixture.CreateAdvancedService();
+        var request = AdvancedRequest(
+            seeded.Request,
+            MachineScheduleAdvancedAction.Hold,
+            requestedStart: new DateTime(2026, 10, 1, 8, 0, 0),
+            holdType: ProductionScheduleHoldTypes.QualityHold);
+        var preview = await service.PreviewHoldAsync(request);
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanCommit, string.Join(" ", preview.Data.Blockers));
+
+        await using (var mutate = fixture.Factory.CreateDbContext())
+        {
+            var machine = await mutate.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == request.WorkOrderMachineId);
+            machine.ScheduleRevision++;
+            await mutate.SaveChangesAsync();
+        }
+
+        var committed = await service.CommitHoldAsync(
+            request with { PreviewToken = preview.Data.PreviewToken });
+
+        Assert.False(committed.Succeeded);
+        Assert.Contains("changed", committed.Message ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        await using var verify = fixture.Factory.CreateDbContext();
+        Assert.Empty(await verify.ProductionWorkOrderScheduleHolds
+            .Where(x => x.WorkOrderId == request.WorkOrderId)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task Segment_backfill_creates_original_segments_and_links_existing_allocations_without_moving_dates()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        var service = fixture.CreateSegmentBackfillService();
+
+        var preview = await service.PreviewAsync();
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanApply, string.Join(" ", preview.Data.Findings));
+        Assert.Equal(1, preview.Data.MissingSegmentCount);
+
+        var applied = await service.ApplyAsync(preview.Data.PreviewToken);
+
+        Assert.True(applied.Succeeded, applied.Message);
+        await using var verify = fixture.Factory.CreateDbContext();
+        var order = await verify.ProductionWorkOrders.SingleAsync(x => x.Uid == seeded.Request.WorkOrderId);
+        var machine = await verify.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == seeded.Request.WorkOrderMachineId);
+        var segment = await verify.ProductionMachineScheduleSegments.SingleAsync(x =>
+            x.WorkOrderMachineId == machine.Uid);
+        var allocation = await verify.ProductionMachineScheduleAllocations.SingleAsync(x =>
+            x.WorkOrderMachineId == machine.Uid);
+        Assert.Equal(ProductionMachineScheduleSegmentKinds.Original, segment.SegmentKind);
+        Assert.Equal(1, segment.SegmentSequence);
+        Assert.Equal(segment.Uid, allocation.MachineScheduleSegmentId);
+        Assert.Equal(new DateTime(2026, 10, 1, 8, 0, 0), segment.PlannedStartDateTime);
+        Assert.Equal(new DateTime(2026, 10, 1, 9, 0, 0), segment.PlannedCompletionDateTime);
+        Assert.Equal(10m, segment.PlannedOutputQty);
+        Assert.Equal(seeded.SnapshotRevision, order.SnapshotRevision);
+        Assert.Equal(seeded.SnapshotHash, order.SnapshotHash);
+        Assert.Equal(0, order.ScheduleRevision);
+        Assert.Equal(0, machine.ScheduleRevision);
+    }
+
+    private static MachineScheduleAdvancedRequest AdvancedRequest(
+        MachineScheduleRescheduleRequest request,
+        MachineScheduleAdvancedAction action,
+        DateTime? requestedStart = null,
+        decimal? partialQuantity = null,
+        string? holdType = null) => new()
+    {
+        Action = action,
+        WorkOrderId = request.WorkOrderId,
+        OperationId = request.OperationId,
+        WorkOrderMachineId = request.WorkOrderMachineId,
+        MachineCode = request.MachineCode,
+        ExpectedWorkOrderScheduleRevision = request.ExpectedWorkOrderScheduleRevision,
+        ExpectedWorkOrderRowVersion = request.ExpectedWorkOrderRowVersion,
+        ExpectedMachineScheduleRevision = request.ExpectedMachineScheduleRevision,
+        ExpectedMachineRowVersion = request.ExpectedMachineRowVersion,
+        RequestedStart = requestedStart,
+        PartialQuantity = partialQuantity,
+        HoldType = holdType,
+        Reason = "Advanced schedule test"
+    };
+
+    [Fact]
     [Trait(TestCategories.Name, TestCategories.SqlServer)]
     public async Task SqlServer_readiness_evidence_is_current_while_write_setting_still_controls_enablement()
     {
@@ -829,6 +1290,56 @@ public sealed class MachineScheduleRescheduleServiceTests
         public TestDbContextFactory Factory { get; }
         public MachineScheduleRescheduleService Service { get; }
         public string MachineCode => _machineCode;
+
+        public async Task SetMachineCycleSecondsAsync(long machineId, decimal cycleSeconds)
+        {
+            await using var db = Factory.CreateDbContext();
+            var machine = await db.ProductionWorkOrderMachines.SingleAsync(x => x.Uid == machineId);
+            machine.CycleSeconds = cycleSeconds;
+            await db.SaveChangesAsync();
+        }
+
+        public MachineScheduleSegmentBackfillService CreateSegmentBackfillService()
+        {
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            return new MachineScheduleSegmentBackfillService(
+                Factory,
+                InventoryTenantTestHelper.CreateTenantContext(),
+                access.Object);
+        }
+
+        public MachineScheduleAdvancedPlanningService CreateAdvancedService()
+        {
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var settings = new Mock<IAppSettingService>();
+            settings.Setup(x => x.GetFlagAsync(
+                    AppSettingModules.Planning,
+                    AppSettingCatalogue.PlanningKeys.MachineScheduleSegmentWriteEnabled,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var readiness = new Mock<IMachineSchedulePlannerReadinessService>();
+            readiness.Setup(x => x.GetReadinessAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new MachineSchedulePlannerReadiness
+                {
+                    IsWriteReady = true,
+                    WriteSettingEnabled = true,
+                    AllocationSchemaReady = true,
+                    ActiveAllocationBackfillComplete = true
+                });
+            return new MachineScheduleAdvancedPlanningService(
+                Factory,
+                InventoryTenantTestHelper.CreateTenantContext(),
+                access.Object,
+                settings.Object,
+                readiness.Object,
+                _calendars,
+                new AlwaysOpenWorkOrderCalendarProvider(),
+                new ProductionMachineCapacityService(Factory));
+        }
 
         public MachineScheduleAllocationBackfillService CreateBackfillService()
         {

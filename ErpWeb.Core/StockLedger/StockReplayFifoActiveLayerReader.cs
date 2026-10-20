@@ -30,9 +30,9 @@ public sealed record StockReplayFifoActiveLayerSnapshot(
     string SnapshotHash);
 
 /// <summary>
-/// Reads an exact current FIFO layer base for historical simulation. Receipt
-/// reversals and layer value adjustments currently fail closed; they need their
-/// own replay event adapters before this snapshot can authorize a write.
+/// Reads an exact current FIFO layer base for historical simulation. Exact MR
+/// receipt reversals and direct initial-count removals are supported; other
+/// receipt reversals and layer value adjustments fail closed.
 /// </summary>
 public static class StockReplayFifoActiveLayerReader
 {

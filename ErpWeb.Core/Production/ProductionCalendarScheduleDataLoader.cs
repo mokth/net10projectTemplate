@@ -125,6 +125,12 @@ public sealed class ProductionCalendarScheduleDataLoader : IProductionCalendarSc
             });
         }
 
+        // Breakdown / repair / service downtime reuses PrMacMaintenance. Without this the loader
+        // would hand the scheduler full capacity while the machine is physically down.
+        var downtimes = await MachineDowntimeWindowReader.LoadAsync(
+            db, comp, [mac], prevStart, prevEnd, ct);
+        windows.AddRange(MachineDowntimeWindowReader.ToBlockingWindows(downtimes));
+
         return ProductionCalendarScheduler.BuildScheduleData(mac, calendar, shiftGroups, windows);
     }
 }

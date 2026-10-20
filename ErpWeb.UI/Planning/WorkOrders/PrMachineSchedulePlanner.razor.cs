@@ -4,6 +4,7 @@ using System.Text.Json;
 using DevExpress.Blazor;
 using DevExtreme.AspNet.Data;
 using DevExtreme.AspNet.Data.ResponseModel;
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Sales;
@@ -17,6 +18,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 {
     [Inject] private IMachineSchedulePlannerService Planner { get; set; } = default!;
     [Inject] private IMachineScheduleRescheduleService Rescheduler { get; set; } = default!;
+    [Inject] private IMachineScheduleAdvancedPlanningService AdvancedPlanner { get; set; } = default!;
     [Inject] private IMachineScheduleAllocationBackfillService AllocationBackfill { get; set; } = default!;
     [Inject] private IMachineSchedulePlannerReadinessService Readiness { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
@@ -37,6 +39,27 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private bool IsMoreFiltersOpen;
     private MachineScheduleAllocationBackfillReport? BackfillReport;
     private MachineSchedulePlannerJob? RescheduleDialogJob;
+    private bool IsAdvancedDialogOpen;
+    private bool IsAdvancedBusy;
+    private MachineScheduleAdvancedAction AdvancedAction;
+    private MachineSchedulePlannerJob? AdvancedDialogJob;
+    private MachineScheduleAdvancedPreview? AdvancedPreview;
+    private string AdvancedReason = string.Empty;
+    private string AdvancedPartialQuantityText = string.Empty;
+    private string AdvancedDateText = string.Empty;
+    private string AdvancedTimeText = string.Empty;
+    private string AdvancedHoldType = string.Empty;
+    private string AdvancedResumeDateText = string.Empty;
+    private string AdvancedResumeTimeText = string.Empty;
+    private string AdvancedDowntimeStartDateText = string.Empty;
+    private string AdvancedDowntimeStartTimeText = string.Empty;
+    private string AdvancedDowntimeEndDateText = string.Empty;
+    private string AdvancedDowntimeEndTimeText = string.Empty;
+    private string AdvancedMaintenanceType = string.Empty;
+    private bool AdvancedIncludeRestartSetup = true;
+    private string? AdvancedDemandAdvisory => AdvancedPreview?.AffectedWorkOrders
+        .Select(x => x.DrAdvisory)
+        .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
     private string RequestedDateText = string.Empty;
     private string RequestedTimeText = string.Empty;
     private string RescheduleReason = string.Empty;
@@ -101,6 +124,49 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private bool CanEditRescheduleDialog => CanReschedule(RescheduleDialogJob);
 
     private bool CanDragAppointments => IsReschedulingEnabled && CanEditSchedule;
+
+    private bool AdvancedActionsEnabled => IsReschedulingEnabled
+        && Board?.Readiness.SegmentWriteSettingEnabled == true;
+
+    private bool CanUseAdvancedActions => AdvancedActionsEnabled
+        && CanEditSchedule
+        && SelectedJob is { IsBackwardScheduled: false } job
+        && (string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.Released, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.InProgress, StringComparison.OrdinalIgnoreCase));
+
+    private bool CanInsertSplit => CanUseAdvancedActions && SelectedJob is { IsLocked: false, RemainingQuantity: > 0m };
+    private bool CanHoldJob => CanUseAdvancedActions && SelectedJob is { HasActiveHold: false };
+    private bool CanResumeJob => AdvancedActionsEnabled && CanEditSchedule && SelectedJob is { HasActiveHold: true };
+    private bool CanReplanRemaining => CanUseAdvancedActions
+        && SelectedJob is { IsLocked: false, RemainingQuantity: > 0m };
+    private bool CanReplanMaintenance => CanUseAdvancedActions && SelectedJob is { HasActiveHold: false };
+
+    private string AdvancedTitle => AdvancedAction switch
+    {
+        MachineScheduleAdvancedAction.InsertSplit => "Insert / Split Job",
+        MachineScheduleAdvancedAction.Hold => "Hold scheduled work",
+        MachineScheduleAdvancedAction.ReleaseHold => "Resume held work",
+        MachineScheduleAdvancedAction.ReplanRemaining => "Replan remaining quantity",
+        MachineScheduleAdvancedAction.MaintenanceReplan => "Replan after maintenance",
+        _ => "Advanced schedule change"
+    };
+
+    private string AdvancedEyebrow => AdvancedAction switch
+    {
+        MachineScheduleAdvancedAction.InsertSplit => "Urgent insert · split preview",
+        MachineScheduleAdvancedAction.Hold => "Pause and hold",
+        MachineScheduleAdvancedAction.ReleaseHold => "Resume held segment",
+        MachineScheduleAdvancedAction.ReplanRemaining => "Partial execution · replan remaining",
+        MachineScheduleAdvancedAction.MaintenanceReplan => "Breakdown / repair / service",
+        _ => "Advanced scheduling"
+    };
+
+    private bool AdvancedNeedsStart => AdvancedAction is MachineScheduleAdvancedAction.InsertSplit;
+    private bool AdvancedNeedsQuantity => AdvancedAction is MachineScheduleAdvancedAction.InsertSplit;
+    private bool AdvancedNeedsHoldType => AdvancedAction is MachineScheduleAdvancedAction.Hold;
+    private bool AdvancedNeedsResumeNotBefore => AdvancedAction is MachineScheduleAdvancedAction.Hold;
+    private bool AdvancedNeedsDowntime => AdvancedAction is MachineScheduleAdvancedAction.MaintenanceReplan;
+    private bool AdvancedNeedsReason => AdvancedAction is not MachineScheduleAdvancedAction.ReleaseHold;
 
     private string HeaderInstructions => CanDragAppointments
         ? "Find a Work Order or machine, then select a job. Drag it to move, or use Change Schedule."
@@ -550,6 +616,334 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         IsDetailsOpen = SelectedJob is not null || SelectedExternalCapacityAppointment is not null;
         ReschedulePreview = null;
         await Task.CompletedTask;
+    }
+
+    private bool CanStartAdvanced(MachineScheduleAdvancedAction action) => action switch
+    {
+        MachineScheduleAdvancedAction.InsertSplit => CanInsertSplit,
+        MachineScheduleAdvancedAction.Hold => CanHoldJob,
+        MachineScheduleAdvancedAction.ReleaseHold => CanResumeJob,
+        MachineScheduleAdvancedAction.ReplanRemaining => CanReplanRemaining,
+        MachineScheduleAdvancedAction.MaintenanceReplan => CanReplanMaintenance,
+        _ => false
+    };
+
+    private void OpenAdvancedDialog(MachineScheduleAdvancedAction action)
+    {
+        if (SelectedJob is not { } job || !CanStartAdvanced(action))
+            return;
+
+        AdvancedAction = action;
+        AdvancedDialogJob = job;
+        AdvancedPreview = null;
+        AdvancedReason = string.Empty;
+        AdvancedPartialQuantityText = string.Empty;
+        AdvancedIncludeRestartSetup = true;
+        AdvancedHoldType = ProductionScheduleHoldTypes.Other;
+        AdvancedMaintenanceType = "BREAKDOWN";
+
+        var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified);
+        var insertStart = now < job.PlannedStart ? now : job.PlannedStart;
+        AdvancedDateText = insertStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        AdvancedTimeText = insertStart.ToString("HH:mm", CultureInfo.InvariantCulture);
+        AdvancedResumeDateText = string.Empty;
+        AdvancedResumeTimeText = string.Empty;
+        var downtimeStart = job.ResumeNotBefore ?? job.PlannedStart;
+        AdvancedDowntimeStartDateText = downtimeStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        AdvancedDowntimeStartTimeText = downtimeStart.ToString("HH:mm", CultureInfo.InvariantCulture);
+        AdvancedDowntimeEndDateText = string.Empty;
+        AdvancedDowntimeEndTimeText = string.Empty;
+
+        ErrorMessage = null;
+        IsAdvancedDialogOpen = true;
+    }
+
+    private void CloseAdvancedDialog()
+    {
+        if (IsAdvancedBusy)
+            return;
+        IsAdvancedDialogOpen = false;
+        AdvancedDialogJob = null;
+        AdvancedPreview = null;
+    }
+
+    private void InvalidateAdvancedPreview()
+    {
+        AdvancedPreview = null;
+        ErrorMessage = null;
+    }
+
+    private void OnAdvancedDateChanged(ChangeEventArgs args)
+    {
+        AdvancedDateText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedTimeChanged(ChangeEventArgs args)
+    {
+        AdvancedTimeText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedResumeDateChanged(ChangeEventArgs args)
+    {
+        AdvancedResumeDateText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedResumeTimeChanged(ChangeEventArgs args)
+    {
+        AdvancedResumeTimeText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedDowntimeStartDateChanged(ChangeEventArgs args)
+    {
+        AdvancedDowntimeStartDateText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedDowntimeStartTimeChanged(ChangeEventArgs args)
+    {
+        AdvancedDowntimeStartTimeText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedDowntimeEndDateChanged(ChangeEventArgs args)
+    {
+        AdvancedDowntimeEndDateText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedDowntimeEndTimeChanged(ChangeEventArgs args)
+    {
+        AdvancedDowntimeEndTimeText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedPartialQuantityChanged(ChangeEventArgs args)
+    {
+        AdvancedPartialQuantityText = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private void OnAdvancedReasonChanged(ChangeEventArgs args)
+    {
+        AdvancedReason = args.Value?.ToString() ?? string.Empty;
+        InvalidateAdvancedPreview();
+    }
+
+    private bool TryBuildAdvancedRequest(out MachineScheduleAdvancedRequest request)
+    {
+        request = new MachineScheduleAdvancedRequest();
+        if (AdvancedDialogJob is not { } job)
+            return false;
+
+        DateTime? requestedStart = null;
+        if (AdvancedNeedsStart)
+        {
+            if (!TryGetAdvancedSlot(AdvancedDateText, AdvancedTimeText, out var start))
+            {
+                ErrorMessage = "Enter a valid requested start date and time.";
+                return false;
+            }
+            requestedStart = start;
+        }
+
+        decimal? partialQuantity = null;
+        if (AdvancedNeedsQuantity && !string.IsNullOrWhiteSpace(AdvancedPartialQuantityText))
+        {
+            if (!decimal.TryParse(AdvancedPartialQuantityText, NumberStyles.Number, CultureInfo.CurrentCulture, out var quantity)
+                && !decimal.TryParse(AdvancedPartialQuantityText, NumberStyles.Number, CultureInfo.InvariantCulture, out quantity))
+            {
+                ErrorMessage = "Enter a valid partial quantity.";
+                return false;
+            }
+            if (quantity < 0m || quantity > job.RemainingQuantity)
+            {
+                ErrorMessage = $"Partial quantity must be between 0 and {job.RemainingQuantity:n4} {job.OutputUom}.";
+                return false;
+            }
+            partialQuantity = quantity;
+        }
+
+        DateTime? resumeNotBefore = null;
+        if (AdvancedNeedsResumeNotBefore)
+        {
+            if (!string.IsNullOrWhiteSpace(AdvancedResumeDateText) || !string.IsNullOrWhiteSpace(AdvancedResumeTimeText))
+            {
+                if (!TryGetAdvancedSlot(AdvancedResumeDateText, AdvancedResumeTimeText, out var resume))
+                {
+                    ErrorMessage = "Enter both a valid resume-not-before date and time, or leave both blank.";
+                    return false;
+                }
+                resumeNotBefore = resume;
+            }
+        }
+
+        DateTime? downtimeStart = null;
+        DateTime? downtimeEnd = null;
+        if (AdvancedNeedsDowntime)
+        {
+            if (!TryGetAdvancedSlot(AdvancedDowntimeStartDateText, AdvancedDowntimeStartTimeText, out var downStart))
+            {
+                ErrorMessage = "Enter a valid downtime start date and time.";
+                return false;
+            }
+            downtimeStart = downStart;
+            if (!string.IsNullOrWhiteSpace(AdvancedDowntimeEndDateText) || !string.IsNullOrWhiteSpace(AdvancedDowntimeEndTimeText))
+            {
+                if (!TryGetAdvancedSlot(AdvancedDowntimeEndDateText, AdvancedDowntimeEndTimeText, out var downEnd)
+                    || downEnd <= downStart)
+                {
+                    ErrorMessage = "Downtime end must be after the downtime start, or leave it blank for an open-ended repair.";
+                    return false;
+                }
+                downtimeEnd = downEnd;
+            }
+        }
+
+        var reason = AdvancedReason.Trim();
+        if (AdvancedNeedsReason && reason.Length == 0)
+        {
+            ErrorMessage = "Enter a reason for this schedule change.";
+            return false;
+        }
+        if (reason.Length > 500)
+            reason = reason[..500];
+
+        request = new MachineScheduleAdvancedRequest
+        {
+            Action = AdvancedAction,
+            WorkOrderId = job.WorkOrderId,
+            OperationId = job.OperationId,
+            WorkOrderMachineId = job.WorkOrderMachineId,
+            MachineCode = job.MachineCode,
+            ExpectedWorkOrderScheduleRevision = job.ScheduleRevision,
+            ExpectedWorkOrderRowVersion = job.WorkOrderRowVersion,
+            ExpectedMachineScheduleRevision = job.MachineScheduleRevision,
+            ExpectedMachineRowVersion = job.MachineRowVersion,
+            RequestedStart = requestedStart,
+            PartialQuantity = partialQuantity,
+            IncludeRestartSetup = AdvancedIncludeRestartSetup,
+            Reason = reason,
+            HoldType = AdvancedNeedsHoldType ? AdvancedHoldType : null,
+            ResumeNotBefore = resumeNotBefore,
+            DowntimeStart = downtimeStart,
+            DowntimeEnd = downtimeEnd,
+            MaintenanceType = AdvancedNeedsDowntime
+                ? (string.IsNullOrWhiteSpace(AdvancedMaintenanceType) ? "BREAKDOWN" : AdvancedMaintenanceType.Trim())
+                : null
+        };
+        return true;
+    }
+
+    private static bool TryGetAdvancedSlot(string dateText, string timeText, out DateTime value) =>
+        MachineSchedulePlannerInputParser.TryParseRequestedStart(
+            dateText, timeText, CultureInfo.CurrentCulture, out value);
+
+    private async Task<IvMasterOperationResult<MachineScheduleAdvancedPreview>?> PreviewAdvancedAsync(
+        MachineScheduleAdvancedRequest request)
+    {
+        return AdvancedAction switch
+        {
+            MachineScheduleAdvancedAction.InsertSplit => await AdvancedPlanner.PreviewInsertAsync(request),
+            MachineScheduleAdvancedAction.Hold => await AdvancedPlanner.PreviewHoldAsync(request),
+            MachineScheduleAdvancedAction.ReleaseHold => await AdvancedPlanner.PreviewReleaseHoldAsync(request),
+            MachineScheduleAdvancedAction.ReplanRemaining => await AdvancedPlanner.PreviewReplanRemainingAsync(request),
+            MachineScheduleAdvancedAction.MaintenanceReplan => await AdvancedPlanner.PreviewMaintenanceReplanAsync(request),
+            _ => null
+        };
+    }
+
+    private async Task<IvMasterOperationResult<MachineScheduleAdvancedCommitResult>?> CommitAdvancedAsync(
+        MachineScheduleAdvancedRequest request)
+    {
+        return AdvancedAction switch
+        {
+            MachineScheduleAdvancedAction.InsertSplit => await AdvancedPlanner.CommitInsertAsync(request),
+            MachineScheduleAdvancedAction.Hold => await AdvancedPlanner.CommitHoldAsync(request),
+            MachineScheduleAdvancedAction.ReleaseHold => await AdvancedPlanner.CommitReleaseHoldAsync(request),
+            MachineScheduleAdvancedAction.ReplanRemaining => await AdvancedPlanner.CommitReplanRemainingAsync(request),
+            MachineScheduleAdvancedAction.MaintenanceReplan => await AdvancedPlanner.CommitMaintenanceReplanAsync(request),
+            _ => null
+        };
+    }
+
+    private async Task PreviewAdvancedActionAsync()
+    {
+        if (!IsReschedulingEnabled || !CanEditSchedule || !TryBuildAdvancedRequest(out var request))
+            return;
+
+        IsAdvancedBusy = true;
+        ErrorMessage = null;
+        AdvancedPreview = null;
+        try
+        {
+            var result = await PreviewAdvancedAsync(request);
+            if (result is null)
+                return;
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "The advanced schedule preview could not be created.";
+                return;
+            }
+            AdvancedPreview = result.Data;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"The advanced schedule preview could not be created. {ex.Message}";
+        }
+        finally
+        {
+            IsAdvancedBusy = false;
+        }
+    }
+
+    private async Task CommitAdvancedActionAsync()
+    {
+        if (!IsReschedulingEnabled || !CanEditSchedule
+            || AdvancedPreview is not { CanCommit: true, PreviewToken: { Length: > 0 } token }
+            || !TryBuildAdvancedRequest(out var request))
+            return;
+
+        IsAdvancedBusy = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await CommitAdvancedAsync(request with { PreviewToken = token });
+            if (result is null)
+                return;
+            if (!result.Succeeded || result.Data is null)
+            {
+                var failureMessage = result.Message ?? "The advanced schedule change could not be committed.";
+                AdvancedPreview = null;
+                await ReloadAsync();
+                var refreshedJob = Board?.Jobs.FirstOrDefault(x => x.OperationId == AdvancedDialogJob?.OperationId);
+                if (refreshedJob is null)
+                    CloseAdvancedDialog();
+                else
+                    AdvancedDialogJob = refreshedJob;
+                ErrorMessage = failureMessage;
+                return;
+            }
+
+            var successMessage = result.Data.Message;
+            var hasUnscheduled = result.Data.HasUnscheduledRemaining;
+            CloseAdvancedDialog();
+            await ReloadAsync();
+            StatusMessage = hasUnscheduled
+                ? $"{successMessage} Completion is unknown until the remaining quantity is scheduled."
+                : successMessage;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"The advanced schedule change could not be committed. {ex.Message}";
+        }
+        finally
+        {
+            IsAdvancedBusy = false;
+        }
     }
 
     private void OpenRescheduleDialog()
@@ -1030,7 +1424,13 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         new(MachineSchedulePlannerLabelIds.ExecutionLocked, "Execution locked", "pr-machine-schedule-label--locked", "pr-machine-schedule-label__text"),
         new(MachineSchedulePlannerLabelIds.PreventiveMaintenance, "Preventive maintenance", "pr-machine-schedule-label--maintenance", "pr-machine-schedule-label__text"),
         new(MachineSchedulePlannerLabelIds.LateToRequiredDate, "Late vs DR date", "pr-machine-schedule-label--late", "pr-machine-schedule-label__text"),
-        new(MachineSchedulePlannerLabelIds.ReservedOtherBranch, "Reserved · other branch", "pr-machine-schedule-label--external", "pr-machine-schedule-label__text")
+        new(MachineSchedulePlannerLabelIds.ReservedOtherBranch, "Reserved · other branch", "pr-machine-schedule-label--external", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.ManualSplit, "Part 1 / split", "pr-machine-schedule-label--split", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.UrgentInsert, "URGENT", "pr-machine-schedule-label--urgent", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.Resume, "Resume", "pr-machine-schedule-label--resume", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.HoldResume, "Hold resume", "pr-machine-schedule-label--hold-resume", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.MaintenanceResume, "Maintenance resume", "pr-machine-schedule-label--maintenance-resume", "pr-machine-schedule-label__text"),
+        new(MachineSchedulePlannerLabelIds.RemainingReplan, "Remaining replan", "pr-machine-schedule-label--remaining", "pr-machine-schedule-label__text")
     ];
 
     private static DateTime StartOfWeek(DateTime date)

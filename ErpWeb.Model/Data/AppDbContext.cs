@@ -308,6 +308,8 @@ public class AppDbContext : DbContext
     public DbSet<ProductionWorkOrderOperation> ProductionWorkOrderOperations => Set<ProductionWorkOrderOperation>();
     public DbSet<ProductionWorkOrderMachine> ProductionWorkOrderMachines => Set<ProductionWorkOrderMachine>();
     public DbSet<ProductionMachineScheduleAllocation> ProductionMachineScheduleAllocations => Set<ProductionMachineScheduleAllocation>();
+    public DbSet<ProductionMachineScheduleSegment> ProductionMachineScheduleSegments => Set<ProductionMachineScheduleSegment>();
+    public DbSet<ProductionWorkOrderScheduleHold> ProductionWorkOrderScheduleHolds => Set<ProductionWorkOrderScheduleHold>();
     public DbSet<ProductionMachineScheduleReadinessEvidence> ProductionMachineScheduleReadinessEvidence => Set<ProductionMachineScheduleReadinessEvidence>();
     public DbSet<ProductionWorkOrderLabour> ProductionWorkOrderLabours => Set<ProductionWorkOrderLabour>();
     public DbSet<ProductionWorkOrderResource> ProductionWorkOrderResources => Set<ProductionWorkOrderResource>();

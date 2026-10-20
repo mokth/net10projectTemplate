@@ -23,6 +23,12 @@ public class ProductionOutput
     public string? ShiftCode { get; set; }
     public string? PlannedMachineCode { get; set; }
     public string? ActualMachineCode { get; set; }
+
+    /// <summary>
+    /// Optional planning-segment trace. Never a prerequisite for creating, posting, or rolling
+    /// back Daily Production; ambiguous or missing links stay null.
+    /// </summary>
+    public long? MachineScheduleSegmentId { get; set; }
     public string? OperatorCode { get; set; }
 
     public decimal GoodQty { get; set; }

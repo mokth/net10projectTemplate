@@ -2548,7 +2548,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Equal(ProductionWorkOrderStatuses.Draft, after.Status);
         Assert.Null(after.ReleasedDate);
         Assert.Null(after.ReleasedBy);
-        Assert.Equal(snapshotRevision, after.SnapshotRevision);
+        Assert.Equal(snapshotRevision + 1, after.SnapshotRevision);
         Assert.Equal(snapshotHash, after.SnapshotHash);
         Assert.Equal(definitionCode, after.SourceDefinitionCode);
         Assert.Equal(scheduleAnchor, after.ScheduleAnchorDateTime);
@@ -2879,7 +2879,7 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
             Reason = "Qty correction"
         });
         Assert.True(reopen.Succeeded, reopen.Message);
-        Assert.Equal(beforeRevision, reopen.Data!.SnapshotRevision);
+        Assert.Equal(beforeRevision + 1, reopen.Data!.SnapshotRevision);
         Assert.Equal(beforeHash, reopen.Data.SnapshotHash);
 
         var updated = await sut.UpdateDraftHeaderAsync(new ProductionWorkOrderHeaderUpdate

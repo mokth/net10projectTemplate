@@ -53,6 +53,28 @@ SELECT @result;";
             throw new ProductionWorkOrderExecutionLockException();
     }
 
+    /// <summary>
+    /// Acquires several Work Order execution locks in ascending UID order. Advanced scheduling
+    /// touches more than one Work Order, and a deterministic order is what prevents two planners
+    /// from deadlocking against each other.
+    /// </summary>
+    public static async Task AcquireManyAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IEnumerable<long> workOrderIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        foreach (var workOrderId in workOrderIds
+                     .Where(x => x > 0)
+                     .Distinct()
+                     .Order())
+        {
+            await AcquireAsync(db, companyCode, branchCode, workOrderId, cancellationToken);
+        }
+    }
+
     private static string Normalize(string value) => (value ?? string.Empty).Trim().ToUpperInvariant();
 }
 

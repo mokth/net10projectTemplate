@@ -23,10 +23,99 @@ public sealed record StockReplayFifoCountSheetRemovalPlan(
 /// <summary>
 /// Binds a posted count's physical removal to the active FIFO pool of each
 /// counted item. Supported later MR and MI/Scrap ownership is rechecked under
-/// the root; this planner remains read-only until a reversal writer exists.
+/// the root. Writing is currently limited to one isolated adjustment.
 /// </summary>
 public static class StockReplayFifoCountSheetRemovalPlanner
 {
+    /// <summary>
+    /// The bounded FIFO removal writer accepts one unchanged adjustment and
+    /// any zero-adjustment lines without later physical movements.
+    /// Later proven MR receipts and unchanged MI/Scrap issues may remain when
+    /// they do not depend on a removed count-created layer.
+    /// </summary>
+    public static StockReplayFifoCountSheetRemovalItem RequireIsolatedAdjustment(
+        StockReplayFifoCountSheetRemovalPlan plan)
+    {
+        ValidatePreparedPlan(plan);
+        var adjustedLines = plan.Sheet.Lines.Where(l =>
+            l.Physical.RemovedActiveEvent.SignedDelta != 0m).ToArray();
+        if (adjustedLines.Length != 1
+            || plan.Sheet.Lines.Any(l =>
+                l.Physical.RemovedActiveEvent.SignedDelta == 0m
+                && (l.Physical.LaterEvents.Count != 0
+                    || l.Physical.Projection.FinalQuantity
+                        != l.Physical.CurrentQuantity)))
+            throw Invalid("The isolated FIFO reversal needs one adjustment and unchanged zero lines.");
+        var line = adjustedLines[0];
+        var item = plan.Items.Single(i => i.CountLineIds.Contains(line.CountLineId));
+        var removed = item.Projection?.RemovedCounts;
+        if (plan.Items.Any(i => i != item && i.Projection is not null)
+            || removed is null || removed.Count != 1
+            || removed[0].SignedAdjustmentQuantity == 0m
+            || item.Projection!.LaterIssues.Any(issue =>
+                !issue.DepletesPool
+                || !issue.PreviousConsumptions.Select(c =>
+                        (c.LayerId, c.Quantity, c.Value))
+                    .OrderBy(c => c.LayerId)
+                    .SequenceEqual(issue.Allocations.Select(a =>
+                            (a.LayerId, a.Quantity, a.Value))
+                        .OrderBy(a => a.LayerId)))
+            || item.Projection.FinalQuantity
+                != item.Snapshot.CurrentQuantity
+                    - removed[0].SignedAdjustmentQuantity)
+            throw Invalid("The FIFO count has a tail or an adjustment that needs a broader reversal writer.");
+        var count = removed[0];
+        if (count.SignedAdjustmentQuantity > 0m)
+        {
+            var receipt = count.Receipt;
+            if (receipt is null || count.Consumptions.Count != 0
+                || item.Snapshot.ActiveConsumptions.Any(c =>
+                    c.LayerId == receipt.LayerId)
+                || item.Snapshot.Layers.Count(l =>
+                    l.LayerId == receipt.LayerId) != 1
+                || receipt.ReceiptKey != count.Key
+                || receipt.OriginalQuantity != receipt.RemainingQuantity
+                || receipt.OriginalValue != receipt.RemainingValue
+                || item.Snapshot.Layers.Any(l =>
+                    l.LayerId != receipt.LayerId
+                    && l.ReceiptKey is { } key
+                    && key.CompareTo(count.Key) >= 0
+                    && key.ClassPriority != StockReplayEventKey.OrdinaryClass)
+                || item.Projection.FinalValue
+                    != item.Snapshot.CurrentValue - receipt.OriginalValue)
+                throw Invalid("The positive FIFO count has a dependent layer or later event.");
+        }
+        else
+        {
+            var consumptionIds = count.Consumptions
+                .Select(c => c.ConsumptionId).Order().ToArray();
+            if (count.Receipt is not null
+                || consumptionIds.Length == 0
+                || line.Physical.LaterEvents.Any(e =>
+                    !item.Projection.LaterIssues.Any(i => i.Key == e.Key)
+                    && !item.Projection.BeforeFirstCount.LaterReceipts
+                        .Any(r => r.ReceiptKey == e.Key))
+                || count.Consumptions.Any(c => !c.DepletesPool
+                    || c.IssueKey != count.Key)
+                || !consumptionIds.SequenceEqual(item.Snapshot
+                    .ActiveConsumptions.Where(c =>
+                        c.IssueKey == count.Key)
+                    .Select(c => c.ConsumptionId).Order())
+                || count.Consumptions.Sum(c => c.Quantity)
+                    != -count.SignedAdjustmentQuantity
+                || item.Snapshot.Layers.Any(l =>
+                    l.ReceiptKey is not { } key
+                    || key.CompareTo(count.Key) >= 0
+                        && key.ClassPriority
+                            != StockReplayEventKey.OrdinaryClass)
+                || item.Projection.FinalValue
+                    != item.Snapshot.CurrentValue
+                        + count.Consumptions.Sum(c => c.Value))
+                throw Invalid("The negative FIFO count has dependent allocations or a later event.");
+        }
+        return item;
+    }
+
     public static async Task<StockReplayFifoCountSheetRemovalPlan> BuildAsync(
         AppDbContext db, string companyCode, string branchCode, int countId,
         CancellationToken cancellationToken = default)

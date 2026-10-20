@@ -21,6 +21,7 @@ public sealed class ProductionMachineScheduleAllocationConfiguration
         builder.Property(x => x.WorkOrderId).HasColumnName("WorkOrderID");
         builder.Property(x => x.WorkOrderOperationId).HasColumnName("WorkOrderOperationID");
         builder.Property(x => x.WorkOrderMachineId).HasColumnName("WorkOrderMachineID");
+        builder.Property(x => x.MachineScheduleSegmentId).HasColumnName("MachineScheduleSegmentID");
         builder.Property(x => x.ScheduleRevision).HasDefaultValue(0).ValueGeneratedNever();
         builder.Property(x => x.FragmentNo).HasDefaultValue(1).ValueGeneratedNever();
         builder.Property(x => x.StartDateTime).HasColumnType("datetime2");
@@ -37,5 +38,7 @@ public sealed class ProductionMachineScheduleAllocationConfiguration
             .HasDatabaseName("IX_PrMachineScheduleAllocation_Machine_Start_End");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.WorkOrderId, x.WorkOrderOperationId })
             .HasDatabaseName("IX_PrMachineScheduleAllocation_Order_Operation");
+        builder.HasIndex(x => x.MachineScheduleSegmentId)
+            .HasDatabaseName("IX_PrMachineScheduleAllocation_Segment");
     }
 }

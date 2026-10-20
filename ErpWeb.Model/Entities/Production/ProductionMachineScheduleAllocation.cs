@@ -14,6 +14,13 @@ public sealed class ProductionMachineScheduleAllocation
     public long WorkOrderId { get; set; }
     public long WorkOrderOperationId { get; set; }
     public long WorkOrderMachineId { get; set; }
+
+    /// <summary>
+    /// Business planning segment this productive fragment belongs to. Nullable so legacy/backfill
+    /// rows keep working; segment-aware rows always link to a current segment.
+    /// </summary>
+    public long? MachineScheduleSegmentId { get; set; }
+
     public int ScheduleRevision { get; set; }
     public int FragmentNo { get; set; }
     public DateTime StartDateTime { get; set; }
