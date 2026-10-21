@@ -149,7 +149,8 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         Assert.False(result.Succeeded);
         Assert.Contains("source WIP changed", result.Message, StringComparison.OrdinalIgnoreCase);
         await using var verify = await _factory.CreateDbContextAsync();
-        Assert.Empty(await verify.ProductionBalLotMovements.ToListAsync());
+        Assert.Equal(ProductionBalLotMovementTypes.Produce,
+            (await verify.ProductionBalLotMovements.SingleAsync()).MovementType);
         Assert.Equal(4.25m, (await verify.ProductionBalLots.SingleAsync(x => x.Uid == graph.SourcePoolId)).Qty);
         Assert.Empty(await verify.StockPostings.ToListAsync());
     }
@@ -252,7 +253,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         _factory,
         InventoryTenantTestHelper.CreateTenantContext(),
         ProductionLedgerTestFixture.Allow(MenuCodes.PlanningWorkOrderTransfer),
-        new FixedCurrentDateService(EffectiveAt),
+        new FixedCurrentDateService(EffectiveAt, EffectiveAt),
         new TestRunningNumberService(),
         new BranchStockTransactionLock(),
         _coordinator,
@@ -266,7 +267,7 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
             .ReturnsAsync(IvMasterOperationResult<string?>.Ok(ProductionWipConsumptionPolicies.SharedBomWip));
         return new ProductionOutputService(_factory, InventoryTenantTestHelper.CreateTenantContext(),
             ProductionLedgerTestFixture.Allow(MenuCodes.PlanningDailyProduction),
-            new FixedCurrentDateService(EffectiveAt), new TestRunningNumberService(), _coordinator,
+            new FixedCurrentDateService(EffectiveAt, EffectiveAt), new TestRunningNumberService(), _coordinator,
             settings: settings.Object);
     }
 
@@ -365,6 +366,29 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, sourcePool);
         await db.Entry(sourcePool).ReloadAsync();
         Assert.Equal(StockLedgerPrecision.Money(sourcePool.TotalCost / sourcePool.BaseQty), sourcePool.AverageUnitCost);
+        var sourceReceipt = new ProductionBalLotMovement
+        {
+            ProductionBalLotId = sourcePool.Uid,
+            MovementType = ProductionBalLotMovementTypes.Produce,
+            Qty = sourcePool.Qty, Uom = sourcePool.Uom,
+            BaseQty = sourcePool.BaseQty, BaseUom = sourcePool.BaseUom,
+            UnitCost = sourcePool.AverageUnitCost, TotalCost = sourcePool.TotalCost,
+            WorkOrderId = sourceOrder.Uid, WorkOrderOperationId = sourceOperation.Uid,
+            RouteStepId = sourceRoute.Uid, PostingLinkId = 0,
+            DocumentType = ProductionDocumentTypes.ProductionOutput,
+            DocumentNo = sourceOrder.WorkOrderNo,
+            MovementDate = sourcePool.LastMovementDate!.Value,
+            CreatedDate = sourcePool.LastMovementDate.Value, CreatedBy = "test"
+        };
+        db.ProductionBalLotMovements.Add(sourceReceipt);
+        await db.SaveChangesAsync();
+        db.ProductionValuationEvidenceRows.Add(new ProductionValuationEvidence
+        {
+            MovementId = sourceReceipt.Uid, ProductionBalLotId = sourcePool.Uid,
+            Generation = 1, Status = ProductionPoolValuationService.Verified,
+            Basis = "TEST_VERIFIED_SOURCE"
+        });
+        await db.SaveChangesAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
         await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE PrProductionBalLot SET RowVersion = X'01' WHERE UID = {sourcePool.Uid};");
         return new(sourceOrder.Uid, targetOrder.Uid, sourcePool.Uid, material.Uid,

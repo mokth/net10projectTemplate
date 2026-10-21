@@ -32,6 +32,46 @@ public sealed class ProductionEffectiveCostResolverTests
         Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, error.Error.Code);
     }
 
+    [Fact]
+    public void Returns_original_cost_when_the_only_restatement_is_reversed()
+    {
+        var initial = Restatement(1, 10m, 12m, null);
+        var reversal = Restatement(2, 12m, 10m, 1);
+
+        var resolved = ProductionEffectiveCostResolver.Resolve(
+            [new ProductionEffectiveCost(5, 10m, 1m, null)],
+            [initial, reversal]);
+
+        Assert.Equal(10m, resolved[5].TotalCost);
+        Assert.Equal(1m, resolved[5].UnitCost);
+        Assert.Null(resolved[5].RestatementFactId);
+    }
+
+    [Fact]
+    public void Rejects_reversal_that_does_not_restore_the_prior_cost()
+    {
+        var initial = Restatement(1, 10m, 12m, null);
+        var reversal = Restatement(2, 12m, 11m, 1);
+
+        var error = Assert.Throws<StockLedgerException>(() =>
+            ProductionEffectiveCostResolver.Resolve(
+                [new ProductionEffectiveCost(5, 10m, 1m, null)],
+                [initial, reversal]));
+
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, error.Error.Code);
+    }
+
+    [Fact]
+    public void Rejects_restatement_that_does_not_start_at_original_cost()
+    {
+        var error = Assert.Throws<StockLedgerException>(() =>
+            ProductionEffectiveCostResolver.Resolve(
+                [new ProductionEffectiveCost(5, 10m, 1m, null)],
+                [Restatement(1, 9m, 12m, null)]));
+
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, error.Error.Code);
+    }
+
     private static ProductionCostRestatementFact Restatement(
         long id, decimal prior, decimal corrected, long? reverses) => new()
     {

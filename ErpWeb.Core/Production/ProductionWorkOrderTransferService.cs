@@ -92,8 +92,12 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
 SELECT * FROM dbo.PrProductionBalLot WITH (UPDLOCK,HOLDLOCK)
 WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchCode}");
         else
-            q = db.ProductionBalLots.AsNoTracking().Where(x => x.Uid == id
+        {
+            q = db.ProductionBalLots.Where(x => x.Uid == id
                 && x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
+            if (!locked)
+                q = q.AsNoTracking();
+        }
         var lot = await q.Include(x => x.WorkOrder).Include(x => x.ProducingRouteStep)
             .Include(x => x.ProductionLocation)
             .Include(x => x.WorkOrderOperation).SingleOrDefaultAsync(ct);
@@ -264,7 +268,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             catch (InvalidOperationException) { }
         }
         var receiptIdArray = receiptIds.ToArray();
-        List<ProductionMovementAllocation> allocations = receiptIdArray.Length == 0 ? [] : await db.ProductionMovementAllocations.AsNoTracking()
+        List<ProductionMovementAllocation> allocations = receiptIdArray.Length == 0 ? [] : await ProductionActiveEdgeResolver.Allocations(db).AsNoTracking()
             .Where(x => receiptIdArray.Contains(x.ReceiptMovementId)).ToListAsync(ct);
         var allocationsByReceipt = allocations.GroupBy(x => x.ReceiptMovementId)
             .ToDictionary(x => x.Key, x => (IReadOnlyList<ProductionMovementAllocation>)x.ToArray());

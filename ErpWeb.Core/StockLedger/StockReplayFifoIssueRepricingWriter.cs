@@ -131,6 +131,36 @@ public static class StockReplayFifoIssueRepricingWriter
                 p => p.Value.Id));
     }
 
+    internal static async Task<IReadOnlyList<StockValuationFact>>
+        AppendCountRemovalAsync(StockPostingContext context,
+            StockReplayFifoCountSheetRemovalPlan plan,
+            StockReplayFifoCountSheetRemovalItem item,
+            StockReplayEventKey issueKey,
+            int reversalPostingLineNo,
+            int replacementPostingLineNo,
+            CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(item);
+        StockReplayFifoCountSheetRemovalPlanner.ValidatePreparedPlan(plan);
+        if (context.Posting.SourceDocumentType != "IV_STOCK_COUNT"
+            || context.Posting.PostingRole != "REVERSAL"
+            || !plan.Items.Contains(item)
+            || item.Projection is null)
+            throw Invalid("FIFO count issue correction needs its removal root.");
+        await ValidateFifoPolicyAsync(context,
+            plan.Sheet.EffectiveAt.Date,
+            item.Projection.LaterIssues.Select(i => i.Key.EffectiveAt.Date)
+                .Append(plan.Sheet.EffectiveAt.Date).Max(),
+            cancellationToken);
+        return await AppendCoreAsync(context, item.ItemCode, item.Snapshot,
+            item.Projection.LaterIssues, plan.PlanHash, "COUNT_REMOVE",
+            new StockReplayFifoWritePermit(context, plan, item), issueKey,
+            reversalPostingLineNo, replacementPostingLineNo, null,
+            cancellationToken);
+    }
+
     private static async Task<IReadOnlyList<StockValuationFact>> AppendCoreAsync(
         StockPostingContext context, string itemCode,
         StockReplayFifoActiveLayerSnapshot snapshot,

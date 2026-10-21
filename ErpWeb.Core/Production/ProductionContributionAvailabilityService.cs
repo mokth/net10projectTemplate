@@ -40,7 +40,7 @@ public static class ProductionContributionAvailabilityService
                 && new StockMovementRegistry().GetRequired(x.Movement.MovementType).Direction > 0)
             .Select(x => x.Movement.Uid).ToArray();
         if (receiptIds.Length == 0) return [];
-        var allocations = await db.ProductionMovementAllocations.AsNoTracking()
+        var allocations = await ProductionActiveEdgeResolver.Allocations(db).AsNoTracking()
             .Where(x => receiptIds.Contains(x.ReceiptMovementId)).ToListAsync(ct);
         var sequenceIds = rows.Where(x => x.Movement.StockPostingId.HasValue)
             .Select(x => x.Movement.StockPostingId!.Value).Distinct().ToArray();

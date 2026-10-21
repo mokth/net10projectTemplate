@@ -8,12 +8,13 @@ using Microsoft.EntityFrameworkCore;
 namespace ErpWeb.Core.StockLedger;
 
 public sealed record StockReplayFifoIsolatedCountRemovalResult(
-    int ReversalHistoryId, IReadOnlyList<long> RemovalGenerationIds);
+    int ReversalHistoryId, IReadOnlyList<long> RemovalGenerationIds,
+    IReadOnlyList<int> RequiredActiveHistoryIds);
 
 /// <summary>
 /// Reverses one FIFO count adjustment and any unchanged zero-adjustment lines
-/// while preserving earlier issues, later unchanged issues, and independent
-/// later receipts. Multiple adjustments or repriced issues need the full writer.
+/// while preserving earlier issues and independent later receipts. Supported
+/// changed ordinary issues are corrected under the same reversal root.
 /// </summary>
 public static class StockReplayFifoIsolatedCountRemovalWriter
 {
@@ -31,8 +32,19 @@ public static class StockReplayFifoIsolatedCountRemovalWriter
             throw Invalid("FIFO count rollback needs a valid reason.");
         await StockReplayFifoCountSheetRemovalPlanner.ValidateWithinRootAsync(
             context, plan, cancellationToken);
-        var item = StockReplayFifoCountSheetRemovalPlanner
-            .RequireIsolatedAdjustment(plan);
+        var repriced = plan.Items.Any(i => i.Projection?.LaterIssues.Any(
+            StockReplayFifoCountSheetRemovalPlanner.NeedsIssueRepricing)
+            == true);
+        var positiveAdjustment = plan.Sheet.Lines.Any(l =>
+            l.Physical.RemovedActiveEvent.SignedDelta > 0m);
+        var item = repriced
+            ? positiveAdjustment
+                ? StockReplayFifoCountSheetRemovalPlanner
+                    .RequireRepricedPositiveAdjustment(plan)
+                : StockReplayFifoCountSheetRemovalPlanner
+                    .RequireRepricedNegativeAdjustment(plan)
+            : StockReplayFifoCountSheetRemovalPlanner
+                .RequireIsolatedAdjustment(plan);
         if (context.Posting.PostingRole != "REVERSAL"
             || context.Posting.ReversesPostingId != plan.Sheet.AnchorPostingId)
             throw Invalid("FIFO count rollback needs the original anchor reversal root.");
@@ -117,8 +129,9 @@ public static class StockReplayFifoIsolatedCountRemovalWriter
                     || facts.Sum(f => f.CostAmount)
                         != removed.Consumptions.Sum(c => c.Value)))
             throw Invalid("FIFO count has incomplete original valuation facts.");
-        var touchedLayerIds = positive
-            ? new[] { receipt!.LayerId }
+        var touchedLayerIds = repriced
+            ? item.Snapshot.Layers.Select(l => l.LayerId).ToArray()
+            : positive ? [receipt!.LayerId]
             : removed.Consumptions.Select(c => c.LayerId)
                 .Distinct().ToArray();
         var layers = await db.StockFifoLayers.Where(l =>
@@ -147,8 +160,10 @@ public static class StockReplayFifoIsolatedCountRemovalWriter
             || receipt.OriginalQuantity != receipt.RemainingQuantity
             || receipt.OriginalValue != receipt.RemainingValue
             || layers[receipt.LayerId].AccumulatedAdjustment != 0m
-            || layers[receipt.LayerId].Status != StockFifoLayerStatuses.Open
-            || await db.StockFifoLayerConsumptions.AsNoTracking()
+            || !repriced
+                && layers[receipt.LayerId].Status != StockFifoLayerStatuses.Open
+            || !repriced
+                && await db.StockFifoLayerConsumptions.AsNoTracking()
                 .AnyAsync(c => c.FifoLayerId == receipt.LayerId,
                     cancellationToken)))
             throw Stale("FIFO count receipt layer changed before removal.");
@@ -348,6 +363,24 @@ public static class StockReplayFifoIsolatedCountRemovalWriter
         if (reversedFacts.Count != facts.Count)
             throw Invalid("FIFO count reversal omitted a valuation split.");
         reversal.ValuationStatus = StockValuationStatuses.Reversed;
+        var correctedFacts = new List<StockValuationFact>();
+        var requiredHistoryIds = new List<int>();
+        var correctionLine = checked(reversal.PostingLineNo!.Value + 1);
+        foreach (var issue in item.Projection!.LaterIssues
+            .Where(StockReplayFifoCountSheetRemovalPlanner
+                .NeedsIssueRepricing).OrderBy(i => i.Key))
+        {
+            var replacements = await StockReplayFifoIssueRepricingWriter
+                .AppendCountRemovalAsync(context, plan, item, issue.Key,
+                    correctionLine, checked(correctionLine + 1),
+                    cancellationToken);
+            if (replacements.Count == 0)
+                throw Invalid("FIFO count issue correction produced no replacement.");
+            correctedFacts.AddRange(replacements);
+            requiredHistoryIds.Add(StockReplayFifoMiRootWriter
+                .HistoryId(issue.Key));
+            correctionLine = checked(correctionLine + 2);
+        }
         if (positive)
         {
             var layer = layers[receipt!.LayerId];
@@ -355,6 +388,22 @@ public static class StockReplayFifoIsolatedCountRemovalWriter
             layer.RemainingValue = 0m;
             layer.CurrentUnitCost = 0m;
             layer.Status = StockFifoLayerStatuses.Closed;
+            if (repriced)
+            {
+                var finalLayers = item.Projection.FinalLayers
+                    .ToDictionary(l => l.LayerId);
+                foreach (var (layerId, laterLayer) in layers)
+                {
+                    if (layerId == receipt.LayerId)
+                        continue;
+                    if (!finalLayers.TryGetValue(layerId, out var final))
+                        throw Invalid("FIFO count reversal has incomplete final layers.");
+                    laterLayer.RemainingQty = final.RemainingQuantity;
+                    laterLayer.RemainingValue = final.RemainingValue;
+                    laterLayer.CurrentUnitCost = final.CurrentUnitCost;
+                    laterLayer.Status = final.Status;
+                }
+            }
         }
         else
         {
@@ -455,12 +504,12 @@ public static class StockReplayFifoIsolatedCountRemovalWriter
         state.CurrentUnitCost = state.AverageUnitCost;
         state.LastPostingSequence = context.Posting.PostingSequence;
         await db.SaveChangesAsync(cancellationToken);
-        state.LastValuationFactId = reversedFacts
+        state.LastValuationFactId = reversedFacts.Concat(correctedFacts)
             .OrderBy(f => f.PostingLineNo)
             .ThenBy(f => f.SplitOrdinal).Last().Id;
         await db.SaveChangesAsync(cancellationToken);
         return new(reversal.Id, [removedGeneration.Id,
-            ..zeroRemovals.Select(g => g.Id)]);
+            ..zeroRemovals.Select(g => g.Id)], requiredHistoryIds);
     }
 
     private static StockLedgerException Invalid(string message) =>

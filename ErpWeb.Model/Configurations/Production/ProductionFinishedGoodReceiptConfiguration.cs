@@ -108,7 +108,8 @@ public sealed class ProductionFinishedGoodReceiptConfiguration :
         b.HasOne<ProductionBalLotMovement>().WithMany().HasForeignKey(x => x.ConsumerMovementId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<StockPosting>().WithMany().HasForeignKey(x => x.StockPostingId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<ProductionPoolDependency>().WithMany().HasForeignKey(x => x.ReversesDependencyId).OnDelete(DeleteBehavior.Restrict);
-        b.HasIndex(x => new { x.ConsumerMovementId, x.ContributorMovementId, x.StockPostingId }).IsUnique();
+        b.HasIndex(x => new { x.ConsumerMovementId, x.ContributorMovementId, x.StockPostingId })
+            .IsUnique().HasFilter("[ReversesDependencyId] IS NULL");
         b.HasIndex(x => new { x.ContributorMovementId, x.ConsumerMovementId })
             .HasDatabaseName("IX_PrPoolDependency_ContributorConsumer");
         b.HasIndex(x => x.ReversesDependencyId).IsUnique().HasFilter("[ReversesDependencyId] IS NOT NULL");

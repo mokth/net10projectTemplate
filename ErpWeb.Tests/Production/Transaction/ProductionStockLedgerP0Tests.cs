@@ -4,9 +4,11 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -29,6 +31,135 @@ public sealed class ProductionStockLedgerP0Tests : IAsyncDisposable
         using var db = _factory.CreateDbContext();
         db.Database.EnsureCreated();
         ProductionLedgerTestFixture.SeedActiveEpochAsync(db).GetAwaiter().GetResult();
+    }
+
+    [Fact]
+    public async Task Replay_restatement_writer_reverses_and_replaces_a_verified_movement()
+    {
+        var fixture = await SeedOutputAsync(
+            new MaterialSpec("WIP-A", 10m, "EA", 1m));
+        await SeedLotAsync(fixture, "WIP-A", 10m, "EA", 10m, 1m);
+        var posted = await CreateService().PostAsync(fixture.OutputId);
+        Assert.True(posted.Succeeded, posted.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        var epoch = await db.StockLedgerEpochs.SingleAsync();
+        var movement = await db.ProductionBalLotMovements.SingleAsync(m =>
+            m.MovementType == ProductionBalLotMovementTypes.Consume);
+        Assert.Equal(10m, movement.BaseQty);
+        Assert.Equal(0m, movement.TotalCost);
+        var owner = await db.StockPostings.SingleAsync(p =>
+            p.Id == movement.StockPostingId);
+        Assert.NotNull(owner.SealedAtUtc);
+        var ownerAt = owner.EffectiveAt;
+        var rootAt = ownerAt.AddDays(-1);
+        var root = new StockPosting
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            LedgerEpochId = epoch.Id,
+            PostingSequence = owner.PostingSequence + 1,
+            RequestId = Guid.NewGuid(), CommandType = "PRODUCTION_RESTATEMENT_TEST",
+            RequestFingerprint = new string('A', 64),
+            SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+            SourceDocumentId = "2", SourceDocumentNo = "2", DocumentRevision = 1,
+            PostingRole = "PRIMARY", SourceSnapshotJson = "{}",
+            SourceSnapshotHash = new string('B', 64),
+            EffectiveAt = rootAt, BusinessDate = rootAt.Date,
+            PeriodKey = "2026-10", PostedAtUtc = DateTime.UtcNow,
+            PostedBy = "test"
+        };
+        db.StockPostings.Add(root);
+        await db.SaveChangesAsync();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var context = new StockPostingContext(db, epoch, root, "test");
+        var original = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+            "DEMO", "HQ", [movement.Uid]))[movement.Uid];
+        var noRun = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionCostRestatementWriter.AppendWithinRootAsync(context,
+                original, 12m, 1.2m));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            noRun.Error.Code);
+        db.StockReplayRuns.Add(new StockReplayRun
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            RootStockPostingId = root.Id, RootRequestId = root.RequestId,
+            RootDocumentType = "TEST", RootDocumentId = "2",
+            EarliestEffectiveAt = rootAt, LatestEffectiveAt = ownerAt,
+            PlanHash = new string('C', 64),
+            CreatedAtUtc = DateTime.UtcNow, CreatedBy = "test"
+        });
+        await db.SaveChangesAsync();
+        owner.SealedAtUtc = null;
+        await db.SaveChangesAsync();
+        var unsealedOwner = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionCostRestatementWriter.AppendWithinRootAsync(context,
+                original, 12m, 1.2m));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            unsealedOwner.Error.Code);
+        owner.SealedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        var first = await ProductionCostRestatementWriter
+            .AppendWithinRootAsync(context, original, 12m, 1.2m);
+        Assert.Null(first.Reversal);
+        Assert.NotNull(first.Replacement);
+        var firstEffect = await db.StockReplayEffects.SingleAsync();
+        Assert.Equal(owner.Id, firstEffect.BusinessOwnerPostingId);
+        Assert.Equal(first.Replacement!.Id, firstEffect.AffectedEntityId);
+        Assert.Equal(movement.Uid, firstEffect.OriginalEntityId);
+        var current = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+            "DEMO", "HQ", [movement.Uid]))[movement.Uid];
+        Assert.Equal(12m, current.TotalCost);
+        var stale = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionCostRestatementWriter.AppendWithinRootAsync(context,
+                original, 15m, 1.5m));
+        Assert.Equal(StockLedgerErrorCodes.StaleDocument,
+            stale.Error.Code);
+        Assert.Single(await db.ProductionCostRestatementFacts.ToArrayAsync());
+
+        var second = await ProductionCostRestatementWriter
+            .AppendWithinRootAsync(context, current, 15m, 1.5m);
+        Assert.NotNull(second.Reversal);
+        Assert.Equal(first.Replacement!.Id,
+            second.Reversal.ReversesRestatementFactId);
+        Assert.NotNull(second.Replacement);
+        Assert.Equal(3, await db.StockReplayEffects.CountAsync());
+        current = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+            "DEMO", "HQ", [movement.Uid]))[movement.Uid];
+        Assert.Equal(15m, current.TotalCost);
+        var restored = await ProductionCostRestatementWriter
+            .AppendWithinRootAsync(context, current, 0m, 0m);
+        Assert.NotNull(restored.Reversal);
+        Assert.Null(restored.Replacement);
+        Assert.Equal(4, await db.StockReplayEffects.CountAsync());
+        current = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+            "DEMO", "HQ", [movement.Uid]))[movement.Uid];
+        Assert.Equal(original, current);
+        db.StockPostings.Add(new StockPosting
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            LedgerEpochId = epoch.Id,
+            PostingSequence = root.PostingSequence + 1,
+            RequestId = Guid.NewGuid(), CommandType = "PRODUCTION_RESTATEMENT_TEST_REVERSAL",
+            RequestFingerprint = new string('D', 64),
+            SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+            SourceDocumentId = "2", SourceDocumentNo = "2", DocumentRevision = 1,
+            PostingRole = "REVERSAL", SourceSnapshotJson = "{}",
+            SourceSnapshotHash = new string('E', 64),
+            EffectiveAt = ownerAt, BusinessDate = ownerAt.Date,
+            PeriodKey = "2026-10", PostedAtUtc = DateTime.UtcNow,
+            PostedBy = "test", ReversesPostingId = owner.Id,
+            SealedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var reversedOwner = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionCostRestatementWriter.AppendWithinRootAsync(context,
+                original, 12m, 1.2m));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            reversedOwner.Error.Code);
+        await transaction.RollbackAsync();
+        db.ChangeTracker.Clear();
+        Assert.Empty(await db.ProductionCostRestatementFacts.ToArrayAsync());
+        Assert.Empty(await db.StockReplayEffects.ToArrayAsync());
     }
 
     [Fact]

@@ -58,7 +58,69 @@ public static class StockReplayCountSheetRemovalRootWriter
         {
             var fifo = await StockReplayFifoCountSheetRemovalPlanner.BuildAsync(
                 db, companyCode, branchCode, countId, cancellationToken);
-            StockReplayFifoCountSheetRemovalPlanner.RequireIsolatedAdjustment(fifo);
+            if (fifo.Items.Count(i => i.Projection is not null) > 1
+                && sheet.Lines.Count(l =>
+                    l.Physical.RemovedActiveEvent.SignedDelta != 0m) > 1)
+            {
+                if (fifo.Items.Any(i => i.Projection?.LaterIssues.Any(
+                        StockReplayFifoCountSheetRemovalPlanner
+                            .NeedsIssueRepricing) == true))
+                    StockReplayFifoCountSheetRemovalPlanner
+                        .RequireRepricedMultiItemAdjustments(fifo);
+                else if (sheet.Lines.Any(l =>
+                        l.Physical.RemovedActiveEvent.SignedDelta < 0m))
+                    StockReplayFifoCountSheetRemovalPlanner
+                        .RequireIndependentMultiItemSignedAdjustments(fifo);
+                else
+                    StockReplayFifoCountSheetRemovalPlanner
+                        .RequireIndependentMultiItemPositiveAdjustments(fifo);
+            }
+            else if (sheet.Lines.Count(l =>
+                    l.Physical.RemovedActiveEvent.SignedDelta != 0m) == 1)
+            {
+                if (fifo.Items.Any(i => i.Projection?.LaterIssues.Any(
+                        StockReplayFifoCountSheetRemovalPlanner
+                            .NeedsIssueRepricing) == true))
+                {
+                    if (sheet.Lines.Any(l =>
+                            l.Physical.RemovedActiveEvent.SignedDelta > 0m))
+                        StockReplayFifoCountSheetRemovalPlanner
+                            .RequireRepricedPositiveAdjustment(fifo);
+                    else
+                        StockReplayFifoCountSheetRemovalPlanner
+                            .RequireRepricedNegativeAdjustment(fifo);
+                }
+                else
+                    StockReplayFifoCountSheetRemovalPlanner
+                        .RequireIsolatedAdjustment(fifo);
+            }
+            else if (sheet.Lines.All(l =>
+                    l.Physical.RemovedActiveEvent.SignedDelta >= 0m))
+            {
+                if (fifo.Items.Any(i => i.Projection?.LaterIssues.Any(
+                        StockReplayFifoCountSheetRemovalPlanner
+                            .NeedsIssueRepricing) == true))
+                    StockReplayFifoCountSheetRemovalPlanner
+                        .RequireRepricedPositiveAdjustments(fifo);
+                else
+                    StockReplayFifoCountSheetRemovalPlanner
+                        .RequireIndependentPositiveAdjustments(fifo);
+            }
+            else if (sheet.Lines.Any(l =>
+                    l.Physical.RemovedActiveEvent.SignedDelta > 0m))
+            {
+                if (fifo.Items.Any(i => i.Projection?.LaterIssues.Any(
+                        StockReplayFifoCountSheetRemovalPlanner
+                            .NeedsIssueRepricing) == true))
+                    StockReplayFifoCountSheetRemovalPlanner
+                        .RequireRepricedMixedAdjustments(fifo);
+                else
+                    StockReplayFifoCountSheetRemovalPlanner
+                        .RequireIndependentMixedAdjustments(fifo);
+            }
+            else
+                StockReplayFifoCountSheetRemovalPlanner
+                    .RequireIndependentNegativeAdjustments(fifo);
             return new(fifo.Command, method, null, null, null, fifo);
         }
         throw Invalid("The count has no supported rollback cost policy.");
@@ -120,11 +182,22 @@ public static class StockReplayCountSheetRemovalRootWriter
         }
         if (plan.Fifo is { } fifo && method == StockCostMethods.Fifo)
         {
-            var result = await StockReplayFifoIsolatedCountRemovalWriter
+            if (fifo.Sheet.Lines.Count(l =>
+                    l.Physical.RemovedActiveEvent.SignedDelta != 0m) == 1)
+            {
+                var result = await StockReplayFifoIsolatedCountRemovalWriter
+                    .AppendWithinRootAsync(context, fifo, numbers, reason, now,
+                        cancellationToken);
+                return new([result.ReversalHistoryId],
+                    result.RemovalGenerationIds,
+                    result.RequiredActiveHistoryIds);
+            }
+            var multiple = await StockReplayFifoBoundedCountSheetRemovalWriter
                 .AppendWithinRootAsync(context, fifo, numbers, reason, now,
                     cancellationToken);
-            return new([result.ReversalHistoryId],
-                result.RemovalGenerationIds, []);
+            return new(multiple.ReversalHistoryIds,
+                multiple.RemovalGenerationIds,
+                multiple.RequiredActiveHistoryIds);
         }
         throw Invalid("The count removal has no matching financial writer.");
     }

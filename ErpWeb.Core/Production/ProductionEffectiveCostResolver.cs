@@ -76,15 +76,24 @@ public static class ProductionEffectiveCostResolver
                 if (fact.ReversesRestatementFactId is long reversed)
                 {
                     if (!ids.Contains(reversed) || !reversedIds.Add(reversed)
-                        || byId[reversed].ReversesRestatementFactId is not null)
+                        || byId[reversed].ReversesRestatementFactId is not null
+                        || fact.PriorEffectiveTotalCost
+                            != byId[reversed].CorrectedEffectiveTotalCost
+                        || fact.CorrectedEffectiveTotalCost
+                            != byId[reversed].PriorEffectiveTotalCost
+                        || fact.CorrectedUnitCost != original.UnitCost)
                         throw Corrupt($"Production movement {group.Key} has invalid reversal {fact.Id}.");
                 }
+                else if (fact.PriorEffectiveTotalCost != original.TotalCost)
+                    throw Corrupt($"Production movement {group.Key} has invalid prior cost in restatement {fact.Id}.");
             }
 
             var active = rows.Where(f => f.ReversesRestatementFactId is null
                                          && !reversedIds.Contains(f.Id)).ToArray();
-            if (active.Length != 1)
-                throw Corrupt($"Production movement {group.Key} has no unique active effective cost.");
+            if (active.Length > 1)
+                throw Corrupt($"Production movement {group.Key} has ambiguous active effective cost.");
+            if (active.Length == 0)
+                continue;
 
             var value = active[0];
             originals[group.Key] = new ProductionEffectiveCost(

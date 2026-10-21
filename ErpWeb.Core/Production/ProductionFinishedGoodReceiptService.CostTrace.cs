@@ -852,14 +852,15 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 .Where(x => x.ConsumerMovementId == movement.Uid)
                 .OrderBy(x => x.Id)
                 .ToListAsync(ct);
+            if (await ProductionDependencyOwnerReader.ValidateForConsumerAsync(
+                    _db, _scope.CompanyCode, _scope.BranchCode, movement,
+                    edges, ct) is string ownerError)
+                throw new TraceFailure(ownerError);
             var inputAtoms = new List<TraceAtom>();
             var producer = await GetMovementAsync(movement.Uid, ct)
                 ?? throw new TraceFailure($"Production PRODUCE movement {movement.Uid} is missing its sealed posting.");
             foreach (var edge in edges)
             {
-                if (edge.StockPostingId != movement.StockPostingId)
-                    throw new TraceFailure($"Production dependency {edge.Id} does not belong to the PRODUCE posting.");
-
                 var contributor = await GetMovementAsync(edge.ContributorMovementId, ct)
                     ?? throw new TraceFailure($"Production dependency {edge.Id} contributor is missing.");
                 if (contributor.Movement.MovementType != ProductionBalLotMovementTypes.Consume

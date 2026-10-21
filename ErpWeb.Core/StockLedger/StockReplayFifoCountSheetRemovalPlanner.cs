@@ -23,18 +23,44 @@ public sealed record StockReplayFifoCountSheetRemovalPlan(
 /// <summary>
 /// Binds a posted count's physical removal to the active FIFO pool of each
 /// counted item. Supported later MR and MI/Scrap ownership is rechecked under
-/// the root. Writing is currently limited to one isolated adjustment.
+/// the root. Bounded writers handle independent sheets and supported repriced
+/// issues after positive, negative or mixed adjustments.
 /// </summary>
 public static class StockReplayFifoCountSheetRemovalPlanner
 {
     /// <summary>
     /// The bounded FIFO removal writer accepts one unchanged adjustment and
-    /// any zero-adjustment lines without later physical movements.
+    /// zero-adjustment lines whose later physical movements are unchanged.
     /// Later proven MR receipts and unchanged MI/Scrap issues may remain when
     /// they do not depend on a removed count-created layer.
     /// </summary>
     public static StockReplayFifoCountSheetRemovalItem RequireIsolatedAdjustment(
         StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireIsolatedAdjustment(plan, repricedSign: 0);
+
+    public static StockReplayFifoCountSheetRemovalItem
+        RequireRepricedNegativeAdjustment(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireIsolatedAdjustment(plan, repricedSign: -1);
+
+    public static StockReplayFifoCountSheetRemovalItem
+        RequireRepricedPositiveAdjustment(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireIsolatedAdjustment(plan, repricedSign: 1);
+
+    internal static bool NeedsIssueRepricing(
+        StockReplayFifoProjectedIssue issue) =>
+        !issue.PreviousConsumptions.Select(c =>
+                (c.LayerId, c.Quantity, c.Value))
+            .OrderBy(c => c.LayerId)
+            .SequenceEqual(issue.Allocations.Select(a =>
+                    (a.LayerId, a.Quantity, a.Value))
+                .OrderBy(a => a.LayerId));
+
+    private static StockReplayFifoCountSheetRemovalItem
+        RequireIsolatedAdjustment(
+            StockReplayFifoCountSheetRemovalPlan plan,
+            int repricedSign)
     {
         ValidatePreparedPlan(plan);
         var adjustedLines = plan.Sheet.Lines.Where(l =>
@@ -42,9 +68,15 @@ public static class StockReplayFifoCountSheetRemovalPlanner
         if (adjustedLines.Length != 1
             || plan.Sheet.Lines.Any(l =>
                 l.Physical.RemovedActiveEvent.SignedDelta == 0m
-                && (l.Physical.LaterEvents.Count != 0
-                    || l.Physical.Projection.FinalQuantity
-                        != l.Physical.CurrentQuantity)))
+                && (l.Physical.Projection.FinalQuantity
+                        != l.Physical.CurrentQuantity
+                    || l.Physical.LaterEvents.Count
+                        != l.Physical.Projection.LaterSteps.Count
+                    || l.Physical.LaterEvents.Zip(
+                        l.Physical.Projection.LaterSteps).Any(pair =>
+                            pair.First.EventId != pair.Second.EventId
+                            || pair.First.SignedDelta
+                                != pair.Second.SignedDelta))))
             throw Invalid("The isolated FIFO reversal needs one adjustment and unchanged zero lines.");
         var line = adjustedLines[0];
         var item = plan.Items.Single(i => i.CountLineIds.Contains(line.CountLineId));
@@ -52,14 +84,15 @@ public static class StockReplayFifoCountSheetRemovalPlanner
         if (plan.Items.Any(i => i != item && i.Projection is not null)
             || removed is null || removed.Count != 1
             || removed[0].SignedAdjustmentQuantity == 0m
+            || repricedSign != 0
+                && Math.Sign(removed[0].SignedAdjustmentQuantity)
+                    != repricedSign
+            || repricedSign != 0
+                && !item.Projection!.LaterIssues.Any(NeedsIssueRepricing)
             || item.Projection!.LaterIssues.Any(issue =>
                 !issue.DepletesPool
-                || !issue.PreviousConsumptions.Select(c =>
-                        (c.LayerId, c.Quantity, c.Value))
-                    .OrderBy(c => c.LayerId)
-                    .SequenceEqual(issue.Allocations.Select(a =>
-                            (a.LayerId, a.Quantity, a.Value))
-                        .OrderBy(a => a.LayerId)))
+                || repricedSign == 0
+                    && NeedsIssueRepricing(issue))
             || item.Projection.FinalQuantity
                 != item.Snapshot.CurrentQuantity
                     - removed[0].SignedAdjustmentQuantity)
@@ -68,11 +101,25 @@ public static class StockReplayFifoCountSheetRemovalPlanner
         if (count.SignedAdjustmentQuantity > 0m)
         {
             var receipt = count.Receipt;
+            var changedKeys = item.Projection.LaterIssues
+                .Where(NeedsIssueRepricing).Select(i => i.Key).ToHashSet();
             if (receipt is null || count.Consumptions.Count != 0
                 || item.Snapshot.ActiveConsumptions.Any(c =>
-                    c.LayerId == receipt.LayerId)
+                    c.LayerId == receipt.LayerId
+                    && (repricedSign != 1
+                        || !changedKeys.Contains(c.IssueKey)))
                 || item.Snapshot.Layers.Count(l =>
-                    l.LayerId == receipt.LayerId) != 1
+                    l.LayerId == receipt.LayerId
+                    && l.OriginalQuantity == receipt.OriginalQuantity
+                    && l.OriginalValue == receipt.OriginalValue
+                    && l.RemainingQuantity
+                        + item.Snapshot.ActiveConsumptions.Where(c =>
+                            c.LayerId == receipt.LayerId)
+                            .Sum(c => c.Quantity) == l.OriginalQuantity
+                    && l.RemainingValue
+                        + item.Snapshot.ActiveConsumptions.Where(c =>
+                            c.LayerId == receipt.LayerId)
+                            .Sum(c => c.Value) == l.OriginalValue) != 1
                 || receipt.ReceiptKey != count.Key
                 || receipt.OriginalQuantity != receipt.RemainingQuantity
                 || receipt.OriginalValue != receipt.RemainingValue
@@ -82,7 +129,11 @@ public static class StockReplayFifoCountSheetRemovalPlanner
                     && key.CompareTo(count.Key) >= 0
                     && key.ClassPriority != StockReplayEventKey.OrdinaryClass)
                 || item.Projection.FinalValue
-                    != item.Snapshot.CurrentValue - receipt.OriginalValue)
+                    != StockLedgerPrecision.Money(
+                        item.Snapshot.CurrentValue - receipt.OriginalValue
+                        - item.Projection.LaterIssues.Sum(i =>
+                            i.Value - i.PreviousConsumptions.Sum(c =>
+                                c.Value))))
                 throw Invalid("The positive FIFO count has a dependent layer or later event.");
         }
         else
@@ -110,10 +161,445 @@ public static class StockReplayFifoCountSheetRemovalPlanner
                             != StockReplayEventKey.OrdinaryClass)
                 || item.Projection.FinalValue
                     != item.Snapshot.CurrentValue
-                        + count.Consumptions.Sum(c => c.Value))
+                        + count.Consumptions.Sum(c => c.Value)
+                        - item.Projection.LaterIssues.Sum(i =>
+                            i.Value - i.PreviousConsumptions.Sum(c =>
+                                c.Value)))
                 throw Invalid("The negative FIFO count has dependent allocations or a later event.");
         }
         return item;
+    }
+
+    /// <summary>
+    /// Multiple positive adjustments can be removed together when their
+    /// original receipts are intact. Supported changed later issues may have
+    /// consumed count layers; ordinary receipts retain their exact ownership.
+    /// Other counted items may have only zero-adjustment lines and proven tails.
+    /// </summary>
+    public static StockReplayFifoCountSheetRemovalItem
+        RequireIndependentPositiveAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequirePositiveAdjustments(plan, allowRepricedIssues: false);
+
+    public static StockReplayFifoCountSheetRemovalItem
+        RequireRepricedPositiveAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequirePositiveAdjustments(plan, allowRepricedIssues: true);
+
+    /// <summary>
+    /// Removes bounded adjustments on multiple items in one sheet. An item may
+    /// have several signed lines with exact count-owned layers and consumption
+    /// splits. Zero-adjustment lines on an adjusted item retain their physical
+    /// proof and removal generations. Later ordinary issue allocations must
+    /// remain unchanged. Zero-only items may retain proven tails.
+    /// </summary>
+    public static IReadOnlyList<StockReplayFifoCountSheetRemovalItem>
+        RequireIndependentMultiItemPositiveAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireMultiItemAdjustments(plan,
+            allowNegative: false, allowRepricedIssues: false);
+
+    public static IReadOnlyList<StockReplayFifoCountSheetRemovalItem>
+        RequireIndependentMultiItemSignedAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireMultiItemAdjustments(plan,
+            allowNegative: true, allowRepricedIssues: false);
+
+    /// <summary>
+    /// Reprices later ordinary issues for any affected item only when their
+    /// count-layer ownership and each item's final value are proven. Zero-only
+    /// counted items retain their original ordinary tails.
+    /// </summary>
+    public static IReadOnlyList<StockReplayFifoCountSheetRemovalItem>
+        RequireRepricedMultiItemAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireMultiItemAdjustments(plan,
+            allowNegative: plan.Sheet.Lines.Any(l =>
+                l.Physical.RemovedActiveEvent.SignedDelta < 0m),
+            allowRepricedIssues: true);
+
+    private static IReadOnlyList<StockReplayFifoCountSheetRemovalItem>
+        RequireMultiItemAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan,
+            bool allowNegative, bool allowRepricedIssues)
+    {
+        ValidatePreparedPlan(plan);
+        var adjustedItems = plan.Items.Where(i => i.Projection is not null)
+            .ToArray();
+        var zeroLineIds = plan.Items.Where(i => i.Projection is null)
+            .SelectMany(i => i.CountLineIds).ToHashSet();
+        if (adjustedItems.Length < 2
+            || adjustedItems.Length > plan.Sheet.Lines.Count(l =>
+                l.Physical.RemovedActiveEvent.SignedDelta != 0m)
+            || plan.Sheet.Lines.Any(l =>
+                zeroLineIds.Contains(l.CountLineId)
+                    && l.Physical.RemovedActiveEvent.SignedDelta != 0m
+                || l.Physical.Projection.FinalQuantity
+                    != l.Physical.CurrentQuantity
+                        - l.Physical.RemovedActiveEvent.SignedDelta
+                || !allowNegative
+                    && l.Physical.RemovedActiveEvent.SignedDelta < 0m
+                || l.Physical.LaterEvents.Count
+                    != l.Physical.Projection.LaterSteps.Count
+                || l.Physical.LaterEvents.Zip(
+                    l.Physical.Projection.LaterSteps).Any(pair =>
+                        pair.First.EventId != pair.Second.EventId
+                        || pair.First.SignedDelta != pair.Second.SignedDelta))
+            || allowNegative && !plan.Sheet.Lines.Any(l =>
+                l.Physical.RemovedActiveEvent.SignedDelta < 0m)
+            || allowRepricedIssues && !adjustedItems.Any(i =>
+                i.Projection?.LaterIssues.Any(NeedsIssueRepricing) == true))
+            throw Invalid("The multi-item FIFO reversal has unsupported adjusted or zero lines.");
+        foreach (var item in adjustedItems)
+        {
+            var lineIds = item.CountLineIds.ToHashSet();
+            var selected = plan.Sheet.Lines.Where(l =>
+                lineIds.Contains(l.CountLineId)
+                && l.Physical.RemovedActiveEvent.SignedDelta != 0m)
+                .ToArray();
+            if (selected.Length > 1)
+            {
+                var itemRepriced = allowRepricedIssues
+                    && item.Projection!.LaterIssues.Any(NeedsIssueRepricing);
+                if (selected.Any(l =>
+                        l.Physical.RemovedActiveEvent.SignedDelta < 0m))
+                {
+                    if (!allowNegative)
+                        throw Invalid("A multi-item FIFO count has a negative adjustment in a positive-only sheet.");
+                    RequireSignedAdjustmentItem(plan, item, selected,
+                        requirePositive: selected.Any(l =>
+                            l.Physical.RemovedActiveEvent.SignedDelta > 0m),
+                        allowRepricedIssues: itemRepriced);
+                }
+                else
+                    RequirePositiveAdjustmentItem(plan, item, selected,
+                        itemRepriced);
+                continue;
+            }
+            if (selected.Length != 1 || item.Projection is null)
+                throw Invalid("The multi-item FIFO reversal has an incomplete item.");
+            var line = selected[0];
+            var removed = item.Projection.RemovedCounts;
+            var count = removed.Count == 1 ? removed[0] : null;
+            var receipt = count?.Receipt;
+            var changedKeys = item.Projection.LaterIssues
+                .Where(NeedsIssueRepricing).Select(i => i.Key).ToHashSet();
+            var changedValue = item.Projection.LaterIssues.Sum(i =>
+                i.Value - i.PreviousConsumptions.Sum(c => c.Value));
+            if (count is null
+                || count.Key != line.Physical.RemovedActiveEvent.Key
+                || count.SignedAdjustmentQuantity
+                    != line.Physical.RemovedActiveEvent.SignedDelta
+                || item.Projection.LaterIssues.Any(i =>
+                    !i.DepletesPool
+                    || !allowRepricedIssues && NeedsIssueRepricing(i))
+                || line.Physical.Projection.FinalQuantity
+                    != line.Physical.CurrentQuantity
+                        - count.SignedAdjustmentQuantity
+                || line.Physical.LaterEvents.Count
+                    != line.Physical.Projection.LaterSteps.Count
+                || line.Physical.LaterEvents.Zip(
+                    line.Physical.Projection.LaterSteps).Any(pair =>
+                        pair.First.EventId != pair.Second.EventId
+                        || pair.First.SignedDelta != pair.Second.SignedDelta)
+                || item.Projection.FinalQuantity
+                    != StockLedgerPrecision.Quantity(
+                        item.Snapshot.CurrentQuantity
+                        - count.SignedAdjustmentQuantity))
+                throw Invalid("A multi-item FIFO count has dependent layers or a later event.");
+            if (count.SignedAdjustmentQuantity > 0m)
+            {
+                if (receipt is null || count.Consumptions.Count != 0
+                    || receipt.ReceiptKey != count.Key
+                    || receipt.OriginalQuantity
+                        != count.SignedAdjustmentQuantity
+                    || receipt.OriginalQuantity != receipt.RemainingQuantity
+                    || receipt.OriginalValue != receipt.RemainingValue
+                    || item.Projection.BeforeFirstCount.LaterReceipts.Count(r =>
+                        r.ReceiptKey?.ClassPriority
+                            == StockReplayEventKey.CountClass) != 1
+                    || !item.Snapshot.Layers.Any(l =>
+                        l.LayerId == receipt.LayerId
+                        && l.OriginalQuantity == receipt.OriginalQuantity
+                        && l.OriginalValue == receipt.OriginalValue
+                        && l.RemainingQuantity
+                            + item.Snapshot.ActiveConsumptions.Where(c =>
+                                c.LayerId == receipt.LayerId)
+                                .Sum(c => c.Quantity) == l.OriginalQuantity
+                        && l.RemainingValue
+                            + item.Snapshot.ActiveConsumptions.Where(c =>
+                                c.LayerId == receipt.LayerId)
+                                .Sum(c => c.Value) == l.OriginalValue)
+                    || item.Snapshot.ActiveConsumptions.Any(c =>
+                        c.LayerId == receipt.LayerId
+                        && (!allowRepricedIssues
+                            || !changedKeys.Contains(c.IssueKey)))
+                    || item.Snapshot.Layers.Any(l =>
+                        l.ReceiptKey is { } key
+                        && key.CompareTo(count.Key) >= 0
+                        && key.ClassPriority
+                            != StockReplayEventKey.OrdinaryClass
+                        && l.LayerId != receipt.LayerId)
+                    || item.Projection.FinalValue
+                        != StockLedgerPrecision.Money(
+                            item.Snapshot.CurrentValue
+                            - receipt.OriginalValue - changedValue))
+                    throw Invalid("A multi-item FIFO count has a dependent receipt.");
+            }
+            else
+            {
+                var consumptions = count.Consumptions;
+                if (!allowNegative || receipt is not null
+                    || consumptions.Count == 0
+                    || consumptions.Any(c => !c.DepletesPool
+                        || c.IssueKey != count.Key)
+                    || consumptions.Sum(c => c.Quantity)
+                        != -count.SignedAdjustmentQuantity
+                    || !consumptions.Select(c => c.ConsumptionId)
+                        .Order().SequenceEqual(item.Snapshot
+                            .ActiveConsumptions.Where(c =>
+                                c.IssueKey == count.Key)
+                            .Select(c => c.ConsumptionId).Order())
+                    || item.Projection.BeforeFirstCount.LaterReceipts.Any(r =>
+                        r.ReceiptKey?.ClassPriority
+                            == StockReplayEventKey.CountClass)
+                    || item.Snapshot.Layers.Any(l =>
+                        l.ReceiptKey is not { } key
+                        || key.CompareTo(count.Key) >= 0
+                            && key.ClassPriority
+                                != StockReplayEventKey.OrdinaryClass)
+                    || item.Projection.FinalValue
+                        != StockLedgerPrecision.Money(
+                            item.Snapshot.CurrentValue
+                            + consumptions.Sum(c => c.Value)
+                            - changedValue))
+                    throw Invalid("A multi-item FIFO count has dependent negative allocations.");
+            }
+        }
+        return adjustedItems;
+    }
+
+    private static StockReplayFifoCountSheetRemovalItem
+        RequirePositiveAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan,
+            bool allowRepricedIssues)
+    {
+        ValidatePreparedPlan(plan);
+        if (plan.Items.Count(i => i.Projection is not null) != 1
+            || plan.Sheet.Lines.Count < 2)
+            throw Invalid("The bounded FIFO sheet reversal needs one adjusted item and multiple lines.");
+        var item = plan.Items.Single(i => i.Projection is not null);
+        var adjusted = plan.Sheet.Lines.Where(l =>
+            l.Physical.RemovedActiveEvent.SignedDelta != 0m).ToArray();
+        RequirePositiveAdjustmentItem(plan, item, adjusted,
+            allowRepricedIssues);
+        return item;
+    }
+
+    private static void RequirePositiveAdjustmentItem(
+        StockReplayFifoCountSheetRemovalPlan plan,
+        StockReplayFifoCountSheetRemovalItem item,
+        StockReplayCountSheetRemovalLine[] adjusted,
+        bool allowRepricedIssues)
+    {
+        var removed = item.Projection?.RemovedCounts;
+        var changedKeys = item.Projection?.LaterIssues
+            .Where(NeedsIssueRepricing).Select(i => i.Key).ToHashSet();
+        if (adjusted.Length < 2 || removed is null
+            || allowRepricedIssues && (changedKeys is null
+                || changedKeys.Count == 0)
+            || removed.Count != adjusted.Length
+            || adjusted.Any(l => l.Physical.RemovedActiveEvent.SignedDelta <= 0m)
+            || plan.Sheet.Lines.Any(l =>
+                l.Physical.Projection.FinalQuantity
+                    != l.Physical.CurrentQuantity
+                        - l.Physical.RemovedActiveEvent.SignedDelta
+                || l.Physical.LaterEvents.Count
+                    != l.Physical.Projection.LaterSteps.Count
+                || l.Physical.LaterEvents.Zip(
+                    l.Physical.Projection.LaterSteps).Any(pair =>
+                        pair.First.EventId != pair.Second.EventId
+                        || pair.First.SignedDelta
+                            != pair.Second.SignedDelta))
+            || item.Projection!.LaterIssues.Any(issue =>
+                !issue.DepletesPool
+                || !allowRepricedIssues && NeedsIssueRepricing(issue))
+            || item.Projection.BeforeFirstCount.LaterReceipts.Count(r =>
+                r.ReceiptKey?.ClassPriority
+                    == StockReplayEventKey.CountClass) != adjusted.Length
+            || removed.Any(c => c.Receipt is null
+                || c.Consumptions.Count != 0
+                || c.Receipt.ReceiptKey != c.Key
+                || c.Receipt.OriginalQuantity != c.Receipt.RemainingQuantity
+                || c.Receipt.OriginalValue != c.Receipt.RemainingValue
+                || !item.Snapshot.Layers.Any(l =>
+                    l.LayerId == c.Receipt.LayerId
+                    && l.OriginalQuantity == c.Receipt.OriginalQuantity
+                    && l.OriginalValue == c.Receipt.OriginalValue
+                    && l.RemainingQuantity
+                        + item.Snapshot.ActiveConsumptions.Where(x =>
+                            x.LayerId == c.Receipt.LayerId)
+                            .Sum(x => x.Quantity) == l.OriginalQuantity
+                    && l.RemainingValue
+                        + item.Snapshot.ActiveConsumptions.Where(x =>
+                            x.LayerId == c.Receipt.LayerId)
+                            .Sum(x => x.Value) == l.OriginalValue)
+                || item.Snapshot.ActiveConsumptions.Any(x =>
+                    x.LayerId == c.Receipt.LayerId
+                    && (!allowRepricedIssues
+                        || changedKeys is null
+                        || !changedKeys.Contains(x.IssueKey))))
+            || !adjusted.Select(l => l.Physical.RemovedActiveEvent.Key)
+                .Order().SequenceEqual(removed.Select(c => c.Key).Order())
+            || item.Snapshot.Layers.Any(l =>
+                l.ReceiptKey is { } key
+                && key.CompareTo(removed[0].Key) >= 0
+                && key.ClassPriority
+                    != StockReplayEventKey.OrdinaryClass
+                && !removed.Any(c => c.Key == key))
+            || item.Projection.FinalQuantity != StockLedgerPrecision.Quantity(
+                item.Snapshot.CurrentQuantity
+                - removed.Sum(c => c.SignedAdjustmentQuantity))
+            || item.Projection.FinalValue != StockLedgerPrecision.Money(
+                item.Snapshot.CurrentValue
+                - removed.Sum(c => c.Receipt!.OriginalValue)
+                - item.Projection.LaterIssues.Sum(i =>
+                    i.Value - i.PreviousConsumptions.Sum(c => c.Value))))
+            throw Invalid("The FIFO sheet has dependent adjustments or later item activity.");
+    }
+
+    /// <summary>
+    /// An independent mixed sheet keeps positive layers unconsumed and later
+    /// ordinary issue allocations unchanged. Repriced mixed removal also
+    /// accepts count-layer consumptions owned by corrected later issues.
+    /// Other counted items may have only zero-adjustment lines.
+    /// </summary>
+    public static StockReplayFifoCountSheetRemovalItem
+        RequireIndependentMixedAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireIndependentSignedAdjustments(plan, requirePositive: true,
+            allowRepricedIssues: false);
+
+    public static StockReplayFifoCountSheetRemovalItem
+        RequireRepricedMixedAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireIndependentSignedAdjustments(plan, requirePositive: true,
+            allowRepricedIssues: true);
+
+    public static StockReplayFifoCountSheetRemovalItem
+        RequireIndependentNegativeAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan)
+        => RequireIndependentSignedAdjustments(plan, requirePositive: false,
+            allowRepricedIssues: false);
+
+    private static StockReplayFifoCountSheetRemovalItem
+        RequireIndependentSignedAdjustments(
+            StockReplayFifoCountSheetRemovalPlan plan,
+            bool requirePositive, bool allowRepricedIssues)
+    {
+        ValidatePreparedPlan(plan);
+        if (plan.Items.Count(i => i.Projection is not null) != 1
+            || plan.Sheet.Lines.Count < 2)
+            throw Invalid("The mixed FIFO reversal needs one adjusted item and multiple lines.");
+        var item = plan.Items.Single(i => i.Projection is not null);
+        var adjusted = plan.Sheet.Lines.Where(l =>
+            l.Physical.RemovedActiveEvent.SignedDelta != 0m).ToArray();
+        RequireSignedAdjustmentItem(plan, item, adjusted, requirePositive,
+            allowRepricedIssues);
+        return item;
+    }
+
+    private static void RequireSignedAdjustmentItem(
+        StockReplayFifoCountSheetRemovalPlan plan,
+        StockReplayFifoCountSheetRemovalItem item,
+        StockReplayCountSheetRemovalLine[] adjusted,
+        bool requirePositive, bool allowRepricedIssues)
+    {
+        var removed = item.Projection?.RemovedCounts;
+        var changedKeys = item.Projection?.LaterIssues
+            .Where(NeedsIssueRepricing).Select(i => i.Key).ToHashSet();
+        var positiveLayerIds = removed?.Where(c => c.Receipt is not null)
+            .Select(c => c.Receipt!.LayerId).ToHashSet();
+        if (adjusted.Length < 2 || removed is null
+            || (requirePositive
+                && !removed.Any(c => c.SignedAdjustmentQuantity > 0m))
+            || (!requirePositive
+                && removed.Any(c => c.SignedAdjustmentQuantity > 0m))
+            || !removed.Any(c => c.SignedAdjustmentQuantity < 0m)
+            || allowRepricedIssues && (changedKeys is null
+                || changedKeys.Count == 0)
+            || removed.Count != adjusted.Length
+            || !adjusted.Select(l => l.Physical.RemovedActiveEvent.Key)
+                .Order().SequenceEqual(removed.Select(c => c.Key).Order())
+            || plan.Sheet.Lines.Any(l =>
+                l.Physical.Projection.FinalQuantity
+                    != l.Physical.CurrentQuantity
+                        - l.Physical.RemovedActiveEvent.SignedDelta
+                || l.Physical.LaterEvents.Count
+                    != l.Physical.Projection.LaterSteps.Count
+                || l.Physical.LaterEvents.Zip(
+                    l.Physical.Projection.LaterSteps).Any(pair =>
+                        pair.First.EventId != pair.Second.EventId
+                        || pair.First.SignedDelta
+                            != pair.Second.SignedDelta))
+            || item.Projection!.LaterIssues.Any(issue =>
+                !issue.DepletesPool
+                || !allowRepricedIssues && NeedsIssueRepricing(issue))
+            || item.Projection.BeforeFirstCount.LaterReceipts.Count(r =>
+                r.ReceiptKey?.ClassPriority
+                    == StockReplayEventKey.CountClass)
+                != removed.Count(c => c.SignedAdjustmentQuantity > 0m)
+            || removed.Any(c => c.SignedAdjustmentQuantity > 0m
+                ? c.Receipt is null || c.Consumptions.Count != 0
+                    || c.Receipt.ReceiptKey != c.Key
+                    || c.Receipt.OriginalQuantity
+                        != c.Receipt.RemainingQuantity
+                    || c.Receipt.OriginalValue
+                        != c.Receipt.RemainingValue
+                    || !item.Snapshot.Layers.Any(l =>
+                        l.LayerId == c.Receipt.LayerId
+                        && l.OriginalQuantity == c.Receipt.OriginalQuantity
+                        && l.OriginalValue == c.Receipt.OriginalValue
+                        && l.RemainingQuantity
+                            + item.Snapshot.ActiveConsumptions.Where(x =>
+                                x.LayerId == c.Receipt.LayerId)
+                                .Sum(x => x.Quantity) == l.OriginalQuantity
+                        && l.RemainingValue
+                            + item.Snapshot.ActiveConsumptions.Where(x =>
+                                x.LayerId == c.Receipt.LayerId)
+                                .Sum(x => x.Value) == l.OriginalValue)
+                    || item.Snapshot.ActiveConsumptions.Any(x =>
+                        x.LayerId == c.Receipt.LayerId
+                        && (!allowRepricedIssues
+                            || changedKeys is null
+                            || !changedKeys.Contains(x.IssueKey)))
+                : c.Receipt is not null || c.Consumptions.Count == 0
+                    || c.Consumptions.Any(x => !x.DepletesPool
+                        || x.IssueKey != c.Key
+                        || positiveLayerIds!.Contains(x.LayerId))
+                    || c.Consumptions.Sum(x => x.Quantity)
+                        != -c.SignedAdjustmentQuantity
+                    || !c.Consumptions.Select(x => x.ConsumptionId)
+                        .Order().SequenceEqual(item.Snapshot
+                            .ActiveConsumptions.Where(x =>
+                                x.IssueKey == c.Key)
+                            .Select(x => x.ConsumptionId).Order()))
+            || item.Snapshot.Layers.Any(l =>
+                l.ReceiptKey is { } key
+                && key.CompareTo(removed[0].Key) >= 0
+                && key.ClassPriority
+                    != StockReplayEventKey.OrdinaryClass
+                && !removed.Any(c => c.Receipt?.ReceiptKey == key))
+            || item.Projection.FinalQuantity != StockLedgerPrecision.Quantity(
+                item.Snapshot.CurrentQuantity
+                - removed.Sum(c => c.SignedAdjustmentQuantity))
+            || item.Projection.FinalValue != StockLedgerPrecision.Money(
+                item.Snapshot.CurrentValue
+                - removed.Sum(c => c.Receipt?.OriginalValue ?? 0m)
+                + removed.Sum(c => c.Consumptions.Sum(x => x.Value))
+                - item.Projection.LaterIssues.Sum(i =>
+                    i.Value - i.PreviousConsumptions.Sum(c => c.Value))))
+            throw Invalid("The mixed FIFO sheet has dependent adjustments or repriced issues.");
     }
 
     public static async Task<StockReplayFifoCountSheetRemovalPlan> BuildAsync(

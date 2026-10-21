@@ -26,24 +26,29 @@ internal static class StockReplayFifoCountRemovalTailEvidenceReader
         var physical = lines.SelectMany(l => l.Physical.LaterEvents
                 .Select(e => new Movement(l.BalLocId, e)))
             .OrderBy(e => e.PileId).ThenBy(e => e.Event.Key).ToArray();
-        if (projection is null)
-        {
-            if (physical.Length != 0)
-                throw Invalid("A zero FIFO count item has unsupported later pile movement.");
+        if (projection is null && physical.Length == 0)
             return Fingerprint(new { sheet.PlanHash, itemCode,
                 snapshot.SnapshotHash, EmptyTail = true });
-        }
-        var receipts = projection.BeforeFirstCount.LaterReceipts
+        var earliestCount = lines.Select(l =>
+                l.Physical.RemovedActiveEvent.Key).Order().First();
+        var receipts = (projection?.BeforeFirstCount.LaterReceipts
+                ?? snapshot.Layers)
             .Where(l => l.ReceiptKey?.ClassPriority
-                == StockReplayEventKey.OrdinaryClass).ToArray();
-        var issueGroups = projection.BeforeFirstCount.LaterConsumptions
+                == StockReplayEventKey.OrdinaryClass
+                && l.ReceiptKey.Value.CompareTo(earliestCount) > 0)
+            .ToArray();
+        var issueGroups = (projection?.BeforeFirstCount.LaterConsumptions
+                ?? snapshot.ActiveConsumptions)
             .Where(c => c.IssueKey.ClassPriority
-                == StockReplayEventKey.OrdinaryClass)
+                == StockReplayEventKey.OrdinaryClass
+                && c.IssueKey.CompareTo(earliestCount) > 0)
             .GroupBy(c => c.IssueKey)
             .ToDictionary(g => g.Key, g => g.ToArray());
-        if (projection.LaterIssues.Count != issueGroups.Count
-            || projection.LaterIssues.Any(i => i.IsCandidate
-                || !i.DepletesPool || !issueGroups.ContainsKey(i.Key))
+        if (projection is not null
+                && (projection.LaterIssues.Count != issueGroups.Count
+                    || projection.LaterIssues.Any(i => i.IsCandidate
+                        || !i.DepletesPool
+                        || !issueGroups.ContainsKey(i.Key)))
             || receipts.Any(r => r.ReceiptKey is null))
             throw Invalid("The FIFO count has an unsupported later event.");
         var factIds = receipts.Select(r => r.OriginFactId)

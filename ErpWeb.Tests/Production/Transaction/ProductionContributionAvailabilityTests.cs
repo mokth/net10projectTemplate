@@ -87,5 +87,30 @@ public sealed class ProductionContributionAvailabilityTests
             .Select(x => x.Id).SingleAsync());
         Assert.Equal(activeDependency.Id, await ProductionActiveEdgeResolver.Dependencies(db)
             .Select(x => x.Id).SingleAsync());
+
+        db.ProductionBalLotMovements.AddRange(
+            new ProductionBalLotMovement
+            {
+                Uid = 10, ProductionBalLotId = 1,
+                MovementType = ProductionBalLotMovementTypes.Issue,
+                BaseQty = 10, Uom = "EA", BaseUom = "EA"
+            },
+            new ProductionBalLotMovement
+            {
+                Uid = 11, ProductionBalLotId = 1,
+                MovementType = ProductionBalLotMovementTypes.Issue,
+                BaseQty = 20, Uom = "EA", BaseUom = "EA"
+            });
+        db.ProductionValuationEvidenceRows.AddRange(
+            new ProductionValuationEvidence { MovementId = 10, ProductionBalLotId = 1 },
+            new ProductionValuationEvidence { MovementId = 11, ProductionBalLotId = 1 });
+        await db.SaveChangesAsync();
+
+        var availability = await ProductionContributionAvailabilityService.ReadAsync(db, 1, null,
+            CancellationToken.None);
+        Assert.Equal(10m, availability.Single(x => x.Movement.Uid == 10)
+            .Contribution.AvailableBaseQty);
+        Assert.Equal(17m, availability.Single(x => x.Movement.Uid == 11)
+            .Contribution.AvailableBaseQty);
     }
 }

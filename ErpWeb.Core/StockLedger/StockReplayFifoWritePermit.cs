@@ -71,6 +71,28 @@ public sealed class StockReplayFifoWritePermit
         ChangedPileFinalQuantity = 0m;
     }
 
+    internal StockReplayFifoWritePermit(
+        StockPostingContext context,
+        StockReplayFifoCountSheetRemovalPlan plan,
+        StockReplayFifoCountSheetRemovalItem item)
+    {
+        Operation = "COUNT_REMOVE";
+        CompanyCode = context.CompanyCode;
+        BranchCode = context.BranchCode;
+        LedgerEpochId = context.Epoch.Id;
+        RootPostingId = context.Posting.Id;
+        RootPostingSequence = context.Posting.PostingSequence;
+        ItemCode = item.ItemCode;
+        PlanHash = plan.PlanHash;
+        SnapshotHash = item.Snapshot.SnapshotHash;
+        CurrentQuantity = item.Snapshot.CurrentQuantity;
+        CurrentValue = item.Snapshot.CurrentValue;
+        FinalQuantity = item.Projection!.FinalQuantity;
+        FinalValue = item.Projection.FinalValue;
+        ChangedPileId = 0;
+        ChangedPileFinalQuantity = 0m;
+    }
+
     public string Operation { get; }
     public string CompanyCode { get; }
     public string BranchCode { get; }

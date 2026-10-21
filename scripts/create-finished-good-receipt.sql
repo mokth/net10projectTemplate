@@ -237,7 +237,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.PrFinis
 CREATE INDEX [IX_PrFinishedGoodSource_ProductionBalLotId] ON [PrFinishedGoodSource] ([ProductionBalLotId]);
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.PrPoolDependency') AND name=N'IX_PrPoolDependency_ConsumerMovementId_ContributorMovementId_StockPostingId')
-CREATE UNIQUE INDEX [IX_PrPoolDependency_ConsumerMovementId_ContributorMovementId_StockPostingId] ON [PrPoolDependency] ([ConsumerMovementId], [ContributorMovementId], [StockPostingId]);
+CREATE UNIQUE INDEX [IX_PrPoolDependency_ConsumerMovementId_ContributorMovementId_StockPostingId] ON [PrPoolDependency] ([ConsumerMovementId], [ContributorMovementId], [StockPostingId]) WHERE [ReversesDependencyId] IS NULL;
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.PrPoolDependency') AND name=N'IX_PrPoolDependency_ContributorMovementId')
 CREATE INDEX [IX_PrPoolDependency_ContributorMovementId] ON [PrPoolDependency] ([ContributorMovementId]);
