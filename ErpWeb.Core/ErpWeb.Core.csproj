@@ -1,6 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <Compile Remove="artifacts\**" />
+    <EmbeddedResource Remove="artifacts\**" />
+    <None Remove="artifacts\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ErpWeb.Model\ErpWeb.Model.csproj" />
     <ProjectReference Include="..\ErpWeb.Library\ErpWeb.Library.csproj" />
     <ProjectReference Include="..\ErpWeb.EInvoiceLib\ErpWeb.EInvoiceLib.csproj" />
