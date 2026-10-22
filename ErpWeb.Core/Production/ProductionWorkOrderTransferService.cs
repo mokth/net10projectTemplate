@@ -558,11 +558,15 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             var take = Math.Clamp(query.Take, 1, 100);
             var rows = await q.OrderByDescending(x => x.TransferDateTime).ThenByDescending(x => x.Uid)
                 .Skip(skip).Take(take).ToListAsync(ct);
+            var effectiveValues = canViewCost
+                ? await ResolvePostedTransferValuesAsync(db, scope, rows, ct)
+                : new Dictionary<long, decimal>();
             var page = rows.Select(x => new ProductionWorkOrderTransferSummary(x.Uid, x.TransferNo,
                 x.TransferDateTime, x.ItemCode, x.LotNo, x.Qty, x.Uom, x.SourceWorkOrderNo,
                 x.SourceWorkCentreCode, x.SourceProcessCode, x.TargetWorkOrderNo,
                 x.TargetConsumingWorkCentreCode, x.TargetConsumingProcessCode, x.Status, x.CreatedBy,
-                x.PostedBy, canViewCost ? x.TransferTotalCost : null, x.RowVersion)).ToArray();
+                x.PostedBy, canViewCost ? x.Status == ProductionWorkOrderTransferStatuses.Posted
+                    ? effectiveValues[x.Uid] : x.TransferTotalCost : null, x.RowVersion)).ToArray();
             return IvMasterOperationResult<ProductionWorkOrderTransferPage>.Ok(new(page, total));
         }
         catch (TransferException ex) { return Fail<ProductionWorkOrderTransferPage>(ex.Message, ex.Code); }
@@ -1401,6 +1405,37 @@ WHERE UID={transfer.ProductionPostingLinkId} AND CompanyCode={scope.CompanyCode}
         || ex.InnerException?.Message.Contains("2601", StringComparison.OrdinalIgnoreCase) == true
         || ex.InnerException?.Message.Contains("2627", StringComparison.OrdinalIgnoreCase) == true;
 
+    private static async Task<IReadOnlyDictionary<long, decimal>> ResolvePostedTransferValuesAsync(
+        AppDbContext db, InventoryTenantScope scope,
+        IReadOnlyCollection<ProductionWorkOrderTransfer> transfers, CancellationToken ct)
+    {
+        var posted = transfers.Where(x => x.Status == ProductionWorkOrderTransferStatuses.Posted).ToArray();
+        if (posted.Any(x => x.TransferOutMovementId is null || x.TransferInMovementId is null
+            || x.TransferOutMovementId == x.TransferInMovementId))
+            throw new TransferException("Posted Work Order Transfer movement identity is incomplete.");
+        var ids = posted.SelectMany(x => new[] { x.TransferOutMovementId!.Value, x.TransferInMovementId!.Value })
+            .Distinct().ToArray();
+        try
+        {
+            var effective = await ProductionEffectiveCostResolver.ResolveAsync(db,
+                scope.CompanyCode, scope.BranchCode!, ids, ct);
+            var values = new Dictionary<long, decimal>(posted.Length);
+            foreach (var transfer in posted)
+            {
+                var outbound = effective[transfer.TransferOutMovementId!.Value];
+                var inbound = effective[transfer.TransferInMovementId!.Value];
+                if (outbound.TotalCost != inbound.TotalCost || outbound.UnitCost != inbound.UnitCost)
+                    throw new TransferException("The effective Work Order Transfer OUT and IN costs do not reconcile.");
+                values.Add(transfer.Uid, outbound.TotalCost);
+            }
+            return values;
+        }
+        catch (StockLedgerException ex)
+        {
+            throw new TransferException(ex.Error.Message);
+        }
+    }
+
     private async Task<ProductionWorkOrderTransferDocument> MapAsync(AppDbContext db,
         ProductionWorkOrderTransfer transfer, InventoryTenantScope scope, CancellationToken ct)
     {
@@ -1434,6 +1469,9 @@ WHERE UID={transfer.ProductionPostingLinkId} AND CompanyCode={scope.CompanyCode}
             && x.Kind == ProductionBalLotKinds.Wip && x.WorkOrderId == transfer.TargetWorkOrderId
             && x.ProducingRouteStepId == transfer.TargetProducingRouteStepId
             && x.ItemCode == transfer.ItemCode && x.LotNo == transfer.LotNo, ct);
+        var transferValue = canViewCost && transfer.Status == ProductionWorkOrderTransferStatuses.Posted
+            ? (await ResolvePostedTransferValuesAsync(db, scope, [transfer], ct))[transfer.Uid]
+            : transfer.TransferTotalCost;
         var targetValue = canViewCost ? targetBalance?.TotalCost ?? 0m : (decimal?)null;
         return new ProductionWorkOrderTransferDocument
         {
@@ -1449,7 +1487,7 @@ WHERE UID={transfer.ProductionPostingLinkId} AND CompanyCode={scope.CompanyCode}
             SourceProcessCode = transfer.SourceProcessCode,
             SourceLastMovementDate = transfer.SourceLastMovementDate,
             SourceCurrentWipValue = canViewCost ? source?.TotalCost : null,
-            TransferTotalCost = canViewCost ? transfer.TransferTotalCost : null,
+            TransferTotalCost = canViewCost ? transferValue : null,
             TargetWorkOrderId = transfer.TargetWorkOrderId, TargetWorkOrderNo = transfer.TargetWorkOrderNo,
             TargetProductCode = target?.ProductCode ?? string.Empty,
             TargetProductDescription = target?.ProductDescription,
@@ -1460,7 +1498,8 @@ WHERE UID={transfer.ProductionPostingLinkId} AND CompanyCode={scope.CompanyCode}
             TargetProducerWorkCentreCode = transfer.TargetProducerWorkCentreCode,
             TargetProducerProcessCode = transfer.TargetProducerProcessCode,
             TargetCurrentWipValue = targetValue,
-            ProjectedTargetWipValue = canViewCost ? (targetBalance?.TotalCost ?? 0m) + transfer.TransferTotalCost : null,
+            ProjectedTargetWipValue = canViewCost ? (targetBalance?.TotalCost ?? 0m)
+                + (transfer.Status == ProductionWorkOrderTransferStatuses.Posted ? 0m : transferValue) : null,
             CanViewCost = canViewCost, TargetSnapshotRevision = transfer.TargetSnapshotRevision,
             TargetSnapshotHash = transfer.TargetSnapshotHash, RowVersion = transfer.RowVersion,
             DocumentRevision = transfer.DocumentRevision, ReversalPostingId = transfer.ReversalPostingId,

@@ -5,6 +5,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
@@ -302,6 +303,305 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         Assert.NotEqual(0, reversalFact.ProductionMaterialMovementId);
         Assert.True(await db.ProductionMaterialMovements.AsNoTracking()
             .AnyAsync(x => x.Uid == reversalFact.ProductionMaterialMovementId));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Posted_return_rejects_legacy_rollback_after_either_ledger_is_restated(
+        bool restateProduction)
+    {
+        var graph = await SeedTwoProcessWithMaterialAsync("WO-PRTN-RESTATE");
+        await SeedBalanceAsync(58, 20m);
+        var outputs = CreateOutputService();
+        var output = await outputs.CreateAsync(OutputRequest(graph.Process1Id, 40m,
+            new DateTime(2026, 10, 1, 8, 0, 0)));
+        Assert.True(output.Succeeded, output.Message);
+        Assert.True((await outputs.PostAsync(output.Data!.Uid)).Succeeded);
+
+        var issues = CreateIssueService();
+        var issueRequest = await CreateIssueSaveAsync(graph, 58, 2m);
+        issueRequest.ProductionQtyThisIssue = 2m;
+        var issue = await issues.CreateAsync(issueRequest);
+        Assert.True(issue.Succeeded, issue.Message);
+        var issuePost = await issues.PostAsync([issue.Data!.BatchNo]);
+        Assert.True(issuePost.Succeeded && issuePost.Data!.SucceededCount == 1,
+            issuePost.Data?.Batches.FirstOrDefault()?.Message ?? issuePost.Message);
+
+        var returns = CreateReturnService();
+        var sources = await returns.SearchSourcesAsync(new() { WorkOrderId = graph.OrderId, Take = 20 });
+        Assert.True(sources.Succeeded, sources.Message);
+        var source = Assert.Single(sources.Data!.Rows, x => x.ItemCode == "RM001");
+        var draft = await SaveReturnAsync(returns, graph.OrderId, source.ProductionBalLotId);
+        var post = await returns.PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
+        Assert.True(post.Succeeded, post.Message);
+        var posted = post.Data!;
+        var originalValue = Assert.Single(posted.Lines).TotalValue!.Value;
+        var correctedValue = originalValue + 1m;
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            var fact = await db.ProductionStockReturnFacts.SingleAsync(x =>
+                x.BatchId == draft.Id && x.ReversesFactId == null);
+            var movement = await db.ProductionBalLotMovements.SingleAsync(x =>
+                x.Uid == fact.ProductionMovementId);
+            var owner = await db.StockPostings.SingleAsync(x => x.Id == fact.StockPostingId);
+            var epoch = await db.StockLedgerEpochs.SingleAsync();
+            var counter = await db.StockPostingBranchSequences.SingleAsync();
+            var rootAt = owner.EffectiveAt.AddDays(-1);
+            var root = new StockPosting
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+                PostingSequence = ++counter.LastSequence, RequestId = Guid.NewGuid(),
+                CommandType = "PRTN_RESTATEMENT_TEST", RequestFingerprint = new string('C', 64),
+                SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+                SourceDocumentId = "PRTN-COST", SourceDocumentNo = "PRTN-COST",
+                DocumentRevision = 1, SourceSnapshotJson = "{}",
+                SourceSnapshotHash = new string('D', 64), EffectiveAt = rootAt,
+                BusinessDate = rootAt.Date, PeriodKey = "2026-10",
+                PostedAtUtc = DateTime.UtcNow, PostedBy = "test"
+            };
+            db.StockPostings.Add(root);
+            await db.SaveChangesAsync();
+            db.StockReplayRuns.Add(new StockReplayRun
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", RootStockPostingId = root.Id,
+                RootRequestId = root.RequestId, RootDocumentType = root.SourceDocumentType,
+                RootDocumentId = root.SourceDocumentId, EarliestEffectiveAt = rootAt,
+                LatestEffectiveAt = owner.EffectiveAt, PlanHash = new string('E', 64),
+                CreatedAtUtc = DateTime.UtcNow, CreatedBy = "test"
+            });
+            await db.SaveChangesAsync();
+            var context = new StockPostingContext(db, epoch, root, "test");
+            if (restateProduction)
+            {
+                var current = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+                    "DEMO", "HQ", [movement.Uid]))[movement.Uid];
+                await ProductionCostRestatementWriter.AppendWithinRootAsync(context,
+                    current, correctedValue,
+                    StockLedgerPrecision.Money(correctedValue / movement.BaseQty));
+            }
+            else
+            {
+                var receiptFact = await db.StockValuationFacts.AsNoTracking().SingleAsync(x =>
+                    x.InventoryHistoryId == fact.InventoryHistoryId && x.StockPostingId == owner.Id
+                    && x.ReversesValuationFactId == null);
+                var result = await StockReplayWacReceiptRestatementWriter.AppendAsync(context,
+                    fact.InventoryHistoryId, receiptFact.Id, correctedValue,
+                    StockValuationSources.ProductionActual, 10, 11);
+                Assert.NotNull(result?.ActiveDelta);
+            }
+            root.SealedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+
+        var currentReturn = await returns.GetAsync(draft.Id);
+        Assert.True(currentReturn.Succeeded, currentReturn.Message);
+        Assert.Equal(restateProduction ? correctedValue : originalValue,
+            Assert.Single(currentReturn.Data!.Lines).TotalValue);
+        var rollback = await returns.RollbackAsync(new(draft.Id, currentReturn.Data.RowVersion,
+            Guid.NewGuid(), "Restated cost requires replay-aware rollback"));
+        Assert.False(rollback.Succeeded);
+        Assert.Contains(restateProduction ? "corrected Production cost" : "corrected Inventory valuation",
+            rollback.Message, StringComparison.OrdinalIgnoreCase);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(originalValue, (await verify.ProductionStockReturnFacts.AsNoTracking()
+            .SingleAsync(x => x.BatchId == draft.Id && x.ReversesFactId == null)).TotalValue);
+        Assert.False(await verify.ProductionStockReturnFacts.AsNoTracking()
+            .AnyAsync(x => x.BatchId == draft.Id && x.ReversesFactId != null));
+    }
+
+    [Fact]
+    public async Task Isolated_return_derives_corrected_value_from_exact_issue_contribution()
+    {
+        var graph = await SeedTwoProcessWithMaterialAsync("WO-PRTN-SOURCE");
+        await SeedBalanceAsync(59, 20m);
+        var outputs = CreateOutputService();
+        var output = await outputs.CreateAsync(OutputRequest(graph.Process1Id, 40m,
+            new DateTime(2026, 10, 1, 8, 0, 0)));
+        Assert.True(output.Succeeded, output.Message);
+        Assert.True((await outputs.PostAsync(output.Data!.Uid)).Succeeded);
+
+        var issues = CreateIssueService();
+        var issueRequest = await CreateIssueSaveAsync(graph, 59, 2m);
+        issueRequest.ProductionQtyThisIssue = 2m;
+        var issue = await issues.CreateAsync(issueRequest);
+        Assert.True(issue.Succeeded, issue.Message);
+        var issuePost = await issues.PostAsync([issue.Data!.BatchNo]);
+        Assert.True(issuePost.Succeeded && issuePost.Data!.SucceededCount == 1,
+            issuePost.Data?.Batches.FirstOrDefault()?.Message ?? issuePost.Message);
+
+        var returns = CreateReturnService();
+        var sources = await returns.SearchSourcesAsync(new() { WorkOrderId = graph.OrderId, Take = 20 });
+        Assert.True(sources.Succeeded, sources.Message);
+        var source = Assert.Single(sources.Data!.Rows, x => x.ItemCode == "RM001");
+        var draft = await SaveReturnAsync(returns, graph.OrderId, source.ProductionBalLotId);
+        var posted = await returns.PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+        var originalReturnValue = Assert.Single(posted.Data!.Lines).TotalValue!.Value;
+
+        await using var db = await _factory.CreateDbContextAsync();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var issueMovement = await db.ProductionBalLotMovements.SingleAsync(x =>
+            x.ProductionBalLotId == source.ProductionBalLotId
+            && x.MovementType == ProductionBalLotMovementTypes.Issue);
+        var issueOwner = await db.StockPostings.SingleAsync(x => x.Id == issueMovement.StockPostingId);
+        var returnOwner = await db.StockPostings.SingleAsync(x => x.Id == posted.Data.PostingId);
+        var epoch = await db.StockLedgerEpochs.SingleAsync();
+        var counter = await db.StockPostingBranchSequences.SingleAsync();
+        var rootAt = issueOwner.EffectiveAt.AddHours(-1);
+        var root = new StockPosting
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+            PostingSequence = ++counter.LastSequence, RequestId = Guid.NewGuid(),
+            CommandType = "PRTN_SOURCE_TEST", RequestFingerprint = new string('C', 64),
+            SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+            SourceDocumentId = "PRTN-SOURCE", SourceDocumentNo = "PRTN-SOURCE",
+            DocumentRevision = 1, SourceSnapshotJson = "{}",
+            SourceSnapshotHash = new string('D', 64), EffectiveAt = rootAt,
+            BusinessDate = rootAt.Date, PeriodKey = "2026-10",
+            PostedAtUtc = DateTime.UtcNow, PostedBy = "test"
+        };
+        db.StockPostings.Add(root);
+        await db.SaveChangesAsync();
+        db.StockReplayRuns.Add(new StockReplayRun
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", RootStockPostingId = root.Id,
+            RootRequestId = root.RequestId, RootDocumentType = root.SourceDocumentType,
+            RootDocumentId = root.SourceDocumentId, EarliestEffectiveAt = rootAt,
+            LatestEffectiveAt = returnOwner.EffectiveAt, PlanHash = new string('E', 64),
+            CreatedAtUtc = DateTime.UtcNow, CreatedBy = "test"
+        });
+        await db.SaveChangesAsync();
+        var context = new StockPostingContext(db, epoch, root, "test");
+        var originalIssue = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+            "DEMO", "HQ", [issueMovement.Uid]))[issueMovement.Uid];
+        var correctedIssueValue = originalIssue.TotalCost + 2m;
+        await ProductionCostRestatementWriter.AppendWithinRootAsync(context, originalIssue,
+            correctedIssueValue,
+            StockLedgerPrecision.Money(correctedIssueValue / issueMovement.BaseQty));
+
+        var unmatchedLedger = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionStockReturnSourceCostAuthority.ReadWithinRootAsync(context, draft.Id));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, unmatchedLedger.Error.Code);
+        var originalInventory = await db.StockValuationFacts.SingleAsync(x =>
+            x.InventoryHistoryId == issueMovement.InventoryHistoryId
+            && x.StockPostingId == issueOwner.Id && x.Direction < 0
+            && x.ReversesValuationFactId == null);
+        var reversedInventory = (StockValuationFact)db.Entry(originalInventory).CurrentValues.ToObject();
+        reversedInventory.Id = 0;
+        reversedInventory.StockPostingId = root.Id;
+        reversedInventory.PostingLineNo = 10;
+        reversedInventory.Direction = 1;
+        reversedInventory.ValuationSource = StockValuationSources.OriginalReversal;
+        reversedInventory.ValuationStatus = StockValuationStatuses.Reversed;
+        reversedInventory.ReversesValuationFactId = originalInventory.Id;
+        reversedInventory.CreatedAtUtc = DateTime.UtcNow;
+        var replacementInventory = (StockValuationFact)db.Entry(originalInventory).CurrentValues.ToObject();
+        replacementInventory.Id = 0;
+        replacementInventory.StockPostingId = root.Id;
+        replacementInventory.PostingLineNo = 11;
+        replacementInventory.CostAmount = correctedIssueValue;
+        replacementInventory.BaseCostAmount = correctedIssueValue;
+        replacementInventory.UnitCost = StockLedgerPrecision.Money(
+            correctedIssueValue / issueMovement.BaseQty);
+        replacementInventory.OriginalValuationFactId = originalInventory.Id;
+        replacementInventory.ValuationVersion = originalInventory.ValuationVersion + 1;
+        replacementInventory.CreatedAtUtc = DateTime.UtcNow;
+        db.StockValuationFacts.AddRange(reversedInventory, replacementInventory);
+        await db.SaveChangesAsync();
+
+        var projection = await ProductionStockReturnSourceCostAuthority.ReadWithinRootAsync(
+            context, draft.Id);
+        Assert.Equal(issueMovement.Uid, projection.SourceIssueMovementId);
+        Assert.Equal(correctedIssueValue, projection.CorrectedSourceValue);
+        Assert.Equal(originalReturnValue + 1m, projection.CorrectedReturnValue);
+        Assert.Equal(correctedIssueValue - projection.CorrectedReturnValue,
+            projection.ProjectedRemainingValue);
+
+        await transaction.CreateSavepointAsync("before_wrong_return_material");
+        var returnFact = await db.ProductionStockReturnFacts.AsNoTracking()
+            .SingleAsync(x => x.Id == projection.ReturnFactId);
+        var returnMaterial = await db.ProductionMaterialMovements.SingleAsync(x =>
+            x.Uid == returnFact.ProductionMaterialMovementId);
+        returnMaterial.ItemCode = "WRONG-ITEM";
+        await db.SaveChangesAsync();
+        var wrongMaterial = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionStockReturnSourceCostAuthority.ReadWithinRootAsync(context, draft.Id));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, wrongMaterial.Error.Code);
+        await transaction.RollbackToSavepointAsync("before_wrong_return_material");
+        db.ChangeTracker.Clear();
+
+        await transaction.CreateSavepointAsync("before_missing_return_edge");
+        var allocation = await db.ProductionMovementAllocations.SingleAsync(x =>
+            x.OutboundMovementId == projection.ReturnMovementId
+            && x.ReversesAllocationId == null);
+        db.ProductionMovementAllocations.Remove(allocation);
+        await db.SaveChangesAsync();
+        var missingEdge = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionStockReturnSourceCostAuthority.ReadWithinRootAsync(context, draft.Id));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, missingEdge.Error.Code);
+        await transaction.RollbackToSavepointAsync("before_missing_return_edge");
+
+        var expectedReturn = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+            "DEMO", "HQ", [projection.ReturnMovementId]))[projection.ReturnMovementId];
+        var missingReceiptCorrection = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionStockReturnCostCorrectionWriter.AppendWithinRootAsync(
+                context, draft.Id, expectedReturn));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch,
+            missingReceiptCorrection.Error.Code);
+        var returnReceipt = await db.StockValuationFacts.AsNoTracking().SingleAsync(x =>
+            x.InventoryHistoryId == projection.ReturnHistoryId && x.Direction > 0
+            && x.ReversesValuationFactId == null);
+        await transaction.CreateSavepointAsync("before_wrong_return_value");
+        var wrongInventoryCorrection = await StockReplayWacReceiptRestatementWriter.AppendAsync(
+            context, projection.ReturnHistoryId, returnReceipt.Id,
+            projection.CorrectedReturnValue + 1m, StockValuationSources.ProductionActual,
+            20, 21);
+        Assert.NotNull(wrongInventoryCorrection?.ActiveDelta);
+        await db.SaveChangesAsync();
+        var wrongValue = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionStockReturnCostCorrectionWriter.AppendWithinRootAsync(
+                context, draft.Id, expectedReturn));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, wrongValue.Error.Code);
+        Assert.Empty(await db.ProductionCostRestatementFacts.AsNoTracking()
+            .Where(x => x.ProductionBalLotMovementId == projection.ReturnMovementId)
+            .ToArrayAsync());
+        await transaction.RollbackToSavepointAsync("before_wrong_return_value");
+        db.ChangeTracker.Clear();
+        var inventoryCorrection = await StockReplayWacReceiptRestatementWriter.AppendAsync(
+            context, projection.ReturnHistoryId, returnReceipt.Id,
+            projection.CorrectedReturnValue, StockValuationSources.ProductionActual,
+            20, 21);
+        Assert.NotNull(inventoryCorrection?.ActiveDelta);
+        await db.SaveChangesAsync();
+        var corrected = await ProductionStockReturnCostCorrectionWriter.AppendWithinRootAsync(
+            context, draft.Id, expectedReturn);
+        Assert.NotNull(corrected.ReturnCost.Replacement);
+        Assert.Equal(projection.CorrectedReturnValue, corrected.CorrectedReturnValue);
+        Assert.Equal(projection.ProjectedRemainingValue, corrected.RemainingPoolValue);
+        var effectiveReturn = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+            "DEMO", "HQ", [projection.ReturnMovementId]))[projection.ReturnMovementId];
+        Assert.Equal(projection.CorrectedReturnValue, effectiveReturn.TotalCost);
+        var remaining = await db.ProductionBalLots.AsNoTracking().SingleAsync(x =>
+            x.Uid == source.ProductionBalLotId);
+        Assert.Equal(projection.ProjectedRemainingValue, remaining.TotalCost);
+        Assert.Equal(remaining.TotalCost, (await db.ProductionPoolValuationRows.AsNoTracking()
+            .SingleAsync(x => x.ProductionBalLotId == remaining.Uid)).TrackedValue);
+        var factCount = await db.ProductionCostRestatementFacts.CountAsync(x =>
+            x.ProductionBalLotMovementId == projection.ReturnMovementId);
+        var retry = await ProductionStockReturnCostCorrectionWriter.AppendWithinRootAsync(
+            context, draft.Id, expectedReturn);
+        Assert.Null(retry.ReturnCost.Replacement);
+        Assert.Equal(factCount, await db.ProductionCostRestatementFacts.CountAsync(x =>
+            x.ProductionBalLotMovementId == projection.ReturnMovementId));
+        Assert.Equal(projection.CorrectedReturnValue,
+            (await ProductionStockReturnSourceCostAuthority.ReadWithinRootAsync(
+                context, draft.Id)).CorrectedReturnValue);
+        await transaction.RollbackAsync();
     }
 
     [Fact]

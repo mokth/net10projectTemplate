@@ -241,7 +241,8 @@ public sealed class ProductionStockAdjustmentService(
             var fact = canViewCost && doc.PostingId is long postingId
                 ? await db.ProductionStockAdjustmentFacts.AsNoTracking().SingleOrDefaultAsync(x => x.BatchId == doc.BatchId
                     && x.AdjustmentLineId == line.Id && x.StockPostingId == postingId && x.ReversesFactId == null, ct) : null;
-            decimal? value = fact?.TotalValue;
+            decimal? value = fact is null ? null : (await ProductionEffectiveCostResolver.ResolveAsync(
+                db, doc.CompanyCode, doc.BranchCode, [fact.ProductionMovementId], ct))[fact.ProductionMovementId].TotalCost;
             if (canViewCost && value is null && line.AdjustmentQty > 0m && pool.BaseQty > 0m)
                 value = StockLedgerPrecision.Money(pool.TotalCost * line.BaseQty / pool.BaseQty);
             result.Lines.Add(new() { ProductionBalLotId = pool.Uid, ItemCode = pool.ItemCode, Description = pool.Description ?? "",
@@ -726,6 +727,19 @@ public sealed class ProductionStockAdjustmentService(
     {
         var db = context.Db; var originalMoves = await db.ProductionBalLotMovements.Where(x => facts.Select(f => f.ProductionMovementId).Contains(x.Uid)).ToListAsync(ct);
         if (originalMoves.Count != facts.Count) throw new AdjustmentException("Original PADJ Production movements are incomplete.");
+        var effectiveCosts = await ProductionEffectiveCostResolver.ResolveAsync(db,
+            context.CompanyCode, context.BranchCode,
+            facts.Select(f => f.ProductionMovementId).ToArray(), ct);
+        if (facts.Any(f =>
+        {
+            var movement = originalMoves.SingleOrDefault(m => m.Uid == f.ProductionMovementId);
+            return movement is null || movement.StockPostingId != doc.PostingId
+                || movement.OriginalMovementId is not null
+                || movement.BaseQty != f.BaseQty
+                || movement.TotalCost != f.TotalValue
+                || movement.UnitCost != f.UnitCost;
+        }))
+            throw new AdjustmentException("Original PADJ cost authority is incomplete.");
         var originalPosting = await db.StockPostings.SingleAsync(x => x.Id == doc.PostingId, ct);
         foreach (var pool in pools.Values)
         {
@@ -758,7 +772,8 @@ public sealed class ProductionStockAdjustmentService(
             return new ProductionStockLeg(pools[line.ProductionBalLotId], inverse, original.Qty, f.BaseQty, doc.WorkOrderId,
                 original.WorkOrderMaterialId, original.WorkOrderOperationId, original.RouteStepId, link.Uid,
                 ProductionDocumentTypes.ProductionStockAdjustment, doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture), line.Id.ToString(CultureInfo.InvariantCulture), 0,
-                original.Uid, ExactTotalValue: f.TotalValue, ValuationStatus: original.ValuationStatus ?? ProductionPoolValuationService.Unvalued);
+                original.Uid, ExactTotalValue: effectiveCosts[original.Uid].TotalCost,
+                ValuationStatus: original.ValuationStatus ?? ProductionPoolValuationService.Unvalued);
         }).ToArray();
         // The caller applies these legs; material ADJUST reversals are appended after movement IDs are known.
         return legs;
@@ -796,7 +811,8 @@ public sealed class ProductionStockAdjustmentService(
             var line = doc.Lines.Single(x => x.Id == original.AdjustmentLineId); var move = movements.Single(x => x.SourceLineId == line.Id.ToString(CultureInfo.InvariantCulture));
             db.ProductionStockAdjustmentFacts.Add(new ProductionStockAdjustmentFact { BatchId = doc.BatchId, AdjustmentLineId = line.Id,
                 StockPostingId = context.Posting.Id, ProductionMovementId = move.Uid, BaseQty = original.BaseQty,
-                TotalValue = original.TotalValue, UnitCost = original.UnitCost, CostBasisCode = ProductionStockAdjustmentCostBasisCodes.Reversal,
+                TotalValue = move.TotalCost, UnitCost = move.UnitCost,
+                CostBasisCode = ProductionStockAdjustmentCostBasisCodes.Reversal,
                 ReversesFactId = original.Id });
         }
         await db.SaveChangesAsync(ct);
@@ -815,7 +831,8 @@ public sealed class ProductionStockAdjustmentService(
                 ConversionFactorToBase = material.ConversionFactorToBase, WarehouseCode = material.WarehouseCode, LocationCode = material.LocationCode,
                 LotNo = material.LotNo, LotId = material.LotId, FromBalLocId = material.FromBalLocId, ItemStatus = material.ItemStatus,
                 ProductionBalLotId = material.ProductionBalLotId, ProductionBalLotMovementId = inverse.Uid,
-                UnitCost = material.UnitCost, TotalCost = material.TotalCost, PostingLinkId = inverse.PostingLinkId,
+                UnitCost = inverse.UnitCost, TotalCost = inverse.TotalCost,
+                PostingLinkId = inverse.PostingLinkId,
                 StockPostingId = context.Posting.Id, SourceLineId = material.SourceLineId, SplitOrdinal = material.SplitOrdinal,
                 OriginalMovementId = material.Uid, ReversesMaterialMovementId = material.Uid, SourceIssueMovementId = material.SourceIssueMovementId,
                 Reason = "ROLLBACK", Remarks = "Production Stock Adjustment rollback", CreatedDate = context.Posting.PostedAtUtc, CreatedBy = context.UserId });

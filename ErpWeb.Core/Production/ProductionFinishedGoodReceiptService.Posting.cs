@@ -296,6 +296,10 @@ public sealed partial class ProductionFinishedGoodReceiptService
         var db = context.Db;
         var facts = await db.ProductionFinishedGoodFactRows.Where(x => x.BatchId == r.BatchId && x.StockPostingId == r.PostingId && x.ReversesFactId == null).OrderBy(x => x.SourceId).ToListAsync(ct);
         if (facts.Count != r.Sources.Count) throw new FgException("The original FG posting facts are incomplete.");
+        var effectiveCosts = await ProductionEffectiveCostResolver.ResolveAsync(db,
+            scope.CompanyCode, scope.BranchCode!, facts.Select(x => x.ProductionMovementId).ToArray(), ct);
+        if (facts.Any(x => effectiveCosts[x.ProductionMovementId].TotalCost != x.TotalValue))
+            throw new FgException("The posted FG receipt has a corrected Production cost and requires replay-aware Inventory/Production rollback.");
         var originalPosting = await db.StockPostings.SingleAsync(x => x.Id == r.PostingId, ct);
         var poolIds = pools.Keys.ToArray();
         var later = await (from m in db.ProductionBalLotMovements join p in db.StockPostings on m.StockPostingId equals p.Id
@@ -304,6 +308,23 @@ public sealed partial class ProductionFinishedGoodReceiptService
             select m).ToListAsync(ct);
         if (later.Any(m => new StockMovementRegistry().GetRequired(m.MovementType).Direction < 0)) throw new FgException("Reverse later active source-pool outflows first.");
         var histories = await db.IvTrxHistories.Where(x => facts.Select(f => f.InventoryHistoryId).Contains(x.Id)).ToListAsync(ct);
+        if (histories.Count != facts.Count || histories.Any(x => x.ReversesHistoryId is not null
+            || x.LedgerVersion != 2 || x.StockPostingId != r.PostingId
+            || db.IvTrxHistories.Any(y => y.ReversesHistoryId == x.Id)))
+            throw new FgException("The original FG Inventory history is missing or already reversed.");
+        var activeValuations = await StockReplayValuationGenerationResolver.ResolveAsync(db,
+            scope.CompanyCode, scope.BranchCode!, histories, ct);
+        var historyIds = facts.Select(x => x.InventoryHistoryId).ToArray();
+        var originalValuationIds = await db.StockValuationFacts.AsNoTracking()
+            .Where(x => x.InventoryHistoryId.HasValue
+                && historyIds.Contains(x.InventoryHistoryId.Value)
+                && x.StockPostingId == r.PostingId && x.ReversesValuationFactId == null)
+            .Select(x => x.Id).ToArrayAsync(ct);
+        if (activeValuations.Values.SelectMany(x => x).Any(x => x.StockPostingId != r.PostingId)
+            || await db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
+                x.OriginalValuationFactId.HasValue
+                && originalValuationIds.Contains(x.OriginalValuationFactId.Value), ct))
+            throw new FgException("The posted FG receipt has corrected Inventory valuation and requires replay-aware Inventory/Production rollback.");
         var maxOriginalHistoryId = histories.Max(h => h.Id);
         var snapshots = await db.ProductionFinishedGoodPriceSnapshotRows.Where(x => x.StockPostingId == r.PostingId).ToListAsync(ct);
         foreach (var group in r.Sources.GroupBy(x => Slice(scope, x, pools[x.ProductionBalLotId])).OrderBy(x => x.Key))

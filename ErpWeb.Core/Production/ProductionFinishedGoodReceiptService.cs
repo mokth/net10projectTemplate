@@ -321,13 +321,48 @@ public sealed partial class ProductionFinishedGoodReceiptService(
             WorkOrderNo = order.WorkOrderNo, Status = r.Batch.BatchStatus, EffectiveDate = r.Batch.TrxDtTime, RefNo = r.Batch.RefNo,
             Remarks = r.Batch.Remarks, Revision = r.DocumentRevision, RowVersion = r.RowVersion, PostingId = r.PostingId,
             ReversalPostingId = r.ReversalPostingId, CorrectedBatchId = r.CorrectedBatchId, CanViewCost = costs };
+        var postedFacts = new Dictionary<long, ProductionFinishedGoodFact>();
+        var postedCosts = new Dictionary<long, ProductionEffectiveCost>();
+        if (costs && r.Batch.BatchStatus == IvBatchStatuses.Posted)
+        {
+            if (r.PostingId is not long activePostingId)
+                throw new FgException("The posted FG receipt has no active posting identity.");
+            var facts = await db.ProductionFinishedGoodFactRows.AsNoTracking()
+                .Where(x => x.BatchId == r.BatchId && x.StockPostingId == activePostingId
+                    && x.ReversesFactId == null).ToArrayAsync(ct);
+            var activeSources = r.Sources.Where(x => x.DocumentRevision == r.DocumentRevision)
+                .ToDictionary(x => x.Id);
+            if (facts.Length != activeSources.Count
+                || facts.Any(x => !activeSources.ContainsKey(x.SourceId))
+                || facts.Select(x => x.SourceId).Distinct().Count() != facts.Length)
+                throw new FgException("The posted FG receipt has incomplete effective cost evidence.");
+            var movementIds = facts.Select(x => x.ProductionMovementId).ToArray();
+            var movements = await db.ProductionBalLotMovements.AsNoTracking()
+                .Where(x => movementIds.Contains(x.Uid)).ToDictionaryAsync(x => x.Uid, ct);
+            if (movements.Count != facts.Length || facts.Any(x =>
+                    !movements.TryGetValue(x.ProductionMovementId, out var movement)
+                    || movement.ProductionBalLotId != activeSources[x.SourceId].ProductionBalLotId
+                    || movement.StockPostingId != activePostingId
+                    || movement.BaseQty != x.BaseQty || movement.TotalCost != x.TotalValue))
+                throw new FgException("The posted FG receipt movement does not match its original fact.");
+            postedFacts = facts.ToDictionary(x => x.SourceId);
+            postedCosts = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+                r.CompanyCode, r.BranchCode, movementIds, ct))
+                .ToDictionary(x => x.Key, x => x.Value);
+        }
         foreach (var s in r.Sources.Where(x => x.DocumentRevision == r.DocumentRevision).OrderBy(x => x.Id))
         {
             var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == s.ProductionBalLotId, ct);
             var error = await SourceReadinessAsync(db, lot, ct);
             if (r.Batch.BatchStatus == "NEW" && error is not null) result.ReadinessErrors.Add(error);
             decimal? value = null;
-            if (costs && r.PostingId is not null) value = await db.ProductionFinishedGoodFactRows.Where(x => x.SourceId == s.Id && x.ReversesFactId == null).Select(x => (decimal?)x.TotalValue).SingleOrDefaultAsync(ct);
+            if (costs && r.Batch.BatchStatus == IvBatchStatuses.Posted)
+            {
+                if (!postedFacts.TryGetValue(s.Id, out var fact)
+                    || !postedCosts.TryGetValue(fact.ProductionMovementId, out var effective))
+                    throw new FgException("The posted FG receipt has incomplete effective cost evidence.");
+                value = effective.TotalCost;
+            }
             else if (costs && error is null && lot.BaseQty > 0) value = StockLedgerPrecision.Money(lot.TotalCost * s.BaseQty / lot.BaseQty);
             var item = await db.IvStockMasters.AsNoTracking()
                 .SingleAsync(x => x.CompanyCode == r.CompanyCode && x.ICode == lot.ItemCode, ct);

@@ -428,6 +428,11 @@ public sealed partial class ProductionStockReturnService
         var facts = await db.ProductionStockReturnFacts.Where(x => x.BatchId == r.BatchId
             && x.StockPostingId == r.PostingId && x.ReversesFactId == null).OrderBy(x => x.ReturnLineId).ToListAsync(ct);
         if (facts.Count != r.Lines.Count) throw new ReturnException("The original PRTN cross-ledger facts are incomplete.");
+        var effectiveCosts = await ProductionEffectiveCostResolver.ResolveAsync(db,
+            scope.CompanyCode, scope.BranchCode!, facts.Select(x => x.ProductionMovementId).ToArray(), ct);
+        if (facts.Any(x => effectiveCosts[x.ProductionMovementId].TotalCost != x.TotalValue))
+            throw new ReturnException("The posted return has a corrected Production cost and requires replay-aware Inventory/Production rollback.",
+                IvMasterErrorCode.InUse);
         var originalPosting = await db.StockPostings.SingleAsync(x => x.Id == r.PostingId, ct);
         var poolIds = pools.Keys.ToArray();
         var laterMovement = await (from m in db.ProductionBalLotMovements
@@ -445,6 +450,20 @@ public sealed partial class ProductionStockReturnService
             || x.LedgerVersion != 2 || x.StockPostingId != r.PostingId
             || db.IvTrxHistories.Any(y => y.ReversesHistoryId == x.Id)))
             throw new ReturnException("The original PRTN Inventory history is missing or already reversed.");
+        var activeValuations = await StockReplayValuationGenerationResolver.ResolveAsync(db,
+            scope.CompanyCode, scope.BranchCode!, histories, ct);
+        var historyIds = facts.Select(f => f.InventoryHistoryId).ToArray();
+        var originalValuationIds = await db.StockValuationFacts.AsNoTracking()
+            .Where(x => x.InventoryHistoryId.HasValue
+                && historyIds.Contains(x.InventoryHistoryId.Value)
+                && x.StockPostingId == r.PostingId && x.ReversesValuationFactId == null)
+            .Select(x => x.Id).ToArrayAsync(ct);
+        if (activeValuations.Values.SelectMany(x => x).Any(x => x.StockPostingId != r.PostingId)
+            || await db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
+                x.OriginalValuationFactId.HasValue
+                && originalValuationIds.Contains(x.OriginalValuationFactId.Value), ct))
+            throw new ReturnException("The posted return has corrected Inventory valuation and requires replay-aware Inventory/Production rollback.",
+                IvMasterErrorCode.InUse);
         var snapshots = await db.ProductionStockReturnPriceSnapshots.Where(x => x.StockPostingId == r.PostingId).ToListAsync(ct);
         if (snapshots.Count == 0) throw new ReturnException("The original PRTN operational price snapshots are missing.");
         foreach (var group in facts.GroupBy(x => x.DestinationBalanceId).OrderBy(x => x.Key))

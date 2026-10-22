@@ -9,6 +9,7 @@ using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Tests.Infrastructure.Helpers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -127,6 +128,512 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         Assert.True(replay.Succeeded, replay.Message);
         Assert.Equal(posted.Data.StockPostingId, replay.Data!.StockPostingId);
         Assert.Single(await db.StockPostings.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Posted_transfer_displays_matching_effective_out_and_in_costs()
+    {
+        const decimal correctedCost = 36.123456m;
+        var graph = await SeedGraphAsync();
+        var service = CreateService();
+        var draft = await CreateDraftAsync(service, graph);
+        var posted = await service.PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            var transfer = await db.ProductionWorkOrderTransfers.SingleAsync(x => x.Uid == draft.Id);
+            var owner = await db.StockPostings.SingleAsync(x => x.Id == transfer.StockPostingId);
+            var epoch = await db.StockLedgerEpochs.SingleAsync();
+            var counter = await db.StockPostingBranchSequences.SingleAsync();
+            var rootAt = owner.EffectiveAt.AddDays(-1);
+            var root = new StockPosting
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+                PostingSequence = ++counter.LastSequence,
+                RequestId = Guid.NewGuid(), CommandType = "WOT_RESTATEMENT_TEST",
+                RequestFingerprint = new string('C', 64),
+                SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+                SourceDocumentId = "WOT-COST", SourceDocumentNo = "WOT-COST",
+                DocumentRevision = 1, PostingRole = "PRIMARY",
+                SourceSnapshotJson = "{}", SourceSnapshotHash = new string('D', 64),
+                EffectiveAt = rootAt, BusinessDate = rootAt.Date, PeriodKey = "2026-10",
+                PostedAtUtc = DateTime.UtcNow, PostedBy = "test"
+            };
+            db.StockPostings.Add(root);
+            await db.SaveChangesAsync();
+            db.StockReplayRuns.Add(new StockReplayRun
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", RootStockPostingId = root.Id,
+                RootRequestId = root.RequestId, RootDocumentType = root.SourceDocumentType,
+                RootDocumentId = root.SourceDocumentId, EarliestEffectiveAt = rootAt,
+                LatestEffectiveAt = owner.EffectiveAt, PlanHash = new string('E', 64),
+                CreatedAtUtc = DateTime.UtcNow, CreatedBy = "test"
+            });
+            await db.SaveChangesAsync();
+            var context = new StockPostingContext(db, epoch, root, "test");
+            var movementIds = new[] { transfer.TransferOutMovementId!.Value, transfer.TransferInMovementId!.Value };
+            var originals = await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", movementIds);
+            var stale = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                ProductionWorkOrderTransferPairCostCorrectionWriter.AppendWithinRootAsync(context,
+                    transfer.Uid, originals[movementIds[0]],
+                    originals[movementIds[1]] with { TotalCost = 1m }, correctedCost));
+            Assert.Equal(StockLedgerErrorCodes.StaleDocument, stale.Error.Code);
+            Assert.Empty(await db.ProductionCostRestatementFacts.ToArrayAsync());
+            var result = await ProductionWorkOrderTransferPairCostCorrectionWriter.AppendWithinRootAsync(
+                context, transfer.Uid, originals[movementIds[0]], originals[movementIds[1]], correctedCost);
+            Assert.NotNull(result.Outbound.Replacement);
+            Assert.NotNull(result.Inbound.Replacement);
+            Assert.Equal(correctedCost, result.TargetValue);
+            var corrected = await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", movementIds);
+            var retry = await ProductionWorkOrderTransferPairCostCorrectionWriter.AppendWithinRootAsync(
+                context, transfer.Uid, corrected[movementIds[0]], corrected[movementIds[1]], correctedCost);
+            Assert.Null(retry.Outbound.Replacement);
+            Assert.Null(retry.Inbound.Replacement);
+            root.SealedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+
+        var current = await service.GetAsync(draft.Id);
+        Assert.True(current.Succeeded, current.Message);
+        Assert.Equal(correctedCost, current.Data!.TransferTotalCost);
+        Assert.Equal(correctedCost, current.Data.TargetCurrentWipValue);
+        Assert.Equal(correctedCost, current.Data.ProjectedTargetWipValue);
+        var search = await service.SearchAsync(new() { Status = ProductionWorkOrderTransferStatuses.Posted });
+        Assert.True(search.Succeeded, search.Message);
+        Assert.Equal(correctedCost, Assert.Single(search.Data!.Rows).TransferTotalCost);
+        var rollback = await service.RollbackAsync(new(draft.Id, current.Data.RowVersion,
+            Guid.NewGuid(), "Reverse restated transfer"));
+        Assert.True(rollback.Succeeded, rollback.Message);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var facts = await verify.ProductionWorkOrderTransferFacts.OrderBy(x => x.Id).ToArrayAsync();
+        Assert.Equal(35.123456m, facts[0].TotalValue);
+        Assert.Equal(correctedCost, facts[1].TotalValue);
+        Assert.Equal(facts[0].Id, facts[1].ReversesFactId);
+        var restoredSource = await verify.ProductionBalLots.SingleAsync(x => x.Uid == graph.SourcePoolId);
+        var revertedTransfer = await verify.ProductionWorkOrderTransfers.SingleAsync(x => x.Uid == draft.Id);
+        var emptiedTarget = await verify.ProductionBalLots.SingleAsync(x => x.Uid == revertedTransfer.DestinationProductionBalLotId);
+        Assert.Equal(correctedCost, restoredSource.TotalCost);
+        Assert.Equal(0m, emptiedTarget.TotalCost);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Transfer_pair_correction_derives_value_from_exact_source_receipt_cost(
+        bool splitSourceReceipt)
+    {
+        const decimal correctedCost = 36.123456m;
+        var graph = await SeedGraphAsync();
+        await UpgradeSourceReceiptToV2Async(graph.SourcePoolId, splitSourceReceipt);
+        var service = CreateService();
+        var draft = await CreateDraftAsync(service, graph);
+        var posted = await service.PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            var transfer = await db.ProductionWorkOrderTransfers.SingleAsync(x => x.Uid == draft.Id);
+            var owner = await db.StockPostings.SingleAsync(x => x.Id == transfer.StockPostingId);
+            var epoch = await db.StockLedgerEpochs.SingleAsync();
+            var counter = await db.StockPostingBranchSequences.SingleAsync();
+            var rootAt = owner.EffectiveAt.AddDays(-1).AddHours(-2);
+            var root = new StockPosting
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+                PostingSequence = ++counter.LastSequence, RequestId = Guid.NewGuid(),
+                CommandType = "WOT_SOURCE_RESTATEMENT_TEST", RequestFingerprint = new string('C', 64),
+                SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+                SourceDocumentId = "WOT-SOURCE-COST", SourceDocumentNo = "WOT-SOURCE-COST",
+                DocumentRevision = 1, SourceSnapshotJson = "{}",
+                SourceSnapshotHash = new string('D', 64), EffectiveAt = rootAt,
+                BusinessDate = rootAt.Date, PeriodKey = "2026-10",
+                PostedAtUtc = DateTime.UtcNow, PostedBy = "test"
+            };
+            db.StockPostings.Add(root);
+            await db.SaveChangesAsync();
+            db.StockReplayRuns.Add(new StockReplayRun
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", RootStockPostingId = root.Id,
+                RootRequestId = root.RequestId, RootDocumentType = root.SourceDocumentType,
+                RootDocumentId = root.SourceDocumentId, EarliestEffectiveAt = rootAt,
+                LatestEffectiveAt = owner.EffectiveAt, PlanHash = new string('E', 64),
+                CreatedAtUtc = DateTime.UtcNow, CreatedBy = "test"
+            });
+            await db.SaveChangesAsync();
+            var context = new StockPostingContext(db, epoch, root, "test");
+            var sourceReceipt = await db.ProductionBalLotMovements.Where(x =>
+                x.ProductionBalLotId == graph.SourcePoolId
+                && x.MovementType == ProductionBalLotMovementTypes.Produce)
+                .OrderBy(x => x.Uid).FirstAsync();
+            var originalReceiptCost = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+                "DEMO", "HQ", [sourceReceipt.Uid]))[sourceReceipt.Uid];
+            var correctedReceiptValue = originalReceiptCost.TotalCost + 1m;
+            var correctedUnit = StockLedgerPrecision.Money(correctedReceiptValue / sourceReceipt.BaseQty);
+            await ProductionCostRestatementWriter.AppendWithinRootAsync(
+                context, originalReceiptCost, correctedReceiptValue, correctedUnit);
+            var ids = new[] { transfer.TransferOutMovementId!.Value, transfer.TransferInMovementId!.Value };
+            var originalPair = await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", ids);
+            var result = await ProductionWorkOrderTransferPairCostCorrectionWriter.AppendFromSourceReceiptsWithinRootAsync(
+                context, transfer.Uid, originalPair[ids[0]], originalPair[ids[1]]);
+            Assert.NotNull(result.Outbound.Replacement);
+            Assert.NotNull(result.Inbound.Replacement);
+            Assert.Equal(correctedCost, result.TargetValue);
+            root.SealedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+
+        var current = await service.GetAsync(draft.Id);
+        Assert.True(current.Succeeded, current.Message);
+        Assert.Equal(correctedCost, current.Data!.TransferTotalCost);
+        var rollback = await service.RollbackAsync(new(draft.Id, current.Data.RowVersion,
+            Guid.NewGuid(), "Reverse source-authorized transfer"));
+        Assert.True(rollback.Succeeded, rollback.Message);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(correctedCost,
+            (await verify.ProductionBalLots.SingleAsync(x => x.Uid == graph.SourcePoolId)).TotalCost);
+    }
+
+    private async Task UpgradeSourceReceiptToV2Async(long sourcePoolId, bool splitReceipt)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var pool = await db.ProductionBalLots.SingleAsync(x => x.Uid == sourcePoolId);
+        var receipt = await db.ProductionBalLotMovements.SingleAsync(x => x.ProductionBalLotId == sourcePoolId);
+        var epoch = await db.StockLedgerEpochs.SingleAsync();
+        var receiptAt = receipt.MovementDate;
+        var owner = new StockPosting
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+            PostingSequence = 1, RequestId = Guid.NewGuid(), CommandType = "SOURCE_RECEIPT_TEST",
+            RequestFingerprint = new string('A', 64), SourceModule = "PRODUCTION",
+            SourceDocumentType = "TEST", SourceDocumentId = "SOURCE-RECEIPT",
+            SourceDocumentNo = "SOURCE-RECEIPT", DocumentRevision = 1,
+            SourceSnapshotJson = "{}", SourceSnapshotHash = new string('B', 64),
+            EffectiveAt = receiptAt, BusinessDate = receiptAt.Date, PeriodKey = "2026-10",
+            PostedAtUtc = DateTime.UtcNow, PostedBy = "test", SealedAtUtc = DateTime.UtcNow
+        };
+        db.StockPostings.Add(owner);
+        db.StockPostingBranchSequences.Add(new StockPostingBranchSequence
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", LastSequence = 1,
+            UpdatedAtUtc = DateTime.UtcNow, RowVersion = [1]
+        });
+        await db.SaveChangesAsync();
+        var link = new ProductionPostingLink
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", CommandType = owner.CommandType,
+            PostingRequestId = owner.RequestId.ToString("N"), WorkOrderId = pool.WorkOrderId,
+            ProductionDocumentType = ProductionDocumentTypes.ProductionOutput,
+            ProductionDocumentNo = owner.SourceDocumentNo,
+            Status = ProductionPostingLinkStatuses.Succeeded,
+            CreatedDate = receiptAt, CreatedBy = "test", CompletedDate = receiptAt
+        };
+        db.ProductionPostingLinks.Add(link);
+        await db.SaveChangesAsync();
+        receipt.LedgerVersion = 2;
+        receipt.LedgerEpochId = epoch.Id;
+        receipt.StockPostingId = owner.Id;
+        receipt.PostingLineNo = 1;
+        receipt.PostingLinkId = link.Uid;
+        receipt.CompanyCode = "DEMO";
+        receipt.BranchCode = "HQ";
+        receipt.ItemCode = pool.ItemCode;
+        receipt.ConversionFactorToBase = pool.ConversionFactorToBase;
+        receipt.ValuationStatus = ProductionPoolValuationService.Verified;
+        if (splitReceipt)
+        {
+            receipt.Qty = 3.25m;
+            receipt.BaseQty = 8.125m;
+            receipt.TotalCost = 30.123456m;
+            receipt.UnitCost = StockLedgerPrecision.Money(receipt.TotalCost / receipt.BaseQty);
+            var second = new ProductionBalLotMovement
+            {
+                ProductionBalLotId = sourcePoolId, MovementType = ProductionBalLotMovementTypes.Produce,
+                Qty = 1m, Uom = pool.Uom, BaseQty = 2.5m, BaseUom = pool.BaseUom,
+                UnitCost = 2m, TotalCost = 5m, ConversionFactorToBase = pool.ConversionFactorToBase,
+                WorkOrderId = pool.WorkOrderId, WorkOrderOperationId = pool.WorkOrderOperationId,
+                RouteStepId = pool.ProducingRouteStepId, PostingLinkId = link.Uid,
+                DocumentType = ProductionDocumentTypes.ProductionOutput,
+                DocumentNo = owner.SourceDocumentNo, MovementDate = receiptAt,
+                CreatedDate = receiptAt, CreatedBy = "test",
+                CompanyCode = "DEMO", BranchCode = "HQ", ItemCode = pool.ItemCode,
+                LedgerVersion = 2, LedgerEpochId = epoch.Id, StockPostingId = owner.Id,
+                PostingLineNo = 2, ValuationStatus = ProductionPoolValuationService.Verified
+            };
+            db.ProductionBalLotMovements.Add(second);
+            await db.SaveChangesAsync();
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == sourcePoolId);
+            db.ProductionValuationEvidenceRows.Add(new ProductionValuationEvidence
+            {
+                MovementId = second.Uid, ProductionBalLotId = sourcePoolId,
+                Generation = valuation.Generation, Status = ProductionPoolValuationService.Verified,
+                Basis = "TEST_VERIFIED_SOURCE_SPLIT"
+            });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Restated_transfer_preserves_independent_target_receipts(
+        bool restatePriorReceipt, bool laterReceipt)
+    {
+        const decimal priorValue = 10m;
+        const decimal correctedCost = 36.123456m;
+        var expectedPriorValue = restatePriorReceipt ? 11m : priorValue;
+        var expectedTargetValue = expectedPriorValue + correctedCost + (laterReceipt ? 5m : 0m);
+        var graph = await SeedGraphAsync();
+        var service = CreateService();
+        var draft = await CreateDraftAsync(service, graph);
+        long targetId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var transfer = await db.ProductionWorkOrderTransfers.SingleAsync(x => x.Uid == draft.Id);
+            var epoch = await db.StockLedgerEpochs.SingleAsync();
+            var priorAt = EffectiveAt.AddHours(-1);
+            var target = new ProductionBalLot
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", Kind = ProductionBalLotKinds.Wip,
+                ItemCode = "WIP-1", Description = "Intermediate WIP", Qty = 1m, Uom = "BOX",
+                BaseQty = 2.5m, BaseUom = "EA", ConversionFactorToBase = 2.5m,
+                TotalCost = priorValue, AverageUnitCost = 4m,
+                WorkOrderId = graph.TargetWorkOrderId, WorkOrderNo = transfer.TargetWorkOrderNo,
+                LotNo = "LOT-TRANSFER-1", PhysicalLotNo = "LOT-TRANSFER-1",
+                BalanceStage = "PROCESS_WIP", OutputType = PrRouteOutputTypes.WipStocked,
+                StockStatusCode = "AVAILABLE", OriginType = "PRODUCED",
+                ProductionLocationId = transfer.TargetProducerProductionLocationId,
+                ProducingRouteStepId = transfer.TargetProducingRouteStepId,
+                WorkOrderOperationId = transfer.TargetProducerOperationId,
+                WorkCentreCode = transfer.TargetProducerWorkCentreCode,
+                ProcessCode = transfer.TargetProducerProcessCode,
+                LastMovementDate = priorAt, LastStockEventEffectiveAt = priorAt, RowVersion = [1]
+            };
+            db.ProductionBalLots.Add(target);
+            await db.SaveChangesAsync();
+            targetId = target.Uid;
+            await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, target);
+            var owner = new StockPosting
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+                PostingSequence = 1, RequestId = Guid.NewGuid(), CommandType = "TARGET_RECEIPT_TEST",
+                RequestFingerprint = new string('A', 64), SourceModule = "PRODUCTION",
+                SourceDocumentType = "TEST", SourceDocumentId = "TARGET-RECEIPT",
+                SourceDocumentNo = "TARGET-RECEIPT", DocumentRevision = 1,
+                SourceSnapshotJson = "{}", SourceSnapshotHash = new string('B', 64),
+                EffectiveAt = priorAt, BusinessDate = priorAt.Date, PeriodKey = "2026-10",
+                PostedAtUtc = DateTime.UtcNow, PostedBy = "test", SealedAtUtc = DateTime.UtcNow
+            };
+            db.StockPostings.Add(owner);
+            db.StockPostingBranchSequences.Add(new StockPostingBranchSequence
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", LastSequence = 1,
+                UpdatedAtUtc = DateTime.UtcNow, RowVersion = [1]
+            });
+            await db.SaveChangesAsync();
+            var link = new ProductionPostingLink
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CommandType = "TARGET_RECEIPT_TEST",
+                PostingRequestId = owner.RequestId.ToString("N"),
+                WorkOrderId = graph.TargetWorkOrderId,
+                ProductionDocumentType = ProductionDocumentTypes.ProductionOutput,
+                ProductionDocumentNo = "TARGET-RECEIPT",
+                Status = ProductionPostingLinkStatuses.Succeeded,
+                CreatedDate = priorAt, CreatedBy = "test", CompletedDate = priorAt
+            };
+            db.ProductionPostingLinks.Add(link);
+            await db.SaveChangesAsync();
+            var receipt = new ProductionBalLotMovement
+            {
+                ProductionBalLotId = targetId, MovementType = ProductionBalLotMovementTypes.Produce,
+                Qty = 1m, Uom = "BOX", BaseQty = 2.5m, BaseUom = "EA",
+                UnitCost = 4m, TotalCost = priorValue, ConversionFactorToBase = 2.5m,
+                WorkOrderId = graph.TargetWorkOrderId, WorkOrderOperationId = transfer.TargetProducerOperationId,
+                RouteStepId = transfer.TargetProducingRouteStepId, PostingLinkId = link.Uid,
+                DocumentType = ProductionDocumentTypes.ProductionOutput,
+                DocumentNo = "TARGET-RECEIPT", MovementDate = priorAt,
+                CreatedDate = priorAt, CreatedBy = "test",
+                CompanyCode = "DEMO", BranchCode = "HQ", ItemCode = "WIP-1",
+                LedgerVersion = 2, LedgerEpochId = epoch.Id, StockPostingId = owner.Id,
+                PostingLineNo = 1, ValuationStatus = ProductionPoolValuationService.Verified
+            };
+            db.ProductionBalLotMovements.Add(receipt);
+            await db.SaveChangesAsync();
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == targetId);
+            db.ProductionValuationEvidenceRows.Add(new ProductionValuationEvidence
+            {
+                MovementId = receipt.Uid, ProductionBalLotId = targetId,
+                Generation = valuation.Generation, Status = ProductionPoolValuationService.Verified,
+                Basis = "TEST_VERIFIED_TARGET"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var posted = await service.PostAsync(new(draft.Id, draft.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+        if (laterReceipt)
+            await SeedLaterTargetReceiptAsync(draft.Id, targetId);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            var transfer = await db.ProductionWorkOrderTransfers.SingleAsync(x => x.Uid == draft.Id);
+            var fact = await db.ProductionWorkOrderTransferFacts.SingleAsync(x => x.TransferId == draft.Id);
+            Assert.Equal(targetId, transfer.DestinationProductionBalLotId);
+            Assert.Equal(priorValue, fact.TargetValueBefore);
+            Assert.Equal(45.123456m, fact.TargetValueAfter);
+            var owner = await db.StockPostings.SingleAsync(x => x.Id == transfer.StockPostingId);
+            var epoch = await db.StockLedgerEpochs.SingleAsync();
+            var counter = await db.StockPostingBranchSequences.SingleAsync();
+            var rootAt = owner.EffectiveAt.AddDays(-1);
+            var root = new StockPosting
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+                PostingSequence = ++counter.LastSequence, RequestId = Guid.NewGuid(),
+                CommandType = "WOT_RESTATEMENT_TEST", RequestFingerprint = new string('C', 64),
+                SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+                SourceDocumentId = "WOT-COST", SourceDocumentNo = "WOT-COST",
+                DocumentRevision = 1, SourceSnapshotJson = "{}",
+                SourceSnapshotHash = new string('D', 64), EffectiveAt = rootAt,
+                BusinessDate = rootAt.Date, PeriodKey = "2026-10",
+                PostedAtUtc = DateTime.UtcNow, PostedBy = "test"
+            };
+            db.StockPostings.Add(root);
+            await db.SaveChangesAsync();
+            db.StockReplayRuns.Add(new StockReplayRun
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", RootStockPostingId = root.Id,
+                RootRequestId = root.RequestId, RootDocumentType = root.SourceDocumentType,
+                RootDocumentId = root.SourceDocumentId, EarliestEffectiveAt = rootAt,
+                LatestEffectiveAt = laterReceipt ? owner.EffectiveAt.AddHours(1) : owner.EffectiveAt,
+                PlanHash = new string('E', 64),
+                CreatedAtUtc = DateTime.UtcNow, CreatedBy = "test"
+            });
+            await db.SaveChangesAsync();
+            var context = new StockPostingContext(db, epoch, root, "test");
+            if (restatePriorReceipt)
+            {
+                var priorReceipt = await db.ProductionBalLotMovements.SingleAsync(x =>
+                    x.ProductionBalLotId == targetId && x.MovementType == ProductionBalLotMovementTypes.Produce);
+                var priorCost = await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", [priorReceipt.Uid]);
+                var priorCorrection = await ProductionCostRestatementWriter.AppendWithinRootAsync(
+                    context, priorCost[priorReceipt.Uid], expectedPriorValue, 4.4m);
+                Assert.NotNull(priorCorrection.Replacement);
+                var target = await db.ProductionBalLots.SingleAsync(x => x.Uid == targetId);
+                var valuation = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == targetId);
+                target.TotalCost += 1m;
+                target.AverageUnitCost = StockLedgerPrecision.Money(target.TotalCost / target.BaseQty);
+                valuation.TrackedValue = target.TotalCost;
+                await db.SaveChangesAsync();
+            }
+            var ids = new[] { transfer.TransferOutMovementId!.Value, transfer.TransferInMovementId!.Value };
+            var originals = await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", ids);
+            var result = await ProductionWorkOrderTransferPairCostCorrectionWriter.AppendWithinRootAsync(
+                context, transfer.Uid, originals[ids[0]], originals[ids[1]], correctedCost);
+            Assert.Equal(expectedTargetValue, result.TargetValue);
+            root.SealedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+
+        var current = await service.GetAsync(draft.Id);
+        Assert.True(current.Succeeded, current.Message);
+        Assert.Equal(correctedCost, current.Data!.TransferTotalCost);
+        Assert.Equal(expectedTargetValue, current.Data.TargetCurrentWipValue);
+        Assert.Equal(expectedTargetValue, current.Data.ProjectedTargetWipValue);
+        var rollback = await service.RollbackAsync(new(draft.Id, current.Data.RowVersion,
+            Guid.NewGuid(), "Reverse restated transfer into existing target"));
+        if (laterReceipt)
+        {
+            Assert.False(rollback.Succeeded);
+            Assert.Contains("later activity", rollback.Message, StringComparison.OrdinalIgnoreCase);
+            await using var blocked = await _factory.CreateDbContextAsync();
+            Assert.Equal(expectedTargetValue,
+                (await blocked.ProductionBalLots.SingleAsync(x => x.Uid == targetId)).TotalCost);
+            Assert.Equal(35.123456m,
+                (await blocked.ProductionWorkOrderTransferFacts.SingleAsync(x => x.TransferId == draft.Id)).TotalValue);
+            return;
+        }
+        Assert.True(rollback.Succeeded, rollback.Message);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(correctedCost, (await verify.ProductionBalLots.SingleAsync(x => x.Uid == graph.SourcePoolId)).TotalCost);
+        Assert.Equal(expectedPriorValue, (await verify.ProductionBalLots.SingleAsync(x => x.Uid == targetId)).TotalCost);
+        var facts = await verify.ProductionWorkOrderTransferFacts.OrderBy(x => x.Id).ToArrayAsync();
+        Assert.Equal(35.123456m, facts[0].TotalValue);
+        Assert.Equal(correctedCost, facts[1].TotalValue);
+    }
+
+    private async Task SeedLaterTargetReceiptAsync(long transferId, long targetId)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var transfer = await db.ProductionWorkOrderTransfers.SingleAsync(x => x.Uid == transferId);
+        var epoch = await db.StockLedgerEpochs.SingleAsync();
+        var counter = await db.StockPostingBranchSequences.SingleAsync();
+        var laterAt = EffectiveAt.AddHours(1);
+        var owner = new StockPosting
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+            PostingSequence = ++counter.LastSequence, RequestId = Guid.NewGuid(),
+            CommandType = "LATER_TARGET_RECEIPT_TEST", RequestFingerprint = new string('F', 64),
+            SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+            SourceDocumentId = "LATER-RECEIPT", SourceDocumentNo = "LATER-RECEIPT",
+            DocumentRevision = 1, SourceSnapshotJson = "{}",
+            SourceSnapshotHash = new string('G', 64), EffectiveAt = laterAt,
+            BusinessDate = laterAt.Date, PeriodKey = "2026-10",
+            PostedAtUtc = DateTime.UtcNow, PostedBy = "test", SealedAtUtc = DateTime.UtcNow
+        };
+        db.StockPostings.Add(owner);
+        await db.SaveChangesAsync();
+        var link = new ProductionPostingLink
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", CommandType = owner.CommandType,
+            PostingRequestId = owner.RequestId.ToString("N"),
+            WorkOrderId = transfer.TargetWorkOrderId,
+            ProductionDocumentType = ProductionDocumentTypes.ProductionOutput,
+            ProductionDocumentNo = "LATER-RECEIPT",
+            Status = ProductionPostingLinkStatuses.Succeeded,
+            CreatedDate = laterAt, CreatedBy = "test", CompletedDate = laterAt
+        };
+        db.ProductionPostingLinks.Add(link);
+        var target = await db.ProductionBalLots.SingleAsync(x => x.Uid == targetId);
+        var valuation = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == targetId);
+        target.Qty += 1m;
+        target.BaseQty += 2.5m;
+        target.TotalCost += 5m;
+        target.AverageUnitCost = StockLedgerPrecision.Money(target.TotalCost / target.BaseQty);
+        target.LastMovementDate = laterAt;
+        target.LastStockEventEffectiveAt = laterAt;
+        valuation.TrackedBaseQty = target.BaseQty;
+        valuation.TrackedValue = target.TotalCost;
+        await db.SaveChangesAsync();
+        var receipt = new ProductionBalLotMovement
+        {
+            ProductionBalLotId = targetId, MovementType = ProductionBalLotMovementTypes.Produce,
+            Qty = 1m, Uom = "BOX", BaseQty = 2.5m, BaseUom = "EA",
+            UnitCost = 2m, TotalCost = 5m, ConversionFactorToBase = 2.5m,
+            WorkOrderId = transfer.TargetWorkOrderId,
+            WorkOrderOperationId = transfer.TargetProducerOperationId,
+            RouteStepId = transfer.TargetProducingRouteStepId, PostingLinkId = link.Uid,
+            DocumentType = ProductionDocumentTypes.ProductionOutput,
+            DocumentNo = "LATER-RECEIPT", MovementDate = laterAt,
+            CreatedDate = laterAt, CreatedBy = "test",
+            CompanyCode = "DEMO", BranchCode = "HQ", ItemCode = "WIP-1",
+            LedgerVersion = 2, LedgerEpochId = epoch.Id, StockPostingId = owner.Id,
+            PostingLineNo = 1, ValuationStatus = ProductionPoolValuationService.Verified
+        };
+        db.ProductionBalLotMovements.Add(receipt);
+        await db.SaveChangesAsync();
+        db.ProductionValuationEvidenceRows.Add(new ProductionValuationEvidence
+        {
+            MovementId = receipt.Uid, ProductionBalLotId = targetId,
+            Generation = valuation.Generation, Status = ProductionPoolValuationService.Verified,
+            Basis = "TEST_VERIFIED_LATER_TARGET"
+        });
+        await db.SaveChangesAsync();
     }
 
     [Fact]

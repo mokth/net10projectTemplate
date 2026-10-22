@@ -217,8 +217,8 @@ public static class ProductionPoolValuationService
                     db.ProductionPoolDependencyRows.Add(new() { ContributorMovementId = contributor.Uid, ConsumerMovementId = movement.Uid, StockPostingId = context.Posting.Id });
                 var availability = await ProductionContributionAvailabilityService.ReadAsync(db, lot.Uid, pool.Generation, ct);
                 var candidates = availability.Select(x => x.Contribution).ToArray();
-                var requiredReceipt = directives?.RequiredReceiptMovementByOutboundMovementId.GetValueOrDefault(movement.Uid);
-                if (requiredReceipt is long receiptId)
+                if (directives is not null
+                    && directives.RequiredReceiptMovementByOutboundMovementId.TryGetValue(movement.Uid, out var receiptId))
                 {
                     var receipt = availability.SingleOrDefault(x => x.Movement.Uid == receiptId);
                     var validPair = movement.MovementType == ProductionBalLotMovementTypes.Return

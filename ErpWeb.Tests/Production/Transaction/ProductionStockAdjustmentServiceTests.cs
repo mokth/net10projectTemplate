@@ -7,6 +7,7 @@ using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Tests.Infrastructure.Helpers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -21,6 +22,7 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
     private readonly IDbContextFactory<AppDbContext> _factory;
     private readonly IStockPostingCoordinator _coordinator;
+    private readonly TestRunningNumberService _numbers = new();
 
     public ProductionStockAdjustmentServiceTests()
     {
@@ -129,6 +131,119 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
             Assert.Empty(await db.StockValuationFacts.ToListAsync());
             Assert.Empty(await db.IvBalLocs.ToListAsync());
         }
+    }
+
+    [Fact]
+    public async Task Restated_adjust_out_displays_and_rolls_back_its_effective_cost_while_manual_in_stays_frozen()
+    {
+        var (workOrderId, poolId) = await SeedWorkOrderAndPoolAsync();
+        var service = CreateService();
+        var initial = await SaveAndPostAsync(service, workOrderId, poolId, 3m);
+        var posted = await SaveAndPostAsync(service, workOrderId, poolId, -1m);
+        var batchId = posted.Id;
+
+        long originalMovementId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            var movement = await db.ProductionBalLotMovements.SingleAsync(x => x.StockPostingId == posted.PostingId);
+            originalMovementId = movement.Uid;
+            Assert.Equal(1m, movement.TotalCost);
+            var owner = await db.StockPostings.SingleAsync(x => x.Id == movement.StockPostingId);
+            var epoch = await db.StockLedgerEpochs.SingleAsync();
+            var counter = await db.StockPostingBranchSequences.SingleAsync();
+            var rootAt = EffectiveAt.AddDays(-1);
+            var root = new StockPosting
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epoch.Id,
+                PostingSequence = ++counter.LastSequence,
+                RequestId = Guid.NewGuid(), CommandType = "PADJ_RESTATEMENT_TEST",
+                RequestFingerprint = new string('C', 64),
+                SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+                SourceDocumentId = "PADJ-COST", SourceDocumentNo = "PADJ-COST",
+                DocumentRevision = 1, PostingRole = "PRIMARY",
+                SourceSnapshotJson = "{}", SourceSnapshotHash = new string('D', 64),
+                EffectiveAt = rootAt, BusinessDate = rootAt.Date, PeriodKey = "2026-10",
+                PostedAtUtc = DateTime.UtcNow, PostedBy = "test"
+            };
+            db.StockPostings.Add(root);
+            await db.SaveChangesAsync();
+            db.StockReplayRuns.Add(new StockReplayRun
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", RootStockPostingId = root.Id,
+                RootRequestId = root.RequestId, RootDocumentType = root.SourceDocumentType,
+                RootDocumentId = root.SourceDocumentId, EarliestEffectiveAt = rootAt,
+                LatestEffectiveAt = owner.EffectiveAt, PlanHash = new string('E', 64),
+                CreatedAtUtc = DateTime.UtcNow, CreatedBy = "test"
+            });
+            await db.SaveChangesAsync();
+            var context = new StockPostingContext(db, epoch, root, "test");
+            var receipt = await db.ProductionBalLotMovements.SingleAsync(x => x.StockPostingId == initial.PostingId);
+            var receiptCost = (await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", [receipt.Uid]))[receipt.Uid];
+            var frozen = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                ProductionCostRestatementWriter.AppendWithinRootAsync(context, receiptCost, 4.5m, 1.5m));
+            Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, frozen.Error.Code);
+            var original = (await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", [movement.Uid]))[movement.Uid];
+            var restatement = await ProductionCostRestatementWriter.AppendWithinRootAsync(context, original, 1.5m, 1.5m);
+            Assert.NotNull(restatement.Replacement);
+            var pool = await db.ProductionBalLots.SingleAsync(x => x.Uid == poolId);
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == poolId);
+            pool.TotalCost = valuation.TrackedValue = 1.5m;
+            pool.AverageUnitCost = 0.75m;
+            root.SealedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+
+        var current = await service.GetAsync(batchId);
+        Assert.True(current.Succeeded, current.Message);
+        Assert.Equal(1.5m, Assert.Single(current.Data!.Lines).TotalValue);
+        var rollback = await service.RollbackAsync(new(batchId, current.Data.RowVersion,
+            Guid.NewGuid(), "Reverse restated PADJ"));
+        Assert.True(rollback.Succeeded, rollback.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var pool = await db.ProductionBalLots.SingleAsync(x => x.Uid == poolId);
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(x => x.ProductionBalLotId == poolId);
+            Assert.Equal(3m, pool.BaseQty);
+            Assert.Equal(3m, pool.TotalCost);
+            Assert.Equal(3m, valuation.TrackedValue);
+            var inverse = await db.ProductionBalLotMovements.SingleAsync(x => x.OriginalMovementId == originalMovementId);
+            Assert.Equal(1.5m, inverse.TotalCost);
+            var facts = await db.ProductionStockAdjustmentFacts.Where(x => x.BatchId == batchId)
+                .OrderBy(x => x.Id).ToArrayAsync();
+            Assert.Equal(1m, facts[0].TotalValue);
+            Assert.Equal(1.5m, facts[1].TotalValue);
+            Assert.Equal(facts[0].Id, facts[1].ReversesFactId);
+        }
+    }
+
+    private async Task<ProductionStockAdjustmentDocument> SaveAndPostAsync(
+        ProductionStockAdjustmentService service, long workOrderId, long poolId, decimal quantity)
+    {
+        var saved = await service.SaveAsync(new ProductionStockAdjustmentSaveRequest
+        {
+            WorkOrderId = workOrderId,
+            SnapshotRevision = 1,
+            SnapshotHash = new string('A', 64),
+            EffectiveDate = EffectiveAt,
+            Lines = [new ProductionStockAdjustmentLineInput
+            {
+                ProductionBalLotId = poolId,
+                AdjustmentQty = quantity,
+                Reason = ProductionStockAdjustmentReasons.Count,
+                CostEvidenceType = quantity > 0m ? InventoryCostEvidenceTypes.ManualApproved : null,
+                ProposedUnitCost = quantity > 0m ? 1m : null,
+                CostOverrideReason = quantity > 0m ? "Approved opening valuation" : null,
+            }],
+        });
+        Assert.True(saved.Succeeded, saved.Message);
+        await SetSqliteRowVersionAsync(saved.Data!.Id);
+        var draft = await service.GetAsync(saved.Data.Id);
+        var posted = await service.PostAsync(new(saved.Data.Id, draft.Data!.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+        return posted.Data!;
     }
 
     [Fact]
@@ -312,7 +427,7 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         InventoryTenantTestHelper.CreateTenantContext(),
         access ?? ProductionLedgerTestFixture.Allow(MenuCodes.PlanningStockAdjustment),
         new FixedCurrentDateService(EffectiveAt.AddDays(1)),
-        new TestRunningNumberService(),
+        _numbers,
         new BranchStockTransactionLock(),
         _coordinator,
         productionWriter ?? new ProductionStockWriter(new StockMovementRegistry()),
@@ -338,8 +453,9 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
 
     private sealed class TestRunningNumberService : IRunningNumberService
     {
-        public Task<int> PeekNextAsync(AppDbContext db, string companyCode, string docKey, CancellationToken cancellationToken = default) => Task.FromResult(100);
-        public Task<int> GetNextAsync(AppDbContext db, string companyCode, string docKey, CancellationToken cancellationToken = default) => Task.FromResult(100);
+        private int _next = 100;
+        public Task<int> PeekNextAsync(AppDbContext db, string companyCode, string docKey, CancellationToken cancellationToken = default) => Task.FromResult(_next);
+        public Task<int> GetNextAsync(AppDbContext db, string companyCode, string docKey, CancellationToken cancellationToken = default) => Task.FromResult(_next++);
     }
 
     private sealed class ThrowAfterApplyWriter(IProductionStockWriter inner) : IProductionStockWriter

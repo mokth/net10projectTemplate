@@ -460,6 +460,197 @@ public sealed class ProductionIssueEffectiveCostReaderTests
         Assert.Equal(remainingValue, (await db.ProductionBalLots.SingleAsync()).TotalCost);
     }
 
+    [Fact]
+    public async Task Corrects_two_terminal_adjustments_in_business_posting_order()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:;Foreign Keys=False");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.ProductionStockAdjustmentWrite = true;
+        var owner = Posting(10, 1);
+        var firstOwner = Posting(11, 2);
+        firstOwner.SourceDocumentType = ProductionDocumentTypes.ProductionStockAdjustment;
+        firstOwner.SourceDocumentId = "2";
+        firstOwner.SourceDocumentNo = "2";
+        var secondOwner = Posting(12, 3);
+        secondOwner.SourceDocumentType = ProductionDocumentTypes.ProductionStockAdjustment;
+        secondOwner.SourceDocumentId = "3";
+        secondOwner.SourceDocumentNo = "3";
+        var root = Posting(14, 4);
+        root.SealedAtUtc = null;
+        root.SourceDocumentId = "4";
+        root.SourceDocumentNo = "4";
+        root.EffectiveAt = EffectiveAt.AddDays(-1);
+        root.BusinessDate = root.EffectiveAt.Date;
+        db.StockPostings.AddRange(owner, firstOwner, secondOwner, root);
+        var (issue, material, history) = Issue();
+        issue.ProductionBalLotId = 1;
+        issue.Qty = 5m;
+        issue.Uom = "EA";
+        issue.TotalCost = 20m;
+        issue.UnitCost = 4m;
+        material.ProductionBalLotId = 1;
+        material.Qty = 5m;
+        material.Uom = "EA";
+        material.BaseUom = "EA";
+        material.TotalCost = 20m;
+        material.UnitCost = 4m;
+        history.BatchStatus = "POSTED";
+        var first = Adjustment(101, 1m, 4m, firstOwner.Id);
+        var second = Adjustment(102, 2m, 8m, secondOwner.Id);
+        db.ProductionBalLots.Add(new ProductionBalLot
+        {
+            Uid = 1, CompanyCode = "DEMO", BranchCode = "HQ",
+            Kind = ProductionBalLotKinds.MaterialIn,
+            ItemCode = "A100", Qty = 2m, Uom = "EA",
+            BaseQty = 2m, BaseUom = "EA",
+            TotalCost = 8m, AverageUnitCost = 4m
+        });
+        await db.SaveChangesAsync();
+        db.ProductionPoolValuationRows.Add(new ProductionPoolValuation
+        {
+            ProductionBalLotId = 1, Generation = 1,
+            Status = ProductionPoolValuationService.Verified,
+            TrackedBaseQty = 2m, TrackedValue = 8m
+        });
+        db.ProductionBalLotMovements.AddRange(issue, first, second);
+        db.ProductionMaterialMovements.Add(material);
+        db.IvTrxHistories.Add(history);
+        var originalFact = Fact(1, 5m, 20m);
+        db.StockValuationFacts.Add(originalFact);
+        db.ProductionValuationEvidenceRows.Add(new ProductionValuationEvidence
+        {
+            MovementId = issue.Uid, ProductionBalLotId = 1,
+            Generation = 1, Status = ProductionPoolValuationService.Verified,
+            Basis = "STOCK_VALUATION:FIFO", InventoryHistoryId = history.Id
+        });
+        foreach (var (movement, posting, batch) in new[]
+            { (first, firstOwner, 2), (second, secondOwner, 3) })
+        {
+            db.ProductionValuationEvidenceRows.Add(new ProductionValuationEvidence
+            {
+                MovementId = movement.Uid, ProductionBalLotId = 1,
+                Generation = 1, Status = ProductionPoolValuationService.Verified,
+                Basis = "POOLED_AVERAGE"
+            });
+            db.ProductionMovementAllocations.Add(new ProductionMovementAllocation
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ",
+                StockPostingId = posting.Id,
+                ReceiptMovementId = issue.Uid,
+                OutboundMovementId = movement.Uid,
+                BaseQty = movement.BaseQty, CreatedAtUtc = EffectiveAt
+            });
+            db.ProductionPoolDependencyRows.Add(new ProductionPoolDependency
+            {
+                ContributorMovementId = issue.Uid,
+                ConsumerMovementId = movement.Uid,
+                StockPostingId = posting.Id
+            });
+            db.ProductionStockAdjustmentFacts.Add(new ProductionStockAdjustmentFact
+            {
+                BatchId = batch, AdjustmentLineId = batch,
+                StockPostingId = posting.Id,
+                ProductionMovementId = movement.Uid,
+                BaseQty = movement.BaseQty,
+                TotalValue = movement.TotalCost,
+                UnitCost = movement.UnitCost,
+                CostBasisCode = "POOLED_AVERAGE"
+            });
+        }
+        db.StockReplayRuns.Add(new StockReplayRun
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            RootStockPostingId = root.Id, RootRequestId = root.RequestId,
+            RootDocumentType = root.SourceDocumentType,
+            RootDocumentId = root.SourceDocumentId,
+            EarliestEffectiveAt = root.EffectiveAt,
+            LatestEffectiveAt = EffectiveAt,
+            PlanHash = new string('C', 64),
+            CreatedAtUtc = EffectiveAt, CreatedBy = "test"
+        });
+        await db.SaveChangesAsync();
+        var lot = await db.ProductionBalLots.SingleAsync();
+        lot.OriginalIssueMovementId = material.Uid;
+        await db.SaveChangesAsync();
+        db.ProductionStockAdjustmentWrite = false;
+
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var context = new StockPostingContext(db, new StockLedgerEpoch
+        {
+            Id = 1, CompanyCode = "DEMO", BranchCode = "HQ"
+        }, root, "test");
+        var expected = await ProductionEffectiveCostResolver.ResolveAsync(
+            db, "DEMO", "HQ", [issue.Uid, first.Uid, second.Uid]);
+        var inverse = Reverse(originalFact, 2);
+        inverse.StockPostingId = root.Id;
+        var replacement = Fact(3, 5m, 25m);
+        replacement.StockPostingId = root.Id;
+        db.StockValuationFacts.AddRange(inverse, replacement);
+        await db.SaveChangesAsync();
+
+        var extra = new ProductionMovementAllocation
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ",
+            StockPostingId = secondOwner.Id,
+            ReceiptMovementId = issue.Uid,
+            OutboundMovementId = 999,
+            BaseQty = 1m, CreatedAtUtc = EffectiveAt
+        };
+        db.ProductionMovementAllocations.Add(extra);
+        await db.SaveChangesAsync();
+        var dependent = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            ProductionTerminalAdjustmentIssueSetCorrectionWriter.AppendWithinRootAsync(
+                context, expected[issue.Uid],
+                [expected[first.Uid], expected[second.Uid]]));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, dependent.Error.Code);
+        Assert.Empty(await db.ProductionCostRestatementFacts.ToArrayAsync());
+        db.ProductionMovementAllocations.Remove(extra);
+        await db.SaveChangesAsync();
+
+        var result = await ProductionTerminalAdjustmentIssueSetCorrectionWriter
+            .AppendWithinRootAsync(context, expected[issue.Uid],
+                [expected[second.Uid], expected[first.Uid]]);
+        Assert.NotNull(result.Issue.Replacement);
+        Assert.NotNull(result.Adjustments[first.Uid].Replacement);
+        Assert.NotNull(result.Adjustments[second.Uid].Replacement);
+        Assert.Equal(10m, result.RemainingValue);
+        Assert.Equal(10m, (await db.ProductionBalLots.SingleAsync()).TotalCost);
+        Assert.Equal(10m, (await db.ProductionPoolValuationRows.SingleAsync()).TrackedValue);
+        var effective = await ProductionEffectiveCostResolver.ResolveAsync(
+            db, "DEMO", "HQ", [issue.Uid, first.Uid, second.Uid]);
+        Assert.Equal(25m, effective[issue.Uid].TotalCost);
+        Assert.Equal(5m, effective[first.Uid].TotalCost);
+        Assert.Equal(10m, effective[second.Uid].TotalCost);
+        Assert.Equal(3, await db.StockReplayEffects.CountAsync());
+        var repeat = await ProductionTerminalAdjustmentIssueSetCorrectionWriter
+            .AppendWithinRootAsync(context, effective[issue.Uid],
+                [effective[first.Uid], effective[second.Uid]]);
+        Assert.Null(repeat.Issue.Replacement);
+        Assert.All(repeat.Adjustments.Values, value => Assert.Null(value.Replacement));
+        await transaction.RollbackAsync();
+        db.ChangeTracker.Clear();
+        Assert.Empty(await db.ProductionCostRestatementFacts.ToArrayAsync());
+        Assert.Equal(8m, (await db.ProductionBalLots.SingleAsync()).TotalCost);
+    }
+
+    private static ProductionBalLotMovement Adjustment(long id, decimal qty,
+        decimal cost, long postingId) => new()
+    {
+        Uid = id, ProductionBalLotId = 1,
+        MovementType = ProductionBalLotMovementTypes.AdjustOut,
+        Qty = qty, Uom = "EA", BaseQty = qty, BaseUom = "EA",
+        TotalCost = cost, UnitCost = 4m,
+        CompanyCode = "DEMO", BranchCode = "HQ",
+        LedgerVersion = 2, LedgerEpochId = 1,
+        StockPostingId = postingId, PostingLineNo = 1,
+        ItemCode = "A100", MovementDate = EffectiveAt,
+        DocumentType = ProductionDocumentTypes.ProductionStockAdjustment,
+        ValuationStatus = ProductionPoolValuationService.Verified
+    };
+
     private static (ProductionBalLotMovement Movement, ProductionMaterialMovement Material,
         IvTrxHistory History) Issue()
     {

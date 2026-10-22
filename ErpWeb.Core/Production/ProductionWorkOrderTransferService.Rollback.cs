@@ -121,6 +121,14 @@ public sealed partial class ProductionWorkOrderTransferService
                 || originalOut.DocumentType != ProductionDocumentTypes.WorkOrderTransfer
                 || originalIn.DocumentType != ProductionDocumentTypes.WorkOrderTransfer)
                 throw new TransferException("The original Work Order Transfer movement evidence does not match its immutable fact.");
+            var effective = await ProductionEffectiveCostResolver.ResolveAsync(db,
+                scope.CompanyCode, scope.BranchCode!, [originalOut.Uid, originalIn.Uid], ct);
+            var effectiveOut = effective[originalOut.Uid];
+            var effectiveIn = effective[originalIn.Uid];
+            if (effectiveOut.TotalCost != effectiveIn.TotalCost
+                || effectiveOut.UnitCost != effectiveIn.UnitCost)
+                throw new TransferException("The effective Work Order Transfer OUT and IN costs do not reconcile.");
+            var effectiveValue = effectiveOut.TotalCost;
 
             var lockedOrders = new Dictionary<long, ProductionWorkOrder>();
             foreach (var workOrderId in workOrderIds)
@@ -129,9 +137,8 @@ public sealed partial class ProductionWorkOrderTransferService
             var target = await LockPoolByIdAsync(db, scope, destinationId, ct);
             ValidateRollbackPoolIdentity(transfer, source, target);
             if (IvQty.Round(source.BaseQty) != IvQty.Round(forwardFact.SourceBaseAfter)
-                || StockLedgerPrecision.Money(source.TotalCost) != StockLedgerPrecision.Money(forwardFact.SourceValueAfter)
                 || IvQty.Round(target.BaseQty) != IvQty.Round(forwardFact.TargetBaseAfter)
-                || StockLedgerPrecision.Money(target.TotalCost) != StockLedgerPrecision.Money(forwardFact.TargetValueAfter))
+                || source.TotalCost != 0m || target.TotalCost < effectiveValue)
                 throw new TransferException("The WIP balance no longer matches the posted Work Order Transfer. Reconcile or reverse later activity first.");
 
             if (await ProductionCostReadiness.PoolValuationError(db, source, ct) is { } sourceCostError)
@@ -218,13 +225,13 @@ public sealed partial class ProductionWorkOrderTransferService
                     originalIn.Qty, originalIn.BaseQty, transfer.TargetWorkOrderId, originalIn.WorkOrderMaterialId,
                     originalIn.WorkOrderOperationId, originalIn.RouteStepId, postingLink.Uid,
                     ProductionDocumentTypes.WorkOrderTransfer, transfer.TransferNo, $"{transfer.Uid}:ROLLBACK:OUT", 0,
-                    OriginalMovementId: originalIn.Uid, ExactTotalValue: originalIn.TotalCost,
+                    OriginalMovementId: originalIn.Uid, ExactTotalValue: effectiveValue,
                     ValuationStatus: ProductionPoolValuationService.Verified),
                 new ProductionStockLeg(source, ProductionBalLotMovementTypes.TransferIn,
                     originalOut.Qty, originalOut.BaseQty, transfer.SourceWorkOrderId, originalOut.WorkOrderMaterialId,
                     originalOut.WorkOrderOperationId, originalOut.RouteStepId, postingLink.Uid,
                     ProductionDocumentTypes.WorkOrderTransfer, transfer.TransferNo, $"{transfer.Uid}:ROLLBACK:IN", 0,
-                    OriginalMovementId: originalOut.Uid, ExactTotalValue: originalOut.TotalCost,
+                    OriginalMovementId: originalOut.Uid, ExactTotalValue: effectiveValue,
                     ValuationStatus: ProductionPoolValuationService.Verified)
             };
             var movements = await productionStock.ApplyAsync(context, legs, ct);
@@ -235,7 +242,8 @@ public sealed partial class ProductionWorkOrderTransferService
                 target.ProductionLocation?.Code, groupId);
             StampTransferMovement(sourceIn, source.WorkCentreCode, source.ProcessCode,
                 source.ProductionLocation?.Code, groupId);
-            AssertReversalPair(targetOut, sourceIn, originalIn, originalOut, primaryId, groupId);
+            AssertReversalPair(targetOut, sourceIn, originalIn, originalOut, effectiveValue,
+                effectiveOut.UnitCost, primaryId, groupId);
             await db.SaveChangesAsync(ct);
             await ProductionPoolValuationService.RecordAsync(context, movements, ct);
             if (targetOut.ValuationStatus != ProductionPoolValuationService.Verified
@@ -247,9 +255,9 @@ public sealed partial class ProductionWorkOrderTransferService
             var targetBaseAfter = IvQty.Round(target.BaseQty);
             var targetValueAfter = StockLedgerPrecision.Money(target.TotalCost);
             if (sourceBaseAfter != IvQty.Round(forwardFact.SourceBaseBefore)
-                || sourceValueAfter != StockLedgerPrecision.Money(forwardFact.SourceValueBefore)
+                || sourceValueAfter != StockLedgerPrecision.Money(sourceValueBefore + effectiveValue)
                 || targetBaseAfter != IvQty.Round(forwardFact.TargetBaseBefore)
-                || targetValueAfter != StockLedgerPrecision.Money(forwardFact.TargetValueBefore)
+                || targetValueAfter != StockLedgerPrecision.Money(targetValueBefore - effectiveValue)
                 || IvQty.Round(source.BaseQty / source.ConversionFactorToBase) != IvQty.Round(source.Qty)
                 || IvQty.Round(target.BaseQty / target.ConversionFactorToBase) != IvQty.Round(target.Qty)
                 || source.AverageUnitCost != (source.BaseQty > 0m ? StockLedgerPrecision.Money(source.TotalCost / source.BaseQty) : 0m)
@@ -380,7 +388,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
     }
 
     private static void AssertReversalPair(ProductionBalLotMovement targetOut, ProductionBalLotMovement sourceIn,
-        ProductionBalLotMovement originalIn, ProductionBalLotMovement originalOut, long primaryId, Guid reversalGroupId)
+        ProductionBalLotMovement originalIn, ProductionBalLotMovement originalOut,
+        decimal effectiveValue, decimal effectiveUnitCost, long primaryId, Guid reversalGroupId)
     {
         if (targetOut.MovementType != ProductionBalLotMovementTypes.TransferOut
             || sourceIn.MovementType != ProductionBalLotMovementTypes.TransferIn
@@ -392,8 +401,8 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             || targetOut.Qty != originalIn.Qty || sourceIn.Qty != originalOut.Qty
             || targetOut.BaseQty != originalIn.BaseQty || sourceIn.BaseQty != originalOut.BaseQty
             || targetOut.BaseUom != originalIn.BaseUom || sourceIn.BaseUom != originalOut.BaseUom
-            || targetOut.TotalCost != originalIn.TotalCost || sourceIn.TotalCost != originalOut.TotalCost
-            || targetOut.UnitCost != originalIn.UnitCost || sourceIn.UnitCost != originalOut.UnitCost
+            || targetOut.TotalCost != effectiveValue || sourceIn.TotalCost != effectiveValue
+            || targetOut.UnitCost != effectiveUnitCost || sourceIn.UnitCost != effectiveUnitCost
             || targetOut.ItemCode != originalIn.ItemCode || sourceIn.ItemCode != originalOut.ItemCode)
             throw new TransferException("Work Order Transfer reversal legs do not exactly mirror the original movement pair.");
     }

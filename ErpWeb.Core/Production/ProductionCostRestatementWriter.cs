@@ -1,5 +1,6 @@
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
@@ -75,6 +76,13 @@ internal static class ProductionCostRestatementWriter
                 m.OriginalMovementId == movement.Uid,
                 cancellationToken))
             throw Invalid("Production movement has no active sealed business owner.");
+        if (movement.MovementType == ProductionBalLotMovementTypes.AdjustIn
+            && await db.ProductionStockAdjustmentFacts.AsNoTracking().AnyAsync(f =>
+                f.ProductionMovementId == movement.Uid && f.ReversesFactId == null
+                && (f.CostBasisCode == InventoryCostEvidenceTypes.ManualApproved
+                    || f.CostBasisCode == InventoryCostEvidenceTypes.ZeroCostApproved),
+                cancellationToken))
+            throw Invalid("Approved manual or zero-cost PADJ authority is frozen.");
         var run = await db.StockReplayRuns.AsNoTracking()
             .SingleOrDefaultAsync(r => r.CompanyCode == context.CompanyCode
                 && r.BranchCode == context.BranchCode

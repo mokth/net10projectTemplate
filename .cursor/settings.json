@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "devexpress-agent-skills/dx-blazor": {
+      "enabled": true
+    }
+  }
+}

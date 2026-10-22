@@ -382,6 +382,26 @@ public sealed partial class ProductionStockReturnService(
             if (WorkOrderError(order, r.SnapshotRevision, r.SnapshotHash) is { } orderError)
                 result.ReadinessErrors.Add(orderError);
         }
+        var postedReturnCosts = new Dictionary<long, ProductionEffectiveCost>();
+        var postedReturnFacts = new Dictionary<long, ProductionStockReturnFact>();
+        if (costs && result.Status == IvBatchStatuses.Posted)
+        {
+            if (r.PostingId is not long activePostingId)
+                throw new ReturnException("The posted return has no active posting identity.");
+            var facts = await db.ProductionStockReturnFacts.AsNoTracking()
+                .Where(x => x.BatchId == r.BatchId && x.StockPostingId == activePostingId
+                    && x.ReversesFactId == null).ToArrayAsync(ct);
+            var activeLineIds = r.Lines.Where(x => x.DocumentRevision == r.DocumentRevision)
+                .Select(x => x.Id).ToHashSet();
+            if (facts.Length != activeLineIds.Count
+                || facts.Any(x => !activeLineIds.Contains(x.ReturnLineId))
+                || facts.Select(x => x.ReturnLineId).Distinct().Count() != facts.Length)
+                throw new ReturnException("The posted return has incomplete effective cost evidence.");
+            postedReturnFacts = facts.ToDictionary(x => x.ReturnLineId);
+            postedReturnCosts = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+                scope.CompanyCode, scope.BranchCode!, facts.Select(x => x.ProductionMovementId).ToArray(), ct))
+                .ToDictionary(x => x.Key, x => x.Value);
+        }
         foreach (var line in r.Lines.Where(x => x.DocumentRevision == r.DocumentRevision).OrderBy(x => x.Id))
         {
             var pool = await db.ProductionBalLots.AsNoTracking().SingleAsync(x => x.Uid == line.ProductionBalLotId, ct);
@@ -410,10 +430,13 @@ public sealed partial class ProductionStockReturnService(
                 }
             }
             decimal? value = null;
-            if (costs && r.PostingId is long postingId)
-                value = await db.ProductionStockReturnFacts.AsNoTracking().Where(x => x.BatchId == r.BatchId
-                    && x.StockPostingId == postingId && x.ReturnLineId == line.Id && x.ReversesFactId == null)
-                    .Select(x => (decimal?)x.TotalValue).SingleOrDefaultAsync(ct);
+            if (costs && result.Status == IvBatchStatuses.Posted)
+            {
+                if (!postedReturnFacts.TryGetValue(line.Id, out var fact)
+                    || !postedReturnCosts.TryGetValue(fact.ProductionMovementId, out var effective))
+                    throw new ReturnException("The posted return has incomplete effective cost evidence.");
+                value = effective.TotalCost;
+            }
             else if (costs && pool.BaseQty > 0m && await ProductionCostReadiness.PoolValuationError(db, pool, ct) is null)
                 value = StockLedgerPrecision.Money(pool.TotalCost * line.BaseQty / pool.BaseQty);
             var issue = await db.ProductionMaterialMovements.AsNoTracking().SingleOrDefaultAsync(x => x.Uid == line.SourceIssueMovementId, ct);
