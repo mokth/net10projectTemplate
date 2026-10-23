@@ -46,7 +46,7 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         plan.Warnings.AddRange(capacity.Warnings);
         var occupied = capacity.OccupiedByMachine;
 
-        var quantityPlan = SegmentCalculator(plan.TargetMachine, qty);
+        var quantityPlan = await SegmentCalculatorAsync(plan.TargetOperation, plan.TargetMachine, qty, cancellationToken);
         var requested = DateTime.SpecifyKind(
             plan.Request.RequestedStart ?? plan.TargetOrder.PlannedStartDateTime, DateTimeKind.Unspecified);
         var targetPlacement = await _engine.PlaceMachineAsync(
@@ -58,24 +58,25 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             return;
         }
         plan.ResolvedSplit = targetPlacement.Start;
-        plan.SplitExplanation = MachineScheduleSegmentCalculator.SnapToCycleBoundary(
-            requested, requested, plan.TargetMachine.CycleSeconds).Explanation;
+        plan.SplitExplanation = targetPlacement.Start == requested
+            ? $"Insertion starts at the requested time {requested:yyyy-MM-dd HH:mm}."
+            : $"Insertion starts at the first available productive time {targetPlacement.Start:yyyy-MM-dd HH:mm}.";
         occupied[MachineScheduleAdvancedPlacementEngine.Normalize(plan.TargetMachine.MachineCode)]
             .AddRange(targetPlacement.Fragments);
 
         var planned = new List<PlannedSegment>
         {
-            NewSegment(plan, plan.TargetOperation, plan.TargetMachine, targetPlacement, qty,
+            await NewSegmentAsync(plan, plan.TargetOperation, plan.TargetMachine, targetPlacement, qty,
                 plan.TargetMachine.SetupSeconds, plan.TargetMachine.ConversionSeconds,
                 plan.TargetMachine.QueueSeconds, ProductionMachineScheduleSegmentKinds.UrgentInsert,
                 string.IsNullOrWhiteSpace(plan.Request.Reason) ? "Urgent insertion / split." : plan.Request.Reason,
-                targetSegments.FirstOrDefault()?.Uid)
+                targetSegments.FirstOrDefault()?.Uid, cancellationToken)
         };
 
         if (qty < scheduledQty)
         {
             var remainderQty = scheduledQty - qty;
-            var remainderPlan = SegmentCalculator(plan.TargetMachine, remainderQty);
+            var remainderPlan = await SegmentCalculatorAsync(plan.TargetOperation, plan.TargetMachine, remainderQty, cancellationToken);
             var remainderAnchor = targetSegments.Count > 0
                 ? targetSegments.Max(x => x.PlannedCompletionDateTime)
                 : targetPlacement.Completion;
@@ -91,10 +92,11 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             }
             occupied[MachineScheduleAdvancedPlacementEngine.Normalize(plan.TargetMachine.MachineCode)]
                 .AddRange(remainderPlacement.Fragments);
-            planned.Add(NewSegment(plan, plan.TargetOperation, plan.TargetMachine, remainderPlacement,
+            planned.Add(await NewSegmentAsync(plan, plan.TargetOperation, plan.TargetMachine, remainderPlacement,
                 remainderQty, plan.TargetMachine.SetupSeconds, plan.TargetMachine.ConversionSeconds,
                 plan.TargetMachine.QueueSeconds, ProductionMachineScheduleSegmentKinds.ManualSplit,
-                "Partial insertion; remaining quantity stays planned later.", targetSegments.FirstOrDefault()?.Uid));
+                "Partial insertion; remaining quantity stays planned later.", targetSegments.FirstOrDefault()?.Uid,
+                cancellationToken));
             plan.Warnings.Add("Partial quantity inserted early. The remaining quantity stays in its later plan, so downstream operations do not start early.");
         }
 
@@ -150,14 +152,15 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
 
             context.AddOrderPlan(order, step, operation);
             var totalQty = segments.Sum(x => x.PlannedOutputQty);
-            var prefixQty = QuantityBeforeSplit(context, first.WorkOrderMachineId, segments, targetPlacement.Start, machine);
+            var (prefixQty, prefixBoundary) = await QuantityBeforeSplitAsync(context, first.WorkOrderMachineId,
+                segments, targetPlacement.Start, operation, machine, cancellationToken);
             var planned = new List<PlannedSegment>();
             if (prefixQty > 0m)
             {
-                var prefixFragments = context.FragmentsBefore(first.WorkOrderMachineId, targetPlacement.Start);
+                var prefixFragments = context.FragmentsBefore(first.WorkOrderMachineId, prefixBoundary);
                 if (prefixFragments.Count > 0)
                 {
-                    var prefixPlan = SegmentCalculator(machine, prefixQty);
+                    var prefixPlan = await SegmentCalculatorAsync(operation, machine, prefixQty, cancellationToken);
                     planned.Add(new PlannedSegment
                     {
                         Existing = first,
@@ -202,7 +205,7 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             var resumeQty = totalQty - prefixQty;
             if (resumeQty > 0m)
             {
-                var resumePlan = SegmentCalculator(machine, resumeQty);
+                var resumePlan = await SegmentCalculatorAsync(operation, machine, resumeQty, cancellationToken);
                 var overhead = MachineScheduleSegmentCalculator.RestartOverheadSeconds(
                     machine, plan.Request.IncludeRestartSetup);
                 var duration = overhead + TimeSpan.FromMinutes((double)resumePlan.RunMinutes);
@@ -216,11 +219,11 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
                 }
                 occupied[MachineScheduleAdvancedPlacementEngine.Normalize(machine.MachineCode)]
                     .AddRange(placement.Fragments);
-                planned.Add(NewSegment(plan, operation, machine, placement, resumeQty,
+                planned.Add(await NewSegmentAsync(plan, operation, machine, placement, resumeQty,
                     overhead == TimeSpan.Zero ? 0m : machine.SetupSeconds,
                     overhead == TimeSpan.Zero ? 0m : machine.ConversionSeconds, 0m,
                     ProductionMachineScheduleSegmentKinds.Resume,
-                    "Resume after an urgent insertion.", first.Uid));
+                    "Resume after an urgent insertion.", first.Uid, cancellationToken));
             }
 
             plan.SegmentsByMachine[machine.Uid] = planned;
@@ -257,8 +260,13 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         var occupied = capacity.OccupiedByMachine;
         plan.Warnings.AddRange(capacity.Warnings);
 
-        var prefixQty = QuantityBeforeSplit(
-            context, plan.TargetMachine.Uid, segments, holdFrom, plan.TargetMachine);
+        var (prefixQty, resolvedHoldFrom) = await QuantityBeforeSplitAsync(
+            context, plan.TargetMachine.Uid, segments, holdFrom,
+            plan.TargetOperation, plan.TargetMachine, cancellationToken);
+        if (resolvedHoldFrom != holdFrom)
+            plan.Warnings.Add($"Hold boundary moved to the last completed productive cycle at {resolvedHoldFrom:yyyy-MM-dd HH:mm}.");
+        holdFrom = resolvedHoldFrom;
+        plan.ResolvedSplit = holdFrom;
         var planned = new List<PlannedSegment>();
         if (prefixQty > 0m && segments.Count > 0)
         {
@@ -266,7 +274,7 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             if (prefixFragments.Count > 0)
             {
                 var first = segments[0];
-                var prefixPlan = SegmentCalculator(plan.TargetMachine, prefixQty);
+                var prefixPlan = await SegmentCalculatorAsync(plan.TargetOperation, plan.TargetMachine, prefixQty, cancellationToken);
                 planned.Add(new PlannedSegment
                 {
                     Existing = first,
@@ -329,7 +337,7 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             return;
         }
 
-        var resumePlan = SegmentCalculator(plan.TargetMachine, heldQty);
+        var resumePlan = await SegmentCalculatorAsync(plan.TargetOperation, plan.TargetMachine, heldQty, cancellationToken);
         var overhead = MachineScheduleSegmentCalculator.RestartOverheadSeconds(
             plan.TargetMachine, plan.Request.IncludeRestartSetup);
         var duration = overhead + TimeSpan.FromMinutes((double)resumePlan.RunMinutes);
@@ -343,11 +351,11 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         }
         occupied[MachineScheduleAdvancedPlacementEngine.Normalize(plan.TargetMachine.MachineCode)]
             .AddRange(placement.Fragments);
-        planned.Add(NewSegment(plan, plan.TargetOperation, plan.TargetMachine, placement, heldQty,
+        planned.Add(await NewSegmentAsync(plan, plan.TargetOperation, plan.TargetMachine, placement, heldQty,
             overhead == TimeSpan.Zero ? 0m : plan.TargetMachine.SetupSeconds,
             overhead == TimeSpan.Zero ? 0m : plan.TargetMachine.ConversionSeconds, 0m,
             ProductionMachineScheduleSegmentKinds.HoldResume,
-            "Known resume date after hold.", segments.FirstOrDefault()?.Uid));
+            "Known resume date after hold.", segments.FirstOrDefault()?.Uid, cancellationToken));
         plan.SegmentsByMachine[plan.TargetMachine.Uid] = planned;
         plan.ScheduledQty = qty;
         plan.ResolvedSplit = placement.Start;
@@ -388,7 +396,7 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         var anchor = DateTime.SpecifyKind(
             plan.Request.RequestedStart ?? plan.Request.ResumeNotBefore ?? hold.ResumeNotBefore ?? DateTime.Now,
             DateTimeKind.Unspecified);
-        var qtyPlan = SegmentCalculator(plan.TargetMachine, qty);
+        var qtyPlan = await SegmentCalculatorAsync(plan.TargetOperation, plan.TargetMachine, qty, cancellationToken);
         var overhead = MachineScheduleSegmentCalculator.RestartOverheadSeconds(
             plan.TargetMachine, plan.Request.IncludeRestartSetup);
         var duration = overhead + TimeSpan.FromMinutes((double)qtyPlan.RunMinutes);
@@ -407,11 +415,12 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         context.Supersede(current);
         plan.SegmentsByMachine[plan.TargetMachine.Uid] =
         [
-            NewSegment(plan, plan.TargetOperation, plan.TargetMachine, placement, qty,
+            await NewSegmentAsync(plan, plan.TargetOperation, plan.TargetMachine, placement, qty,
                 overhead == TimeSpan.Zero ? 0m : plan.TargetMachine.SetupSeconds,
                 overhead == TimeSpan.Zero ? 0m : plan.TargetMachine.ConversionSeconds, 0m,
                 ProductionMachineScheduleSegmentKinds.HoldResume,
-                "Hold released; remaining quantity resumed.", current.FirstOrDefault()?.Uid)
+                "Hold released; remaining quantity resumed.", current.FirstOrDefault()?.Uid,
+                cancellationToken)
         ];
         plan.AffectedMachineIds.Add(plan.TargetMachine.Uid);
         plan.ScheduledQty = qty;
@@ -450,7 +459,7 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             plan.Request.RequestedStart ?? DateTime.Now, DateTimeKind.Unspecified);
         if (plan.TargetMachine.PlannedStartDateTime is DateTime historical && anchor < historical)
             anchor = historical;
-        var qtyPlan = SegmentCalculator(plan.TargetMachine, remaining);
+        var qtyPlan = await SegmentCalculatorAsync(plan.TargetOperation, plan.TargetMachine, remaining, cancellationToken);
         var overhead = MachineScheduleSegmentCalculator.RestartOverheadSeconds(
             plan.TargetMachine, plan.Request.IncludeRestartSetup);
         var duration = overhead + TimeSpan.FromMinutes((double)qtyPlan.RunMinutes);
@@ -466,11 +475,12 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             .AddRange(placement.Fragments);
         plan.SegmentsByMachine[plan.TargetMachine.Uid] =
         [
-            NewSegment(plan, plan.TargetOperation, plan.TargetMachine, placement, remaining,
+            await NewSegmentAsync(plan, plan.TargetOperation, plan.TargetMachine, placement, remaining,
                 overhead == TimeSpan.Zero ? 0m : plan.TargetMachine.SetupSeconds,
                 overhead == TimeSpan.Zero ? 0m : plan.TargetMachine.ConversionSeconds, 0m,
                 ProductionMachineScheduleSegmentKinds.RemainingReplan,
-                "Remaining unexecuted quantity replanned.", current.FirstOrDefault()?.Uid)
+                "Remaining unexecuted quantity replanned.", current.FirstOrDefault()?.Uid,
+                cancellationToken)
         ];
         plan.ScheduledQty = remaining;
         plan.RequestedSplit = anchor;

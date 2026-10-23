@@ -2567,6 +2567,80 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         Assert.Contains(after.AuditEvents, x => x.EventType == ProductionAuditEventTypes.Released);
     }
 
+    [Fact]
+    public async Task Reopen_for_edit_blocks_when_released_snapshot_facts_changed()
+    {
+        await SeedManualCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == released.WorkOrderNo);
+            order.PlannedQty += 1m;
+            await db.SaveChangesAsync();
+        }
+
+        var reopened = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Changed manufacturing quantity"
+        });
+
+        Assert.False(reopened.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, reopened.ErrorCode);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(ProductionWorkOrderStatuses.Released,
+            (await verify.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == released.WorkOrderNo)).Status);
+    }
+
+    [Fact]
+    public async Task Reopen_for_edit_blocks_advanced_plan_before_removing_allocations()
+    {
+        await SeedMachineCurrentRouteAsync();
+        var sut = CreateSut();
+        var released = await CreateReleasedAsync(sut);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var machine = await db.ProductionWorkOrderMachines
+                .Include(x => x.Operation).ThenInclude(x => x.WorkOrder)
+                .FirstAsync(x => x.Operation!.WorkOrder!.WorkOrderNo == released.WorkOrderNo && x.IsSelected);
+            db.ProductionMachineScheduleSegments.Add(new ProductionMachineScheduleSegment
+            {
+                CompanyCode = machine.Operation!.WorkOrder!.CompanyCode,
+                BranchCode = machine.Operation.WorkOrder.BranchCode,
+                WorkOrderId = machine.Operation.WorkOrder.Uid,
+                WorkOrderOperationId = machine.OperationId,
+                WorkOrderMachineId = machine.Uid,
+                MachineCode = machine.MachineCode,
+                SegmentSequence = 2,
+                SegmentKind = ProductionMachineScheduleSegmentKinds.ManualSplit,
+                PlannedOutputQty = 1m,
+                PlannedStartDateTime = machine.PlannedStartDateTime!.Value,
+                PlannedCompletionDateTime = machine.PlannedCompletionDateTime!.Value,
+                MachineScheduleRevision = machine.ScheduleRevision,
+                RowVersion = [1]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var reopened = await sut.ReopenForEditAsync(new ProductionWorkOrderReopenRequest
+        {
+            WorkOrderNo = released.WorkOrderNo,
+            RowVersion = released.RowVersion,
+            Reason = "Attempt advanced reopen"
+        });
+
+        Assert.False(reopened.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, reopened.ErrorCode);
+        Assert.Contains("Advanced-scheduled", reopened.Message, StringComparison.Ordinal);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(ProductionWorkOrderStatuses.Released,
+            (await verify.ProductionWorkOrders.SingleAsync(x => x.WorkOrderNo == released.WorkOrderNo)).Status);
+        Assert.True(await verify.ProductionMachineScheduleAllocations
+            .AnyAsync(x => x.WorkOrderId == released.Uid));
+    }
+
     [Theory]
     [InlineData(ProductionWorkOrderStatuses.Draft)]
     [InlineData(ProductionWorkOrderStatuses.InProgress)]

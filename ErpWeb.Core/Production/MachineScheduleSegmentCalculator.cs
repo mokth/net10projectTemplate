@@ -17,19 +17,37 @@ public readonly record struct MachineScheduleQuantityPlan(
     public bool IsEmpty => OutputQty <= 0m || CycleCount <= 0m;
 }
 
-/// <summary>Resolved cycle-safe split boundary.</summary>
-public readonly record struct MachineScheduleSplitBoundary(
-    DateTime Requested,
+public readonly record struct MachineScheduleProductiveBoundary(
     DateTime Resolved,
-    int SlotIndex,
-    bool WasAdjusted,
-    string Explanation);
+    int CompletedSlots);
 
 /// <summary>
 /// Pure segment math. It never reads a database and never changes production quantities.
 /// </summary>
 public static class MachineScheduleSegmentCalculator
 {
+    public static async Task<MachineScheduleQuantityPlan> ComputeQuantityAsync(
+        string companyCode,
+        ProductionWorkOrderOperation operation,
+        ProductionWorkOrderMachine machine,
+        decimal operationOutputQty,
+        IUomConversionService uom,
+        CancellationToken cancellationToken = default)
+    {
+        var operationUom = (operation.PlannedOutputUom ?? string.Empty).Trim();
+        var cycleUom = string.IsNullOrWhiteSpace(machine.OutputPerCycleUom)
+            ? operationUom : machine.OutputPerCycleUom.Trim();
+        var conversion = await uom.ConvertAsync(
+            companyCode, operation.OperationCode, operationOutputQty,
+            operationUom, cycleUom, cancellationToken);
+        if (!conversion.Succeeded)
+            throw new MachineScheduleQuantityConversionException(
+                conversion.FailureMessage ?? $"No approved conversion from {operationUom} to {cycleUom}.");
+
+        return ComputeQuantity(conversion.Quantity, machine.OutputPerCycle,
+            machine.ParallelMachineCount, machine.CycleSeconds);
+    }
+
     /// <summary>
     /// Discrete cycle math. A visual split may only sit on a productive cycle-slot boundary, so
     /// this is also the boundary calculator's source of truth.
@@ -52,40 +70,36 @@ public static class MachineScheduleSegmentCalculator
     public static decimal RunMinutes(decimal cycleSlots, decimal cycleSeconds) =>
         decimal.Round(cycleSlots * cycleSeconds / 60m, IvQty.Scale, MidpointRounding.AwayFromZero);
 
-    /// <summary>
-    /// Snaps a requested split point to a whole cycle-slot boundary measured from the segment's
-    /// productive start. Rounding is <b>up</b>: a partial cycle is a productive cycle.
-    /// </summary>
-    public static MachineScheduleSplitBoundary SnapToCycleBoundary(
-        DateTime productiveStart,
+    public static MachineScheduleProductiveBoundary ResolveCompletedProductiveBoundary(
+        IReadOnlyList<TimeInterval> fragments,
         DateTime requested,
+        decimal overheadSeconds,
         decimal cycleSeconds)
     {
+        var ordered = fragments.Where(x => x.End > x.Start).OrderBy(x => x.Start).ToList();
+        if (ordered.Count == 0)
+            return new MachineScheduleProductiveBoundary(requested, 0);
         if (cycleSeconds <= 0m)
-        {
-            return new MachineScheduleSplitBoundary(requested, productiveStart, 0, true,
-                "Machine cycle time is invalid; no split boundary can be resolved.");
-        }
+            return new MachineScheduleProductiveBoundary(ordered[0].Start, 0);
 
-        var slot = TimeSpan.FromSeconds((double)cycleSeconds);
-        var elapsed = requested - productiveStart;
-        if (elapsed <= TimeSpan.Zero)
-        {
-            return new MachineScheduleSplitBoundary(requested, productiveStart, 0, true,
-                $"Requested split is before the productive start; resolved to {productiveStart:yyyy-MM-dd HH:mm}.");
-        }
+        var elapsed = ordered.Sum(x => x.Start >= requested
+            ? 0m
+            : (decimal)((x.End < requested ? x.End : requested) - x.Start).TotalSeconds);
+        var productive = Math.Max(0m, elapsed - Math.Max(0m, overheadSeconds));
+        var slots = (int)Math.Floor(productive / cycleSeconds);
+        if (slots == 0)
+            return new MachineScheduleProductiveBoundary(ordered[0].Start, 0);
 
-        var slots = (int)Math.Ceiling(elapsed.TotalSeconds / slot.TotalSeconds);
-        var resolved = productiveStart.AddTicks(slot.Ticks * slots);
-        var adjusted = resolved != requested;
-        return new MachineScheduleSplitBoundary(
-            requested,
-            resolved,
-            slots,
-            adjusted,
-            adjusted
-                ? $"Split snapped to the next cycle boundary {resolved:yyyy-MM-dd HH:mm} ({cycleSeconds:n0}s cycles)."
-                : $"Split sits exactly on cycle boundary {resolved:yyyy-MM-dd HH:mm}.");
+        var rawSecondsToBoundary = Math.Max(0m, overheadSeconds) + slots * cycleSeconds;
+        foreach (var fragment in ordered)
+        {
+            var seconds = (decimal)(fragment.End - fragment.Start).TotalSeconds;
+            if (rawSecondsToBoundary <= seconds)
+                return new MachineScheduleProductiveBoundary(
+                    fragment.Start.AddSeconds((double)rawSecondsToBoundary), slots);
+            rawSecondsToBoundary -= seconds;
+        }
+        return new MachineScheduleProductiveBoundary(ordered[^1].End, slots);
     }
 
     /// <summary>Additional planning overhead when production genuinely restarts (not a calendar break).</summary>
@@ -96,3 +110,5 @@ public static class MachineScheduleSegmentCalculator
         return TimeSpan.FromSeconds((double)(machine.SetupSeconds + machine.ConversionSeconds));
     }
 }
+
+internal sealed class MachineScheduleQuantityConversionException(string message) : Exception(message);

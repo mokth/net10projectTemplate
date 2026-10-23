@@ -14,8 +14,8 @@ public static class PoProcurementKpiEndpoints
 
     public static IEndpointRouteBuilder MapPoProcurementKpiEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/purchase/inquiry/kpi/export", ExportSummaryAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/kpi/suppliers/export", ExportSupplierDeliveryAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/kpi/export", ExportSummaryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/kpi/suppliers/export", ExportSupplierDeliveryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

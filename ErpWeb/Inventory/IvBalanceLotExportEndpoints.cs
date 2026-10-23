@@ -23,7 +23,7 @@ public static class IvBalanceLotExportEndpoints
     public static IEndpointRouteBuilder MapIvBalanceLotExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/inventory/balance-by-lot/export", ExportAsync)
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

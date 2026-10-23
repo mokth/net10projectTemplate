@@ -22,25 +22,25 @@ public static class SaInquiryExportEndpoints
 
     public static IEndpointRouteBuilder MapSaInquiryExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/sales/inquiry/customer/export", ExportCustomerTransactionsAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/customer-history/export", ExportCustomerHistoryAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/qt-status/export", ExportQtStatusAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/so-outstanding/export", ExportSoOutstandingAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/do-status/export", ExportDoStatusAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/document-relationship/export", ExportDocumentRelationshipAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/cdn/export", ExportCdnAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/einvoice/export", ExportEInvoiceAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/einvoice-reconciliation/export", ExportEInvoiceReconciliationAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/invoice/export", ExportInvoiceInquiryAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/so-transactions/export", ExportSoTransactionsAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/inquiry/price-history/export", ExportPriceHistoryAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/inquiry/customer/export", ExportCustomerTransactionsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/customer-history/export", ExportCustomerHistoryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/qt-status/export", ExportQtStatusAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/so-outstanding/export", ExportSoOutstandingAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/do-status/export", ExportDoStatusAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/document-relationship/export", ExportDocumentRelationshipAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/cdn/export", ExportCdnAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/einvoice/export", ExportEInvoiceAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/einvoice-reconciliation/export", ExportEInvoiceReconciliationAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/invoice/export", ExportInvoiceInquiryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/so-transactions/export", ExportSoTransactionsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/inquiry/price-history/export", ExportPriceHistoryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
 
         // Sales Monitor (plan-salesDecisionSupport.prompt.md, Phase A). Same service method as the grid,
         // same applied filter, same ACCESS check inside the service.
-        endpoints.MapGet("/sales/monitor/so-ageing/export", ExportSoAgeingAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/monitor/delivered-not-fully-invoiced/export", ExportNotFullyInvoicedAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/monitor/quotation-expiry/export", ExportQtExpiryAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/monitor/einvoice-action/export", ExportEInvoiceActionAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/monitor/so-ageing/export", ExportSoAgeingAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/monitor/delivered-not-fully-invoiced/export", ExportNotFullyInvoicedAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/monitor/quotation-expiry/export", ExportQtExpiryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/monitor/einvoice-action/export", ExportEInvoiceActionAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

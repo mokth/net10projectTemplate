@@ -68,7 +68,8 @@ public static class StockReplayFifoIssueRemovalPhysicalWriter
         var detail = details[0];
         var histories = await db.IvTrxHistories
             .Where(h => h.CompanyCode == context.CompanyCode
-                && h.BranchCode == context.BranchCode && h.BatchNo == batchNo)
+                && h.BranchCode == context.BranchCode && h.BatchNo == batchNo
+                && h.DocumentRevision == context.Posting.DocumentRevision)
             .ToArrayAsync(cancellationToken);
         if (histories.Length != 1 || histories[0].Id != permit.RemovedHistoryId)
             throw Invalid("The MI batch has changed or already reversed history.");

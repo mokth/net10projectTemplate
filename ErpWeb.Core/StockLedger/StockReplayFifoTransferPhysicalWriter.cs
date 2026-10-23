@@ -58,6 +58,7 @@ public static class StockReplayFifoTransferPhysicalWriter
                 h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode
                 && (h.BatchNo == batchNo
+                    && h.DocumentRevision == authority.DocumentRevision
                     || h.StockPostingId == context.Posting.Id),
                 cancellationToken))
             throw Invalid("The FIFO transfer changed before its physical write.");

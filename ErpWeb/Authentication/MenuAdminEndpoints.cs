@@ -7,7 +7,8 @@ public static class MenuAdminEndpoints
 {
     public static IEndpointRouteBuilder MapMenuAdminEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var group = endpoints.MapGroup("/admin/menus");
+        var group = endpoints.MapGroup("/admin/menus")
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
 
         group.MapPost("/sync/preview", async (
             IMenuSyncService syncService,

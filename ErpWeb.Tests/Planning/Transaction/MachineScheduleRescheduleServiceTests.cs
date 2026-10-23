@@ -792,6 +792,108 @@ public sealed class MachineScheduleRescheduleServiceTests
     }
 
     [Fact]
+    public async Task Advanced_split_uses_approved_box_to_piece_conversion_for_cycles()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        var backfill = fixture.CreateSegmentBackfillService();
+        var backfillPreview = await backfill.PreviewAsync();
+        Assert.True(backfillPreview.Succeeded, backfillPreview.Message);
+        Assert.True((await backfill.ApplyAsync(backfillPreview.Data!.PreviewToken)).Succeeded);
+
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            var operation = await db.ProductionWorkOrderOperations
+                .SingleAsync(x => x.Uid == seeded.Request.OperationId);
+            operation.PlannedOutputUom = "BOX";
+            var machine = await db.ProductionWorkOrderMachines
+                .SingleAsync(x => x.Uid == seeded.Request.WorkOrderMachineId);
+            machine.OutputPerCycleUom = "PCS";
+            machine.OutputPerCycle = 2m;
+            machine.CycleSeconds = 60m;
+            await db.SaveChangesAsync();
+        }
+
+        var uom = new Mock<IUomConversionService>();
+        uom.Setup(x => x.ConvertAsync("DEMO", "OP1", It.IsAny<decimal>(), "BOX", "PCS",
+                It.IsAny<CancellationToken>()))
+            .Returns((string company, string item, decimal quantity, string fromUom,
+                string toUom, CancellationToken cancellationToken) =>
+                Task.FromResult(UomConversionResult.Ok(quantity * 12m, 4)));
+        var service = fixture.CreateAdvancedService(uom.Object);
+        var request = AdvancedRequest(seeded.Request, MachineScheduleAdvancedAction.InsertSplit,
+            requestedStart: new DateTime(2026, 10, 1, 7, 0, 0), partialQuantity: 4m);
+
+        var preview = await service.PreviewInsertAsync(request);
+
+        Assert.True(preview.Succeeded, preview.Message);
+        Assert.True(preview.Data!.CanCommit, string.Join(" ", preview.Data.Blockers));
+        var inserted = Assert.Single(preview.Data.Segments,
+            x => x.Kind == ProductionMachineScheduleSegmentKinds.UrgentInsert);
+        Assert.Equal(4m, inserted.PlannedOutputQty);
+        Assert.Equal(24m, inserted.CycleCount);
+        Assert.Equal(24m, inserted.RunMinutes);
+
+        uom.Setup(x => x.ConvertAsync("DEMO", "OP1", It.IsAny<decimal>(), "BOX", "PCS",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(UomConversionResult.Fail(
+                UomConversionFailureCodes.MissingConversion, "Approved BOX to PCS conversion is missing."));
+        var blocked = await service.PreviewInsertAsync(request);
+        Assert.True(blocked.Succeeded, blocked.Message);
+        Assert.False(blocked.Data!.CanCommit);
+        Assert.Contains(blocked.Data.Blockers, x => x.Contains("BOX to PCS", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Hold_split_ignores_historical_unlinked_allocation_fragments()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var seeded = await fixture.SeedActiveMachineScheduleAsync();
+        await fixture.SetMachineCycleSecondsAsync(seeded.Request.WorkOrderMachineId, 360m);
+        var backfill = fixture.CreateSegmentBackfillService();
+        var backfillPreview = await backfill.PreviewAsync();
+        Assert.True(backfillPreview.Succeeded, backfillPreview.Message);
+        Assert.True((await backfill.ApplyAsync(backfillPreview.Data!.PreviewToken)).Succeeded);
+
+        var service = fixture.CreateAdvancedService();
+        var request = AdvancedRequest(seeded.Request, MachineScheduleAdvancedAction.Hold,
+            requestedStart: new DateTime(2026, 10, 1, 8, 30, 0),
+            holdType: ProductionScheduleHoldTypes.QualityHold);
+        var before = await service.PreviewHoldAsync(request);
+        Assert.True(before.Succeeded, before.Message);
+        Assert.True(before.Data!.CanCommit, string.Join(" ", before.Data.Blockers));
+
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            var current = await db.ProductionMachineScheduleAllocations.AsNoTracking()
+                .SingleAsync(x => x.WorkOrderMachineId == seeded.Request.WorkOrderMachineId);
+            db.ProductionMachineScheduleAllocations.Add(new ProductionMachineScheduleAllocation
+            {
+                CompanyCode = current.CompanyCode,
+                BranchCode = current.BranchCode,
+                MachineCode = current.MachineCode,
+                WorkOrderId = current.WorkOrderId,
+                WorkOrderOperationId = current.WorkOrderOperationId,
+                WorkOrderMachineId = current.WorkOrderMachineId,
+                ScheduleRevision = current.ScheduleRevision - 1,
+                FragmentNo = 1,
+                StartDateTime = current.StartDateTime,
+                EndDateTime = current.EndDateTime,
+                ScheduleSourceHash = current.ScheduleSourceHash,
+                CreatedDate = current.CreatedDate,
+                CreatedBy = "test"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var after = await service.PreviewHoldAsync(request);
+        Assert.True(after.Succeeded, after.Message);
+        Assert.True(after.Data!.CanCommit, string.Join(" ", after.Data.Blockers));
+        Assert.Equal(before.Data.Segments.Select(x => (x.PlannedOutputQty, x.Start, x.Completion)),
+            after.Data.Segments.Select(x => (x.PlannedOutputQty, x.Start, x.Completion)));
+    }
+
+    [Fact]
     public async Task Open_ended_hold_reports_unknown_completion_and_resume_reanchors_the_remaining_quantity()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -1310,7 +1412,7 @@ public sealed class MachineScheduleRescheduleServiceTests
                 access.Object);
         }
 
-        public MachineScheduleAdvancedPlanningService CreateAdvancedService()
+        public MachineScheduleAdvancedPlanningService CreateAdvancedService(IUomConversionService? uom = null)
         {
             var access = new Mock<IAccessRightService>();
             access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -1338,7 +1440,8 @@ public sealed class MachineScheduleRescheduleServiceTests
                 readiness.Object,
                 _calendars,
                 new AlwaysOpenWorkOrderCalendarProvider(),
-                new ProductionMachineCapacityService(Factory));
+                new ProductionMachineCapacityService(Factory),
+                uom ?? new IvUomConversionService(Factory));
         }
 
         public MachineScheduleAllocationBackfillService CreateBackfillService()
@@ -1484,6 +1587,7 @@ public sealed class MachineScheduleRescheduleServiceTests
                 IsFinalOperation = true,
                 PlannedQty = 10m,
                 PlannedOutputQty = 10m,
+                RemainingQty = 10m,
                 PlannedOutputUom = "EA",
                 OtherCostPerOutputUnit = 3.25m,
                 PlannedStartDateTime = start.Value,

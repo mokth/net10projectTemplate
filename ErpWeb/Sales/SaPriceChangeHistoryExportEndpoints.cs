@@ -12,7 +12,7 @@ public static class SaPriceChangeHistoryExportEndpoints
     {
         endpoints.MapGet(
             "/sales/inquiry/price-change-history/export",
-            ExportAsync).RequireAuthorization();
+            ExportAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

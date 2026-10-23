@@ -154,6 +154,20 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<ISecurityAuditWriter, SecurityAuditWriter>();
 
+        // Self-service password reset by email. Email delivery is best-effort: with Email:Enabled
+        // false the reset request still reaches the administrator queue and no network call is made.
+        services.AddSingleton<IValidateOptions<PasswordRecoveryOptions>, PasswordRecoveryOptionsValidator>();
+        services.AddOptions<PasswordRecoveryOptions>()
+            .Bind(configuration.GetSection(PasswordRecoveryOptions.SectionName))
+            .ValidateOnStart();
+
+        services.AddSingleton<IValidateOptions<EmailOptions>, EmailOptionsValidator>();
+        services.AddOptions<EmailOptions>()
+            .Bind(configuration.GetSection(EmailOptions.SectionName))
+            .ValidateOnStart();
+
+        services.AddSingleton<IEmailSender, SmtpEmailSender>();
+
         services.AddScoped<IPasswordRecoveryService, PasswordRecoveryService>();
 
         services.AddScoped<IPermissionAdminService, PermissionAdminService>();

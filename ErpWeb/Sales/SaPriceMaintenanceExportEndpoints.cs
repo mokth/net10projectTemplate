@@ -11,7 +11,7 @@ public static class SaPriceMaintenanceExportEndpoints
     {
         endpoints.MapGet(
             "/sales/pricing/review/export",
-            ExportAsync).RequireAuthorization();
+            ExportAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

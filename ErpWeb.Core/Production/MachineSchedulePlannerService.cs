@@ -146,6 +146,8 @@ public sealed class MachineSchedulePlannerJob
         string.Equals(SchedulingDirection, ProductionSchedulingDirections.Backward, StringComparison.OrdinalIgnoreCase);
 
     public decimal RemainingQuantity { get; init; }
+    public decimal FuturePlannedQty { get; set; }
+    public bool NeedsRemainingReplan { get; set; }
 
     public bool HasSegmentData { get; set; }
     public bool HasActiveHold { get; set; }
@@ -1025,18 +1027,42 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         var jobMachineIds = jobs.Select(x => x.WorkOrderMachineId).Distinct().ToList();
         var allocationsByMachine = new Dictionary<long, List<ProductionMachineScheduleAllocation>>();
         var segmentsByMachine = new Dictionary<long, List<ProductionMachineScheduleSegment>>();
+        var currentSetsByMachine = new Dictionary<long, List<ProductionMachineScheduleSegmentSet>>();
+        var linksByAllocation = new Dictionary<long, List<ProductionMachineScheduleAllocationSegment>>();
         foreach (var machineBatch in jobMachineIds.Chunk(800))
         {
-            foreach (var row in await db.ProductionMachineScheduleAllocations.AsNoTracking()
+            var batchAllocations = await db.ProductionMachineScheduleAllocations.AsNoTracking()
                          .Where(x => machineBatch.Contains(x.WorkOrderMachineId))
                          .OrderBy(x => x.WorkOrderMachineId)
                          .ThenBy(x => x.ScheduleRevision)
                          .ThenBy(x => x.FragmentNo)
-                         .ToListAsync(cancellationToken))
+                         .ToListAsync(cancellationToken);
+            foreach (var row in batchAllocations)
             {
                 if (!allocationsByMachine.TryGetValue(row.WorkOrderMachineId, out var list))
                     allocationsByMachine[row.WorkOrderMachineId] = list = [];
                 list.Add(row);
+            }
+
+            foreach (var allocationBatch in batchAllocations.Select(x => x.Uid).Chunk(800))
+            {
+                foreach (var link in await db.ProductionMachineScheduleAllocationSegments.AsNoTracking()
+                             .Where(x => allocationBatch.Contains(x.AllocationId))
+                             .ToListAsync(cancellationToken))
+                {
+                    if (!linksByAllocation.TryGetValue(link.AllocationId, out var list))
+                        linksByAllocation[link.AllocationId] = list = [];
+                    list.Add(link);
+                }
+            }
+
+            foreach (var set in await db.ProductionMachineScheduleSegmentSets.AsNoTracking()
+                         .Where(x => machineBatch.Contains(x.WorkOrderMachineId) && x.IsCurrent)
+                         .ToListAsync(cancellationToken))
+            {
+                if (!currentSetsByMachine.TryGetValue(set.WorkOrderMachineId, out var list))
+                    currentSetsByMachine[set.WorkOrderMachineId] = list = [];
+                list.Add(set);
             }
 
             foreach (var row in await db.ProductionMachineScheduleSegments.AsNoTracking()
@@ -1071,12 +1097,23 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         var plannerSegments = new List<MachineSchedulePlannerSegment>();
         foreach (var job in jobs)
         {
+            currentSetsByMachine.TryGetValue(job.WorkOrderMachineId, out var machineSets);
+            var currentSet = machineSets is { Count: 1 } ? machineSets[0] : null;
             segmentsByMachine.TryGetValue(job.WorkOrderMachineId, out var machineSegments);
             var currentSegments = (machineSegments ?? [])
-                .Where(x => x.MachineScheduleRevision == job.MachineScheduleRevision)
+                .Where(x => currentSet is null
+                    ? x.MachineScheduleRevision == job.MachineScheduleRevision
+                    : x.SegmentSetId == currentSet.Uid)
                 .OrderBy(x => x.SegmentSequence)
                 .ToList();
             job.HasSegmentData = currentSegments.Count > 0;
+            if (currentSet is not null)
+            {
+                job.FuturePlannedQty = MachineScheduleSegmentPersistence.FuturePlannedQty(currentSegments);
+                job.NeedsRemainingReplan = currentSet.PlanningState == ProductionMachineSchedulePlanningStates.ReplanRequired
+                    || currentSet.PlanningState == ProductionMachineSchedulePlanningStates.Scheduled
+                    && job.RemainingQuantity > job.FuturePlannedQty;
+            }
             foreach (var segment in currentSegments)
             {
                 plannerSegments.Add(new MachineSchedulePlannerSegment
@@ -1120,12 +1157,24 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             {
                 job.ForecastCompletionDate = job.WorkOrderPlannedCompletion;
             }
+            if (job.NeedsRemainingReplan)
+            {
+                job.ScheduleAttention = ProductionMachineSchedulePlanningStates.ReplanRequired;
+                job.LockReason = "Replan Remaining required: actual remaining quantity exceeds the future plan.";
+            }
         }
 
         var appointments = new List<MachineSchedulePlannerAppointment>();
         var unverified = 0;
         foreach (var job in jobs)
         {
+            currentSetsByMachine.TryGetValue(job.WorkOrderMachineId, out var machineSets);
+            if (machineSets is { Count: > 1 })
+            {
+                unverified++;
+                continue;
+            }
+            var currentSet = machineSets?.SingleOrDefault();
             allocationsByMachine.TryGetValue(job.WorkOrderMachineId, out var machineAllocations);
             var currentAllocations = (machineAllocations ?? [])
                 .Where(x => x.ScheduleRevision == job.MachineScheduleRevision)
@@ -1136,17 +1185,44 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 var segmentById = (segmentsByMachine.TryGetValue(job.WorkOrderMachineId, out var machineSegments)
                         ? machineSegments
                         : [])
-                    .Where(x => x.MachineScheduleRevision == job.MachineScheduleRevision)
+                    .Where(x => currentSet is null
+                        ? x.MachineScheduleRevision == job.MachineScheduleRevision
+                        : x.SegmentSetId == currentSet.Uid)
                     .ToDictionary(x => x.Uid);
                 for (var fragmentNo = 0; fragmentNo < currentAllocations.Count; fragmentNo++)
                 {
                     var allocation = currentAllocations[fragmentNo];
                     if (allocation.StartDateTime >= windowEnd || allocation.EndDateTime <= windowStart)
                         continue;
-                    segmentById.TryGetValue(allocation.MachineScheduleSegmentId ?? 0, out var segment);
+                    long segmentId;
+                    if (currentSet is null)
+                        segmentId = allocation.MachineScheduleSegmentId ?? 0;
+                    else if (linksByAllocation.TryGetValue(allocation.Uid, out var allocationLinks)
+                             && allocationLinks.Count == 1)
+                        segmentId = allocationLinks[0].SegmentId;
+                    else
+                    {
+                        unverified++;
+                        segmentId = 0;
+                    }
+                    segmentById.TryGetValue(segmentId, out var segment);
+                    if (currentSet is not null && segment is null && segmentId != 0)
+                        unverified++;
                     appointments.Add(ToJobAppointment(
                         job, allocation.StartDateTime, allocation.EndDateTime, fragmentNo, segment));
                 }
+                continue;
+            }
+
+            if (currentSet is not null && currentSet.PlanningState is
+                ProductionMachineSchedulePlanningStates.HeldUnscheduled or
+                ProductionMachineSchedulePlanningStates.MaintenanceUnscheduled or
+                ProductionMachineSchedulePlanningStates.Completed)
+                continue;
+
+            if (currentSet is not null)
+            {
+                unverified++;
                 continue;
             }
 

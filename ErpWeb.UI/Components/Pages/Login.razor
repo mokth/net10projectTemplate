@@ -85,6 +85,17 @@
                 <p>Sign in with your company credentials to continue.</p>
             </header>
 
+            @if (PasswordReset)
+            {
+                <div class="login-success" role="status">
+                    <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
+                    <div>
+                        <strong>Password updated</strong>
+                        <p>Your password has been changed. Sign in with your new password.</p>
+                    </div>
+                </div>
+            }
+
             @if (!string.IsNullOrWhiteSpace(ErrorMessage))
             {
                 <div class="login-error" role="alert">

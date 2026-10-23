@@ -7,15 +7,12 @@ namespace ErpWeb.Model.Repositories;
 public interface IUserLoginRepository
 {
     Task<UserLogin?> FindByLoginAsync(string companyCode, string username, CancellationToken cancellationToken = default);
-    Task<UserLogin?> GetByUidAsync(int uid, CancellationToken cancellationToken = default);
-    Task<UserLogin?> UpdatePasswordAsync(int uid, string passwordHash, string? updatedUid, CancellationToken cancellationToken = default);
 
     /// <summary>Live, company-scoped current-user row (active, not soft-deleted).</summary>
     Task<UserLogin?> GetActiveByUidAsync(int uid, string companyCode, CancellationToken cancellationToken = default);
 
     /// <summary>Compare-and-set own-password change: updates only when the verified security state still holds. Returns false on any predicate mismatch (including concurrency conflicts).</summary>
     Task<bool> TryChangeOwnPasswordAsync(int uid, string companyCode, string expectedPasswordHash, bool expectedChangePass, string newPasswordHash, string updatedUid, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<UserAdminRow>> ListByCompanyAsync(string companyCode, CancellationToken cancellationToken = default);
 
     /// <summary>Company-scoped admin row; soft-deleted rows are excluded.</summary>
     Task<UserAdminRow?> GetAdminRowAsync(int uid, string companyCode, CancellationToken cancellationToken = default);
@@ -30,6 +27,11 @@ public interface IUserLoginRepository
     /// Compare-and-set admin reset guarded by the security state originally inspected: expected password hash,
     /// expected changepass, company, non-deleted and protected-role state. A stale read matches 0 rows and is
     /// reported as a concurrency conflict rather than overwriting newer state.
+    /// <para>
+    /// Pending password-recovery request(s) for the same user are resolved as COMPLETED inside the SAME
+    /// transaction as the password write, so a successful reset can never leave a stale queue row and a
+    /// failed reset can never consume the request.
+    /// </para>
     /// </summary>
     Task<UserSecurityMutationResult> TryResetPasswordAsync(
         int uid,
@@ -105,11 +107,12 @@ public enum UserSecurityMutationStatus
     ConcurrencyConflict = 3
 }
 
-public readonly record struct UserSecurityMutationResult(UserSecurityMutationStatus Status)
+public readonly record struct UserSecurityMutationResult(UserSecurityMutationStatus Status, int CompletedRecoveryRequests = 0)
 {
     public bool Succeeded => Status == UserSecurityMutationStatus.Success;
 
-    public static UserSecurityMutationResult Ok() => new(UserSecurityMutationStatus.Success);
+    public static UserSecurityMutationResult Ok(int completedRecoveryRequests = 0) =>
+        new(UserSecurityMutationStatus.Success, completedRecoveryRequests);
 
     public static UserSecurityMutationResult Fail(UserSecurityMutationStatus status) => new(status);
 }
@@ -129,35 +132,6 @@ public class UserLoginRepository : IUserLoginRepository
         return await db.UserLogins
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.id == username && x.CompanyCode == companyCode, cancellationToken);
-    }
-
-    public async Task<UserLogin?> GetByUidAsync(int uid, CancellationToken cancellationToken = default)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.UserLogins
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.uid == uid, cancellationToken);
-    }
-
-    public async Task<UserLogin?> UpdatePasswordAsync(
-        int uid,
-        string passwordHash,
-        string? updatedUid,
-        CancellationToken cancellationToken = default)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var user = await db.UserLogins.FirstOrDefaultAsync(x => x.uid == uid, cancellationToken);
-        if (user is null)
-        {
-            return null;
-        }
-
-        user.password = passwordHash;
-        user.changepass = false;
-        user.Updated = DateTime.Now;
-        user.UpdatedUID = updatedUid;
-        await db.SaveChangesAsync(cancellationToken);
-        return user;
     }
 
     public async Task<UserLogin?> GetActiveByUidAsync(
@@ -184,6 +158,8 @@ public class UserLoginRepository : IUserLoginRepository
         CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
         var updated = DateTime.Now;
         var rows = await db.UserLogins
             .Where(x => x.uid == uid && x.CompanyCode == companyCode)
@@ -199,20 +175,18 @@ public class UserLoginRepository : IUserLoginRepository
                     .SetProperty(x => x.UpdatedUID, updatedUid),
                 cancellationToken);
 
-        return rows > 0;
-    }
+        if (rows == 0)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return false;
+        }
 
-    public async Task<IReadOnlyList<UserAdminRow>> ListByCompanyAsync(
-        string companyCode,
-        CancellationToken cancellationToken = default)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.UserLogins
-            .AsNoTracking()
-            .Where(x => x.CompanyCode == companyCode)
-            .OrderBy(x => x.id)
-            .Select(ProjectUserAdminRow())
-            .ToListAsync(cancellationToken);
+        // A changed password must invalidate any outstanding emailed reset link for the same user
+        // (plan §0.1 acceptance 42), otherwise the old link still resets the new password.
+        await InvalidateOutstandingResetTokensAsync(db, uid, updated, cancellationToken);
+
+        await tx.CommitAsync(cancellationToken);
+        return true;
     }
 
     public async Task<UserAdminRow?> GetAdminRowAsync(
@@ -260,10 +234,12 @@ public class UserLoginRepository : IUserLoginRepository
         CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
         var classification = await ClassifyTargetAsync(db, uid, companyCode, protectRoleCode, cancellationToken);
         if (classification is not null)
         {
+            await tx.RollbackAsync(cancellationToken);
             return UserSecurityMutationResult.Fail(classification.Value);
         }
 
@@ -283,9 +259,32 @@ public class UserLoginRepository : IUserLoginRepository
                 .SetProperty(x => x.UpdatedUID, updatedUid),
             cancellationToken);
 
-        return rows > 0
-            ? UserSecurityMutationResult.Ok()
-            : UserSecurityMutationResult.Fail(UserSecurityMutationStatus.ConcurrencyConflict);
+        if (rows == 0)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return UserSecurityMutationResult.Fail(UserSecurityMutationStatus.ConcurrencyConflict);
+        }
+
+        // Resolving the recovery request(s) is part of the reset transaction, not a second commit:
+        // a failed/conflicted reset above never reaches this point, and a successful reset can never
+        // leave a stale PENDING row behind.
+        DateTime? resolvedAtUtc = updated;
+        var completedRecoveryRequests = await db.PasswordResetRequests
+            .Where(r => r.UserUid == uid &&
+                        r.CompanyCode == companyCode &&
+                        r.Status == PasswordResetRequestStatus.Pending)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(r => r.Status, PasswordResetRequestStatus.Completed)
+                    .SetProperty(r => r.ResolvedAtUtc, resolvedAtUtc)
+                    .SetProperty(r => r.ResolvedBy, updatedUid),
+                cancellationToken);
+
+        // Same reasoning as TryChangeOwnPasswordAsync: the new password must retire every outstanding link.
+        await InvalidateOutstandingResetTokensAsync(db, uid, updated, cancellationToken);
+
+        await tx.CommitAsync(cancellationToken);
+        return UserSecurityMutationResult.Ok(completedRecoveryRequests);
     }
 
     public async Task<UserSecurityMutationResult> TrySetChangePassAsync(
@@ -472,6 +471,22 @@ public class UserLoginRepository : IUserLoginRepository
             .AnyAsync(r => r.CompanyCode == companyCode &&
                            r.RoleCode == roleCode &&
                            r.IsActive, cancellationToken);
+    }
+
+    /// <summary>
+    /// Retires every outstanding emailed reset link for the user. Called inside the password-change
+    /// transaction so a link issued before the change can never reset the new password.
+    /// </summary>
+    private static Task<int> InvalidateOutstandingResetTokensAsync(
+        AppDbContext db,
+        int uid,
+        DateTime consumedAt,
+        CancellationToken cancellationToken)
+    {
+        DateTime? consumedAtUtc = consumedAt;
+        return db.PasswordResetTokens
+            .Where(t => t.UserUid == uid && t.UsedAtUtc == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.UsedAtUtc, consumedAtUtc), cancellationToken);
     }
 
     private static IQueryable<UserLogin> WhereNotProtectedRole(IQueryable<UserLogin> query, string? protectRoleCode)

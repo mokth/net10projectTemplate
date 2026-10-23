@@ -225,13 +225,6 @@ public sealed partial class IvInventoryPostingService
             || original.ICode is null || original.TrxType != trxType
             || original.ValuationStatus != StockValuationStatuses.Valued)
             return null;
-        var hasLaterValue = await read.StockValuationFacts.AsNoTracking()
-            .AnyAsync(f => f.CompanyCode == companyCode
-                && f.BranchCode == branchCode && f.ItemCode == original.ICode
-                && f.EffectiveAt > original.TrxDtTime
-                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
-        if (!hasLaterValue)
-            return null;
         var method = await read.StockCostStates.AsNoTracking()
             .Where(s => s.CompanyCode == companyCode
                 && s.BranchCode == branchCode && s.ItemCode == original.ICode)
@@ -252,6 +245,15 @@ public sealed partial class IvInventoryPostingService
             || owner.LedgerEpochId != original.LedgerEpochId)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "The posted Inventory origin has no exact sealed WAC owner.");
+        var hasLaterValue = await read.StockValuationFacts.AsNoTracking()
+            .AnyAsync(f => f.CompanyCode == companyCode
+                && f.BranchCode == branchCode && f.ItemCode == original.ICode
+                && (f.EffectiveAt > owner.EffectiveAt
+                    || f.EffectiveAt == owner.EffectiveAt
+                        && f.StockPosting!.PostingSequence > owner.PostingSequence)
+                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
+        if (!hasLaterValue)
+            return null;
         var isReceipt = trxType == IvTrxTypes.MiscellaneousReceipt;
         var pileId = isReceipt ? original.ToBalLocId : original.FromBalLocId;
         var quantity = isReceipt ? original.ToStdQty : original.FrStdQty;

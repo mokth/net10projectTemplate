@@ -21,6 +21,8 @@ public static class SecurityAuditEventTypes
     public const string PasswordRecoveryRequested = "PASSWORD_RECOVERY_REQUESTED";
     public const string PasswordRecoveryCompleted = "PASSWORD_RECOVERY_COMPLETED";
     public const string PasswordRecoveryCancelled = "PASSWORD_RECOVERY_CANCELLED";
+    public const string PasswordResetEmailIssued = "PASSWORD_RESET_EMAIL_ISSUED";
+    public const string PasswordResetEmailRedeemed = "PASSWORD_RESET_EMAIL_REDEEMED";
 }
 
 /// <summary>

@@ -343,7 +343,6 @@ public class UserAdminPasswordTests
             accessRights.Object,
             policy.Object,
             Mock.Of<ISecurityAuditWriter>(),
-            Mock.Of<IPasswordRecoveryService>(),
             NullLogger<UserAdminService>.Instance);
     }
 

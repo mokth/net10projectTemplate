@@ -16,7 +16,7 @@ public static class IvStockCountVarianceExportEndpoints
     public static IEndpointRouteBuilder MapIvStockCountVarianceExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/inventory/stock-count-variance/export", ExportAsync)
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

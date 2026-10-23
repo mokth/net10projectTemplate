@@ -12,10 +12,10 @@ public static class SaItemFamilyExportEndpoints
 {
     public static IEndpointRouteBuilder MapSaItemFamilyExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/sales/price-groups/export", ExportCustPriceGroupsAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/price-groups/prices/export", ExportPriceGroupPricesAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/customer-items/export", ExportItemCustsAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/item-discounts/export", ExportDisGroupItemsAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/price-groups/export", ExportCustPriceGroupsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/price-groups/prices/export", ExportPriceGroupPricesAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/customer-items/export", ExportItemCustsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/item-discounts/export", ExportDisGroupItemsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

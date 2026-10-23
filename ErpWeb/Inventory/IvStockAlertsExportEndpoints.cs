@@ -17,7 +17,7 @@ public static class IvStockAlertsExportEndpoints
     public static IEndpointRouteBuilder MapIvStockAlertsExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/inventory/stock-alerts/export", ExportAsync)
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

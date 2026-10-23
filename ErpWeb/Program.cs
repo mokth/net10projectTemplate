@@ -113,7 +113,7 @@ try
 
         // Normal ERP access requires the forced-password-change gate to be cleared. A user with
         // change_password = "true" is authenticated but must not reach business pages/endpoints.
-        options.AddPolicy("ErpAccess", policy =>
+        options.AddPolicy(ErpAuthPolicies.ErpAccess, policy =>
             policy.RequireAuthenticatedUser()
                   .RequireAssertion(ctx =>
                       !string.Equals(
@@ -143,6 +143,17 @@ try
                 _ => new FixedWindowRateLimiterOptions
                 {
                     PermitLimit = 10,
+                    Window = TimeSpan.FromMinutes(1)
+                }));
+
+        // Submitting a reset token is a credential-bearing operation, so it is throttled like login
+        // rather than like the request form.
+        options.AddPolicy("auth-reset", context =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 20,
                     Window = TimeSpan.FromMinutes(1)
                 }));
     });

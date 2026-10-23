@@ -413,7 +413,8 @@ internal static class InventoryLedgerTestFixture
         IDbContextFactory<AppDbContext> factory,
         DateTime today,
         string company = CompanyCode,
-        string branch = BranchCode)
+        string branch = BranchCode,
+        bool enableBackdatedReplay = false)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -428,7 +429,8 @@ internal static class InventoryLedgerTestFixture
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),
             postingRepo,
-            CreateInventoryPosting(factory, company, branch, access),
+            CreateInventoryPosting(factory, company, branch, access,
+                enableBackdatedReplay: enableBackdatedReplay),
             NullLogger<IvStockTransferService>.Instance);
     }
 

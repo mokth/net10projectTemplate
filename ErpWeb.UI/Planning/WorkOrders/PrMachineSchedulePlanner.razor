@@ -328,6 +328,10 @@
                                     <div><dt>Machine</dt><dd>@job.MachineCode @DescriptionSuffix(job.MachineDescription)</dd></div>
                                     <div><dt>Planned quantity</dt><dd>@job.PlannedQuantity.ToString("n4") @job.OutputUom</dd></div>
                                     <div><dt>Remaining quantity</dt><dd>@job.RemainingQuantity.ToString("n4") @job.OutputUom</dd></div>
+                                    @if (job.HasSegmentData || job.NeedsRemainingReplan)
+                                    {
+                                        <div><dt>Future planned quantity</dt><dd>@job.FuturePlannedQty.ToString("n4") @job.OutputUom</dd></div>
+                                    }
                                     @if (job.HasActiveHold)
                                     {
                                         <div><dt>Schedule hold</dt><dd>@(job.ActiveHoldType ?? "Active")@(job.ResumeNotBefore is { } resume ? $" · resume not before {resume:dd MMM yyyy HH:mm}" : " · completion unknown")</dd></div>
@@ -379,7 +383,7 @@
                                         </table>
                                     </div>
                                 }
-                                @if (job.IsLocked && !string.IsNullOrWhiteSpace(job.LockReason))
+                                @if ((job.IsLocked || job.NeedsRemainingReplan) && !string.IsNullOrWhiteSpace(job.LockReason))
                                 {
                                     <p class="pr-machine-schedule-lock-reason"><i class="fa-solid fa-lock" aria-hidden="true"></i> @job.LockReason</p>
                                 }

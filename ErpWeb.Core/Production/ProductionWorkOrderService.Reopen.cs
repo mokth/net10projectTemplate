@@ -173,8 +173,7 @@ public sealed partial class ProductionWorkOrderService
                     IvMasterErrorCode.InUse, blocker);
             }
 
-            // Reopen needs the full graph so a split schedule can be normalized back to the
-            // standard Draft one-span model before the snapshot hash is recomputed.
+            // Reopen needs the full manufacturing graph to verify the frozen released snapshot.
             var aggregate = await LoadAggregateAsync(db, scope, order.WorkOrderNo, tracking: true, cancellationToken);
             if (aggregate is not null)
                 order = aggregate;
@@ -190,6 +189,30 @@ public sealed partial class ProductionWorkOrderService
                 .Any(group => group.Count() > 1)
                 || reopenSegments.Any(x => !string.Equals(
                     x.SegmentKind, ProductionMachineScheduleSegmentKinds.Original, StringComparison.Ordinal));
+            var reopenSets = await db.ProductionMachineScheduleSegmentSets
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.WorkOrderId == order.Uid
+                    && x.IsCurrent)
+                .ToListAsync(cancellationToken);
+            if (hasAdvancedSegments || reopenSets.Any(x =>
+                    x.Mode != ProductionMachineScheduleSegmentSetModes.FullPlan
+                    || x.PlanningState != ProductionMachineSchedulePlanningStates.Scheduled))
+            {
+                return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                    IvMasterErrorCode.InUse,
+                    "Advanced-scheduled Work Order cannot be reopened safely. "
+                    + "Resolve through the controlled scheduling lifecycle first.");
+            }
+
+            if (!string.Equals(order.SnapshotHash,
+                    WorkOrderSnapshotHasher.ComputeSnapshotHash(order), StringComparison.Ordinal))
+            {
+                return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
+                    IvMasterErrorCode.InUse,
+                    "The released Work Order snapshot no longer matches its manufacturing facts. "
+                    + "Resolve the discrepancy before reopening.");
+            }
 
             // Removing the released capacity reservation is part of the same transaction that
             // returns the Work Order to Draft: a Draft must never keep active allocations that
@@ -226,39 +249,16 @@ public sealed partial class ProductionWorkOrderService
             }
 
             var now = DateTime.UtcNow;
-            var reopenSets = await db.ProductionMachineScheduleSegmentSets
-                .Where(x => x.CompanyCode == scope.CompanyCode
-                    && x.BranchCode == scope.BranchCode
-                    && x.WorkOrderId == order.Uid
-                    && x.IsCurrent)
-                .ToListAsync(cancellationToken);
             MachineScheduleSegmentPersistence.SupersedeSets(reopenSets, scope.UserId, now);
-
-            // A split Released placement must not survive into Draft: Draft is the standard
-            // one-span manufacturing snapshot, and its hash must describe the graph it stores.
-            // Rebuild the normal Draft schedule from the existing calculator.
-            if (hasAdvancedSegments)
-            {
-                var normalized = await _scheduler.ScheduleAsync(order, cancellationToken);
-                if (!normalized.Succeeded)
-                {
-                    return IvMasterOperationResult<ProductionWorkOrderDetail>.Fail(
-                        IvMasterErrorCode.Validation,
-                        normalized.FailureCode + ": " + normalized.FailureMessage
-                        + " The Work Order could not be normalized back to a standard Draft schedule.");
-                }
-            }
 
             MachineScheduleSegmentPersistence.Supersede(
                 reopenSegments, scope.UserId, now,
                 "Reopen returned the Work Order to the standard Draft schedule.");
 
-            // Reopen already guarantees no execution exists, so recomputing the hash cannot
-            // rewrite history. Freeze nothing here: Draft edit/release later expects the stored
-            // hash to match the current graph.
+            // The released snapshot was verified above. A simple Reopen changes only lifecycle
+            // fields and keeps the verified hash; Draft edits will calculate their own revision.
             var oldHash = order.SnapshotHash;
             var oldSnapshotRevision = order.SnapshotRevision;
-            order.SnapshotHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(order);
             order.SnapshotRevision += 1;
 
             // Lifecycle transition only — do not RequireCurrentSnapshot or rebuild/upgrade snapshot.

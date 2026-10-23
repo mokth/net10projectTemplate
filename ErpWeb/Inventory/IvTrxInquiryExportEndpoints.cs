@@ -19,7 +19,7 @@ public static class IvTrxInquiryExportEndpoints
     public static IEndpointRouteBuilder MapIvTrxInquiryExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/inventory/trx-inquiry/export", ExportAsync)
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

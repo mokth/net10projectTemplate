@@ -12,12 +12,12 @@ public static class SaMasterRefExportEndpoints
 {
     public static IEndpointRouteBuilder MapSaMasterRefExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/sales/customer-sub-groups/export", ExportCustSubGroupsAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/ship-vias/export", ExportShipViasAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/so-types/export", ExportSoTypesAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/comments/export", ExportCommentsAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/shipping-lead-time/export", ExportShippingLeadTimesAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/lmw/export", ExportLmwsAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/customer-sub-groups/export", ExportCustSubGroupsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/ship-vias/export", ExportShipViasAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/so-types/export", ExportSoTypesAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/comments/export", ExportCommentsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/shipping-lead-time/export", ExportShippingLeadTimesAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/lmw/export", ExportLmwsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

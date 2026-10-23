@@ -15,6 +15,7 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
     private readonly AppDbContext _db;
     private readonly InventoryTenantScope _scope;
     private readonly IProductionMachineCapacityService _capacity;
+    private readonly IUomConversionService _uom;
     private readonly MachineScheduleAdvancedPlacementEngine _engine;
     private readonly bool _tracking;
 
@@ -22,12 +23,14 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         AppDbContext db,
         InventoryTenantScope scope,
         IProductionMachineCapacityService capacity,
+        IUomConversionService uom,
         MachineScheduleAdvancedPlacementEngine engine,
         bool tracking)
     {
         _db = db;
         _scope = scope;
         _capacity = capacity;
+        _uom = uom;
         _engine = engine;
         _tracking = tracking;
     }
@@ -63,14 +66,24 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         plan.ResolvedSplit = plan.RequestedSplit;
         ValidateCommon(plan);
 
+        var currentSet = await _db.ProductionMachineScheduleSegmentSets.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.WorkOrderMachineId == plan.TargetMachine.Uid
+                && x.IsCurrent, cancellationToken);
         var hasCurrentTargetSegment = await _db.ProductionMachineScheduleSegments
             .AsNoTracking()
             .AnyAsync(x => x.CompanyCode == _scope.CompanyCode
                 && x.BranchCode == _scope.BranchCode
                 && x.WorkOrderMachineId == plan.TargetMachine.Uid
+                && (currentSet == null ? x.MachineScheduleRevision == plan.TargetMachine.ScheduleRevision
+                    : x.SegmentSetId == currentSet.Uid)
                 && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded,
                 cancellationToken);
-        if (!hasCurrentTargetSegment)
+        var canReplanEmptySet = request.Action == MachineScheduleAdvancedAction.ReplanRemaining
+            && currentSet is not null && currentSet.PlanningState is
+                ProductionMachineSchedulePlanningStates.HeldUnscheduled or
+                ProductionMachineSchedulePlanningStates.MaintenanceUnscheduled or
+                ProductionMachineSchedulePlanningStates.Completed;
+        if (!hasCurrentTargetSegment && !canReplanEmptySet)
         {
             plan.Blockers.Add(
                 "The active machine schedule has no current business segment. Run segment backfill "
@@ -80,39 +93,55 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         }
 
         var branchSegments = await LoadBranchSegmentsAsync(cancellationToken);
+        if (currentSet is not null)
+        {
+            var futureSegments = branchSegments.Where(x => x.SegmentSetId == currentSet.Uid).ToList();
+            if ((currentSet.PlanningState == ProductionMachineSchedulePlanningStates.ReplanRequired
+                || currentSet.PlanningState == ProductionMachineSchedulePlanningStates.Scheduled
+                    && MachineScheduleSegmentPersistence.RequiresRemainingReplan(
+                        plan.TargetOperation.RemainingQty, futureSegments))
+                && request.Action != MachineScheduleAdvancedAction.ReplanRemaining)
+                plan.Blockers.Add("Replan Remaining required: actual remaining quantity exceeds the current future plan.");
+        }
         var machineIds = branchSegments.Select(x => x.WorkOrderMachineId)
             .Append(plan.TargetMachine.Uid)
             .ToHashSet();
-        var allocations = await LoadAllocationsAsync(machineIds, cancellationToken);
+        var allocations = await LoadAllocationsAsync(machineIds, branchSegments, cancellationToken);
         var context = new PlanContext(plan, branchSegments, allocations);
 
         if (plan.Blockers.Count == 0)
         {
-            switch (request.Action)
+            try
             {
-                case MachineScheduleAdvancedAction.InsertSplit:
-                    await BuildInsertAsync(context, cancellationToken);
-                    break;
-                case MachineScheduleAdvancedAction.Hold:
-                    await BuildHoldAsync(context, cancellationToken);
-                    break;
-                case MachineScheduleAdvancedAction.ReleaseHold:
-                    await BuildReleaseHoldAsync(context, cancellationToken);
-                    break;
-                case MachineScheduleAdvancedAction.ReplanRemaining:
-                    await BuildReplanRemainingAsync(context, cancellationToken);
-                    break;
-                case MachineScheduleAdvancedAction.MaintenanceReplan:
-                    await BuildMaintenanceAsync(context, cancellationToken);
-                    break;
-                default:
-                    plan.Blockers.Add("Unknown advanced scheduling action.");
-                    break;
+                switch (request.Action)
+                {
+                    case MachineScheduleAdvancedAction.InsertSplit:
+                        await BuildInsertAsync(context, cancellationToken);
+                        break;
+                    case MachineScheduleAdvancedAction.Hold:
+                        await BuildHoldAsync(context, cancellationToken);
+                        break;
+                    case MachineScheduleAdvancedAction.ReleaseHold:
+                        await BuildReleaseHoldAsync(context, cancellationToken);
+                        break;
+                    case MachineScheduleAdvancedAction.ReplanRemaining:
+                        await BuildReplanRemainingAsync(context, cancellationToken);
+                        break;
+                    case MachineScheduleAdvancedAction.MaintenanceReplan:
+                        await BuildMaintenanceAsync(context, cancellationToken);
+                        break;
+                    default:
+                        plan.Blockers.Add("Unknown advanced scheduling action.");
+                        break;
+                }
+                if (plan.Blockers.Count == 0)
+                    await ProjectAsync(context, cancellationToken);
+            }
+            catch (MachineScheduleQuantityConversionException ex)
+            {
+                plan.Blockers.Add(ex.Message);
             }
         }
-
-        if (plan.Blockers.Count == 0)
-            await ProjectAsync(context, cancellationToken);
 
         EnforceBlastRadius(plan);
         plan.Preview = BuildPreview(plan);
@@ -188,8 +217,9 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
     }
 
     private async Task<List<ProductionMachineScheduleSegment>> LoadBranchSegmentsAsync(
-        CancellationToken cancellationToken) =>
-        await _db.ProductionMachineScheduleSegments.AsNoTracking()
+        CancellationToken cancellationToken)
+    {
+        var segments = await _db.ProductionMachineScheduleSegments.AsNoTracking()
             .Where(x => x.CompanyCode == _scope.CompanyCode
                 && x.BranchCode == _scope.BranchCode
                 && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
@@ -197,9 +227,22 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             .ThenBy(x => x.WorkOrderMachineId)
             .ThenBy(x => x.SegmentSequence)
             .ToListAsync(cancellationToken);
+        var currentSets = await _db.ProductionMachineScheduleSegmentSets.AsNoTracking()
+            .Where(x => x.CompanyCode == _scope.CompanyCode
+                && x.BranchCode == _scope.BranchCode && x.IsCurrent)
+            .Select(x => new { x.Uid, x.WorkOrderMachineId })
+            .ToListAsync(cancellationToken);
+        var currentSetIds = currentSets.Select(x => x.Uid).ToHashSet();
+        var machinesWithSets = currentSets.Select(x => x.WorkOrderMachineId).ToHashSet();
+        return segments.Where(x => x.SegmentSetId is long setId
+                ? currentSetIds.Contains(setId)
+                : !machinesWithSets.Contains(x.WorkOrderMachineId))
+            .ToList();
+    }
 
     private async Task<Dictionary<long, List<ProductionMachineScheduleAllocation>>> LoadAllocationsAsync(
         IReadOnlyCollection<long> machineIds,
+        IReadOnlyCollection<ProductionMachineScheduleSegment> currentSegments,
         CancellationToken cancellationToken)
     {
         var result = new Dictionary<long, List<ProductionMachineScheduleAllocation>>();
@@ -215,6 +258,26 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
                 .ThenBy(x => x.FragmentNo)
                 .ToListAsync(cancellationToken));
         }
+        var currentSegmentIds = currentSegments.Where(x => x.SegmentSetId is not null)
+            .Select(x => x.Uid).ToHashSet();
+        var linkedAllocationIds = new HashSet<long>();
+        foreach (var batch in currentSegmentIds.Chunk(800))
+        {
+            var ids = await _db.ProductionMachineScheduleAllocationSegments.AsNoTracking()
+                .Where(x => batch.Contains(x.SegmentId))
+                .Select(x => x.AllocationId)
+                .ToListAsync(cancellationToken);
+            linkedAllocationIds.UnionWith(ids);
+        }
+        var legacySegments = currentSegments.Where(x => x.SegmentSetId is null)
+            .GroupBy(x => x.WorkOrderMachineId)
+            .ToDictionary(x => x.Key, x => x.ToList());
+        rows = rows.Where(row => linkedAllocationIds.Contains(row.Uid)
+            || legacySegments.TryGetValue(row.WorkOrderMachineId, out var legacy)
+                && legacy.Any(segment => segment.MachineScheduleRevision == row.ScheduleRevision
+                    && (row.MachineScheduleSegmentId is null
+                        || row.MachineScheduleSegmentId == segment.Uid)))
+            .ToList();
         foreach (var group in rows.GroupBy(x => x.WorkOrderMachineId))
             result[group.Key] = group.OrderBy(x => x.ScheduleRevision).ThenBy(x => x.FragmentNo).ToList();
         return result;
@@ -238,10 +301,13 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         return result;
     }
 
-    private static MachineScheduleQuantityPlan SegmentCalculator(
-        ProductionWorkOrderMachine machine, decimal qty) =>
-        MachineScheduleSegmentCalculator.ComputeQuantity(
-            qty, machine.OutputPerCycle, machine.ParallelMachineCount, machine.CycleSeconds);
+    private Task<MachineScheduleQuantityPlan> SegmentCalculatorAsync(
+        ProductionWorkOrderOperation operation,
+        ProductionWorkOrderMachine machine,
+        decimal qty,
+        CancellationToken cancellationToken) =>
+        MachineScheduleSegmentCalculator.ComputeQuantityAsync(
+            _scope.CompanyCode, operation, machine, qty, _uom, cancellationToken);
 
     private static TimeSpan FirstSegmentDuration(ProductionWorkOrderMachine machine, decimal runMinutes) =>
         TimeSpan.FromSeconds((double)(machine.SetupSeconds + machine.ConversionSeconds + machine.QueueSeconds))
@@ -253,11 +319,9 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         || operation.ReworkQty != 0m || operation.TransferredQty != 0m;
 
     private static decimal RemainingQuantity(ProductionWorkOrderOperation operation) =>
-        operation.RemainingQty > 0m
-            ? operation.RemainingQty
-            : Math.Max(0m, operation.PlannedOutputQty - operation.GoodQty);
+        Math.Max(0m, operation.RemainingQty);
 
-    private static PlannedSegment NewSegment(
+    private async Task<PlannedSegment> NewSegmentAsync(
         MachineScheduleAdvancedPlan plan,
         ProductionWorkOrderOperation operation,
         ProductionWorkOrderMachine machine,
@@ -268,9 +332,10 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         decimal queueSeconds,
         string kind,
         string reason,
-        long? sourceSegmentId)
+        long? sourceSegmentId,
+        CancellationToken cancellationToken)
     {
-        var quantityPlan = SegmentCalculator(machine, qty);
+        var quantityPlan = await SegmentCalculatorAsync(operation, machine, qty, cancellationToken);
         return new PlannedSegment
         {
             WorkOrderId = operation.WorkOrderId ?? plan.TargetOrder.Uid,

@@ -15,7 +15,7 @@ public static class SaCustExportEndpoints
     public static IEndpointRouteBuilder MapSaCustExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/sales/customers/export", ExportAsync)
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

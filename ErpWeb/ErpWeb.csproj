@@ -5,6 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <!-- ErpAuthPolicies is referenced by every endpoint mapping file; one project-level using keeps
+         the policy name out of the call sites without 20+ duplicated using directives. -->
+    <Using Include="ErpWeb.Core.Authentication" />
+  </ItemGroup>
+  <ItemGroup>
     <Compile Remove="App_Data\**" />
     <Compile Remove="artifacts\**" />
     <Compile Remove="Logs\**" />

@@ -66,7 +66,9 @@ public static class StockReplayWacMiRootWriter
             || await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                 h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode
-                && (h.BatchNo == batchNo || h.StockPostingId == context.Posting.Id),
+                && ((h.BatchNo == batchNo
+                        && h.DocumentRevision == detail.DocumentRevision)
+                    || h.StockPostingId == context.Posting.Id),
                 cancellationToken))
             throw Invalid("The staged MI line differs from its replay candidate.");
         var master = await db.IvStockMasters.AsNoTracking().SingleOrDefaultAsync(m =>

@@ -15,7 +15,7 @@ public static class PoSupplierExportEndpoints
     public static IEndpointRouteBuilder MapPoSupplierExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/purchase/suppliers/export", ExportAsync)
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

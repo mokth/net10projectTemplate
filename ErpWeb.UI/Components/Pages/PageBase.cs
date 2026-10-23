@@ -1,3 +1,4 @@
+using ErpWeb.Core.Authentication;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -5,7 +6,7 @@ using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Components.Pages;
 
-[Authorize(Policy = "ErpAccess")]
+[Authorize(Policy = ErpAuthPolicies.ErpAccess)]
 public abstract class PageBase : ComponentBase
 {
     /// <summary>

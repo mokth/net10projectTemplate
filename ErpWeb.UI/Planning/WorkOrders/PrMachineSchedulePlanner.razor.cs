@@ -134,12 +134,14 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         && (string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.Released, StringComparison.OrdinalIgnoreCase)
             || string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.InProgress, StringComparison.OrdinalIgnoreCase));
 
-    private bool CanInsertSplit => CanUseAdvancedActions && SelectedJob is { IsLocked: false, RemainingQuantity: > 0m };
-    private bool CanHoldJob => CanUseAdvancedActions && SelectedJob is { HasActiveHold: false };
-    private bool CanResumeJob => AdvancedActionsEnabled && CanEditSchedule && SelectedJob is { HasActiveHold: true };
+    private bool CanInsertSplit => CanUseAdvancedActions && SelectedJob is { IsLocked: false, NeedsRemainingReplan: false, RemainingQuantity: > 0m };
+    private bool CanHoldJob => CanUseAdvancedActions && SelectedJob is { HasActiveHold: false, NeedsRemainingReplan: false };
+    private bool CanResumeJob => AdvancedActionsEnabled && CanEditSchedule && SelectedJob is { HasActiveHold: true, NeedsRemainingReplan: false };
     private bool CanReplanRemaining => CanUseAdvancedActions
-        && SelectedJob is { IsLocked: false, RemainingQuantity: > 0m };
-    private bool CanReplanMaintenance => CanUseAdvancedActions && SelectedJob is { HasActiveHold: false };
+        && SelectedJob is { } job
+        && (job.RemainingQuantity > 0m || job.FuturePlannedQty > 0m)
+        && (!job.IsLocked || job.NeedsRemainingReplan || job.RemainingQuantity == 0m);
+    private bool CanReplanMaintenance => CanUseAdvancedActions && SelectedJob is { HasActiveHold: false, NeedsRemainingReplan: false };
 
     private string AdvancedTitle => AdvancedAction switch
     {
@@ -1048,6 +1050,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         && CanEditSchedule
         && job is not null
         && !job.IsLocked
+        && !job.NeedsRemainingReplan
         && !job.IsBackwardScheduled
         && (string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.Released, StringComparison.OrdinalIgnoreCase)
             || string.Equals(job.WorkOrderStatus, ProductionWorkOrderStatuses.InProgress, StringComparison.OrdinalIgnoreCase));

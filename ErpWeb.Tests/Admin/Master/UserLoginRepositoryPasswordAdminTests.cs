@@ -1,4 +1,5 @@
 using System.Reflection;
+using ErpWeb.Core.Security;
 using ErpWeb.Library.Security;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
@@ -110,9 +111,9 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ListByCompanyAsync_returns_only_company_users_without_password_fields()
+    public async Task ListForAdminAsync_returns_only_company_users_without_password_fields()
     {
-        var rows = await _repository.ListByCompanyAsync("DEMO");
+        var rows = await _repository.ListForAdminAsync("DEMO");
 
         Assert.Equal(2, rows.Count);
         Assert.All(rows, r => Assert.False(string.IsNullOrWhiteSpace(r.LoginId)));
@@ -154,6 +155,122 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
         var after = await GetEntityAsync(2);
         Assert.Equal(oldHash, after!.password);
         Assert.False(after.changepass);
+    }
+
+    [Fact]
+    public async Task TryResetPasswordAsync_completes_the_pending_recovery_request()
+    {
+        var before = await GetEntityAsync(2);
+        var oldHash = before!.password;
+        var requestId = await SeedPendingRecoveryRequestAsync(2, "DEMO");
+
+        var result = await _repository.TryResetPasswordAsync(
+            2, "DEMO", oldHash, before.changepass, PasswordHasher.Hash("TempPass1"), "admin", null);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, result.CompletedRecoveryRequests);
+
+        var request = await GetRecoveryRequestAsync(requestId);
+        Assert.NotNull(request);
+        Assert.Equal(PasswordResetRequestStatus.Completed, request!.Status);
+        Assert.NotNull(request.ResolvedAtUtc);
+        Assert.Equal("admin", request.ResolvedBy);
+    }
+
+    [Fact]
+    public async Task TryResetPasswordAsync_conflict_never_completes_the_pending_request()
+    {
+        var before = await GetEntityAsync(2);
+        var requestId = await SeedPendingRecoveryRequestAsync(2, "DEMO");
+
+        // A stale expected hash makes the compare-and-set match 0 rows.
+        var result = await _repository.TryResetPasswordAsync(
+            2, "DEMO", "stale-hash", before!.changepass, PasswordHasher.Hash("TempPass1"), "admin", null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.ConcurrencyConflict, result.Status);
+        Assert.Equal(0, result.CompletedRecoveryRequests);
+
+        var request = await GetRecoveryRequestAsync(requestId);
+        Assert.Equal(PasswordResetRequestStatus.Pending, request!.Status);
+        Assert.Null(request.ResolvedAtUtc);
+    }
+
+    [Fact]
+    public async Task TryResetPasswordAsync_retires_outstanding_email_reset_links()
+    {
+        var before = await GetEntityAsync(2);
+        var token = new PasswordResetToken
+        {
+            UserUid = 2,
+            CompanyCode = "DEMO",
+            TokenHash = PasswordResetTokens.Hash("some-raw-token-value"),
+            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(30)
+        };
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PasswordResetTokens.Add(token);
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _repository.TryResetPasswordAsync(
+            2, "DEMO", before!.password, before.changepass, PasswordHasher.Hash("TempPass1"), "admin", null);
+
+        Assert.True(result.Succeeded);
+
+        await using var check = await _factory.CreateDbContextAsync();
+        var stored = await check.PasswordResetTokens.SingleAsync(t => t.PasswordResetTokenId == token.PasswordResetTokenId);
+        Assert.NotNull(stored.UsedAtUtc);
+    }
+
+    [Fact]
+    public async Task TryResetPasswordAsync_conflict_leaves_outstanding_email_reset_links_usable()
+    {
+        var before = await GetEntityAsync(2);
+        var token = new PasswordResetToken
+        {
+            UserUid = 2,
+            CompanyCode = "DEMO",
+            TokenHash = PasswordResetTokens.Hash("another-raw-token-value"),
+            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(30)
+        };
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PasswordResetTokens.Add(token);
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _repository.TryResetPasswordAsync(
+            2, "DEMO", "stale-hash", before!.changepass, PasswordHasher.Hash("TempPass1"), "admin", null);
+
+        Assert.False(result.Succeeded);
+
+        await using var check = await _factory.CreateDbContextAsync();
+        var stored = await check.PasswordResetTokens.SingleAsync(t => t.PasswordResetTokenId == token.PasswordResetTokenId);
+        Assert.Null(stored.UsedAtUtc);
+    }
+
+    private async Task<long> SeedPendingRecoveryRequestAsync(int uid, string companyCode)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var request = new PasswordResetRequest
+        {
+            UserUid = uid,
+            CompanyCode = companyCode,
+            Status = PasswordResetRequestStatus.Pending,
+            RequestedAtUtc = DateTime.UtcNow
+        };
+        db.PasswordResetRequests.Add(request);
+        await db.SaveChangesAsync();
+        return request.PasswordResetRequestId;
+    }
+
+    private async Task<PasswordResetRequest?> GetRecoveryRequestAsync(long requestId)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        return await db.PasswordResetRequests
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.PasswordResetRequestId == requestId);
     }
 
     [Fact]

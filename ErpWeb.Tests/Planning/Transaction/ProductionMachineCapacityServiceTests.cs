@@ -176,6 +176,59 @@ public sealed class ProductionMachineCapacityServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Current_segment_set_requires_an_explicit_allocation_link()
+    {
+        var row = await SeedAsync(
+            ProductionWorkOrderStatuses.Released,
+            setup: 0m, conversion: 0m, queue: 0m, run: 60m,
+            plannedStart: ShiftStart, plannedEnd: ShiftStart.AddHours(1),
+            operationStart: ShiftStart, operationEnd: ShiftStart.AddHours(1),
+            allocationStart: ShiftStart, allocationEnd: ShiftStart.AddHours(1));
+
+        await SeedCurrentSetAsync(row, ProductionMachineSchedulePlanningStates.Scheduled, withSegment: true, withLink: true);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var evidence = await _service.LoadAsync(db, "DEMO", ["MC01"]);
+            Assert.False(evidence.HasBlockers);
+            Assert.Single(evidence.GetOccupied("MC01"));
+        }
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProductionMachineScheduleAllocationSegments.Remove(
+                await db.ProductionMachineScheduleAllocationSegments.SingleAsync());
+            await db.SaveChangesAsync();
+        }
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var invalid = await _service.LoadAsync(verify, "DEMO", ["MC01"]);
+        Assert.True(invalid.HasBlockers);
+        Assert.Empty(invalid.GetOccupied("MC01"));
+        Assert.Contains(invalid.Findings, x => x.Message.Contains("link", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(ProductionMachineSchedulePlanningStates.HeldUnscheduled, false)]
+    [InlineData(ProductionMachineSchedulePlanningStates.MaintenanceUnscheduled, false)]
+    [InlineData(ProductionMachineSchedulePlanningStates.Completed, false)]
+    [InlineData(ProductionMachineSchedulePlanningStates.Scheduled, true)]
+    public async Task Current_zero_allocation_set_uses_its_explicit_planning_state(string state, bool blocks)
+    {
+        var row = await SeedAsync(
+            ProductionWorkOrderStatuses.InProgress,
+            setup: 0m, conversion: 0m, queue: 0m, run: 0m,
+            plannedStart: ShiftStart, plannedEnd: ShiftStart,
+            operationStart: ShiftStart, operationEnd: ShiftStart);
+        await SeedCurrentSetAsync(row, state, withSegment: false, withLink: false);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var evidence = await _service.LoadAsync(db, "DEMO", ["MC01"]);
+        Assert.Equal(blocks, evidence.HasBlockers);
+        Assert.Empty(evidence.GetOccupied("MC01"));
+        Assert.Equal(0, evidence.LegacyEmptyRowCount);
+    }
+
+    [Fact]
     public async Task Overlapping_verified_allocations_block()
     {
         await SeedAsync(
@@ -392,6 +445,48 @@ public sealed class ProductionMachineCapacityServiceTests : IAsyncLifetime
         }
 
         return new SeededRow(order.Uid, operation.Uid, machine.Uid);
+    }
+
+    private async Task SeedCurrentSetAsync(
+        SeededRow row, string planningState, bool withSegment, bool withLink)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var operation = await db.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == row.OperationId);
+        operation.ScheduleSourceHash = "HASH";
+        var set = new ProductionMachineScheduleSegmentSet
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", WorkOrderId = row.WorkOrderId,
+            WorkOrderOperationId = row.OperationId, WorkOrderMachineId = row.MachineId,
+            MachineCode = "MC01", IsCurrent = true,
+            Mode = ProductionMachineScheduleSegmentSetModes.FullPlan,
+            PlanningState = planningState, PlannedQtyBasis = withSegment ? 10m : 0m,
+            ScheduleSourceHash = "HASH", MachineScheduleRevision = 1,
+            RowVersion = [1]
+        };
+        db.ProductionMachineScheduleSegmentSets.Add(set);
+        await db.SaveChangesAsync();
+        if (!withSegment) return;
+
+        var segment = new ProductionMachineScheduleSegment
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", WorkOrderId = row.WorkOrderId,
+            WorkOrderOperationId = row.OperationId, WorkOrderMachineId = row.MachineId,
+            MachineCode = "MC01", SegmentSetId = set.Uid,
+            SegmentSequence = 1, PlannedOutputQty = 10m,
+            PlannedStartDateTime = ShiftStart,
+            PlannedCompletionDateTime = ShiftStart.AddHours(1),
+            MachineScheduleRevision = 1, RowVersion = [1]
+        };
+        db.ProductionMachineScheduleSegments.Add(segment);
+        await db.SaveChangesAsync();
+        if (!withLink) return;
+
+        var allocation = await db.ProductionMachineScheduleAllocations.SingleAsync();
+        db.ProductionMachineScheduleAllocationSegments.Add(new ProductionMachineScheduleAllocationSegment
+        {
+            AllocationId = allocation.Uid, SegmentId = segment.Uid, RowVersion = [1]
+        });
+        await db.SaveChangesAsync();
     }
 
     private sealed record SeededRow(long WorkOrderId, long OperationId, long MachineId);

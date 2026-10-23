@@ -1,7 +1,9 @@
+using ErpWeb.Core.Authentication;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Sales;
@@ -15,6 +17,7 @@ namespace ErpWeb.UI.Sales;
 ///
 /// "No price" is a legitimate answer, not an error: the ladder then explains every level that was tried.
 /// </summary>
+[Authorize(Policy = ErpAuthPolicies.ErpAccess)]
 public partial class PriceInquiry : ComponentBase
 {
     [Inject] private ISaSalesRefService SalesRef { get; set; } = default!;

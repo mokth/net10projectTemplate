@@ -400,6 +400,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             && await TryPostBackdatedWacMrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } replayResult)
             return replayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
+            && _coordinator is not null
+            && await TryPostBackdatedFifoMrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } fifoReplayResult)
+            return fifoReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -733,6 +739,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 userId, batchNo, expectedTrxType, cancellationToken)
                 is { } replayResult)
             return replayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
+            && _coordinator is not null
+            && await TryRollBackBackdatedFifoMrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } fifoReplayResult)
+            return fifoReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -2032,6 +2044,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             && await TryPostBackdatedWacMiAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } replayResult)
             return replayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && _coordinator is not null
+            && await TryPostBackdatedFifoMiAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } fifoReplayResult)
+            return fifoReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -2304,6 +2322,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 userId, batchNo, expectedTrxType, cancellationToken)
                 is { } replayResult)
             return replayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && _coordinator is not null
+            && await TryRollBackBackdatedFifoMiAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } fifoReplayResult)
+            return fifoReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -2538,6 +2562,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+            && await TryPostBackdatedFifoTrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } fifoReplayResult)
+            return fifoReplayResult;
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
@@ -2983,6 +3012,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+            && await TryRollBackBackdatedFifoTrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } fifoReplayResult)
+            return fifoReplayResult;
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);

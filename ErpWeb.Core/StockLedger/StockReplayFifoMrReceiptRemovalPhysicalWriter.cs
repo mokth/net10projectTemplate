@@ -60,7 +60,9 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
         var histories = await db.IvTrxHistories
             .Where(h => h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode
-                && h.BatchNo == batchNo).ToArrayAsync(cancellationToken);
+                && h.BatchNo == batchNo
+                && h.DocumentRevision == context.Posting.DocumentRevision)
+            .ToArrayAsync(cancellationToken);
         if (details.Length != 1 || histories.Length != 1
             || histories[0].Id != permit.RemovedHistoryId)
             throw Invalid("FIFO MR rollback needs one unchanged original line.");
@@ -142,6 +144,7 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
         balance.ModifiedDate = now;
         var reversal = new IvInventoryHistoryWriter().AppendReversal(
             context, [history], context.Posting.DocumentRevision).Single();
+        detail.ToBalLocId = null;
         detail.ToLotId = null;
         detail.DocumentRevision = checked(detail.DocumentRevision + 1);
         batch.BatchStatus = IvBatchStatuses.New;

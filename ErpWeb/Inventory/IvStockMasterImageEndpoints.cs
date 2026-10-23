@@ -9,7 +9,7 @@ public static class IvStockMasterImageEndpoints
         this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/inventory/item-image", ReadAsync)
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
 
         return endpoints;
     }

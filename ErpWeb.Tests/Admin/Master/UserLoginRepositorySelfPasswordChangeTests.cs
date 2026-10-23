@@ -1,3 +1,4 @@
+using ErpWeb.Core.Security;
 using ErpWeb.Library.Security;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
@@ -98,6 +99,33 @@ public class UserLoginRepositorySelfPasswordChangeTests : IAsyncLifetime
         Assert.False(after.changepass);
         Assert.Equal("clerk", after.UpdatedUID);
         Assert.NotNull(after.Updated);
+    }
+
+    [Fact]
+    public async Task TryChangeOwnPasswordAsync_retires_outstanding_email_reset_links()
+    {
+        var before = await GetAsync(1);
+        var token = new PasswordResetToken
+        {
+            UserUid = 1,
+            CompanyCode = "DEMO",
+            TokenHash = PasswordResetTokens.Hash("self-change-raw-token"),
+            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(30)
+        };
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PasswordResetTokens.Add(token);
+            await db.SaveChangesAsync();
+        }
+
+        var ok = await _repository.TryChangeOwnPasswordAsync(
+            1, "DEMO", before!.password, before.changepass, PasswordHasher.Hash("NewPass99"), "clerk");
+
+        Assert.True(ok);
+
+        await using var check = await _factory.CreateDbContextAsync();
+        var stored = await check.PasswordResetTokens.SingleAsync(t => t.PasswordResetTokenId == token.PasswordResetTokenId);
+        Assert.NotNull(stored.UsedAtUtc);
     }
 
     [Fact]

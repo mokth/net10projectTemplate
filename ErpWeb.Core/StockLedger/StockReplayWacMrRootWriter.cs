@@ -63,7 +63,9 @@ public static class StockReplayWacMrRootWriter
             || await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                 h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode
-                && (h.BatchNo == batchNo || h.StockPostingId == context.Posting.Id),
+                && ((h.BatchNo == batchNo
+                        && h.DocumentRevision == authority.DocumentRevision)
+                    || h.StockPostingId == context.Posting.Id),
                 cancellationToken))
             throw Invalid("The approved MR draft, pile, or replay root changed.");
 

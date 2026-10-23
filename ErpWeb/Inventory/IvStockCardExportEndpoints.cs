@@ -19,7 +19,7 @@ public static class IvStockCardExportEndpoints
     public static IEndpointRouteBuilder MapIvStockCardExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/inventory/stock-card/export", ExportAsync)
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

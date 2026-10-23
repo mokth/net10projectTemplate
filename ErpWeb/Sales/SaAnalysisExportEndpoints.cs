@@ -18,12 +18,12 @@ public static class SaAnalysisExportEndpoints
 {
     public static IEndpointRouteBuilder MapSaAnalysisExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/sales/analysis/summary/export", ExportSummaryAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/analysis/attainment/export", ExportAttainmentAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/analysis/qt-conversion/export", ExportQtConversionAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/analysis/by-item/export", ExportByItemAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/analysis/by-category/export", ExportByCategoryAsync).RequireAuthorization();
-        endpoints.MapGet("/sales/analysis/by-warehouse/export", ExportByWarehouseAsync).RequireAuthorization();
+        endpoints.MapGet("/sales/analysis/summary/export", ExportSummaryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/analysis/attainment/export", ExportAttainmentAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/analysis/qt-conversion/export", ExportQtConversionAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/analysis/by-item/export", ExportByItemAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/analysis/by-category/export", ExportByCategoryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/sales/analysis/by-warehouse/export", ExportByWarehouseAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

@@ -13,6 +13,40 @@
 
 ---
 
+# 0.1 Scope amendment (approved after implementation review)
+
+**Date:** 2026-10-23
+
+The original text of this plan put **email reset links** out of scope (§2.18, §2.2 "Explicitly out of scope", §30) and described only an
+admin-assisted `PasswordResetRequest` queue. During implementation an email reset link flow was built on top of that queue and
+is now part of the delivered product. This amendment records the new scope; the security rules below still apply unchanged.
+
+What was added:
+
+```text
+PasswordResetToken        one row per issued link, user + company scoped
+                          raw token: 256-bit RandomNumberGenerator, base64url, shown once in the email
+                          stored:     SHA-256 hex digest only (never the raw token)
+                          single use, expiring, invalidated on password change
+SmtpEmailSender           IEmailSender implementation, configuration-bound to the Email section
+PasswordRecoveryOptions   link lifetime / public base URL, bound to the PasswordRecovery section
+                          delivery is gated by Email:Enabled (false by default, so a fresh install never blocks on SMTP)
+ResetPassword page        anonymous, antiforgery, token in the URL is never logged
+```
+
+Rules that remain mandatory:
+
+- the raw reset token is **never** persisted, logged, audited or echoed back;
+- only the SHA-256 digest of the token is stored (plain hash is correct: the input is high-entropy random);
+- the admin-assisted `PasswordResetRequest` queue remains the fallback when SMTP is not configured;
+- recovery stays enumeration-safe (the request/reset endpoints never reveal whether an account exists);
+- the forced-password-change gate is unchanged: redeeming a reset sets `changepass = true` like any other reset.
+
+Consequence for the acceptance list: §30's "do not implement email reset" is replaced by "do not store a raw reset token".
+Everything else in this plan is unchanged.
+
+---
+
 # 1. Objective
 
 Harden the CURRENT `productionv2` password management, User Accounts, authentication-session, role-security and forgot-password behavior without replacing the existing custom authentication architecture.
@@ -409,7 +443,8 @@ No reset request is created.
 
 The new implementation will use a real **admin-assisted password reset request**.
 
-No email reset token is added in this plan.
+**Amended (§0.1):** an email reset-link flow was added on top of this request queue. It does not replace the admin-assisted
+path and adds no new trust in the client: the link only carries a single-use opaque token whose SHA-256 digest is stored.
 
 ---
 
@@ -483,7 +518,7 @@ Long ASCII or multibyte Unicode input must fail cleanly before BCrypt rather tha
 - JWT as main Blazor authentication.
 - MFA.
 - OTP.
-- email reset links.
+- ~~email reset links~~ — **removed from out-of-scope; implemented, see §0.1.**
 - SMS.
 - SSO.
 - password history.
@@ -1899,7 +1934,7 @@ OccurredAtUtc
 Details
 ```
 
-Never store password/hash/token.
+Never store a password or hash. Never store a raw password-reset token — only its SHA-256 digest (§0.1).
 
 Audit:
 
@@ -2212,6 +2247,10 @@ All mandatory items must pass.
 38. fast full suite passes.
 39. SQL Server security concurrency tests pass when environment available.
 40. IIS/AppBasePath auth flow is manually verified.
+41. Emailed reset links are single-use, expiring, and only the SHA-256 digest of the token is stored (§0.1).
+42. A successful password change invalidates outstanding reset links for that user.
+43. The reset-password page/endpoints are anonymous, antiforgery-protected, rate limited, and never log or echo the token.
+44. Recovery stays enumeration-safe whether or not SMTP is configured (§0.1).
 
 ---
 
@@ -2238,7 +2277,7 @@ All mandatory items must pass.
 - do not let CurrentUserService fall back to stale authenticated HttpContext after provider invalidation.
 - do not query the DB on every component render.
 - do not add permanent account lockout.
-- do not implement email reset.
+- do not store a raw password-reset token; store only its SHA-256 digest (§0.1).
 - do not implement SSO.
 - do not store reset password/hash.
 - do not modify inventory/costing/production/sales/procurement rules.
@@ -2419,7 +2458,7 @@ Known limitations must include:
 
 ```text
 No MFA
-No email reset token
+Email reset needs a configured SMTP account; without one only the admin-assisted request queue is available (§0.1)
 No password history
 No true immediate server-push revocation
 No delegated helpdesk password-reset permission

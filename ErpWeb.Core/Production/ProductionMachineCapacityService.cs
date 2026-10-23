@@ -322,8 +322,17 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
                     ProductionMachineSchedulePlanningStates.Completed)
             {
                 if (!ValidateSetIdentity(row, currentSet)
+                    || !string.Equals(currentSet.ScheduleSourceHash, row.ScheduleSourceHash, StringComparison.Ordinal)
+                    || !string.Equals(currentSet.ScheduleSourceHash, row.OperationScheduleSourceHash, StringComparison.Ordinal)
+                    || currentSet.PlannedQtyBasis < 0m
                     || currentSegments.Count > 0 && currentSegments.Any(x => x.PlannedOutputQty > 0m))
                     AddInvalid(evidence, row, "zero-allocation SegmentSet has inconsistent identity or scheduled segments");
+                continue;
+            }
+
+            if (currentSet is not null && currentAllocations.Count == 0)
+            {
+                AddInvalid(evidence, row, "current SegmentSet has no productive allocations for its planning state");
                 continue;
             }
 
@@ -549,6 +558,9 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
     {
         if (!ValidateSetIdentity(row, set)
             || set.PlanningState == ProductionMachineSchedulePlanningStates.Completed
+            || set.PlanningState == ProductionMachineSchedulePlanningStates.ReplanRequired
+            || set.Mode is not (ProductionMachineScheduleSegmentSetModes.FullPlan
+                or ProductionMachineScheduleSegmentSetModes.RemainingOnly)
             || !string.Equals(set.ScheduleSourceHash, row.ScheduleSourceHash, StringComparison.Ordinal)
             || !string.Equals(set.ScheduleSourceHash, row.OperationScheduleSourceHash, StringComparison.Ordinal)
             || segments.Count == 0

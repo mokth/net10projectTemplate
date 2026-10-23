@@ -46,3 +46,20 @@ public class ForgotPasswordInputModel
     [MaxLength(10)]
     public string Username { get; set; } = string.Empty;
 }
+
+public class ResetPasswordInputModel
+{
+    /// <summary>The raw token from the emailed link. Never logged, never echoed back.</summary>
+    [MaxLength(200)]
+    public string? Token { get; set; }
+
+    [Required]
+    [MinLength(8)]
+    [DataType(DataType.Password)]
+    public string NewPassword { get; set; } = string.Empty;
+
+    [Required]
+    [Compare(nameof(NewPassword), ErrorMessage = "Passwords do not match.")]
+    [DataType(DataType.Password)]
+    public string ConfirmPassword { get; set; } = string.Empty;
+}

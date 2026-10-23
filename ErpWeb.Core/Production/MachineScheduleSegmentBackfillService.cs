@@ -252,20 +252,33 @@ public sealed class MachineScheduleSegmentBackfillService : IMachineScheduleSegm
         var machineIds = rows.Select(x => x.MachineId).ToList();
         var segments = new List<ProductionMachineScheduleSegment>();
         var allocations = new List<ProductionMachineScheduleAllocation>();
+        var sets = new List<ProductionMachineScheduleSegmentSet>();
+        var links = new List<ProductionMachineScheduleAllocationSegment>();
         foreach (var batch in machineIds.Chunk(800))
         {
             segments.AddRange(await db.ProductionMachineScheduleSegments.AsNoTracking()
                 .Where(x => batch.Contains(x.WorkOrderMachineId)
                     && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
                 .ToListAsync(cancellationToken));
-            allocations.AddRange(await db.ProductionMachineScheduleAllocations.AsNoTracking()
+            var batchAllocations = await db.ProductionMachineScheduleAllocations.AsNoTracking()
                 .Where(x => batch.Contains(x.WorkOrderMachineId))
+                .ToListAsync(cancellationToken);
+            allocations.AddRange(batchAllocations);
+            foreach (var allocationBatch in batchAllocations.Select(x => x.Uid).Chunk(800))
+                links.AddRange(await db.ProductionMachineScheduleAllocationSegments.AsNoTracking()
+                    .Where(x => allocationBatch.Contains(x.AllocationId))
+                    .ToListAsync(cancellationToken));
+            sets.AddRange(await db.ProductionMachineScheduleSegmentSets.AsNoTracking()
+                .Where(x => batch.Contains(x.WorkOrderMachineId) && x.IsCurrent)
                 .ToListAsync(cancellationToken));
         }
         var segmentsByMachine = segments.GroupBy(x => x.WorkOrderMachineId)
             .ToDictionary(x => x.Key, x => x.ToList());
         var allocationsByMachine = allocations.GroupBy(x => x.WorkOrderMachineId)
             .ToDictionary(x => x.Key, x => x.ToList());
+        var setsByMachine = sets.GroupBy(x => x.WorkOrderMachineId)
+            .ToDictionary(x => x.Key, x => x.ToList());
+        var linkedAllocationIds = links.Select(x => x.AllocationId).ToHashSet();
 
         var findings = new List<string>();
         var candidates = new List<Candidate>();
@@ -283,9 +296,40 @@ public sealed class MachineScheduleSegmentBackfillService : IMachineScheduleSegm
             var currentSegments = machineSegments
                 .Where(x => x.MachineScheduleRevision == row.ScheduleRevision)
                 .ToList();
+            setsByMachine.TryGetValue(row.MachineId, out var machineSets);
+            machineSets ??= [];
+            if (machineSets.Count > 1)
+            {
+                findings.Add($"Work Order {row.WorkOrderNo}, machine {row.MachineCode} has multiple current SegmentSets.");
+                continue;
+            }
             if (currentSegments.Count > 0)
             {
+                var currentSet = machineSets.SingleOrDefault();
+                if (currentSet is null || currentSet.MachineScheduleRevision != row.ScheduleRevision
+                    || currentSegments.Any(x => x.SegmentSetId != currentSet.Uid)
+                    || currentAllocations.Any(x => !linkedAllocationIds.Contains(x.Uid)))
+                {
+                    findings.Add($"Work Order {row.WorkOrderNo}, machine {row.MachineCode} has current segments without a complete current SegmentSet and allocation links; run the SegmentSet schema/data migration.");
+                    continue;
+                }
                 alreadySegmented++;
+                continue;
+            }
+            if (machineSets.Count > 0)
+            {
+                var currentSet = machineSets[0];
+                if (currentSet.MachineScheduleRevision == row.ScheduleRevision
+                    && currentAllocations.Count == 0
+                    && currentSet.PlanningState is
+                        ProductionMachineSchedulePlanningStates.HeldUnscheduled or
+                        ProductionMachineSchedulePlanningStates.MaintenanceUnscheduled or
+                        ProductionMachineSchedulePlanningStates.Completed)
+                {
+                    alreadySegmented++;
+                    continue;
+                }
+                findings.Add($"Work Order {row.WorkOrderNo}, machine {row.MachineCode} has a current SegmentSet without segments; repair its plan before backfill.");
                 continue;
             }
             if (row.MachineStart is null || row.MachineCompletion is null
@@ -329,6 +373,15 @@ public sealed class MachineScheduleSegmentBackfillService : IMachineScheduleSegm
                     x.WorkOrderMachineId,
                     x.MachineScheduleRevision,
                     x.SegmentStatus
+                }).ToList(),
+                Sets = sets.OrderBy(x => x.Uid).Select(x => new
+                {
+                    x.Uid, x.WorkOrderMachineId, x.MachineScheduleRevision,
+                    x.IsCurrent, x.PlanningState
+                }).ToList(),
+                Links = links.OrderBy(x => x.Uid).Select(x => new
+                {
+                    x.Uid, x.AllocationId, x.SegmentId
                 }).ToList(),
                 Allocations = allocations.OrderBy(x => x.Uid).Select(x => new
                 {

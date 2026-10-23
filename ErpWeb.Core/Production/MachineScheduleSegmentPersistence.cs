@@ -113,12 +113,6 @@ public static class MachineScheduleSegmentPersistence
         DateTime now,
         AppDbContext db)
     {
-        var plan = MachineScheduleSegmentCalculator.ComputeQuantity(
-            operation.PlannedOutputQty,
-            machine.OutputPerCycle,
-            machine.ParallelMachineCount,
-            machine.CycleSeconds);
-
         return new ProductionMachineScheduleSegment
         {
             CompanyCode = order.CompanyCode,
@@ -132,8 +126,10 @@ public static class MachineScheduleSegmentPersistence
             SegmentStatus = ProductionMachineScheduleSegmentStatuses.Planned,
             PlannedOutputQty = operation.PlannedOutputQty,
             OutputUom = operation.PlannedOutputUom,
-            PlannedCycleCount = plan.CycleCount > 0m ? plan.CycleCount : machine.PlannedCycleCount,
-            PlannedCycleSlots = plan.CycleSlots > 0m ? plan.CycleSlots : machine.PlannedCycleSlots,
+            // The Work Order quantity calculator already converted operation output into the
+            // machine's cycle UOM. Reusing its saved values avoids dividing BOX by PCS here.
+            PlannedCycleCount = machine.PlannedCycleCount,
+            PlannedCycleSlots = machine.PlannedCycleSlots,
             ScheduledRunMinutes = machine.PlannedRunMinutes,
             ScheduledSetupSeconds = machine.SetupSeconds,
             ScheduledConversionSeconds = machine.ConversionSeconds,
@@ -190,7 +186,15 @@ public static class MachineScheduleSegmentPersistence
         || operation.TransferredQty != 0m;
 
     public static decimal RemainingQuantity(ProductionWorkOrderOperation operation) =>
-        operation.RemainingQty > 0m
-            ? operation.RemainingQty
-            : Math.Max(0m, operation.PlannedOutputQty - operation.GoodQty);
+        Math.Max(0m, operation.RemainingQty);
+
+    public static decimal FuturePlannedQty(IEnumerable<ProductionMachineScheduleSegment> currentSegments) =>
+        currentSegments
+            .Where(x => x.SegmentStatus == ProductionMachineScheduleSegmentStatuses.Planned)
+            .Sum(x => x.PlannedOutputQty);
+
+    public static bool RequiresRemainingReplan(
+        decimal remainingQty,
+        IEnumerable<ProductionMachineScheduleSegment> currentSegments) =>
+        remainingQty > FuturePlannedQty(currentSegments);
 }

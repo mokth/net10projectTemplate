@@ -9,11 +9,11 @@ public static class PoMasterRefExportEndpoints
 {
     public static IEndpointRouteBuilder MapPoMasterRefExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/purchase/buyers/export", ExportBuyersAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/buying-terms/export", ExportBuyingTermsAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/categories/export", ExportCategoriesAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/authorised/export", ExportAuthorisedAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/items/export", ExportPurItemsAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/buyers/export", ExportBuyersAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/buying-terms/export", ExportBuyingTermsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/categories/export", ExportCategoriesAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/authorised/export", ExportAuthorisedAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/items/export", ExportPurItemsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

@@ -25,6 +25,7 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
     private readonly IProductionCalendarScheduleDataLoader _machineCalendars;
     private readonly IWorkOrderCalendarProvider _calendarProvider;
     private readonly IProductionMachineCapacityService _capacity;
+    private readonly IUomConversionService _uom;
 
     public MachineScheduleAdvancedPlanningService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -34,7 +35,8 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
         IMachineSchedulePlannerReadinessService readiness,
         IProductionCalendarScheduleDataLoader machineCalendars,
         IWorkOrderCalendarProvider calendarProvider,
-        IProductionMachineCapacityService capacity)
+        IProductionMachineCapacityService capacity,
+        IUomConversionService uom)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -44,6 +46,7 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
         _machineCalendars = machineCalendars;
         _calendarProvider = calendarProvider;
         _capacity = capacity;
+        _uom = uom;
     }
 
     public Task<IvMasterOperationResult<MachineScheduleAdvancedPreview>> PreviewInsertAsync(
@@ -109,7 +112,7 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
 
         var writeCheck = await CheckWritesAsync(cancellationToken);
         var builder = new MachineScheduleAdvancedPlanBuilder(
-            db, authorization.Scope!, _capacity,
+            db, authorization.Scope!, _capacity, _uom,
             new MachineScheduleAdvancedPlacementEngine(_machineCalendars, _calendarProvider),
             tracking: false);
         var plan = await builder.BuildAsync(request, cancellationToken);
@@ -234,7 +237,7 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
 
             var engine = new MachineScheduleAdvancedPlacementEngine(_machineCalendars, _calendarProvider);
             var builder = new MachineScheduleAdvancedPlanBuilder(
-                db, scope, _capacity, engine, tracking: true);
+                db, scope, _capacity, _uom, engine, tracking: true);
             var plan = await builder.BuildAsync(request, cancellationToken);
             if (!plan.CanCommit)
             {

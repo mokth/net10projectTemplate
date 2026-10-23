@@ -16,7 +16,6 @@ public sealed class UserAdminService : IUserAdminService
     private readonly IAccessRightService _accessRights;
     private readonly IPasswordPolicy _passwordPolicy;
     private readonly ISecurityAuditWriter _audit;
-    private readonly IPasswordRecoveryService _recovery;
     private readonly ILogger<UserAdminService> _logger;
 
     public UserAdminService(
@@ -25,7 +24,6 @@ public sealed class UserAdminService : IUserAdminService
         IAccessRightService accessRights,
         IPasswordPolicy passwordPolicy,
         ISecurityAuditWriter audit,
-        IPasswordRecoveryService recovery,
         ILogger<UserAdminService> logger)
     {
         _users = users;
@@ -33,7 +31,6 @@ public sealed class UserAdminService : IUserAdminService
         _accessRights = accessRights;
         _passwordPolicy = passwordPolicy;
         _audit = audit;
-        _recovery = recovery;
         _logger = logger;
     }
 
@@ -370,11 +367,17 @@ public sealed class UserAdminService : IUserAdminService
 
         await AuditAsync(SecurityAuditEventTypes.PasswordResetAdmin, uid, null, target.LoginId, "Administrator reset the password.", cancellationToken);
 
-        // Complete any pending password-recovery request for this user so the queue reflects the reset.
-        var recovery = await _recovery.CompletePendingAsync(uid, context.CompanyCode!, Truncate(context.UserId!, 10), SelfUid() ?? 0, cancellationToken);
-        if (recovery.Succeeded)
+        // The repository resolved any pending recovery request(s) in the same transaction as the
+        // password write (plan §15.1); this audit row is a record of that, not a second mutation.
+        if (result.CompletedRecoveryRequests > 0)
         {
-            await AuditAsync(SecurityAuditEventTypes.PasswordRecoveryCompleted, uid, null, target.LoginId, "Recovery request completed by administrator reset.", cancellationToken);
+            await AuditAsync(
+                SecurityAuditEventTypes.PasswordRecoveryCompleted,
+                uid,
+                null,
+                target.LoginId,
+                $"Recovery request completed by administrator reset ({result.CompletedRecoveryRequests}).",
+                cancellationToken);
         }
 
         _logger.LogInformation(

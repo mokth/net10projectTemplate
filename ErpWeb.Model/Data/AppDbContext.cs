@@ -119,6 +119,7 @@ public class AppDbContext : DbContext
 
     public DbSet<UserLogin> UserLogins => Set<UserLogin>();
     public DbSet<PasswordResetRequest> PasswordResetRequests => Set<PasswordResetRequest>();
+    public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
     public DbSet<SecurityAuditEvent> SecurityAuditEvents => Set<SecurityAuditEvent>();
     public DbSet<Menu> Menus => Set<Menu>();
     public DbSet<Permission> Permissions => Set<Permission>();

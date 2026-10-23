@@ -22,23 +22,23 @@ public static class PoInquiryExportEndpoints
 
     public static IEndpointRouteBuilder MapPoInquiryExportEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/purchase/inquiry/po-outstanding/export", ExportPoOutstandingAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/pr-status/export", ExportPrStatusAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/supplier/export", ExportSupplierTransactionsAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/supplier-history/export", ExportSupplierHistoryAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/invoices/export", ExportInvoicesAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/cdn/export", ExportCdnAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/document-relationship/export", ExportDocumentRelationshipAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/einvoice/export", ExportEInvoiceAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/einvoice-reconciliation/export", ExportEInvoiceReconciliationAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/price-history/export", ExportPriceHistoryAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/matching/export", ExportMatchingAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/delivery-performance/export", ExportDeliveryPerformanceLinesAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/delivery-performance/summary/export", ExportDeliveryPerformanceSummaryAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/workbench/pr-export", ExportWorkbenchPrAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/workbench/overdue-export", ExportWorkbenchOverdueAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/workbench/due-export", ExportWorkbenchDueSoonAsync).RequireAuthorization();
-        endpoints.MapGet("/purchase/inquiry/workbench/rni-export", ExportWorkbenchRniAsync).RequireAuthorization();
+        endpoints.MapGet("/purchase/inquiry/po-outstanding/export", ExportPoOutstandingAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/pr-status/export", ExportPrStatusAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/supplier/export", ExportSupplierTransactionsAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/supplier-history/export", ExportSupplierHistoryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/invoices/export", ExportInvoicesAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/cdn/export", ExportCdnAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/document-relationship/export", ExportDocumentRelationshipAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/einvoice/export", ExportEInvoiceAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/einvoice-reconciliation/export", ExportEInvoiceReconciliationAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/price-history/export", ExportPriceHistoryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/matching/export", ExportMatchingAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/delivery-performance/export", ExportDeliveryPerformanceLinesAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/delivery-performance/summary/export", ExportDeliveryPerformanceSummaryAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/workbench/pr-export", ExportWorkbenchPrAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/workbench/overdue-export", ExportWorkbenchOverdueAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/workbench/due-export", ExportWorkbenchDueSoonAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
+        endpoints.MapGet("/purchase/inquiry/workbench/rni-export", ExportWorkbenchRniAsync).RequireAuthorization(ErpAuthPolicies.ErpAccess);
         return endpoints;
     }
 

@@ -1,5 +1,13 @@
 namespace ErpWeb.Model.Entities;
 
+/// <summary>Well-known <see cref="PasswordResetRequest.Status"/> values, shared by the recovery service and the guarded admin reset.</summary>
+public static class PasswordResetRequestStatus
+{
+    public const string Pending = "PENDING";
+    public const string Completed = "COMPLETED";
+    public const string Cancelled = "CANCELLED";
+}
+
 /// <summary>
 /// An admin-assisted password reset request. No password, hash or token is ever stored here — the
 /// row only records that a user asked a company administrator to reset their password.
@@ -12,7 +20,7 @@ public class PasswordResetRequest
 
     public string CompanyCode { get; set; } = string.Empty;
 
-    public string Status { get; set; } = "PENDING";
+    public string Status { get; set; } = PasswordResetRequestStatus.Pending;
 
     public DateTime RequestedAtUtc { get; set; } = DateTime.UtcNow;
 

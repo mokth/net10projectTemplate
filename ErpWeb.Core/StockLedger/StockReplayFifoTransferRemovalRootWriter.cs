@@ -54,7 +54,9 @@ public static class StockReplayFifoTransferRemovalRootWriter
         var histories = await db.IvTrxHistories
             .Where(h => h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode
-                && h.BatchNo == batchNo).ToArrayAsync(cancellationToken);
+                && h.BatchNo == batchNo
+                && h.DocumentRevision == context.Posting.DocumentRevision)
+            .ToArrayAsync(cancellationToken);
         if (details.Length != 1 || histories.Length != 1
             || histories[0].Id != originalId)
             throw Invalid("The transfer detail or original history changed.");

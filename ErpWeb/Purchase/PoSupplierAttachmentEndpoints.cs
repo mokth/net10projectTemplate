@@ -10,7 +10,7 @@ public static class PoSupplierAttachmentEndpoints
     {
         // Catch-all {*suppCode} must be the final path segment (codes contain '/').
         var group = endpoints.MapGroup("/purchase/suppliers")
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
 
         group.MapGet("/attachments/{*suppCode}", ListAsync);
         group.MapPost("/attachments/{*suppCode}", UploadAsync);

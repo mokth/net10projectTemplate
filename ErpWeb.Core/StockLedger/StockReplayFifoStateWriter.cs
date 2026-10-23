@@ -169,9 +169,31 @@ public static class StockReplayFifoStateWriter
         var receiptId = receipt?.LayerId;
         var finalById = projection.FinalLayers.ToDictionary(
             l => StockReplayFifoReceiptLayerBinding.Map(l.LayerId, receiptId));
-        if (layers.Length != beforeById.Count + (receipt is null ? 0 : 1)
+        var archived = layers.Where(l => !beforeById.ContainsKey(l.Id)
+                && l.Id != receiptId).ToArray();
+        var archivedFactIds = archived.Select(l => l.OriginValuationFactId)
+            .ToArray();
+        var archivedReversals = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.ReversesValuationFactId.HasValue
+                && archivedFactIds.Contains(f.ReversesValuationFactId.Value))
+            .Select(f => new { f.ReversesValuationFactId, f.Direction,
+                f.MovementCode, f.ValuationStatus,
+                SealedAtUtc = f.StockPosting!.SealedAtUtc })
+            .ToArrayAsync(cancellationToken);
+        if (archived.Any(l => l.Status != StockFifoLayerStatuses.Closed
+                || l.RemainingQty != 0m || l.RemainingValue != 0m
+                || l.CurrentUnitCost != 0m
+                || archivedReversals.Count(f =>
+                    f.ReversesValuationFactId == l.OriginValuationFactId
+                    && f.Direction == -1
+                    && f.MovementCode == "RECEIPT_IN"
+                    && f.ValuationStatus == StockValuationStatuses.Reversed
+                    && f.SealedAtUtc is not null) != 1)
+            || archivedReversals.Length != archived.Length
+            || layers.Length != beforeById.Count
+                + (receipt is null ? 0 : 1) + archived.Length
             || layers.Length != finalById.Count
-                + (removedReceipt is null ? 0 : 1)
+                + (removedReceipt is null ? 0 : 1) + archived.Length
             || projection.FinalLayers.Any(l => l.LayerId <= 0
                 || l.LayerId == long.MaxValue && receipt is null)
             || StockLedgerPrecision.Quantity(
@@ -183,6 +205,8 @@ public static class StockReplayFifoStateWriter
             throw Invalid("FIFO final layers differ from the prepared item state.");
         foreach (var layer in layers)
         {
+            if (archived.Any(l => l.Id == layer.Id))
+                continue;
             if (removedReceipt is not null
                 && layer.Id == removedReceipt.LayerId)
             {

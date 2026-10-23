@@ -9,7 +9,7 @@ public static class PoOrderAttachmentEndpoints
     public static IEndpointRouteBuilder MapPoOrderAttachmentEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/purchase/orders/attachments")
-            .RequireAuthorization();
+            .RequireAuthorization(ErpAuthPolicies.ErpAccess);
 
         group.MapGet("/{docId}", ListAsync);
         group.MapPost("/{docId}", UploadAsync);

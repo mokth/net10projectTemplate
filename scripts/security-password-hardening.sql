@@ -59,3 +59,34 @@ BEGIN
         ON dbo.SecurityAuditEvent (CompanyCode, OccurredAtUtc);
 END
 GO
+
+/* ---------------------------------------------------------------------------
+   Self-service password reset by email.
+
+   Only the SHA-256 hash of the token is stored; the raw token exists solely in
+   the emailed link. Single-use (UsedAtUtc) and time-limited (ExpiresAtUtc).
+   --------------------------------------------------------------------------- */
+IF OBJECT_ID(N'dbo.PasswordResetToken', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.PasswordResetToken
+    (
+        PasswordResetTokenId    bigint IDENTITY(1,1) NOT NULL,
+        UserUid                 int NOT NULL,
+        CompanyCode             nvarchar(5) NOT NULL,
+        TokenHash               nvarchar(64) NOT NULL,
+        CreatedAtUtc            datetime2 NOT NULL,
+        ExpiresAtUtc            datetime2 NOT NULL,
+        UsedAtUtc               datetime2 NULL,
+        RequestedIp             nvarchar(45) NULL,
+        CONSTRAINT PK_PasswordResetToken PRIMARY KEY (PasswordResetTokenId),
+        CONSTRAINT FK_PasswordResetToken_userlogin_UserUid
+            FOREIGN KEY (UserUid) REFERENCES dbo.userlogin (uid) ON DELETE CASCADE
+    );
+
+    CREATE UNIQUE INDEX UQ_PasswordResetToken_TokenHash
+        ON dbo.PasswordResetToken (TokenHash);
+
+    CREATE INDEX IX_PasswordResetToken_User_Used
+        ON dbo.PasswordResetToken (UserUid, UsedAtUtc);
+END
+GO

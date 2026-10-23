@@ -4,6 +4,7 @@ using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 
 namespace ErpWeb.Authentication;
 
@@ -75,17 +76,72 @@ public static class AccountEndpoints
         group.MapPost("/forgot-password", async (
             [FromForm] ForgotPasswordInputModel model,
             IPasswordRecoveryService recovery,
+            IOptions<PasswordRecoveryOptions> recoveryOptions,
             HttpContext http) =>
         {
+            // A reset link must never point at a host taken from an untrusted header, so the
+            // configured PublicBaseUrl wins when present; otherwise fall back to the request.
             await recovery.RequestResetAsync(
                 model.CompanyCode?.Trim() ?? string.Empty,
-                model.Username?.Trim() ?? string.Empty);
+                model.Username?.Trim() ?? string.Empty,
+                ResetLinkBaseUrl(http, recoveryOptions.Value),
+                http.Connection.RemoteIpAddress?.ToString());
 
             // Enumeration-safe: always the same redirect regardless of whether an account matched.
             return RedirectToApp(http, "/forgot-password?submitted=1");
         }).AllowAnonymous().RequireRateLimiting("auth-recovery");
 
+        group.MapPost("/reset-password", async (
+            [FromForm] ResetPasswordInputModel model,
+            IPasswordRecoveryService recovery,
+            HttpContext http) =>
+        {
+            if (!string.Equals(model.NewPassword, model.ConfirmPassword, StringComparison.Ordinal))
+            {
+                return RedirectToResetPage(http, model.Token, "mismatch");
+            }
+
+            var result = await recovery.RedeemAsync(model.Token, model.NewPassword ?? string.Empty);
+            if (result.Succeeded)
+            {
+                return RedirectToApp(http, "/login?reset=1");
+            }
+
+            // The token is echoed back so a password-policy rejection does not cost the user the
+            // link. It already travelled in this request's own URL.
+            return result.Status == PasswordResetRedeemStatus.PolicyRejected
+                ? RedirectToResetPage(http, model.Token, "policy")
+                : RedirectToResetPage(http, model.Token, "invalid");
+        }).AllowAnonymous().RequireRateLimiting("auth-reset");
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// Absolute base URL for the emailed reset link, without a trailing slash.
+    /// </summary>
+    private static string ResetLinkBaseUrl(HttpContext http, PasswordRecoveryOptions options)
+    {
+        if (!string.IsNullOrWhiteSpace(options.PublicBaseUrl))
+        {
+            return options.PublicBaseUrl.TrimEnd('/');
+        }
+
+        return $"{http.Request.Scheme}://{http.Request.Host}{http.Request.PathBase}".TrimEnd('/');
+    }
+
+    /// <summary>
+    /// Sends the browser back to the reset form with an error code, keeping the token so the user can
+    /// correct a typo instead of requesting a brand-new link. An absent token drops the parameter
+    /// rather than sending <c>token=</c>.
+    /// </summary>
+    private static IResult RedirectToResetPage(HttpContext http, string? token, string errorCode)
+    {
+        var query = string.IsNullOrWhiteSpace(token)
+            ? $"?error={errorCode}"
+            : $"?token={Uri.EscapeDataString(token)}&error={errorCode}";
+
+        return RedirectToApp(http, "/reset-password" + query);
     }
 
     /// <summary>

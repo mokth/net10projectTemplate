@@ -609,7 +609,7 @@ public class IvStockMasterServiceTests : IAsyncLifetime
                 "old-image.webp",
                 "DEMO",
                 "A100",
-                "item-replace-or-remove",
+                "item-remove",
                 It.IsAny<CancellationToken>()),
             Times.Once);
         await using var db = await _factory.CreateDbContextAsync();
@@ -645,7 +645,7 @@ public class IvStockMasterServiceTests : IAsyncLifetime
                 "old-image.webp",
                 "DEMO",
                 "A100",
-                "item-replace-or-remove",
+                "item-remove",
                 It.IsAny<CancellationToken>()),
             Times.Once);
         await using var db = await _factory.CreateDbContextAsync();
@@ -957,6 +957,15 @@ public class IvStockMasterServiceTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         var row = await db.IvStockMasters.SingleAsync(x => x.CompanyCode == "DEMO" && x.ICode == code);
         row.ImagePath = imagePath;
+        db.IvStockMasterImages.Add(new IvStockMasterImage
+        {
+            CompanyCode = "DEMO",
+            ICode = code,
+            ImagePath = imagePath,
+            SortOrder = 1,
+            CreatedDate = FixedToday,
+            CreatedBy = "TEST"
+        });
         await db.SaveChangesAsync();
     }
 
