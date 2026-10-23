@@ -35,6 +35,7 @@ public sealed class ProductionMachineScheduleSegmentConfiguration
         builder.Property(x => x.WorkOrderId).HasColumnName("WorkOrderID");
         builder.Property(x => x.WorkOrderOperationId).HasColumnName("WorkOrderOperationID");
         builder.Property(x => x.WorkOrderMachineId).HasColumnName("WorkOrderMachineID");
+        builder.Property(x => x.SegmentSetId).HasColumnName("SegmentSetID");
         builder.Property(x => x.MachineCode).HasMaxLength(30).IsRequired();
         builder.Property(x => x.SegmentKind).HasMaxLength(30).IsRequired();
         builder.Property(x => x.SegmentStatus).HasMaxLength(20).IsRequired();
@@ -71,6 +72,8 @@ public sealed class ProductionMachineScheduleSegmentConfiguration
             .HasDatabaseName("IX_PrMachineScheduleSegment_Order_Operation_Status");
         builder.HasIndex(x => new { x.WorkOrderMachineId, x.MachineScheduleRevision, x.SegmentSequence })
             .HasDatabaseName("IX_PrMachineScheduleSegment_Machine_Revision_Sequence");
+        builder.HasIndex(x => x.SegmentSetId)
+            .HasDatabaseName("IX_PrMachineScheduleSegment_Set");
     }
 }
 

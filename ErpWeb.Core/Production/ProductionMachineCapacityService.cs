@@ -198,6 +198,7 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
                 PlannedCompletion = machine.PlannedCompletionDateTime,
                 ScheduleRevision = machine.ScheduleRevision,
                 ScheduleSourceHash = machine.ScheduleSourceHash,
+                OperationScheduleSourceHash = machine.Operation.ScheduleSourceHash,
                 SetupSeconds = machine.SetupSeconds,
                 ConversionSeconds = machine.ConversionSeconds,
                 QueueSeconds = machine.QueueSeconds,
@@ -219,13 +220,23 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
         var machineIds = rows.Select(x => x.MachineId).ToList();
         var allocations = new List<ProductionMachineScheduleAllocation>();
         var segments = new List<ProductionMachineScheduleSegment>();
+        var sets = new List<ProductionMachineScheduleSegmentSet>();
+        var links = new List<ProductionMachineScheduleAllocationSegment>();
         foreach (var batch in machineIds.Chunk(800))
         {
-            allocations.AddRange(await db.ProductionMachineScheduleAllocations.AsNoTracking()
+            var machineAllocations = await db.ProductionMachineScheduleAllocations.AsNoTracking()
                 .Where(x => x.CompanyCode == companyCode && batch.Contains(x.WorkOrderMachineId))
                 .OrderBy(x => x.WorkOrderMachineId)
                 .ThenBy(x => x.ScheduleRevision)
                 .ThenBy(x => x.FragmentNo)
+                .ToListAsync(cancellationToken);
+            allocations.AddRange(machineAllocations);
+            foreach (var allocationBatch in machineAllocations.Select(x => x.Uid).Chunk(800))
+                links.AddRange(await db.ProductionMachineScheduleAllocationSegments.AsNoTracking()
+                    .Where(x => allocationBatch.Contains(x.AllocationId))
+                    .ToListAsync(cancellationToken));
+            sets.AddRange(await db.ProductionMachineScheduleSegmentSets.AsNoTracking()
+                .Where(x => batch.Contains(x.WorkOrderMachineId) && x.IsCurrent)
                 .ToListAsync(cancellationToken));
             segments.AddRange(await db.ProductionMachineScheduleSegments.AsNoTracking()
                 .Where(x => batch.Contains(x.WorkOrderMachineId)
@@ -240,6 +251,10 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
             .ToDictionary(x => x.Key, x => x.ToList());
         var segmentsByMachine = segments
             .GroupBy(x => x.WorkOrderMachineId)
+            .ToDictionary(x => x.Key, x => x.ToList());
+        var setsByMachine = sets.GroupBy(x => x.WorkOrderMachineId)
+            .ToDictionary(x => x.Key, x => x.ToList());
+        var linksByAllocation = links.GroupBy(x => x.AllocationId)
             .ToDictionary(x => x.Key, x => x.ToList());
 
         var ordered = rows
@@ -256,17 +271,31 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
             machineAllocations ??= [];
             segmentsByMachine.TryGetValue(row.MachineId, out var machineSegments);
             machineSegments ??= [];
+            setsByMachine.TryGetValue(row.MachineId, out var machineSets);
+            machineSets ??= [];
+            if (machineSets.Count > 1)
+            {
+                AddInvalid(evidence, row, "more than one current SegmentSet exists");
+                continue;
+            }
+            var currentSet = machineSets.SingleOrDefault();
             var currentAllocations = machineAllocations
                 .Where(x => x.ScheduleRevision == row.ScheduleRevision)
                 .OrderBy(x => x.FragmentNo)
                 .ToList();
             var currentSegments = machineSegments
-                .Where(x => x.MachineScheduleRevision == row.ScheduleRevision)
+                .Where(x => currentSet is null
+                    ? x.MachineScheduleRevision == row.ScheduleRevision
+                    : x.SegmentSetId == currentSet.Uid)
                 .OrderBy(x => x.SegmentSequence)
                 .ToList();
             var hasPositiveFragment = machineAllocations.Any(x => x.EndDateTime > x.StartDateTime);
 
-            evidence.SourceStamps.Add(SourceStamp(row, machineAllocations, currentSegments));
+            var currentLinks = currentAllocations.SelectMany(x =>
+                linksByAllocation.TryGetValue(x.Uid, out var allocationLinks)
+                    ? allocationLinks : []).ToList();
+            evidence.SourceStamps.Add(SourceStamp(row, machineAllocations, currentSegments,
+                currentSet, currentLinks));
 
             if ((excludedWorkOrderId is long excludedWorkOrder && row.WorkOrderId == excludedWorkOrder)
                 || (excludedWorkOrderMachineIds is not null && excludedWorkOrderMachineIds.Contains(row.MachineId)))
@@ -286,10 +315,23 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
                 continue;
             }
 
+            if (currentSet is not null && currentAllocations.Count == 0
+                && currentSet.PlanningState is
+                    ProductionMachineSchedulePlanningStates.HeldUnscheduled or
+                    ProductionMachineSchedulePlanningStates.MaintenanceUnscheduled or
+                    ProductionMachineSchedulePlanningStates.Completed)
+            {
+                if (!ValidateSetIdentity(row, currentSet)
+                    || currentSegments.Count > 0 && currentSegments.Any(x => x.PlannedOutputQty > 0m))
+                    AddInvalid(evidence, row, "zero-allocation SegmentSet has inconsistent identity or scheduled segments");
+                continue;
+            }
+
             if (seconds > 0m)
             {
                 evidence.PositiveRowCount++;
-                if (!ValidatePositiveRow(evidence, row, currentAllocations, machineAllocations, currentSegments))
+                if (!ValidatePositiveRow(evidence, row, currentAllocations, machineAllocations,
+                    currentSegments, currentSet, linksByAllocation))
                     continue;
 
                 foreach (var allocation in currentAllocations)
@@ -331,7 +373,9 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
         ActiveCapacityRow row,
         IReadOnlyList<ProductionMachineScheduleAllocation> currentAllocations,
         IReadOnlyList<ProductionMachineScheduleAllocation> allAllocations,
-        IReadOnlyList<ProductionMachineScheduleSegment> currentSegments)
+        IReadOnlyList<ProductionMachineScheduleSegment> currentSegments,
+        ProductionMachineScheduleSegmentSet? currentSet,
+        IReadOnlyDictionary<long, List<ProductionMachineScheduleAllocationSegment>> linksByAllocation)
     {
         if (row.PlannedStart is null || row.PlannedCompletion is null
             || row.OperationStart is null || row.OperationCompletion is null)
@@ -394,6 +438,15 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
                 AddInvalid(evidence, row, "allocation provenance does not match the selected active machine operation");
                 return false;
             }
+        }
+
+        if (currentSet is not null)
+            return ValidateCurrentSetSegments(
+                evidence, row, currentAllocations, currentSegments, currentSet, linksByAllocation);
+        if (currentAllocations.Any(x => linksByAllocation.ContainsKey(x.Uid)))
+        {
+            AddInvalid(evidence, row, "allocation links exist without a current SegmentSet");
+            return false;
         }
 
         // ── Segment-aware validation ──────────────────────────────────────────────────────
@@ -468,6 +521,85 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
         {
             AddInvalid(evidence, row, "segment union does not match the machine summary dates");
             return false;
+        }
+
+        return true;
+    }
+
+    private static bool ValidateSetIdentity(
+        ActiveCapacityRow row,
+        ProductionMachineScheduleSegmentSet set) =>
+        set.WorkOrderMachineId == row.MachineId
+        && set.WorkOrderId == row.WorkOrderId
+        && set.WorkOrderOperationId == row.OperationId
+        && string.Equals(set.CompanyCode, row.CompanyCode, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(set.BranchCode, row.BranchCode, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(
+            ProductionMachineCapacityEvidence.Normalize(set.MachineCode),
+            ProductionMachineCapacityEvidence.Normalize(row.MachineCode), StringComparison.Ordinal)
+        && set.MachineScheduleRevision == row.ScheduleRevision;
+
+    private static bool ValidateCurrentSetSegments(
+        ProductionMachineCapacityEvidence evidence,
+        ActiveCapacityRow row,
+        IReadOnlyList<ProductionMachineScheduleAllocation> allocations,
+        IReadOnlyList<ProductionMachineScheduleSegment> segments,
+        ProductionMachineScheduleSegmentSet set,
+        IReadOnlyDictionary<long, List<ProductionMachineScheduleAllocationSegment>> linksByAllocation)
+    {
+        if (!ValidateSetIdentity(row, set)
+            || set.PlanningState == ProductionMachineSchedulePlanningStates.Completed
+            || !string.Equals(set.ScheduleSourceHash, row.ScheduleSourceHash, StringComparison.Ordinal)
+            || !string.Equals(set.ScheduleSourceHash, row.OperationScheduleSourceHash, StringComparison.Ordinal)
+            || segments.Count == 0
+            || set.PlannedQtyBasis != segments.Sum(x => x.PlannedOutputQty))
+        {
+            AddInvalid(evidence, row, "current SegmentSet identity, quantity, or combined provenance is inconsistent");
+            return false;
+        }
+
+        var segmentById = segments.ToDictionary(x => x.Uid);
+        var linkedSegmentIds = new HashSet<long>();
+        foreach (var allocation in allocations)
+        {
+            if (!linksByAllocation.TryGetValue(allocation.Uid, out var allocationLinks)
+                || allocationLinks.Count != 1
+                || !segmentById.TryGetValue(allocationLinks[0].SegmentId, out var segment))
+            {
+                AddInvalid(evidence, row, "productive allocation lacks exactly one link to a current segment");
+                return false;
+            }
+            linkedSegmentIds.Add(segment.Uid);
+            if (segment.SegmentSetId != set.Uid
+                || segment.SegmentStatus == ProductionMachineScheduleSegmentStatuses.Superseded
+                || segment.WorkOrderMachineId != row.MachineId
+                || segment.WorkOrderId != row.WorkOrderId
+                || segment.WorkOrderOperationId != row.OperationId
+                || segment.MachineScheduleRevision != row.ScheduleRevision
+                || allocation.StartDateTime < segment.PlannedStartDateTime
+                || allocation.EndDateTime > segment.PlannedCompletionDateTime)
+            {
+                AddInvalid(evidence, row, "productive allocation falls outside its current business segment");
+                return false;
+            }
+        }
+
+        if (segments.Any(x => !linkedSegmentIds.Contains(x.Uid)))
+        {
+            AddInvalid(evidence, row, "current scheduled segment has no productive allocation");
+            return false;
+        }
+
+        if (set.PlanningState == ProductionMachineSchedulePlanningStates.Scheduled)
+        {
+            var segmentStart = segments.Min(x => x.PlannedStartDateTime);
+            var segmentCompletion = segments.Max(x => x.PlannedCompletionDateTime);
+            if (segmentCompletion != row.PlannedCompletion
+                || (!row.HasExecution && segmentStart != row.PlannedStart))
+            {
+                AddInvalid(evidence, row, "current SegmentSet bounds do not match the machine summary");
+                return false;
+            }
         }
 
         return true;
@@ -563,7 +695,9 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
     private static string SourceStamp(
         ActiveCapacityRow row,
         IReadOnlyList<ProductionMachineScheduleAllocation> allocations,
-        IReadOnlyList<ProductionMachineScheduleSegment> segments)
+        IReadOnlyList<ProductionMachineScheduleSegment> segments,
+        ProductionMachineScheduleSegmentSet? currentSet,
+        IReadOnlyList<ProductionMachineScheduleAllocationSegment> links)
     {
         var allocationStamp = allocations.Count == 0
             ? "none"
@@ -575,8 +709,17 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
             : string.Join(",", segments.Select(x =>
                 $"{x.Uid}:{x.SegmentSequence}:{x.SegmentKind}:{x.SegmentStatus}:{x.MachineScheduleRevision}:"
                 + $"{x.PlannedStartDateTime:O}:{x.PlannedCompletionDateTime:O}:{x.PlannedOutputQty}:{x.SegmentScheduleSourceHash}"));
+        var setStamp = currentSet is null
+            ? "none"
+            : $"{currentSet.Uid}:{currentSet.Mode}:{currentSet.PlanningState}:{currentSet.PlannedQtyBasis}:"
+              + $"{currentSet.MachineScheduleRevision}:{currentSet.ScheduleSourceHash}";
+        var linkStamp = links.Count == 0
+            ? "none"
+            : string.Join(",", links.OrderBy(x => x.AllocationId).ThenBy(x => x.SegmentId)
+                .Select(x => $"{x.Uid}:{x.AllocationId}:{x.SegmentId}"));
         return $"M:{row.MachineId}:{row.ScheduleRevision}:{ProductionMachineCapacityEvidence.Normalize(row.MachineCode)}:"
-            + $"{row.PlannedStart:O}:{row.PlannedCompletion:O}:{row.ScheduleSourceHash}:{allocationStamp}:{segmentStamp}";
+            + $"{row.PlannedStart:O}:{row.PlannedCompletion:O}:{row.ScheduleSourceHash}:"
+            + $"{row.OperationScheduleSourceHash}:{allocationStamp}:{segmentStamp}:{setStamp}:{linkStamp}";
     }
 
     private sealed class ActiveCapacityRow
@@ -595,6 +738,7 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
         public DateTime? PlannedCompletion { get; init; }
         public int ScheduleRevision { get; init; }
         public string? ScheduleSourceHash { get; init; }
+        public string? OperationScheduleSourceHash { get; init; }
         public decimal SetupSeconds { get; init; }
         public decimal ConversionSeconds { get; init; }
         public decimal QueueSeconds { get; init; }

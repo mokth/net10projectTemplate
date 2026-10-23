@@ -106,27 +106,41 @@ public sealed class MachineScheduleSegmentBackfillService : IMachineScheduleSegm
             }
 
             var now = DateTime.UtcNow;
-            var user = MachineScheduleSegmentPersistence.TruncateUser(scope.UserId);
             var created = new List<(Candidate candidate, ProductionMachineScheduleSegment segment)>();
+            var setCandidates = new List<(Candidate candidate, ProductionWorkOrderMachine machine,
+                ProductionWorkOrder order, ProductionMachineScheduleSegmentSet set)>();
             foreach (var candidate in current.Candidates)
             {
                 var machine = await db.ProductionWorkOrderMachines
                     .Include(x => x.Operation)
                     .FirstAsync(x => x.Uid == candidate.MachineId, cancellationToken);
+                var order = new ProductionWorkOrder
+                {
+                    Uid = candidate.WorkOrderId,
+                    CompanyCode = scope.CompanyCode,
+                    BranchCode = scope.BranchCode!,
+                    PlannedStartDateTime = candidate.MachineStart!.Value,
+                    PlannedCompletionDateTime = candidate.MachineCompletion!.Value
+                };
+                var set = MachineScheduleSegmentPersistence.BuildCurrentSet(
+                    order, machine.Operation!, machine,
+                    ProductionMachineScheduleSegmentSetModes.FullPlan,
+                    ProductionMachineSchedulePlanningStates.Scheduled,
+                    candidate.PlannedQty,
+                    "Backfilled existing one-span active schedule.",
+                    scope.UserId, now, db);
+                db.ProductionMachineScheduleSegmentSets.Add(set);
+                setCandidates.Add((candidate, machine, order, set));
+            }
+
+            if (setCandidates.Count > 0)
+                await db.SaveChangesAsync(cancellationToken);
+
+            foreach (var (candidate, machine, order, set) in setCandidates)
+            {
                 var segment = MachineScheduleSegmentPersistence.BuildOriginalSegment(
-                    new ProductionWorkOrder
-                    {
-                        Uid = candidate.WorkOrderId,
-                        CompanyCode = scope.CompanyCode,
-                        BranchCode = scope.BranchCode!,
-                        PlannedStartDateTime = candidate.MachineStart!.Value,
-                        PlannedCompletionDateTime = candidate.MachineCompletion!.Value
-                    },
-                    machine.Operation!,
-                    machine,
-                    scope.UserId,
-                    now,
-                    db);
+                    order, machine.Operation!, machine, scope.UserId, now, db);
+                segment.SegmentSetId = set.Uid;
                 segment.SegmentSequence = 1;
                 segment.ReasonCode = "BACKFILL";
                 segment.Reason = "Backfilled existing one-span active schedule.";
@@ -149,6 +163,8 @@ public sealed class MachineScheduleSegmentBackfillService : IMachineScheduleSegm
                 {
                     allocation.MachineScheduleSegmentId = segment.Uid;
                     allocation.FragmentNo = fragmentNo++;
+                    MachineScheduleSegmentPersistence.AddAllocationLink(
+                        db, allocation, segment, scope.UserId, now);
                 }
             }
 

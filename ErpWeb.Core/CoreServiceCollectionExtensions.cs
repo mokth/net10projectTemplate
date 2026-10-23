@@ -46,6 +46,14 @@ public static class CoreServiceCollectionExtensions
 
         services.AddSingleton<IValidateOptions<MenusOptions>, MenusOptionsValidator>();
 
+        services.AddSingleton<IValidateOptions<SecurityRevalidationOptions>, SecurityRevalidationOptionsValidator>();
+
+        services.AddOptions<SecurityRevalidationOptions>()
+            .Bind(configuration.GetSection(SecurityRevalidationOptions.SectionName))
+            .ValidateOnStart();
+
+        services.AddScoped<IAuthSecurityStateValidator, AuthSecurityStateValidator>();
+
         services.AddOptions<MenusOptions>()
 
             .Bind(configuration.GetSection(MenusOptions.SectionName))
@@ -143,6 +151,10 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IUserAdminService, UserAdminService>();
 
         services.AddScoped<IRoleAdminService, RoleAdminService>();
+
+        services.AddScoped<ISecurityAuditWriter, SecurityAuditWriter>();
+
+        services.AddScoped<IPasswordRecoveryService, PasswordRecoveryService>();
 
         services.AddScoped<IPermissionAdminService, PermissionAdminService>();
 

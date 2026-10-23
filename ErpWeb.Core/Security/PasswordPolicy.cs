@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 
@@ -28,6 +29,13 @@ public sealed class PasswordPolicy : IPasswordPolicy
         if (newPassword.Length < _options.MinimumLength)
         {
             errors.Add($"Password must be at least {_options.MinimumLength} characters.");
+        }
+
+        // BCrypt only uses the first 72 bytes; enforce the limit by UTF-8 byte count, never by
+        // character count, so multibyte passwords are measured correctly and never truncated.
+        if (Encoding.UTF8.GetByteCount(newPassword) > _options.MaximumUtf8Bytes)
+        {
+            errors.Add($"Password must not exceed {_options.MaximumUtf8Bytes} UTF-8 bytes.");
         }
 
         if (_options.RequireLetter && !AsciiLetter.IsMatch(newPassword))

@@ -83,6 +83,46 @@ public class PasswordPolicyTests
         var result = CreatePolicy().Validate(password!, "user1");
         Assert.False(result.IsValid);
     }
+
+    [Fact]
+    public void Accepts_exactly_72_ascii_bytes()
+    {
+        var password = new string('a', 71) + "1"; // 72 ASCII bytes, has letter + digit
+        var result = CreatePolicy().Validate(password, "user1");
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    [Fact]
+    public void Rejects_73_ascii_bytes()
+    {
+        var password = new string('a', 72) + "1"; // 73 ASCII bytes
+        var result = CreatePolicy().Validate(password, "user1");
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("UTF-8 bytes", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Accepts_multibyte_password_within_byte_limit()
+    {
+        // 20 CJK chars (60 bytes) + "a1" (2 bytes) = 62 bytes, has ASCII letter + digit.
+        var password = new string('密', 20) + "a1";
+        var result = CreatePolicy().Validate(password, "user1");
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    [Fact]
+    public void Rejects_multibyte_password_over_byte_limit()
+    {
+        // 24 CJK chars (72 bytes) + "a1" (2 bytes) = 74 bytes, but only 26 characters.
+        var password = new string('密', 24) + "a1";
+        var result = CreatePolicy().Validate(password, "user1");
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("UTF-8 bytes", StringComparison.Ordinal));
+    }
 }
 
 [Trait(TestCategories.Name, TestCategories.Admin)]
@@ -98,7 +138,8 @@ public class PasswordPolicyOptionsValidatorTests
             MinimumLength = 8,
             RequireLetter = true,
             RequireDigit = true,
-            RejectUsername = true
+            RejectUsername = true,
+            MaximumUtf8Bytes = 72
         });
 
         Assert.True(result.Succeeded);
@@ -133,5 +174,38 @@ public class PasswordPolicyOptionsValidatorTests
         });
 
         Assert.False(result.Succeeded);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(73)]
+    [InlineData(-1)]
+    public void Rejects_out_of_range_maximum_utf8_bytes(int maximumUtf8Bytes)
+    {
+        var result = _validator.Validate(null, new PasswordPolicyOptions
+        {
+            MinimumLength = 8,
+            RequireLetter = true,
+            RequireDigit = true,
+            RejectUsername = true,
+            MaximumUtf8Bytes = maximumUtf8Bytes
+        });
+
+        Assert.False(result.Succeeded);
+    }
+
+    [Fact]
+    public void Accepts_maximum_utf8_bytes_of_72()
+    {
+        var result = _validator.Validate(null, new PasswordPolicyOptions
+        {
+            MinimumLength = 8,
+            RequireLetter = true,
+            RequireDigit = true,
+            RejectUsername = true,
+            MaximumUtf8Bytes = 72
+        });
+
+        Assert.True(result.Succeeded);
     }
 }

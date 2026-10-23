@@ -11,6 +11,7 @@ using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using System.Data.Common;
@@ -337,7 +338,8 @@ internal static class InventoryLedgerTestFixture
         string company = CompanyCode,
         string branch = BranchCode,
         IAccessRightService? access = null,
-        IInventoryValuationService? valuation = null)
+        IInventoryValuationService? valuation = null,
+        bool enableBackdatedReplay = false)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         return new IvInventoryPostingService(
@@ -350,14 +352,21 @@ internal static class InventoryLedgerTestFixture
             NullLogger<IvInventoryPostingService>.Instance,
             currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
             historyWriter: new IvInventoryHistoryWriter(),
-            coordinator: CreateCoordinator(factory, company, branch, valuation));
+            coordinator: CreateCoordinator(factory, company, branch, valuation),
+            configuration: enableBackdatedReplay
+                ? new ConfigurationManager
+                {
+                    ["OpenPeriodBackdatedReplayEnabled"] = "true"
+                }
+                : null);
     }
 
     public static IvMiscIssueService CreateMiscIssue(
         IDbContextFactory<AppDbContext> factory,
         DateTime today,
         string company = CompanyCode,
-        string branch = BranchCode)
+        string branch = BranchCode,
+        bool enableBackdatedReplay = false)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -372,7 +381,8 @@ internal static class InventoryLedgerTestFixture
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),
             postingRepo,
-            CreateInventoryPosting(factory, company, branch, access),
+            CreateInventoryPosting(factory, company, branch, access,
+                enableBackdatedReplay: enableBackdatedReplay),
             NullLogger<IvMiscIssueService>.Instance);
     }
 

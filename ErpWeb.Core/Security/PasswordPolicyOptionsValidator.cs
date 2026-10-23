@@ -28,6 +28,11 @@ public sealed class PasswordPolicyOptionsValidator : IValidateOptions<PasswordPo
             failures.Add($"{PasswordPolicyOptions.SectionName}:RejectUsername must be true.");
         }
 
+        if (options.MaximumUtf8Bytes is <= 0 or > 72)
+        {
+            failures.Add($"{PasswordPolicyOptions.SectionName}:MaximumUtf8Bytes must be between 1 and 72.");
+        }
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

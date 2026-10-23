@@ -124,8 +124,20 @@ public sealed class ProductionAbsorbedCostCalculator
             basisQty,
             expectedUom);
 
-        return ProductionAbsorbedCostResult.Success(lines);
+        return ProductionAbsorbedCostResult.Success(lines
+            .OrderBy(x => CostTypeOrder(x.CostType))
+            .ThenBy(x => x.SourceLineKey, StringComparer.Ordinal)
+            .ToArray());
     }
+
+    private static int CostTypeOrder(string costType) => costType switch
+    {
+        ProductionConversionCostTypes.Labour => 0,
+        ProductionConversionCostTypes.Machine => 1,
+        ProductionConversionCostTypes.UtilitiesOverhead => 2,
+        ProductionConversionCostTypes.Other => 3,
+        _ => throw new InvalidOperationException("Unknown frozen conversion cost type."),
+    };
 
     private static string? AddLabourLine(
         ICollection<ProductionAbsorbedCostLine> lines,

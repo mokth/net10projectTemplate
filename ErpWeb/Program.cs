@@ -1,6 +1,7 @@
 using ErpWeb.Authentication;
 using ErpWeb.Components;
 using ErpWeb.Core;
+using ErpWeb.Core.Authentication;
 using ErpWeb.Core.Menus;
 using ErpWeb.Inventory;
 using ErpWeb.Purchase;
@@ -12,9 +13,12 @@ using ErpWeb.UI.Services;
 using ErpWeb.UI.Services.Theme;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using Serilog;
+using System.Threading.RateLimiting;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -41,6 +45,10 @@ try
 
     builder.Services.AddCascadingAuthenticationState();
     builder.Services.AddHttpContextAccessor();
+
+    // Replace the default ServerAuthenticationStateProvider with a revalidating provider that re-checks
+    // the live DB security state on an interval and refreshes the permission cache.
+    builder.Services.AddScoped<AuthenticationStateProvider, ErpRevalidatingAuthenticationStateProvider>();
     builder.Services.AddDevExpressBlazor(options =>
     {
         options.SizeMode = DevExpress.Blazor.SizeMode.Medium;
@@ -60,6 +68,7 @@ try
     builder.Services.AddErpWebModel(connectionString);
     builder.Services.AddErpWebCore(builder.Configuration);
     builder.Services.AddScoped<ICookieSignInService, CookieSignInService>();
+    builder.Services.AddScoped<CookieSecurityRevalidationEvents>();
     builder.Services.AddScoped<CookiesService>();
     builder.Services.AddScoped<ThemeService>();
     builder.Services.AddScoped<PageNavigationGuard>();
@@ -93,6 +102,7 @@ try
             options.AccessDeniedPath = "/unauthorized";
             options.ExpireTimeSpan = TimeSpan.FromHours(8);
             options.SlidingExpiration = true;
+            options.EventsType = typeof(CookieSecurityRevalidationEvents);
         });
 
     builder.Services.AddAuthorization(options =>
@@ -100,6 +110,41 @@ try
         options.FallbackPolicy = new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser()
             .Build();
+
+        // Normal ERP access requires the forced-password-change gate to be cleared. A user with
+        // change_password = "true" is authenticated but must not reach business pages/endpoints.
+        options.AddPolicy("ErpAccess", policy =>
+            policy.RequireAuthenticatedUser()
+                  .RequireAssertion(ctx =>
+                      !string.Equals(
+                          ctx.User.FindFirst(AppClaimTypes.ChangePassword)?.Value,
+                          "true",
+                          StringComparison.OrdinalIgnoreCase)));
+    });
+
+    // Rate limiting for the anonymous auth/recovery endpoints only. Limits are deliberately not
+    // extremely low because SME users may share a NAT/public IP, and there is no permanent lockout.
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+        options.AddPolicy("auth-login", context =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 60,
+                    Window = TimeSpan.FromMinutes(1)
+                }));
+
+        options.AddPolicy("auth-recovery", context =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 10,
+                    Window = TimeSpan.FromMinutes(1)
+                }));
     });
 
     var app = builder.Build();
@@ -142,6 +187,7 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
     app.UseAntiforgery();
+    app.UseRateLimiter();
 
     app.MapAccountEndpoints();
     app.MapMenuAdminEndpoints();

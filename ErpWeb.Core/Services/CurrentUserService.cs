@@ -45,21 +45,30 @@ public class CurrentUserService : ICurrentUserService
     {
         get
         {
-            var httpUser = _httpContextAccessor.HttpContext?.User;
-            if (httpUser?.Identity?.IsAuthenticated == true)
+            // In an Interactive Server circuit the AuthenticationStateProvider is authoritative: it is
+            // what a revalidating provider updates when security state changes, so it must win over a
+            // possibly-stale HttpContext.User. In a pure HTTP endpoint scope the provider is registered
+            // but not initialized, so GetAuthenticationStateAsync throws — that is the ONLY case where
+            // we fall back to HttpContext.User.
+            var authStateProvider = _services.GetService<AuthenticationStateProvider>();
+            if (authStateProvider is not null)
             {
-                return httpUser;
+                AuthenticationState state;
+                try
+                {
+                    state = authStateProvider.GetAuthenticationStateAsync().GetAwaiter().GetResult();
+                }
+                catch (InvalidOperationException)
+                {
+                    return _httpContextAccessor.HttpContext?.User;
+                }
+
+                // Do NOT fall back to HttpContext.User here: if the circuit provider has invalidated
+                // the auth state, we must expose that unauthenticated principal, not resurrect the old one.
+                return state.User;
             }
 
-            var authState = _services.GetService<AuthenticationStateProvider>();
-            if (authState is null)
-            {
-                return httpUser;
-            }
-
-            // ServerAuthenticationStateProvider completes synchronously from the circuit/HTTP user.
-            var state = authState.GetAuthenticationStateAsync().GetAwaiter().GetResult();
-            return state.User.Identity?.IsAuthenticated == true ? state.User : httpUser;
+            return _httpContextAccessor.HttpContext?.User;
         }
     }
 

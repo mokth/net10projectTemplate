@@ -85,11 +85,23 @@ internal static class ProductionStockReturnCostCorrectionWriter
                 || deltas[0].Direction != Math.Sign(correction)
                 || deltas[0].CostAmount != Math.Abs(correction)
                 || deltas[0].BaseCostAmount != deltas[0].CostAmount
+                || deltas[0].UnitCost != StockLedgerPrecision.Money(
+                    Math.Abs(correction) / receipt.BaseQty)
                 || deltas[0].BaseQty != 0m
                 || deltas[0].CostMethod != StockCostMethods.MovingAverage
                 || deltas[0].ValuationStatus != StockValuationStatuses.Valued
+                || deltas[0].ValuationSource != StockValuationSources.ProductionActual
                 || deltas[0].ValuationVersion != receipt.ValuationVersion + 1
                 || deltas[0].ItemCode != receipt.ItemCode
+                || deltas[0].WarehouseCode != receipt.WarehouseCode
+                || deltas[0].LocationCode != receipt.LocationCode
+                || deltas[0].LotId != receipt.LotId
+                || deltas[0].LotNo != receipt.LotNo
+                || deltas[0].ItemStatus != receipt.ItemStatus
+                || deltas[0].BaseUom != receipt.BaseUom
+                || deltas[0].MovementCode != receipt.MovementCode
+                || deltas[0].FromBalLocId != receipt.FromBalLocId
+                || deltas[0].ToBalLocId != receipt.ToBalLocId
                 || deltas[0].EffectiveAt != receipt.EffectiveAt
                 || deltas[0].BusinessDate != receipt.BusinessDate
                 || deltas[0].PeriodKey != receipt.PeriodKey
@@ -98,7 +110,10 @@ internal static class ProductionStockReturnCostCorrectionWriter
                 || deltas[0].SourceDocumentId != receipt.SourceDocumentId
                 || deltas[0].SourceDocumentNo != receipt.SourceDocumentNo
                 || deltas[0].SourceDocumentLine != receipt.SourceDocumentLine
-                || deltas[0].BaseCurrency != receipt.BaseCurrency))
+                || deltas[0].BaseCurrency != receipt.BaseCurrency
+                || deltas[0].TransactionCurrency is not null
+                || deltas[0].TransactionCostAmount is not null
+                || deltas[0].ExchangeRate is not null))
             throw Invalid("Return WAC receipt correction is absent or differs from the projected value.");
 
         var returnMovement = await db.ProductionBalLotMovements.AsNoTracking()

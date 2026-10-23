@@ -1,6 +1,5 @@
 ﻿@page "/adminuser"
 @inherits PageBase
-@using ErpWeb.Model.Entities
 @using ErpWeb.Model.Repositories
 @using ErpWeb.UI.Components.Common.DataGrid
 
@@ -30,10 +29,10 @@
 <CommonDataGridEx Columns="@Columns()"
                   Buttons="@Buttons"
                   ActionButtons="@ActionButtons"
-                  KeyName="uid"
+                  KeyName="Uid"
                   GridKey="admin-user-list"
                   Title="Users"
-                  T="UserLogin"
+                  T="UserAdminRow"
                   OnGridInstance="@OnGridInstance"
                   GridData="@Data"
                   allowSelect="true"
@@ -42,112 +41,250 @@
                   OnActionEventHandle="@OnActionClick">
 </CommonDataGridEx>
 
+@if (PendingRequests is not null && PendingRequests.Count > 0)
+{
+    <div class="card mt-3">
+        <div class="card-header"><strong>Password Reset Requests</strong></div>
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <thead>
+                    <tr>
+                        <th>Login ID</th>
+                        <th>User Name</th>
+                        <th>Requested At</th>
+                        <th style="width:180px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var request in PendingRequests)
+                    {
+                        <tr>
+                            <td>@request.LoginId</td>
+                            <td>@request.Name</td>
+                            <td>@request.RequestedAtUtc.ToLocalTime().ToString("g")</td>
+                            <td>
+                                <div class="d-flex gap-2">
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                              SizeMode="SizeMode.Small"
+                                              Text="Reset"
+                                              Click="() => OnQueueResetAsync(request)" />
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              SizeMode="SizeMode.Small"
+                                              Text="Cancel"
+                                              Click="() => OnQueueCancelAsync(request)" />
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
 <DxPopup HeaderCssClass="code-style" HeaderText="User Login Info"
          CloseOnOutsideClick="false"
          Width="50vw"
          CssClass="common-popup"
          @bind-Visible="@PopupVisible">
     <Content>
-        <EditForm Model="@selectedRow" Context="aa" OnValidSubmit="@HandleValidSubmit">
-            <DataAnnotationsValidator />
-            <ValidationSummary />
-            <div class="row">
-                <div class="col-12">
-                    <DxFormLayout SizeMode="SizeMode.Small">
-                        <DxFormLayoutGroup ColSpanMd="12">
-                            <HeaderContentTemplate>
-                                Login Info
-                            </HeaderContentTemplate>
-                            <Items>
-                                <DxFormLayoutItem CaptionCssClass="code-style" Caption="User ID" ColSpanMd="6">
-                                    <Template>
-                                        <DxTextBox @bind-Text="@selectedRow.id" maxlength="10" ReadOnly="@IsEditMode" InputCssClass="required-field"></DxTextBox>
-                                    </Template>
-                                </DxFormLayoutItem>
-                                <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Active" ColSpanMd="3">
-                                    <Template>
-                                        <DxCheckBox @bind-Checked="@selectedRow.active" AllowIndeterminateState="false" ReadOnly="@(!editEnable)"></DxCheckBox>
-                                    </Template>
-                                </DxFormLayoutItem>
-                                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Can View Price" ColSpanMd="3">
-                                    <Template>
-                                        <DxCheckBox @bind-Checked="@selectedRow.CanViewPrice" AllowIndeterminateState="false" ReadOnly="@(!editEnable)"></DxCheckBox>
-                                        <small class="text-muted d-block">Applies after the user's next sign-in.</small>
-                                    </Template>
-                                </DxFormLayoutItem>
-                                <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name" ColSpanMd="6" BeginRow="true">
-                                    <Template>
-                                        <DxTextBox @bind-Text="@selectedRow.name" maxlength="50" ReadOnly="@IsChgPass" InputCssClass="required-field"></DxTextBox>
-                                    </Template>
-                                </DxFormLayoutItem>
-                                @if (!IsEditMode)
-                                {
-                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Password" ColSpanMd="6">
+        @if (!IsEditMode)
+        {
+            <EditForm Model="@CreateModel" Context="aa" OnValidSubmit="@HandleValidSubmit">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="row">
+                    <div class="col-12">
+                        <DxFormLayout SizeMode="SizeMode.Small">
+                            <DxFormLayoutGroup ColSpanMd="12">
+                                <HeaderContentTemplate>
+                                    Login Info
+                                </HeaderContentTemplate>
+                                <Items>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User ID" ColSpanMd="6">
                                         <Template>
-                                            <DxTextBox Password="true" @bind-Text="@selectedRow.password" ReadOnly="@IsEditMode" InputCssClass="password-style" maxlength="100"></DxTextBox>
+                                            <DxTextBox @bind-Text="@CreateModel.LoginId" maxlength="10" InputCssClass="required-field"></DxTextBox>
                                         </Template>
                                     </DxFormLayoutItem>
-                                }
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Active" ColSpanMd="3">
+                                        <Template>
+                                            <DxCheckBox @bind-Checked="@CreateModel.Active" AllowIndeterminateState="false"></DxCheckBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Can View Price" ColSpanMd="3">
+                                        <Template>
+                                            <DxCheckBox @bind-Checked="@CreateModel.CanViewPrice" AllowIndeterminateState="false"></DxCheckBox>
+                                            <small class="text-muted d-block">Applies after the user's next sign-in.</small>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name" ColSpanMd="6" BeginRow="true">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@CreateModel.Name" maxlength="50" InputCssClass="required-field"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Password" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox Password="true" @bind-Text="@CreateModel.TemporaryPassword" InputCssClass="password-style" maxlength="100"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Confirm Password" ColSpanMd="6" BeginRow="true">
+                                        <Template>
+                                            <DxTextBox Password="true" @bind-Text="@CreateModel.ConfirmPassword" InputCssClass="password-style" maxlength="100"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level" ColSpanMd="6">
+                                        <Template>
+                                            <DxComboBox Data="@levelgroup"
+                                                        AllowUserInput="false"
+                                                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                                        @bind-Value="@CreateModel.RoleCode"
+                                                        TextFieldName=@nameof(RoleOptionRow.RoleName)
+                                                        ValueFieldName=@nameof(RoleOptionRow.RoleCode)
+                                                        EditFormat="{0}"
+                                                        InputCssClass="required-field">
+                                            </DxComboBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Email" ColSpanMd="6" BeginRow="true">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@CreateModel.Email" InputCssClass="code-style"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Mobile" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@CreateModel.MobileNo" InputCssClass="code-style" placeholder="+60123456789"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                </Items>
+                            </DxFormLayoutGroup>
 
-                                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level" ColSpanMd="6">
-                                    <Template>
-                                        <DxComboBox Data="@levelgroup"
-                                                    AllowUserInput="true"
-                                                    SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                                    @bind-Value="@selectedRow.userlevel"
-                                                    TextFieldName=@nameof(RoleOptionRow.RoleName)
-                                                    ValueFieldName=@nameof(RoleOptionRow.RoleCode)
-                                                    EditFormat="{0}"
-                                                    InputCssClass="required-field"
-                                                    ReadOnly="@(!editEnable)">
-                                        </DxComboBox>
-                                    </Template>
-                                </DxFormLayoutItem>
-                                <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Email" ColSpanMd="6" BeginRow="true">
-                                    <Template>
-                                        <DxTextBox @bind-Text="@selectedRow.email" ReadOnly="@IsChgPass" InputCssClass="code-style"></DxTextBox>
-                                    </Template>
-                                </DxFormLayoutItem>
-                                <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Mobile" ColSpanMd="6">
-                                    <Template>
-                                        <DxTextBox @bind-Text="@selectedRow.mobileno" ReadOnly="@IsChgPass" InputCssClass="code-style" placeholder="+60123456789"></DxTextBox>
-                                    </Template>
-                                </DxFormLayoutItem>
-                            </Items>
-                        </DxFormLayoutGroup>
+                            <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                                <Template>
+                                </Template>
+                            </DxFormLayoutItem>
 
-                        <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
-                            <Template>
-                            </Template>
-                        </DxFormLayoutItem>
-
-                        <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
-                            <Template>
-                                <div class="d-flex gap-2">
-                                    @if (editEnable)
-                                    {
-                                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
-                                                  SubmitFormOnClick="true"
+                            <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                                <Template>
+                                    <div class="d-flex gap-2">
+                                        @if (editEnable)
+                                        {
+                                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                      Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                                      SubmitFormOnClick="true"
+                                                      Enabled="@(!IsSubmitting)" />
+                                        }
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="Cancel"
+                                                  Click="@OnCancel"
                                                   Enabled="@(!IsSubmitting)" />
-                                    }
-                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                              Text="Cancel"
-                                              Click="@OnCancel"
-                                              Enabled="@(!IsSubmitting)" />
-                                </div>
-                            </Template>
-                        </DxFormLayoutItem>
+                                    </div>
+                                </Template>
+                            </DxFormLayoutItem>
 
-                        <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
-                            <Template>
-                                <small class="text-danger">@ErrorMessage</small>
-                            </Template>
-                        </DxFormLayoutItem>
-                    </DxFormLayout>
+                            <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                                <Template>
+                                    <small class="text-danger">@ErrorMessage</small>
+                                </Template>
+                            </DxFormLayoutItem>
+                        </DxFormLayout>
+                    </div>
                 </div>
-            </div>
-        </EditForm>
+            </EditForm>
+        }
+        else
+        {
+            <EditForm Model="@EditModel" Context="aa" OnValidSubmit="@HandleValidSubmit">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="row">
+                    <div class="col-12">
+                        <DxFormLayout SizeMode="SizeMode.Small">
+                            <DxFormLayoutGroup ColSpanMd="12">
+                                <HeaderContentTemplate>
+                                    Login Info
+                                </HeaderContentTemplate>
+                                <Items>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User ID" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@EditModel.LoginId" maxlength="10" ReadOnly="true" InputCssClass="required-field"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Active" ColSpanMd="3">
+                                        <Template>
+                                            <DxCheckBox @bind-Checked="@EditModel.Active" AllowIndeterminateState="false" ReadOnly="@(!editEnable)"></DxCheckBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Can View Price" ColSpanMd="3">
+                                        <Template>
+                                            <DxCheckBox @bind-Checked="@EditModel.CanViewPrice" AllowIndeterminateState="false" ReadOnly="@(!editEnable)"></DxCheckBox>
+                                            <small class="text-muted d-block">Applies after the user's next sign-in.</small>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name" ColSpanMd="6" BeginRow="true">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@EditModel.Name" maxlength="50" ReadOnly="@(!editEnable)" InputCssClass="required-field"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level" ColSpanMd="6">
+                                        <Template>
+                                            <DxComboBox Data="@levelgroup"
+                                                        AllowUserInput="false"
+                                                        SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                                        @bind-Value="@EditModel.RoleCode"
+                                                        TextFieldName=@nameof(RoleOptionRow.RoleName)
+                                                        ValueFieldName=@nameof(RoleOptionRow.RoleCode)
+                                                        EditFormat="{0}"
+                                                        InputCssClass="required-field"
+                                                        ReadOnly="@(!editEnable)">
+                                            </DxComboBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Email" ColSpanMd="6" BeginRow="true">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@EditModel.Email" ReadOnly="@(!editEnable)" InputCssClass="code-style"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Mobile" ColSpanMd="6">
+                                        <Template>
+                                            <DxTextBox @bind-Text="@EditModel.MobileNo" ReadOnly="@(!editEnable)" InputCssClass="code-style" placeholder="+60123456789"></DxTextBox>
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                </Items>
+                            </DxFormLayoutGroup>
+
+                            <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                                <Template>
+                                </Template>
+                            </DxFormLayoutItem>
+
+                            <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">
+                                <Template>
+                                    <div class="d-flex gap-2">
+                                        @if (editEnable)
+                                        {
+                                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                                      Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                                      SubmitFormOnClick="true"
+                                                      Enabled="@(!IsSubmitting)" />
+                                        }
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  Text="Cancel"
+                                                  Click="@OnCancel"
+                                                  Enabled="@(!IsSubmitting)" />
+                                    </div>
+                                </Template>
+                            </DxFormLayoutItem>
+
+                            <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12">
+                                <Template>
+                                    <small class="text-danger">@ErrorMessage</small>
+                                </Template>
+                            </DxFormLayoutItem>
+                        </DxFormLayout>
+                    </div>
+                </div>
+            </EditForm>
+        }
     </Content>
 </DxPopup>
 
@@ -156,28 +293,28 @@
          CssClass="common-popup"
          @bind-Visible="@PopupPassword">
     <Content>
-        <EditForm Model="@selectedRow" Context="Password" OnValidSubmit="@HandlePasswordSubmit">
+        <EditForm Model="@ResetModel" Context="Password" OnValidSubmit="@HandlePasswordSubmit">
             <DataAnnotationsValidator />
             <ValidationSummary />
             <DxFormLayout SizeMode="SizeMode.Small">
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="User ID" ColSpanMd="6">
                     <Template>
-                        <DxTextBox @bind-Text="@selectedRow.id" maxlength="10" ReadOnly="true" InputCssClass="code-style"></DxTextBox>
+                        <DxTextBox @bind-Text="@ResetModel.LoginId" maxlength="10" ReadOnly="true" InputCssClass="code-style"></DxTextBox>
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name" ColSpanMd="6">
                     <Template>
-                        <DxTextBox @bind-Text="@selectedRow.name" maxlength="50" ReadOnly="true" InputCssClass="code-style"></DxTextBox>
+                        <DxTextBox @bind-Text="@ResetModel.Name" maxlength="50" ReadOnly="true" InputCssClass="code-style"></DxTextBox>
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="New Password" ColSpanMd="12" BeginRow="true">
                     <Template>
-                        <DxTextBox Password="true" @bind-Text="@selectedRow.password" InputCssClass="required-field" maxlength="100"></DxTextBox>
+                        <DxTextBox Password="true" @bind-Text="@ResetModel.NewPassword" InputCssClass="required-field" maxlength="100"></DxTextBox>
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="Confirm New Password" ColSpanMd="12">
                     <Template>
-                        <DxTextBox Password="true" @bind-Text="@confirmPassword" InputCssClass="required-field" maxlength="100"></DxTextBox>
+                        <DxTextBox Password="true" @bind-Text="@ResetModel.ConfirmPassword" InputCssClass="required-field" maxlength="100"></DxTextBox>
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem CaptionCssClass="code-style" ColSpanMd="12" BeginRow="true">

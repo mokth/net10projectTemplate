@@ -94,6 +94,7 @@
             }
 
             <form class="login-form" method="post" action="@($"{NavigationManager.BaseUri}account/login")">
+                <AntiforgeryToken />
                 <div class="form-group">
                     <label class="field" for="CompanyCode">
                         <span class="field-label">Company Code</span>

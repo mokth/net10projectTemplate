@@ -819,14 +819,46 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
             step.ModifiedBy = scope.UserId;
         }
 
-        // Keep the business segment aligned with the simple placement. The BuildProposal guard
-        // guarantees this is one normal segment; legacy pre-backfill rows are seeded here.
+        // A simple placement is a new plan version. Preserve the previous segment/set as history.
         var segments = await db.ProductionMachineScheduleSegments
             .Where(x => affectedMachineIds.Contains(x.WorkOrderMachineId)
                 && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
             .ToListAsync(cancellationToken);
+        MachineScheduleSegmentPersistence.Supersede(
+            segments, scope.UserId, modifiedAt, "Simple reschedule superseded the previous plan.");
+        var oldSets = await db.ProductionMachineScheduleSegmentSets
+            .Where(x => affectedMachineIds.Contains(x.WorkOrderMachineId) && x.IsCurrent)
+            .ToListAsync(cancellationToken);
+        MachineScheduleSegmentPersistence.SupersedeSets(oldSets, scope.UserId, modifiedAt);
+        var existing = await db.ProductionMachineScheduleAllocations
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.WorkOrderId == order.Uid
+                && affectedMachineIds.Contains(x.WorkOrderMachineId))
+            .ToListAsync(cancellationToken);
+        await MachineScheduleSegmentPersistence.RemoveAllocationLinksAsync(db, existing, cancellationToken);
+        db.ProductionMachineScheduleAllocations.RemoveRange(existing);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var setByMachine = new Dictionary<long, ProductionMachineScheduleSegmentSet>();
+        foreach (var placement in proposal.Placements)
+        {
+            var machine = placement.Placement.Machine;
+            if (machine is null || setByMachine.ContainsKey(machine.Uid))
+                continue;
+            var set = MachineScheduleSegmentPersistence.BuildCurrentSet(
+                order, placement.Operation, machine,
+                ProductionMachineScheduleSegmentSetModes.FullPlan,
+                ProductionMachineSchedulePlanningStates.Scheduled,
+                placement.Operation.PlannedOutputQty,
+                request.Reason, scope.UserId, modifiedAt, db);
+            set.ScheduleSourceHash = placement.Placement.SourceHash;
+            db.ProductionMachineScheduleSegmentSets.Add(set);
+            setByMachine[machine.Uid] = set;
+        }
+        if (setByMachine.Count > 0)
+            await db.SaveChangesAsync(cancellationToken);
+
         var segmentByMachine = new Dictionary<long, ProductionMachineScheduleSegment>();
-        var createdSegment = false;
         foreach (var placement in proposal.Placements)
         {
             var machine = placement.Placement.Machine;
@@ -835,15 +867,10 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
 
             if (!segmentByMachine.TryGetValue(machine.Uid, out var segment))
             {
-                segment = segments.FirstOrDefault(x => x.WorkOrderMachineId == machine.Uid);
-                if (segment is null)
-                {
-                    segment = MachineScheduleSegmentPersistence.BuildOriginalSegment(
-                        order, placement.Operation, machine, scope.UserId, modifiedAt, db);
-                    db.ProductionMachineScheduleSegments.Add(segment);
-                    createdSegment = true;
-                }
-
+                segment = MachineScheduleSegmentPersistence.BuildOriginalSegment(
+                    order, placement.Operation, machine, scope.UserId, modifiedAt, db);
+                segment.SegmentSetId = setByMachine[machine.Uid].Uid;
+                db.ProductionMachineScheduleSegments.Add(segment);
                 segmentByMachine[machine.Uid] = segment;
             }
 
@@ -871,17 +898,12 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
             segment.ModifiedBy = scope.UserId;
         }
 
-        if (createdSegment)
+        if (segmentByMachine.Count > 0)
             await db.SaveChangesAsync(cancellationToken);
 
-        var existing = db.ProductionMachineScheduleAllocations
-            .Where(x => x.CompanyCode == scope.CompanyCode
-                && x.WorkOrderId == order.Uid
-                && affectedMachineIds.Contains(x.WorkOrderMachineId))
-            .ToList();
-        db.ProductionMachineScheduleAllocations.RemoveRange(existing);
-
         var createdBy = scope.UserId.Length > 10 ? scope.UserId[..10] : scope.UserId;
+        var allocationLinks = new List<(ProductionMachineScheduleAllocation Allocation,
+            ProductionMachineScheduleSegment Segment)>();
         foreach (var placement in proposal.Placements)
         {
             var machine = placement.Placement.Machine;
@@ -891,7 +913,7 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
             var fragmentNo = 1;
             foreach (var interval in placement.Placement.ConsumedIntervals)
             {
-                db.ProductionMachineScheduleAllocations.Add(new ProductionMachineScheduleAllocation
+                var allocation = new ProductionMachineScheduleAllocation
                 {
                     CompanyCode = scope.CompanyCode,
                     BranchCode = order.BranchCode,
@@ -913,8 +935,18 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
                         StringComparison.Ordinal)
                         ? Guid.NewGuid().ToByteArray()
                         : []
-                });
+                };
+                db.ProductionMachineScheduleAllocations.Add(allocation);
+                allocationLinks.Add((allocation, segment));
             }
+        }
+
+        if (allocationLinks.Count > 0)
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            foreach (var (allocation, segment) in allocationLinks)
+                MachineScheduleSegmentPersistence.AddAllocationLink(
+                    db, allocation, segment, scope.UserId, modifiedAt);
         }
 
         if (!db.Database.IsSqlServer())

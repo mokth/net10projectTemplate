@@ -8,6 +8,9 @@ public partial class Header
     [Inject]
     private ICurrentUserService CurrentUser { get; set; } = default!;
 
+    [Inject]
+    private NavigationManager NavigationManager { get; set; } = default!;
+
     [Parameter]
     public bool SidebarOpen { get; set; }
 

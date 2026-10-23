@@ -1,7 +1,6 @@
 ﻿using DevExpress.Blazor;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
-using ErpWeb.Model.Entities;
 using ErpWeb.Model.Repositories;
 using ErpWeb.UI.Components.Common.DataGrid;
 using ErpWeb.UI.Components.Pages;
@@ -14,32 +13,36 @@ public partial class AdminUser : PageBase
 {
     [Inject] private IUserAdminService UserAdmin { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
+    [Inject] private IPasswordRecoveryService Recovery { get; set; } = default!;
     [Inject] private IJSRuntime JsRuntime { get; set; } = default!;
 
     private DxGrid? _grid;
 
     protected bool PopupVisible;
     protected bool PopupPassword;
-    protected UserLogin selectedRow { get; set; } = new();
     protected bool IsEditMode;
-    protected bool IsChgPass;
+    protected bool editEnable;
     protected bool IsLoading = true;
     protected bool IsSubmitting;
-    protected string confirmPassword = string.Empty;
-    protected bool editEnable;
     protected string? StatusMessage;
 
-    protected IEnumerable<UserLogin>? Data;
+    protected IEnumerable<UserAdminRow>? Data;
     protected IEnumerable<RoleOptionRow> levelgroup { get; set; } = [];
 
-    private readonly List<UserLogin> _selectedUsers = [];
+    protected IReadOnlyList<PasswordResetRequestRow>? PendingRequests;
+
+    private readonly List<UserAdminRow> _selectedUsers = [];
+
+    protected CreateUserRequest CreateModel { get; set; } = new();
+    protected EditUserRequest EditModel { get; set; } = new();
+    protected ResetUserPasswordRequest ResetModel { get; set; } = new();
 
     public List<GridColumnData> Columns() =>
     [
         new()
         {
             Caption = "Login ID",
-            FieldName = nameof(UserLogin.id),
+            FieldName = nameof(UserAdminRow.LoginId),
             DataType = "string",
             SortIndex = 0,
             SortOrder = GridColumnSortOrder.Ascending,
@@ -49,7 +52,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = "User Name",
-            FieldName = nameof(UserLogin.name),
+            FieldName = nameof(UserAdminRow.Name),
             DataType = "string",
             VisibleIndex = 2,
             Width = "150px"
@@ -57,7 +60,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = "Group Level",
-            FieldName = nameof(UserLogin.userlevel),
+            FieldName = nameof(UserAdminRow.RoleCode),
             DataType = "string",
             VisibleIndex = 3,
             Width = "120px"
@@ -65,14 +68,14 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = "User Email",
-            FieldName = nameof(UserLogin.email),
+            FieldName = nameof(UserAdminRow.Email),
             DataType = "string",
             VisibleIndex = 4
         },
         new()
         {
             Caption = "User Mobile",
-            FieldName = nameof(UserLogin.mobileno),
+            FieldName = nameof(UserAdminRow.MobileNo),
             DataType = "string",
             VisibleIndex = 5,
             Width = "120px"
@@ -80,7 +83,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = "User Active",
-            FieldName = nameof(UserLogin.active),
+            FieldName = nameof(UserAdminRow.Active),
             DataType = "bool",
             VisibleIndex = 6,
             Width = "80px"
@@ -88,7 +91,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = "Force Change Pwd",
-            FieldName = nameof(UserLogin.changepass),
+            FieldName = nameof(UserAdminRow.ChangePass),
             DataType = "bool",
             VisibleIndex = 7,
             Width = "110px"
@@ -96,7 +99,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = "Can View Price",
-            FieldName = nameof(UserLogin.CanViewPrice),
+            FieldName = nameof(UserAdminRow.CanViewPrice),
             DataType = "bool",
             VisibleIndex = 8,
             Width = "110px"
@@ -104,7 +107,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = AuditColumns.CreatedCaption,
-            FieldName = nameof(UserLogin.Created),
+            FieldName = nameof(UserAdminRow.Created),
             DataType = "datetime",
             VisibleIndex = 9,
             Width = "140px"
@@ -112,7 +115,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = AuditColumns.CreatedByCaption,
-            FieldName = nameof(UserLogin.UserID),
+            FieldName = nameof(UserAdminRow.CreatedBy),
             DataType = "string",
             VisibleIndex = 10,
             Width = "110px"
@@ -120,7 +123,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = AuditColumns.ModifiedCaption,
-            FieldName = nameof(UserLogin.Updated),
+            FieldName = nameof(UserAdminRow.Updated),
             DataType = "datetime",
             VisibleIndex = 11,
             Width = "140px"
@@ -128,7 +131,7 @@ public partial class AdminUser : PageBase
         new()
         {
             Caption = AuditColumns.ModifiedByCaption,
-            FieldName = nameof(UserLogin.UpdatedUID),
+            FieldName = nameof(UserAdminRow.UpdatedBy),
             DataType = "string",
             VisibleIndex = 12,
             Width = "110px"
@@ -216,8 +219,9 @@ public partial class AdminUser : PageBase
         else
         {
             Data = usersResult.Users;
-            selectedRow = Data.FirstOrDefault() ?? new UserLogin();
         }
+
+        PendingRequests = await Recovery.ListPendingAsync(CurrentUser.CompanyCode ?? string.Empty);
 
         IsLoading = false;
         _selectedUsers.Clear();
@@ -229,11 +233,10 @@ public partial class AdminUser : PageBase
         PopupVisible = false;
         PopupPassword = false;
         ErrorMessage = string.Empty;
-        confirmPassword = string.Empty;
         IsSubmitting = false;
     }
 
-    public async Task OnActionClick(SelectedButtonInfo<UserLogin> info)
+    public async Task OnActionClick(SelectedButtonInfo<UserAdminRow> info)
     {
         var mode = info.SelectedButton.Text.ToLowerInvariant();
         if (info.SelectedRow is null)
@@ -259,7 +262,7 @@ public partial class AdminUser : PageBase
         }
     }
 
-    public async Task OnButtonClick(SelectedButtonInfo<UserLogin> info)
+    public async Task OnButtonClick(SelectedButtonInfo<UserAdminRow> info)
     {
         var mode = info.SelectedButton.Text.ToLowerInvariant();
         switch (mode)
@@ -284,22 +287,17 @@ public partial class AdminUser : PageBase
             return;
         }
 
-        selectedRow = new UserLogin
+        CreateModel = new CreateUserRequest
         {
-            active = true,
-            CompanyCode = CurrentUser.CompanyCode ?? string.Empty,
-            BranchCode = CurrentUser.BranchCode ?? string.Empty,
-            LocationCode = CurrentUser.LocationCode ?? string.Empty
+            Active = true
         };
-        confirmPassword = string.Empty;
         ErrorMessage = string.Empty;
         IsEditMode = false;
-        IsChgPass = false;
         PopupVisible = true;
         editEnable = true;
     }
 
-    public async Task OnEditClick(UserLogin data)
+    public async Task OnEditClick(UserAdminRow data)
     {
         if (!await AccessRights.CanAsync(MenuCodes.AdminUsers, PermissionCodes.Edit))
         {
@@ -307,15 +305,14 @@ public partial class AdminUser : PageBase
             return;
         }
 
-        selectedRow = CloneForEdit(data);
+        EditModel = MapToEdit(data);
         ErrorMessage = string.Empty;
         IsEditMode = true;
-        IsChgPass = false;
         PopupVisible = true;
         editEnable = true;
     }
 
-    public async Task OnChgPassClick(UserLogin data)
+    public async Task OnChgPassClick(UserAdminRow data)
     {
         if (!await AccessRights.CanAsync(MenuCodes.AdminUsers, PermissionCodes.Edit))
         {
@@ -323,14 +320,17 @@ public partial class AdminUser : PageBase
             return;
         }
 
-        selectedRow = CloneForEdit(data);
-        selectedRow.password = string.Empty;
-        confirmPassword = string.Empty;
+        ResetModel = new ResetUserPasswordRequest
+        {
+            Uid = data.Uid,
+            LoginId = data.LoginId,
+            Name = data.Name
+        };
         ErrorMessage = string.Empty;
         PopupPassword = true;
     }
 
-    public async Task OnForceChangeClick(UserLogin data)
+    public async Task OnForceChangeClick(UserAdminRow data)
     {
         if (!await AccessRights.CanAsync(MenuCodes.AdminUsers, PermissionCodes.Edit))
         {
@@ -338,13 +338,13 @@ public partial class AdminUser : PageBase
             return;
         }
 
-        var force = !data.changepass;
-        var result = await UserAdmin.ForceChangeAsync(data.uid, force);
+        var force = !data.ChangePass;
+        var result = await UserAdmin.ForceChangeAsync(data.Uid, force);
         if (result.Succeeded)
         {
             StatusMessage = force
-                ? $"Password change required at next login for {data.id}."
-                : $"Password-change requirement cleared for {data.id}.";
+                ? $"Password change required at next login for {data.LoginId}."
+                : $"Password-change requirement cleared for {data.LoginId}.";
             await LoadPageDataAsync();
         }
         else
@@ -353,7 +353,7 @@ public partial class AdminUser : PageBase
         }
     }
 
-    protected async Task OnViewClick(UserLogin data)
+    protected async Task OnViewClick(UserAdminRow data)
     {
         if (!await AccessRights.CanAsync(MenuCodes.AdminUsers, PermissionCodes.Access))
         {
@@ -361,12 +361,50 @@ public partial class AdminUser : PageBase
             return;
         }
 
-        selectedRow = CloneForEdit(data);
+        EditModel = MapToEdit(data);
         ErrorMessage = string.Empty;
         IsEditMode = true;
         editEnable = false;
-        IsChgPass = true;
         PopupVisible = true;
+    }
+
+    protected async Task OnQueueResetAsync(PasswordResetRequestRow request)
+    {
+        if (!await AccessRights.CanAsync(MenuCodes.AdminUsers, PermissionCodes.Edit))
+        {
+            StatusMessage = "Access Denied!!";
+            return;
+        }
+
+        ResetModel = new ResetUserPasswordRequest
+        {
+            Uid = request.UserUid,
+            LoginId = request.LoginId,
+            Name = request.Name
+        };
+        ErrorMessage = string.Empty;
+        PopupPassword = true;
+    }
+
+    protected async Task OnQueueCancelAsync(PasswordResetRequestRow request)
+    {
+        if (!await AccessRights.CanAsync(MenuCodes.AdminUsers, PermissionCodes.Edit))
+        {
+            StatusMessage = "Access Denied!!";
+            return;
+        }
+
+        var actorUid = int.TryParse(CurrentUser.SubjectUid, out var a) ? a : 0;
+        var result = await Recovery.CancelAsync(
+            request.PasswordResetRequestId,
+            CurrentUser.CompanyCode ?? string.Empty,
+            CurrentUser.UserId ?? string.Empty,
+            actorUid);
+
+        StatusMessage = result.Succeeded
+            ? $"Recovery request for {request.LoginId} cancelled."
+            : (result.Detail ?? "Unable to cancel the recovery request.");
+        await LoadPageDataAsync();
     }
 
     public void OnGridInstance(DxGrid gridInstance)
@@ -396,7 +434,7 @@ public partial class AdminUser : PageBase
             return;
         }
 
-        var result = await UserAdmin.DeleteUsersAsync(_selectedUsers.Select(x => x.uid).ToList());
+        var result = await UserAdmin.DeleteUsersAsync(_selectedUsers.Select(x => x.Uid).ToList());
         if (result.Succeeded)
         {
             StatusMessage = "User(s) deleted successfully.";
@@ -418,16 +456,17 @@ public partial class AdminUser : PageBase
         IsSubmitting = true;
         ErrorMessage = string.Empty;
 
-        var result = await UserAdmin.ChangePasswordAsync(
-            selectedRow.uid,
-            selectedRow.password,
-            confirmPassword);
+        var result = await UserAdmin.ResetPasswordAsync(
+            ResetModel.Uid,
+            ResetModel.NewPassword,
+            ResetModel.ConfirmPassword);
 
         if (result.Succeeded)
         {
             PopupPassword = false;
-            confirmPassword = string.Empty;
-            StatusMessage = $"Password reset for {selectedRow.id}. The user must change the password at next login.";
+            ResetModel.NewPassword = string.Empty;
+            ResetModel.ConfirmPassword = string.Empty;
+            StatusMessage = $"Password reset for {ResetModel.LoginId}. The user must change the password at next login.";
             await LoadPageDataAsync();
         }
         else
@@ -451,11 +490,11 @@ public partial class AdminUser : PageBase
         UserAdminOperationResult result;
         if (IsEditMode)
         {
-            result = await UserAdmin.UpdateUserAsync(selectedRow);
+            result = await UserAdmin.UpdateUserAsync(EditModel);
         }
         else
         {
-            result = await UserAdmin.AddUserAsync(selectedRow, selectedRow.password);
+            result = await UserAdmin.AddUserAsync(CreateModel);
         }
 
         if (result.Succeeded)
@@ -474,7 +513,7 @@ public partial class AdminUser : PageBase
         IsSubmitting = false;
     }
 
-    protected void OnSelectionsEvent(List<UserLogin> list)
+    protected void OnSelectionsEvent(List<UserAdminRow> list)
     {
         if (Data is null)
         {
@@ -483,28 +522,19 @@ public partial class AdminUser : PageBase
         }
 
         _selectedUsers.Clear();
-        _selectedUsers.AddRange(list.Where(item => Data.Any(d => d.uid == item.uid)));
+        _selectedUsers.AddRange(list.Where(item => Data.Any(d => d.Uid == item.Uid)));
     }
 
-    private static UserLogin CloneForEdit(UserLogin data) =>
+    private static EditUserRequest MapToEdit(UserAdminRow data) =>
         new()
         {
-            uid = data.uid,
-            id = data.id,
-            name = data.name,
-            password = string.Empty,
-            email = data.email,
-            mobileno = data.mobileno,
-            active = data.active,
-            userlevel = data.userlevel,
-            CompanyCode = data.CompanyCode,
-            BranchCode = data.BranchCode,
-            LocationCode = data.LocationCode,
-            ImagePath = data.ImagePath,
-            UserID = data.UserID,
-            Created = data.Created,
-            Updated = data.Updated,
-            UpdatedUID = data.UpdatedUID,
-            changepass = data.changepass
+            Uid = data.Uid,
+            LoginId = data.LoginId,
+            Name = data.Name,
+            Email = data.Email,
+            MobileNo = data.MobileNo,
+            Active = data.Active ?? true,
+            RoleCode = data.RoleCode ?? string.Empty,
+            CanViewPrice = data.CanViewPrice
         };
 }

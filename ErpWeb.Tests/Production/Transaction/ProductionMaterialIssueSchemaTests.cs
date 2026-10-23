@@ -122,8 +122,12 @@ public sealed class ProductionMaterialIssueSchemaTests
         Assert.Equal(64, link.FindProperty(nameof(ProductionPostingLink.SnapshotHash))!.GetMaxLength());
         Assert.Equal(18, link.FindProperty(nameof(ProductionPostingLink.ProductionQtyThisIssue))!.GetPrecision());
         Assert.Equal(4, link.FindProperty(nameof(ProductionPostingLink.ProductionQtyThisIssue))!.GetScale());
-        var index = link.GetIndexes().Single(x => x.GetDatabaseName() == "UQ_PrProductionPostingLink_MaterialIssueBatch");
+        var index = link.GetIndexes().Single(x => x.GetDatabaseName() == "UQ_PrProductionPostingLink_MaterialIssueBatchRevision");
         Assert.True(index.IsUnique);
+        Assert.Equal([nameof(ProductionPostingLink.CompanyCode), nameof(ProductionPostingLink.BranchCode),
+            nameof(ProductionPostingLink.CommandType), nameof(ProductionPostingLink.InventoryBatchNo),
+            nameof(ProductionPostingLink.DocumentRevision)],
+            index.Properties.Select(x => x.Name));
         Assert.Contains("MATERIAL_ISSUE_POST", index.GetFilter());
     }
 }

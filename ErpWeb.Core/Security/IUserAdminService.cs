@@ -1,4 +1,3 @@
-using ErpWeb.Model.Entities;
 using ErpWeb.Model.Repositories;
 
 namespace ErpWeb.Core.Security;
@@ -9,14 +8,14 @@ public sealed class UserAdminOperationResult
 
     public string? ErrorMessage { get; init; }
 
-    public IReadOnlyList<UserLogin> Users { get; init; } = [];
+    public IReadOnlyList<UserAdminRow> Users { get; init; } = [];
 
     public IReadOnlyList<RoleOptionRow> Roles { get; init; } = [];
 
     public static UserAdminOperationResult Ok() =>
         new() { Succeeded = true };
 
-    public static UserAdminOperationResult Ok(IReadOnlyList<UserLogin> users) =>
+    public static UserAdminOperationResult Ok(IReadOnlyList<UserAdminRow> users) =>
         new() { Succeeded = true, Users = users };
 
     public static UserAdminOperationResult OkRoles(IReadOnlyList<RoleOptionRow> roles) =>
@@ -32,13 +31,13 @@ public interface IUserAdminService
 
     Task<UserAdminOperationResult> GetRolesAsync(CancellationToken cancellationToken = default);
 
-    Task<UserAdminOperationResult> AddUserAsync(UserLogin user, string plainPassword, CancellationToken cancellationToken = default);
+    Task<UserAdminOperationResult> AddUserAsync(CreateUserRequest user, CancellationToken cancellationToken = default);
 
-    Task<UserAdminOperationResult> UpdateUserAsync(UserLogin user, CancellationToken cancellationToken = default);
+    Task<UserAdminOperationResult> UpdateUserAsync(EditUserRequest user, CancellationToken cancellationToken = default);
 
     Task<UserAdminOperationResult> DeleteUsersAsync(IReadOnlyCollection<int> uids, CancellationToken cancellationToken = default);
 
-    Task<UserAdminOperationResult> ChangePasswordAsync(
+    Task<UserAdminOperationResult> ResetPasswordAsync(
         int uid,
         string newPassword,
         string confirmPassword,

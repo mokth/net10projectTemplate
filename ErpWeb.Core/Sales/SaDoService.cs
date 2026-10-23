@@ -2826,8 +2826,12 @@ public sealed class SaDoService : ISaDoService
                 }
                 else
                 {
+                    var beforeCandidate = SaSoLineReserve.Evaluate(
+                        soNo, soLine, soDetail.OrderQty, soDetail.DeliveredQty,
+                        SaSoLineReserve.GetSums(sums, soNo, custRel, soLine),
+                        thisDoQty: 0m, thisSoInvQty: 0m);
                     var openProductionQty = SaProductionDemandRules.ToProductionQty(
-                        Math.Max(SaSoLineReserve.RemainingForNewDo(eval), 0m),
+                        Math.Max(SaSoLineReserve.RemainingForNewDo(beforeCandidate), 0m),
                         resolvedFactor);
                     var availableProductionQty = SaSoQty.RoundQty(Math.Max(
                         openProductionQty - committedFacts.OutstandingProductionQty,

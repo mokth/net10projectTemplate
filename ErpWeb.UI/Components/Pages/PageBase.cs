@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Components.Pages;
 
-[Authorize]
+[Authorize(Policy = "ErpAccess")]
 public abstract class PageBase : ComponentBase
 {
     /// <summary>

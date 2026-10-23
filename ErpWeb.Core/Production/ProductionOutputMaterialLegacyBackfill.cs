@@ -36,14 +36,14 @@ public static class ProductionOutputMaterialLegacyBackfill
             {
                 var standard = ProductionMaterialExecutionCalc.DailyProductionStandardQty(
                     material.RequiredQty, operation.PlannedOutputQty, processed);
-                var consume = await db.ProductionMaterialMovements.AsNoTracking()
+                var originalConsume = await db.ProductionMaterialMovements.AsNoTracking()
                     .Where(x => x.ProductionOutputId == output.Uid
                         && x.StockPostingId == output.PostingId
                         && x.WorkOrderMaterialId == material.Uid
                         && x.MovementType == ProductionMaterialMovementTypes.Consume)
-                    .SumAsync(x => (decimal?)x.Qty, cancellationToken) ?? 0m;
-                if (output.Status == ProductionOutputStatuses.New)
-                    consume = standard;
+                    .SumAsync(x => (decimal?)x.Qty, cancellationToken);
+                var consume = originalConsume
+                    ?? (output.Status == ProductionOutputStatuses.New ? standard : 0m);
 
                 var variance = ProductionMaterialExecutionCalc.DailyProductionVarianceQty(consume, standard);
                 db.ProductionOutputMaterials.Add(new ProductionOutputMaterial

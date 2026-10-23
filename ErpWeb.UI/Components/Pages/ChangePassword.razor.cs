@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Components.Pages;
 
-public partial class ChangePassword : PageBase
+public partial class ChangePassword : AuthenticatedPageBase
 {
     [SupplyParameterFromQuery(Name = "error")]
     public string? Error { get; set; }
@@ -26,7 +26,7 @@ public partial class ChangePassword : PageBase
             ? "Almost there — update your password to unlock the workspace."
             : "Keep your account secure with a fresh password.";
 
-    protected override Task OnPageInitializedAsync()
+    protected override Task OnInitializedAsync()
     {
         ErrorMessage = Error switch
         {

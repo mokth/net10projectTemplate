@@ -83,6 +83,13 @@ public sealed class RoleAdminService : IRoleAdminService
             return RoleAdminOperationResult.Fail("Role name is required.");
         }
 
+        // Privilege boundary: a normal ADMIN must never mint the built-in SYSTEM_ADMIN role.
+        // The check runs on the normalized (upper-cased) code so case variants cannot slip through.
+        if (IsSystemAdminRoleCode(roleCode) && !IsSystemAdmin())
+        {
+            return RoleAdminOperationResult.Fail("You cannot create the SYSTEM_ADMIN role.");
+        }
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var exists = await db.Roles.AnyAsync(
             r => r.CompanyCode == context.CompanyCode && r.RoleCode == roleCode,
@@ -147,6 +154,21 @@ public sealed class RoleAdminService : IRoleAdminService
         if (entity is null)
         {
             return RoleAdminOperationResult.Fail("Role not found.");
+        }
+
+        var targetIsSystemAdmin = IsSystemAdminRoleCode(entity.RoleCode);
+        var targetIsAdmin = string.Equals(entity.RoleCode, AdminRole, StringComparison.OrdinalIgnoreCase);
+
+        // Privilege boundary: a normal ADMIN can never modify the built-in SYSTEM_ADMIN role.
+        if (targetIsSystemAdmin && !IsSystemAdmin())
+        {
+            return RoleAdminOperationResult.Fail("You cannot modify the SYSTEM_ADMIN role.");
+        }
+
+        // Built-in roles must never be deactivated through Role Administration, even by SYSTEM_ADMIN.
+        if ((targetIsSystemAdmin || targetIsAdmin) && !role.IsActive)
+        {
+            return RoleAdminOperationResult.Fail("The ADMIN and SYSTEM_ADMIN roles cannot be deactivated.");
         }
 
         // RoleCode is immutable after create (maps to userlevel).
@@ -223,6 +245,12 @@ public sealed class RoleAdminService : IRoleAdminService
 
         return RoleAdminOperationResult.Ok();
     }
+
+    private bool IsSystemAdmin() =>
+        _currentUser.IsInRole(CompanyService.SystemAdminRole);
+
+    private static bool IsSystemAdminRoleCode(string? roleCode) =>
+        string.Equals(roleCode, CompanyService.SystemAdminRole, StringComparison.OrdinalIgnoreCase);
 
     private AdminContext ValidateAdminContext()
     {

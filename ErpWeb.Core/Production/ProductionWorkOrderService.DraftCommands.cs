@@ -1398,7 +1398,16 @@ public sealed partial class ProductionWorkOrderService
                 && x.BranchCode == scope.BranchCode
                 && x.WorkOrderId == entity.Uid)
             .ToListAsync(cancellationToken);
+        await MachineScheduleSegmentPersistence.RemoveAllocationLinksAsync(db, superseded, cancellationToken);
         db.ProductionMachineScheduleAllocations.RemoveRange(superseded);
+
+        var supersededSets = await db.ProductionMachineScheduleSegmentSets
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                && x.BranchCode == scope.BranchCode
+                && x.WorkOrderId == entity.Uid
+                && x.IsCurrent)
+            .ToListAsync(cancellationToken);
+        MachineScheduleSegmentPersistence.SupersedeSets(supersededSets, scope.UserId, now);
 
         // Metadata dual-write only: re-release supersedes the previous planning history and seeds
         // one ORIGINAL business segment per selected machine. No quantity/hash/cost changes.
@@ -1411,11 +1420,31 @@ public sealed partial class ProductionWorkOrderService
         MachineScheduleSegmentPersistence.Supersede(
             supersededSegments, scope.UserId, now, "Re-release superseded the previous planning segments.");
 
+        // Clear the filtered one-current-set index before inserting replacement sets.
+        await db.SaveChangesAsync(cancellationToken);
+
+        var setByMachine = new Dictionary<long, ProductionMachineScheduleSegmentSet>();
+        foreach (var (operation, machine, _) in pending)
+        {
+            var set = MachineScheduleSegmentPersistence.BuildCurrentSet(
+                entity, operation, machine,
+                ProductionMachineScheduleSegmentSetModes.FullPlan,
+                ProductionMachineSchedulePlanningStates.Scheduled,
+                operation.PlannedOutputQty,
+                "Draft release seeded the canonical one-span plan.",
+                scope.UserId, now, db);
+            db.ProductionMachineScheduleSegmentSets.Add(set);
+            setByMachine[machine.Uid] = set;
+        }
+        if (setByMachine.Count > 0)
+            await db.SaveChangesAsync(cancellationToken);
+
         var segmentByMachine = new Dictionary<long, ProductionMachineScheduleSegment>();
         foreach (var (operation, machine, _) in pending)
         {
             var segment = MachineScheduleSegmentPersistence.BuildOriginalSegment(
                 entity, operation, machine, scope.UserId, now, db);
+            segment.SegmentSetId = setByMachine[machine.Uid].Uid;
             db.ProductionMachineScheduleSegments.Add(segment);
             segmentByMachine[machine.Uid] = segment;
         }
@@ -1425,13 +1454,15 @@ public sealed partial class ProductionWorkOrderService
         if (segmentByMachine.Count > 0)
             await db.SaveChangesAsync(cancellationToken);
 
+        var allocationLinks = new List<(ProductionMachineScheduleAllocation Allocation,
+            ProductionMachineScheduleSegment Segment)>();
         foreach (var (operation, machine, fragments) in pending)
         {
             var fragmentNo = 1;
             var segment = segmentByMachine[machine.Uid];
             foreach (var interval in fragments)
             {
-                db.ProductionMachineScheduleAllocations.Add(new ProductionMachineScheduleAllocation
+                var allocation = new ProductionMachineScheduleAllocation
                 {
                     CompanyCode = scope.CompanyCode,
                     BranchCode = scope.BranchCode!,
@@ -1448,9 +1479,18 @@ public sealed partial class ProductionWorkOrderService
                     CreatedDate = DateTime.UtcNow,
                     CreatedBy = createdBy,
                     RowVersion = IsSqlite(db) ? Guid.NewGuid().ToByteArray() : []
-                });
+                };
+                db.ProductionMachineScheduleAllocations.Add(allocation);
+                allocationLinks.Add((allocation, segment));
                 fragmentCount++;
             }
+        }
+
+        if (allocationLinks.Count > 0)
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            foreach (var (allocation, segment) in allocationLinks)
+                MachineScheduleSegmentPersistence.AddAllocationLink(db, allocation, segment, scope.UserId, now);
         }
 
         return fragmentCount;

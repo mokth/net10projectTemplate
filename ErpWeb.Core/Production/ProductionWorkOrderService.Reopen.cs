@@ -220,10 +220,19 @@ public sealed partial class ProductionWorkOrderService
                 .ToListAsync(cancellationToken);
             if (reopenAllocations.Count > 0)
             {
+                await MachineScheduleSegmentPersistence.RemoveAllocationLinksAsync(
+                    db, reopenAllocations, cancellationToken);
                 db.ProductionMachineScheduleAllocations.RemoveRange(reopenAllocations);
             }
 
             var now = DateTime.UtcNow;
+            var reopenSets = await db.ProductionMachineScheduleSegmentSets
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.WorkOrderId == order.Uid
+                    && x.IsCurrent)
+                .ToListAsync(cancellationToken);
+            MachineScheduleSegmentPersistence.SupersedeSets(reopenSets, scope.UserId, now);
 
             // A split Released placement must not survive into Draft: Draft is the standard
             // one-span manufacturing snapshot, and its hash must describe the graph it stores.

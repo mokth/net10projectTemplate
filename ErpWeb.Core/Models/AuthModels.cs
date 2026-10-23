@@ -35,3 +35,14 @@ public class ChangePasswordInputModel
     [DataType(DataType.Password)]
     public string ConfirmPassword { get; set; } = string.Empty;
 }
+
+public class ForgotPasswordInputModel
+{
+    [Required(ErrorMessage = "Company code is required.")]
+    [MaxLength(5)]
+    public string CompanyCode { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "Username is required.")]
+    [MaxLength(10)]
+    public string Username { get; set; } = string.Empty;
+}

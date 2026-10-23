@@ -29,9 +29,12 @@ public partial class NavMenu : IDisposable
         Navigation.LocationChanged += OnLocationChanged;
     }
 
-    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
         RefreshUrlMatchMode();
+        // Permission cache may have been refreshed by circuit revalidation since the menu was built;
+        // rebuild the authorized sidebar on the next navigation so it reflects the current grants.
+        _items = MapItems(await NavigationService.GetSidebarAsync());
         _ = InvokeAsync(StateHasChanged);
     }
 

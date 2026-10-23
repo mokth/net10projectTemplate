@@ -25,6 +25,9 @@ public sealed class ProductionMachineScheduleSegment
     public long WorkOrderMachineId { get; set; }
     public string MachineCode { get; set; } = string.Empty;
 
+    // Nullable during the additive migration. Phase C writers will require a current set.
+    public long? SegmentSetId { get; set; }
+
     public int SegmentSequence { get; set; }
 
     /// <summary>ORIGINAL | MANUAL_SPLIT | URGENT_INSERT | RESUME | HOLD_RESUME | MAINTENANCE_RESUME | REMAINING_REPLAN.</summary>

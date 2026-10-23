@@ -118,6 +118,8 @@ public class AppDbContext : DbContext
     public DbSet<ProductionConversionCostFact> ProductionConversionCostFacts => Set<ProductionConversionCostFact>();
 
     public DbSet<UserLogin> UserLogins => Set<UserLogin>();
+    public DbSet<PasswordResetRequest> PasswordResetRequests => Set<PasswordResetRequest>();
+    public DbSet<SecurityAuditEvent> SecurityAuditEvents => Set<SecurityAuditEvent>();
     public DbSet<Menu> Menus => Set<Menu>();
     public DbSet<Permission> Permissions => Set<Permission>();
     public DbSet<Role> Roles => Set<Role>();
@@ -308,6 +310,8 @@ public class AppDbContext : DbContext
     public DbSet<ProductionWorkOrderOperation> ProductionWorkOrderOperations => Set<ProductionWorkOrderOperation>();
     public DbSet<ProductionWorkOrderMachine> ProductionWorkOrderMachines => Set<ProductionWorkOrderMachine>();
     public DbSet<ProductionMachineScheduleAllocation> ProductionMachineScheduleAllocations => Set<ProductionMachineScheduleAllocation>();
+    public DbSet<ProductionMachineScheduleAllocationSegment> ProductionMachineScheduleAllocationSegments => Set<ProductionMachineScheduleAllocationSegment>();
+    public DbSet<ProductionMachineScheduleSegmentSet> ProductionMachineScheduleSegmentSets => Set<ProductionMachineScheduleSegmentSet>();
     public DbSet<ProductionMachineScheduleSegment> ProductionMachineScheduleSegments => Set<ProductionMachineScheduleSegment>();
     public DbSet<ProductionWorkOrderScheduleHold> ProductionWorkOrderScheduleHolds => Set<ProductionWorkOrderScheduleHold>();
     public DbSet<ProductionMachineScheduleReadinessEvidence> ProductionMachineScheduleReadinessEvidence => Set<ProductionMachineScheduleReadinessEvidence>();

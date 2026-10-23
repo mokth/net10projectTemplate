@@ -39,6 +39,9 @@
 
         <ThemeSwitcher />
         <!-- Relative on purpose: resolves against <base href>, so it keeps the deployment base path. -->
-        <a class="shell-logout" href="account/logout">Sign out</a>
+        <form method="post" action="@($"{NavigationManager.BaseUri}account/logout")" class="header-logout-form">
+            <AntiforgeryToken />
+            <button type="submit" class="shell-logout">Sign out</button>
+        </form>
     </div>
 </header>

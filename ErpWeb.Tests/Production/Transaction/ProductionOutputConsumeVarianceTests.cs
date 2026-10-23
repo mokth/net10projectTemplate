@@ -209,10 +209,11 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
         var created = await sut.CreateAsync(OverRequest(graph, 100m, 105m, ProductionMaterialVarianceReasonCodes.Human));
         Assert.True((await sut.PostAsync(created.Data!.Uid)).Succeeded);
 
+        var rollbackToken = Guid.NewGuid().ToString("N");
         var rollback = await sut.RollbackAsync(new ProductionOutputRollbackRequest
         {
             OutputId = created.Data.Uid,
-            PostingRequestId = Guid.NewGuid().ToString("N"),
+            PostingRequestId = rollbackToken,
             Reason = "restore",
         });
         Assert.True(rollback.Succeeded, rollback.Message);
@@ -233,7 +234,7 @@ public sealed class ProductionOutputConsumeVarianceTests : IAsyncDisposable
         var replay = await sut.RollbackAsync(new ProductionOutputRollbackRequest
         {
             OutputId = created.Data.Uid,
-            PostingRequestId = Guid.NewGuid().ToString("N"),
+            PostingRequestId = rollbackToken,
             Reason = "replay",
         });
         Assert.True(replay.Succeeded, replay.Message);

@@ -71,6 +71,38 @@ public sealed class ProductionAbsorbedCostCalculatorTests
     }
 
     [Fact]
+    public void Frozen_labour_line_order_does_not_depend_on_navigation_order()
+    {
+        static ProductionWorkOrderOperation Operation(params long[] labourIds)
+        {
+            var operation = new ProductionWorkOrderOperation
+            {
+                OperationCode = "OP10",
+                ProcessType = PrProcessTypes.Manual,
+                PlannedOutputUom = "PCS",
+            };
+            foreach (var id in labourIds)
+                operation.Labours.Add(new ProductionWorkOrderLabour
+                {
+                    Uid = id,
+                    LabourCode = $"LB{id}",
+                    RateBasis = ProductionLabourRateBases.PerOutputUnit,
+                    Rate = id,
+                    ContributesToPlan = true,
+                });
+            return operation;
+        }
+
+        var calculator = new ProductionAbsorbedCostCalculator();
+        var first = calculator.Calculate(Operation(2, 1), 1m, "PCS");
+        var second = calculator.Calculate(Operation(1, 2), 1m, "PCS");
+        Assert.True(first.Succeeded && second.Succeeded);
+        Assert.Equal(["LABOUR:1", "LABOUR:2"],
+            first.Lines.Select(x => x.SourceLineKey));
+        Assert.Equal(first.Lines, second.Lines);
+    }
+
+    [Fact]
     public void Fails_closed_for_uom_mismatch_and_duplicate_selected_machine()
     {
         var operation = new ProductionWorkOrderOperation

@@ -39,6 +39,12 @@ public sealed class AccessRightService : IAccessRightService
         {
             return false;
         }
+        // Forced-password-change gate applies to every role including ADMIN/SYSTEM_ADMIN: while the
+        // user must change their password, no ERP menu/action permission is granted.
+        if (_currentUser.MustChangePassword)
+        {
+            return false;
+        }
         if (HasAdminBypass())
         {
             return true;
@@ -73,6 +79,10 @@ public sealed class AccessRightService : IAccessRightService
         {
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
+        if (_currentUser.MustChangePassword)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
         if (HasAdminBypass())
         {
             return new HashSet<string>(PermissionCodes.All, StringComparer.OrdinalIgnoreCase);
@@ -100,6 +110,10 @@ public sealed class AccessRightService : IAccessRightService
     public async Task<IReadOnlyDictionary<string, MenuAccessRight>> GetAllAccessAsync(CancellationToken cancellationToken = default)
     {
         if (!_currentUser.IsAuthenticated)
+        {
+            return new Dictionary<string, MenuAccessRight>(StringComparer.OrdinalIgnoreCase);
+        }
+        if (_currentUser.MustChangePassword)
         {
             return new Dictionary<string, MenuAccessRight>(StringComparer.OrdinalIgnoreCase);
         }

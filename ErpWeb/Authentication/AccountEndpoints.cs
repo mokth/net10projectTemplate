@@ -1,8 +1,9 @@
-using ErpWeb.Authentication;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Models;
+using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ErpWeb.Authentication;
 
@@ -35,18 +36,9 @@ public static class AccountEndpoints
             return result.MustChangePassword
                 ? RedirectToApp(http, "/change-password")
                 : RedirectToApp(http, "/home");
-        }).DisableAntiforgery().AllowAnonymous();
+        }).AllowAnonymous().RequireRateLimiting("auth-login");
 
-        group.MapGet("/logout", async (
-            ICookieSignInService cookieSignIn,
-            IAccessRightService accessRights,
-            HttpContext http) =>
-        {
-            await accessRights.RefreshPermissionsAsync();
-            await cookieSignIn.SignOutAsync();
-            return RedirectToApp(http, "/login");
-        }).AllowAnonymous();
-
+        // Logout is a POST only, protected by antiforgery, so a GET link cannot sign a user out.
         group.MapPost("/logout", async (
             ICookieSignInService cookieSignIn,
             IAccessRightService accessRights,
@@ -55,7 +47,7 @@ public static class AccountEndpoints
             await accessRights.RefreshPermissionsAsync();
             await cookieSignIn.SignOutAsync();
             return RedirectToApp(http, "/login");
-        }).DisableAntiforgery().AllowAnonymous();
+        }).AllowAnonymous();
 
         group.MapPost("/change-password", async (
             [FromForm] ChangePasswordInputModel model,
@@ -78,7 +70,20 @@ public static class AccountEndpoints
             await cookieSignIn.SignInAsync(result.User);
             await accessRights.RefreshPermissionsAsync();
             return RedirectToApp(http, "/home");
-        }).DisableAntiforgery();
+        });
+
+        group.MapPost("/forgot-password", async (
+            [FromForm] ForgotPasswordInputModel model,
+            IPasswordRecoveryService recovery,
+            HttpContext http) =>
+        {
+            await recovery.RequestResetAsync(
+                model.CompanyCode?.Trim() ?? string.Empty,
+                model.Username?.Trim() ?? string.Empty);
+
+            // Enumeration-safe: always the same redirect regardless of whether an account matched.
+            return RedirectToApp(http, "/forgot-password?submitted=1");
+        }).AllowAnonymous().RequireRateLimiting("auth-recovery");
 
         return endpoints;
     }

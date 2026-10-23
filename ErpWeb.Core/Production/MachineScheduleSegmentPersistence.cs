@@ -19,6 +19,88 @@ public static class MachineScheduleSegmentPersistence
     public static byte[] NewRowVersion(AppDbContext db) =>
         db.Database.IsSqlServer() ? [] : Guid.NewGuid().ToByteArray();
 
+    public static ProductionMachineScheduleSegmentSet BuildCurrentSet(
+        ProductionWorkOrder order,
+        ProductionWorkOrderOperation operation,
+        ProductionWorkOrderMachine machine,
+        string mode,
+        string planningState,
+        decimal plannedQtyBasis,
+        string? reason,
+        string userId,
+        DateTime now,
+        AppDbContext db) => new()
+    {
+        CompanyCode = order.CompanyCode,
+        BranchCode = order.BranchCode,
+        WorkOrderId = order.Uid,
+        WorkOrderOperationId = operation.Uid,
+        WorkOrderMachineId = machine.Uid,
+        MachineCode = machine.MachineCode,
+        Mode = mode,
+        PlanningState = planningState,
+        IsCurrent = true,
+        PlannedQtyBasis = plannedQtyBasis,
+        OutputUom = operation.PlannedOutputUom,
+        CalendarHorizonStart = machine.CalendarHorizonStart,
+        CalendarHorizonEnd = machine.CalendarHorizonEnd,
+        ScheduleSourceHash = machine.ScheduleSourceHash,
+        MachineScheduleRevision = machine.ScheduleRevision,
+        Reason = TrimReason(reason),
+        CreatedDate = now,
+        CreatedBy = TruncateUser(userId),
+        RowVersion = NewRowVersion(db)
+    };
+
+    public static void SupersedeSets(
+        IEnumerable<ProductionMachineScheduleSegmentSet> sets,
+        string userId,
+        DateTime now)
+    {
+        foreach (var set in sets.Where(x => x.IsCurrent))
+        {
+            set.IsCurrent = false;
+            set.SupersededDate = now;
+            set.SupersededBy = TruncateUser(userId);
+            set.ModifiedDate = now;
+            set.ModifiedBy = TruncateUser(userId);
+        }
+    }
+
+    public static async Task RemoveAllocationLinksAsync(
+        AppDbContext db,
+        IReadOnlyCollection<ProductionMachineScheduleAllocation> allocations,
+        CancellationToken cancellationToken)
+    {
+        var ids = allocations.Select(x => x.Uid).Where(x => x > 0).ToList();
+        foreach (var batch in ids.Chunk(800))
+        {
+            var links = await db.ProductionMachineScheduleAllocationSegments
+                .Where(x => batch.Contains(x.AllocationId))
+                .ToListAsync(cancellationToken);
+            db.ProductionMachineScheduleAllocationSegments.RemoveRange(links);
+        }
+    }
+
+    public static void AddAllocationLink(
+        AppDbContext db,
+        ProductionMachineScheduleAllocation allocation,
+        ProductionMachineScheduleSegment segment,
+        string userId,
+        DateTime now)
+    {
+        if (allocation.Uid <= 0 || segment.Uid <= 0 || allocation.WorkOrderMachineId != segment.WorkOrderMachineId)
+            throw new InvalidOperationException("A saved allocation and its segment must belong to the same machine.");
+        db.ProductionMachineScheduleAllocationSegments.Add(new ProductionMachineScheduleAllocationSegment
+        {
+            AllocationId = allocation.Uid,
+            SegmentId = segment.Uid,
+            CreatedDate = now,
+            CreatedBy = TruncateUser(userId),
+            RowVersion = NewRowVersion(db)
+        });
+    }
+
     /// <summary>
     /// Builds the release-time <c>ORIGINAL</c> segment for one selected machine. The caller is
     /// responsible for adding it and saving so the generated UID can be linked from allocations.

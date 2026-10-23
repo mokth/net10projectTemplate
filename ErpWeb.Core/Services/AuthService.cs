@@ -47,6 +47,7 @@ public class AuthService : IAuthService
     private readonly ICurrentUserService _currentUser;
     private readonly IPasswordPolicy _passwordPolicy;
     private readonly IUserRoleSyncService _userRoleSync;
+    private readonly ISecurityAuditWriter _audit;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -55,6 +56,7 @@ public class AuthService : IAuthService
         ICurrentUserService currentUser,
         IPasswordPolicy passwordPolicy,
         IUserRoleSyncService userRoleSync,
+        ISecurityAuditWriter audit,
         ILogger<AuthService> logger)
     {
         _users = users;
@@ -62,6 +64,7 @@ public class AuthService : IAuthService
         _currentUser = currentUser;
         _passwordPolicy = passwordPolicy;
         _userRoleSync = userRoleSync;
+        _audit = audit;
         _logger = logger;
     }
 
@@ -106,13 +109,55 @@ public class AuthService : IAuthService
             return AuthOperationResult.Fail(GenericLoginFailure);
         }
 
-        await _userRoleSync.ReconcileFromUserLevelAsync(
+        var sync = await _userRoleSync.ReconcileFromUserLevelAsync(
             user.uid,
             user.CompanyCode,
             user.userlevel,
             cancellationToken);
 
-        return AuthOperationResult.Ok(user);
+        if (!sync.Succeeded)
+        {
+            _logger.LogWarning(
+                "Login rejected for {LoginId} company {CompanyCode}: role reconciliation failed ({Status}: {Detail})",
+                username,
+                companyCode,
+                sync.Status,
+                sync.Detail);
+            return AuthOperationResult.Fail(GenericLoginFailure);
+        }
+
+        // Final live-state recheck: the password verification and role sync above may take long
+        // enough that the row changed underneath us (reset / deactivate / role change). Claims must
+        // be minted from a FINAL live read, and any drift fails generically so no stale cookie is issued.
+        var final = await _users.GetActiveByUidAsync(user.uid, user.CompanyCode, cancellationToken);
+        if (final is null)
+        {
+            _logger.LogWarning(
+                "Login rejected for {LoginId} company {CompanyCode}: user became inactive/deleted during login",
+                username,
+                companyCode);
+            return AuthOperationResult.Fail(GenericLoginFailure);
+        }
+
+        if (!string.Equals(final.password, user.password, StringComparison.Ordinal))
+        {
+            _logger.LogWarning(
+                "Login rejected for {LoginId} company {CompanyCode}: password changed during login",
+                username,
+                companyCode);
+            return AuthOperationResult.Fail(GenericLoginFailure);
+        }
+
+        if (!string.Equals(final.userlevel, user.userlevel, StringComparison.Ordinal))
+        {
+            _logger.LogWarning(
+                "Login rejected for {LoginId} company {CompanyCode}: role changed during login",
+                username,
+                companyCode);
+            return AuthOperationResult.Fail(GenericLoginFailure);
+        }
+
+        return AuthOperationResult.Ok(final);
     }
 
     private async Task<bool> IsCompanyActiveAsync(string companyCode, CancellationToken cancellationToken)
@@ -176,9 +221,20 @@ public class AuthService : IAuthService
             return AuthOperationResult.Fail("Invalid user identity.");
         }
 
+        if (string.IsNullOrWhiteSpace(_currentUser.CompanyCode))
+        {
+            _logger.LogWarning("Password change rejected due to missing CompanyCode for subject {SubjectUid}", _currentUser.SubjectUid);
+            return AuthOperationResult.Fail("Invalid user identity.");
+        }
+
         if (string.IsNullOrWhiteSpace(currentPassword) || string.IsNullOrWhiteSpace(newPassword))
         {
             return AuthOperationResult.Fail("Current and new passwords are required.");
+        }
+
+        if (!int.TryParse(_currentUser.SubjectUid, out var uid))
+        {
+            return AuthOperationResult.Fail("Invalid user identity.");
         }
 
         var policyResult = _passwordPolicy.Validate(newPassword, _currentUser.LoginId);
@@ -187,29 +243,71 @@ public class AuthService : IAuthService
             return AuthOperationResult.Fail(string.Join(" ", policyResult.Errors));
         }
 
-        if (!int.TryParse(_currentUser.SubjectUid, out var uid))
+        var companyCode = _currentUser.CompanyCode.Trim();
+
+        // Company-scoped live target: exists, belongs to the authenticated company, active, not deleted.
+        var target = await _users.GetActiveByUidAsync(uid, companyCode, cancellationToken);
+        if (target is null)
         {
-            return AuthOperationResult.Fail("Invalid user identity.");
+            _logger.LogWarning(
+                "Self password change rejected for subject {SubjectUid} company {CompanyCode}: target not found, inactive, or deleted",
+                _currentUser.SubjectUid,
+                companyCode);
+            return AuthOperationResult.Fail("Unable to change password.");
         }
 
-        var existing = await _users.GetByUidAsync(uid, cancellationToken);
-        if (existing is null)
-        {
-            return AuthOperationResult.Fail("User not found.");
-        }
-
-        if (!PasswordHasher.Verify(currentPassword, existing.password))
+        if (!PasswordHasher.Verify(currentPassword, target.password))
         {
             return AuthOperationResult.Fail("Current password is incorrect.");
         }
 
-        var updated = await _users.UpdatePasswordAsync(uid, PasswordHasher.Hash(newPassword), _currentUser.UserId, cancellationToken);
+        if (PasswordHasher.Verify(newPassword, target.password))
+        {
+            return AuthOperationResult.Fail("New password must be different from the current password.");
+        }
+
+        var newHash = PasswordHasher.Hash(newPassword);
+
+        // Compare-and-set: guard on the exact hash + changepass state that was verified, so a
+        // concurrent reset/force-change cannot be silently overwritten.
+        var changed = await _users.TryChangeOwnPasswordAsync(
+            uid,
+            companyCode,
+            target.password,
+            target.changepass,
+            newHash,
+            _currentUser.UserId,
+            cancellationToken);
+
+        if (!changed)
+        {
+            _logger.LogWarning(
+                "Self password change conflicted for subject {SubjectUid} company {CompanyCode}",
+                _currentUser.SubjectUid,
+                companyCode);
+            return AuthOperationResult.Fail("Your password was changed by another session. Please try again.");
+        }
+
+        var updated = await _users.GetActiveByUidAsync(uid, companyCode, cancellationToken);
         if (updated is null)
         {
-            return AuthOperationResult.Fail("User not found.");
+            // CAS succeeded, so the row exists; fall back to the target with the new state.
+            updated = target;
+            updated.password = newHash;
+            updated.changepass = false;
         }
 
         _logger.LogInformation("Password changed for user {UserId} company {CompanyCode}", updated.UserID, updated.CompanyCode);
+        await _audit.WriteAsync(new SecurityAuditEvent
+        {
+            CompanyCode = updated.CompanyCode,
+            ActorUid = int.TryParse(_currentUser.SubjectUid, out var actorUid) ? actorUid : null,
+            ActorUserId = _currentUser.UserId,
+            TargetUid = updated.uid,
+            EventType = SecurityAuditEventTypes.PasswordChangeSelf,
+            Outcome = "SUCCESS",
+            Details = "Self-service password change."
+        }, cancellationToken);
         return AuthOperationResult.Ok(updated);
     }
 }

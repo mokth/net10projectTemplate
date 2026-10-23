@@ -16,51 +16,42 @@ public sealed partial class MachineScheduleAdvancedPlanningService
     {
         var now = DateTime.UtcNow;
         var user = MachineScheduleSegmentPersistence.TruncateUser(scope.UserId);
-
-        var trackedIds = plan.SegmentsToSupersede.Select(x => x.Uid)
-            .Concat(plan.AllSegments.Where(x => x.Existing is not null).Select(x => x.Existing!.Uid))
+        var machineIds = plan.AffectedMachineIds
+            .Concat(plan.SegmentsByMachine.Keys)
+            .Concat(plan.SegmentsToSupersede.Select(x => x.WorkOrderMachineId))
             .Distinct()
             .ToList();
-        var trackedSegments = trackedIds.Count == 0
-            ? new List<ProductionMachineScheduleSegment>()
-            : await db.ProductionMachineScheduleSegments
-                .Where(x => trackedIds.Contains(x.Uid))
-                .ToListAsync(cancellationToken);
-        var trackedById = trackedSegments.ToDictionary(x => x.Uid);
-
-        foreach (var stale in plan.SegmentsToSupersede)
-        {
-            if (!trackedById.TryGetValue(stale.Uid, out var tracked))
-                continue;
-            MachineScheduleSegmentPersistence.Supersede(
-                [tracked], scope.UserId, now,
-                $"Superseded by {plan.Action}: {MachineScheduleSegmentPersistence.TrimReason(plan.Request.Reason)}");
-        }
+        var priorSets = await db.ProductionMachineScheduleSegmentSets
+            .Where(x => machineIds.Contains(x.WorkOrderMachineId) && x.IsCurrent)
+            .ToListAsync(cancellationToken);
+        var priorSetsByMachine = priorSets.ToDictionary(x => x.WorkOrderMachineId);
+        MachineScheduleSegmentPersistence.SupersedeSets(priorSets, scope.UserId, now);
+        var priorSegments = await db.ProductionMachineScheduleSegments
+            .Where(x => machineIds.Contains(x.WorkOrderMachineId)
+                && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
+            .ToListAsync(cancellationToken);
+        MachineScheduleSegmentPersistence.Supersede(
+            priorSegments, scope.UserId, now,
+            $"Superseded by {plan.Action}: {MachineScheduleSegmentPersistence.TrimReason(plan.Request.Reason)}");
+        // The filtered unique index must see the old current sets superseded first.
+        await db.SaveChangesAsync(cancellationToken);
 
         var entities = new Dictionary<PlannedSegment, ProductionMachineScheduleSegment>();
         foreach (var planned in plan.AllSegments)
         {
-            ProductionMachineScheduleSegment entity;
-            if (planned.Existing is not null && trackedById.TryGetValue(planned.Existing.Uid, out var existing))
+            var entity = new ProductionMachineScheduleSegment
             {
-                entity = existing;
-            }
-            else
-            {
-                entity = new ProductionMachineScheduleSegment
-                {
-                    CompanyCode = scope.CompanyCode,
-                    BranchCode = scope.BranchCode!,
-                    WorkOrderId = planned.WorkOrderId,
-                    WorkOrderOperationId = planned.OperationId,
-                    WorkOrderMachineId = planned.WorkOrderMachineId,
-                    MachineCode = planned.MachineCode,
-                    CreatedDate = now,
-                    CreatedBy = user,
-                    RowVersion = MachineScheduleSegmentPersistence.NewRowVersion(db)
-                };
-                db.ProductionMachineScheduleSegments.Add(entity);
-            }
+                CompanyCode = scope.CompanyCode,
+                BranchCode = scope.BranchCode!,
+                WorkOrderId = planned.WorkOrderId,
+                WorkOrderOperationId = planned.OperationId,
+                WorkOrderMachineId = planned.WorkOrderMachineId,
+                MachineCode = planned.MachineCode,
+                CreatedDate = now,
+                CreatedBy = user,
+                RowVersion = MachineScheduleSegmentPersistence.NewRowVersion(db)
+            };
+            db.ProductionMachineScheduleSegments.Add(entity);
 
             entity.WorkOrderId = planned.WorkOrderId;
             entity.WorkOrderOperationId = planned.OperationId;
@@ -68,7 +59,7 @@ public sealed partial class MachineScheduleAdvancedPlanningService
             entity.MachineCode = planned.MachineCode;
             entity.SegmentKind = planned.Kind;
             entity.SegmentStatus = planned.Status;
-            entity.SourceSegmentId = planned.SourceSegmentId;
+            entity.SourceSegmentId = planned.Existing?.Uid ?? planned.SourceSegmentId;
             entity.PlannedOutputQty = planned.Qty;
             entity.OutputUom = planned.Uom;
             entity.PlannedCycleCount = planned.CycleCount;
@@ -109,18 +100,18 @@ public sealed partial class MachineScheduleAdvancedPlanningService
                 MachineScheduleDateRangeProjector.Apply(orderPlan.Order, projection);
         }
 
-        var machineIds = plan.AffectedMachineIds
-            .Concat(plan.SegmentsByMachine.Keys)
-            .Distinct()
-            .ToList();
         var machines = machineIds.Count == 0
             ? new List<ProductionWorkOrderMachine>()
             : await db.ProductionWorkOrderMachines
                 .Include(x => x.Operation)
+                .ThenInclude(x => x!.WorkOrder)
                 .Where(x => machineIds.Contains(x.Uid))
                 .ToListAsync(cancellationToken);
         var machineById = machines.ToDictionary(x => x.Uid);
         var changedMachineIds = new HashSet<long>();
+        var setByMachine = new Dictionary<long, ProductionMachineScheduleSegmentSet>();
+        var allocationLinks = new List<(ProductionMachineScheduleAllocation Allocation,
+            ProductionMachineScheduleSegment Segment)>();
 
         foreach (var machineId in machineIds)
         {
@@ -188,9 +179,36 @@ public sealed partial class MachineScheduleAdvancedPlanningService
             machine.ModifiedDate = now;
             machine.ModifiedBy = user;
 
+            var operation = machine.Operation
+                ?? throw new InvalidOperationException("Affected machine has no Work Order operation.");
+            var order = operation.WorkOrder
+                ?? throw new InvalidOperationException("Affected machine has no Work Order.");
+            var mode = plan.Action == MachineScheduleAdvancedAction.ReplanRemaining
+                ? ProductionMachineScheduleSegmentSetModes.RemainingOnly
+                : priorSetsByMachine.TryGetValue(machineId, out var previousSet)
+                    ? previousSet.Mode
+                    : ProductionMachineScheduleSegmentSetModes.FullPlan;
+            var planningState = plan.HasUnscheduledRemaining && machineId == plan.TargetMachine.Uid
+                ? plan.Action == MachineScheduleAdvancedAction.Hold
+                    ? ProductionMachineSchedulePlanningStates.HeldUnscheduled
+                    : plan.Action == MachineScheduleAdvancedAction.MaintenanceReplan
+                        ? ProductionMachineSchedulePlanningStates.MaintenanceUnscheduled
+                        : ProductionMachineSchedulePlanningStates.ReplanRequired
+                : segmentEntities.Count == 0 && operation.RemainingQty <= 0m
+                    ? ProductionMachineSchedulePlanningStates.Completed
+                    : ProductionMachineSchedulePlanningStates.Scheduled;
+            var set = MachineScheduleSegmentPersistence.BuildCurrentSet(
+                order, operation, machine, mode, planningState,
+                segmentEntities.Sum(x => x.PlannedOutputQty),
+                plan.Request.Reason, scope.UserId, now, db);
+            db.ProductionMachineScheduleSegmentSets.Add(set);
+            setByMachine[machineId] = set;
+
             var existingAllocations = await db.ProductionMachineScheduleAllocations
                 .Where(x => x.WorkOrderMachineId == machineId)
                 .ToListAsync(cancellationToken);
+            await MachineScheduleSegmentPersistence.RemoveAllocationLinksAsync(
+                db, existingAllocations, cancellationToken);
             db.ProductionMachineScheduleAllocations.RemoveRange(existingAllocations);
 
             var fragmentNo = 1;
@@ -200,7 +218,7 @@ public sealed partial class MachineScheduleAdvancedPlanningService
                 var segment = entities[planned];
                 foreach (var interval in planned.Fragments)
                 {
-                    db.ProductionMachineScheduleAllocations.Add(new ProductionMachineScheduleAllocation
+                    var allocation = new ProductionMachineScheduleAllocation
                     {
                         CompanyCode = segment.CompanyCode,
                         BranchCode = segment.BranchCode,
@@ -217,10 +235,21 @@ public sealed partial class MachineScheduleAdvancedPlanningService
                         CreatedDate = now,
                         CreatedBy = createdBy,
                         RowVersion = MachineScheduleSegmentPersistence.NewRowVersion(db)
-                    });
+                    };
+                    db.ProductionMachineScheduleAllocations.Add(allocation);
+                    allocationLinks.Add((allocation, segment));
                 }
             }
         }
+
+        // Assign database identities before attaching each segment to its set and each
+        // productive allocation to its segment. The caller's transaction remains open.
+        await db.SaveChangesAsync(cancellationToken);
+        foreach (var pair in entities)
+            pair.Value.SegmentSetId = setByMachine[pair.Key.WorkOrderMachineId].Uid;
+        foreach (var (allocation, segment) in allocationLinks)
+            MachineScheduleSegmentPersistence.AddAllocationLink(
+                db, allocation, segment, scope.UserId, now);
 
         // Holds are planning rows. The Work Order status never changes.
         foreach (var hold in plan.HoldsToAdd)

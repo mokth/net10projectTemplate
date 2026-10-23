@@ -9,6 +9,7 @@ using ErpWeb.Model.Repositories.Purchase;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Inventory;
@@ -25,6 +26,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     private readonly ICurrentDateService _currentDate;
     private readonly IIvInventoryHistoryWriter? _historyWriter;
     private readonly IStockPostingCoordinator? _coordinator;
+    private readonly bool _openPeriodBackdatedReplayEnabled;
     private static readonly HashSet<string> NormalInventoryFutureDraftTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         IvTrxTypes.MiscellaneousReceipt,
@@ -48,7 +50,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         ILogger<IvInventoryPostingService> logger,
         ICurrentDateService currentDate,
         IIvInventoryHistoryWriter? historyWriter = null,
-        IStockPostingCoordinator? coordinator = null)
+        IStockPostingCoordinator? coordinator = null,
+        IConfiguration? configuration = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -60,6 +63,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         _currentDate = currentDate;
         _historyWriter = historyWriter;
         _coordinator = coordinator;
+        _openPeriodBackdatedReplayEnabled =
+            configuration?.GetValue<bool>("OpenPeriodBackdatedReplayEnabled") == true;
     }
 
     internal static bool RequiresInventoryBusinessDateGate(string? trxType) =>
@@ -389,6 +394,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
+            && _coordinator is not null
+            && await TryPostBackdatedWacMrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } replayResult)
+            return replayResult;
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
@@ -714,6 +726,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
+            && _coordinator is not null
+            && await TryRollBackBackdatedWacAsync(companyCode, branchCode,
+                userId, batchNo, expectedTrxType, cancellationToken)
+                is { } replayResult)
+            return replayResult;
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
@@ -2006,6 +2026,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && _coordinator is not null
+            && await TryPostBackdatedWacMiAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } replayResult)
+            return replayResult;
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
@@ -2270,6 +2297,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && _coordinator is not null
+            && await TryRollBackBackdatedWacAsync(companyCode, branchCode,
+                userId, batchNo, expectedTrxType, cancellationToken)
+                is { } replayResult)
+            return replayResult;
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);

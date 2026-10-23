@@ -569,6 +569,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
                 Uid = x.Uid,
                 DocumentNo = x.DocumentNo,
                 Status = x.Status,
+                DocumentRevision = x.DocumentRevision,
                 WorkOrderId = x.WorkOrderId,
                 WipConsumptionPolicy = x.WipConsumptionPolicy,
                 ProductCode = db.ProductionWorkOrders

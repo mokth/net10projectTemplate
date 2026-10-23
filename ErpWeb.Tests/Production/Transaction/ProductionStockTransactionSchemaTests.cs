@@ -45,7 +45,7 @@ public sealed class ProductionStockTransactionSchemaTests
             Precision(entity, "BaseQty", 18, 4);
             Precision(entity, "SourceFactor", 18, 8);
             AssertUnique(entity, "DetailId");
-            AssertUnique(entity, "BatchId", "ProductionBalLotId");
+            AssertUnique(entity, "BatchId", "DocumentRevision", "ProductionBalLotId");
         }
         Precision(model.FindEntityType(typeof(ProductionStockAdjustmentLine))!, "ProposedUnitCost", 19, 6);
         foreach (var type in FactTypes)
@@ -70,10 +70,12 @@ public sealed class ProductionStockTransactionSchemaTests
         Assert.Contains("'RETURN_REVERSAL'", model.FindEntityType(typeof(ProductionMaterialMovement))!
             .GetCheckConstraints().Single(x => x.Name == "CK_PrMaterialMovement_Type").Sql);
         var indexes = model.FindEntityType(typeof(ProductionPostingLink))!.GetIndexes().ToDictionary(x => x.GetDatabaseName()!);
-        Assert.Contains("MATERIAL_ISSUE_POST", indexes["UQ_PrProductionPostingLink_MaterialIssueBatch"].GetFilter());
-        Assert.Contains("PRODUCTION_STOCK_RETURN_POST", indexes["UQ_PrProductionPostingLink_StockTransactionBatch"].GetFilter());
-        Assert.Contains("PRODUCTION_STOCK_ADJUSTMENT_POST", indexes["UQ_PrProductionPostingLink_StockTransactionBatch"].GetFilter());
-        Assert.True(indexes["UQ_PrProductionPostingLink_StockTransactionBatch"].IsUnique);
+        Assert.Contains("MATERIAL_ISSUE_POST", indexes["UQ_PrProductionPostingLink_MaterialIssueBatchRevision"].GetFilter());
+        var stockTransactions = indexes["UQ_PrProductionPostingLink_StockTransactionBatchRevision"];
+        Assert.Contains("PRODUCTION_STOCK_RETURN_POST", stockTransactions.GetFilter());
+        Assert.Contains("PRODUCTION_STOCK_ADJUSTMENT_POST", stockTransactions.GetFilter());
+        Assert.True(stockTransactions.IsUnique);
+        Assert.Contains(stockTransactions.Properties, x => x.Name == nameof(ProductionPostingLink.DocumentRevision));
     }
 
     [Theory]

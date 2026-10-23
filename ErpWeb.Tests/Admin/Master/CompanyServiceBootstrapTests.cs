@@ -220,6 +220,7 @@ public class CompanyServiceBootstrapTests : IAsyncLifetime
             Mock.Of<ICurrentUserService>(),
             Mock.Of<IPasswordPolicy>(),
             Mock.Of<IUserRoleSyncService>(),
+            Mock.Of<ISecurityAuditWriter>(),
             NullLogger<AuthService>.Instance);
 
         var login = await auth.ValidateCredentialsAsync("xy", "admin", "Demo@123");

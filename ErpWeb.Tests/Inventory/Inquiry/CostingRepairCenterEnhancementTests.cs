@@ -367,7 +367,7 @@ public sealed partial class CostingDiagnosticCenterTests
             });
             var output = new ProductionOutput
             {
-                CompanyCode = "DEMO", BranchCode = "HQ", DocumentNo = "DP-1", Status = "POSTED",
+                CompanyCode = "DEMO", BranchCode = "HQ", DocumentNo = "DP-1", Status = "POSTED", DocumentRevision = 1,
                 WorkOrderId = 1, RouteStepId = 1, WorkOrderOperationId = 1, ProductionDate = new DateTime(2026, 10, 2),
                 OutputUom = "EA", OutputItemCode = "ITEM-1", OutputLotNo = "L1", SnapshotRevision = 1,
                 SnapshotHash = new string('E', 64), CreateRequestId = Guid.NewGuid().ToString("N"),
@@ -375,11 +375,13 @@ public sealed partial class CostingDiagnosticCenterTests
                 CreatedDate = DateTime.UtcNow, CreatedBy = "tester", RowVersion = [1]
             };
             db.ProductionOutputs.Add(output);
+            await db.SaveChangesAsync();
             db.ProductionPostingLinks.Add(new ProductionPostingLink
             {
                 CompanyCode = "DEMO", BranchCode = "HQ", CommandType = "OUTPUT_POST",
                 PostingRequestId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", WorkOrderId = 1,
                 ProductionDocumentType = ProductionDocumentTypes.ProductionOutput, ProductionDocumentNo = "DP-1",
+                ProductionDocumentLineId = output.Uid, DocumentRevision = output.DocumentRevision,
                 Status = "Succeeded", CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
             });
             db.ProductionPostingLinks.Add(new ProductionPostingLink
@@ -420,7 +422,8 @@ public sealed partial class CostingDiagnosticCenterTests
             CreateRequestId = "cccccccccccccccccccccccccccccccc",
             CreateRequestFingerprint = new string('C', 64)
         };
-        var command = ProductionOutputService.BuildOutputPostingCommand(output, false, new DateTime(2026, 10, 2), null, null, 77);
+        var command = ProductionOutputService.BuildOutputPostingCommand(output, false, new DateTime(2026, 10, 2),
+            Guid.NewGuid().ToString("N"), null, 77);
         Assert.Equal(77, command.ProductionPostingLinkId);
         Assert.Equal("5", command.SourceDocumentId);
         Assert.Equal("DP-9", command.SourceDocumentNo);

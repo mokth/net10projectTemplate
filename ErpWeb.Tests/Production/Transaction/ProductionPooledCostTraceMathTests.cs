@@ -33,8 +33,8 @@ public sealed class ProductionPooledCostTraceMathTests
             new ProductionPooledCostTraceMath.ComponentAtom("c", "OTHER", 1m)
         };
 
-        var first = ProductionPooledCostTraceMath.Allocate(3m, 1m, 1m, atoms);
-        var second = ProductionPooledCostTraceMath.Allocate(3m, 1m, 1m, atoms.Reverse().ToArray());
+        var first = ProductionPooledCostTraceMath.Allocate(3m, 3m, 1m, atoms);
+        var second = ProductionPooledCostTraceMath.Allocate(3m, 3m, 1m, atoms.Reverse().ToArray());
 
         Assert.Equal(0.333334m, first.Allocations.Single(x => x.Key == "a").Amount);
         Assert.Equal(first.Allocations.OrderBy(x => x.Key).Select(x => x.Amount),

@@ -54,7 +54,9 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
                 UserID = "clerk",
                 active = true,
                 changepass = false,
-                userlevel = "USER"
+                userlevel = "USER",
+                CanViewPrice = true,
+                ImagePath = "/img/clerk.png"
             },
             new UserLogin
             {
@@ -83,9 +85,9 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
     }
 
     [Fact]
-    public void PasswordAdminUserRow_has_no_password_properties()
+    public void UserAdminRow_has_no_password_properties()
     {
-        var names = typeof(PasswordAdminUserRow)
+        var names = typeof(UserAdminRow)
             .GetProperties(BindingFlags.Instance | BindingFlags.Public)
             .Select(p => p.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -95,9 +97,16 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
         Assert.Contains("Uid", names);
         Assert.Contains("LoginId", names);
         Assert.Contains("Name", names);
-        Assert.Contains("UserId", names);
+        Assert.Contains("Email", names);
+        Assert.Contains("MobileNo", names);
+        Assert.Contains("RoleCode", names);
         Assert.Contains("Active", names);
         Assert.Contains("ChangePass", names);
+        Assert.Contains("CanViewPrice", names);
+        Assert.Contains("Created", names);
+        Assert.Contains("CreatedBy", names);
+        Assert.Contains("Updated", names);
+        Assert.Contains("UpdatedBy", names);
     }
 
     [Fact]
@@ -111,13 +120,16 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ResetPasswordAsync_updates_matching_company_and_sets_changepass()
+    public async Task TryResetPasswordAsync_updates_matching_company_and_sets_changepass()
     {
         var before = await GetEntityAsync(2);
         var oldHash = before!.password;
 
-        var ok = await _repository.ResetPasswordAsync(2, "DEMO", PasswordHasher.Hash("TempPass1"), "admin");
-        Assert.True(ok);
+        var result = await _repository.TryResetPasswordAsync(
+            2, "DEMO", oldHash, before.changepass, PasswordHasher.Hash("TempPass1"), "admin", null);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.Success, result.Status);
 
         var after = await GetEntityAsync(2);
         Assert.NotNull(after);
@@ -128,13 +140,16 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ResetPasswordAsync_fails_for_wrong_company()
+    public async Task TryResetPasswordAsync_fails_for_wrong_company()
     {
         var before = await GetEntityAsync(2);
         var oldHash = before!.password;
 
-        var ok = await _repository.ResetPasswordAsync(2, "OTH", PasswordHasher.Hash("TempPass1"), "admin");
-        Assert.False(ok);
+        var result = await _repository.TryResetPasswordAsync(
+            2, "OTH", oldHash, before.changepass, PasswordHasher.Hash("TempPass1"), "admin", null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.NotFoundOrDeleted, result.Status);
 
         var after = await GetEntityAsync(2);
         Assert.Equal(oldHash, after!.password);
@@ -142,13 +157,15 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SetChangePassAsync_does_not_change_password_hash()
+    public async Task TrySetChangePassAsync_does_not_change_password_hash()
     {
         var before = await GetEntityAsync(2);
         var oldHash = before!.password;
 
-        var ok = await _repository.SetChangePassAsync(2, "DEMO", true, "admin");
-        Assert.True(ok);
+        var result = await _repository.TrySetChangePassAsync(
+            2, "DEMO", oldHash, before.changepass, true, "admin", null);
+
+        Assert.True(result.Succeeded);
 
         var after = await GetEntityAsync(2);
         Assert.Equal(oldHash, after!.password);
@@ -157,13 +174,343 @@ public class UserLoginRepositoryPasswordAdminTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SetChangePassAsync_fails_for_wrong_company()
+    public async Task TrySetChangePassAsync_fails_for_wrong_company()
     {
-        var ok = await _repository.SetChangePassAsync(2, "OTH", true, "admin");
-        Assert.False(ok);
+        var before = await GetEntityAsync(2);
+        var oldHash = before!.password;
+
+        var result = await _repository.TrySetChangePassAsync(
+            2, "OTH", oldHash, before.changepass, true, "admin", null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.NotFoundOrDeleted, result.Status);
 
         var after = await GetEntityAsync(2);
         Assert.False(after!.changepass);
+    }
+
+    [Fact]
+    public async Task ListForAdminAsync_projects_grid_fields_and_excludes_soft_deleted()
+    {
+        // Soft-delete clerk (uid 2) in DEMO.
+        var deleted = await _repository.SoftDeleteAsync(new[] { 2 }, "DEMO", "admin", null);
+        Assert.Equal(1, deleted);
+
+        var rows = await _repository.ListForAdminAsync("DEMO");
+
+        Assert.Single(rows);
+        var admin = rows[0];
+        Assert.Equal("admin", admin.LoginId);
+        Assert.Equal("ADMIN", admin.RoleCode);
+        Assert.Equal("admin", admin.CreatedBy);
+    }
+
+    [Fact]
+    public async Task UpdateProfileAsync_writes_CanViewPrice_and_preserves_uneditable_fields()
+    {
+        var before = await GetEntityAsync(2);
+        var originalHash = before!.password;
+
+        var ok = await _repository.UpdateProfileAsync(
+            new EditUserRequest
+            {
+                Uid = 2,
+                LoginId = "ignored",
+                Name = "Clerk Renamed",
+                Email = "clerk@example.com",
+                MobileNo = "6011112222",
+                Active = true,
+                RoleCode = "MANAGER",
+                CanViewPrice = false
+            },
+            "DEMO",
+            "admin",
+            null);
+
+        Assert.True(ok);
+
+        var after = await GetEntityAsync(2);
+        Assert.NotNull(after);
+        Assert.Equal(originalHash, after!.password);
+        Assert.Equal("clerk", after.id);
+        Assert.Equal("DEMO", after.CompanyCode);
+        Assert.Equal("HQ", after.BranchCode);
+        Assert.Equal("MAIN", after.LocationCode);
+        Assert.Equal("/img/clerk.png", after.ImagePath);
+        Assert.False(after.changepass);
+
+        Assert.Equal("Clerk Renamed", after.name);
+        Assert.Equal("clerk@example.com", after.email);
+        Assert.Equal("6011112222", after.mobileno);
+        Assert.True(after.active);
+        Assert.Equal("MANAGER", after.userlevel);
+        Assert.False(after.CanViewPrice);
+        Assert.Equal("admin", after.UpdatedUID);
+        Assert.NotNull(after.Updated);
+    }
+
+    [Fact]
+    public async Task GetAdminRowAsync_excludes_soft_deleted()
+    {
+        await _repository.SoftDeleteAsync(new[] { 2 }, "DEMO", "admin", null);
+
+        var row = await _repository.GetAdminRowAsync(2, "DEMO");
+
+        Assert.Null(row);
+    }
+
+    [Fact]
+    public async Task TryResetPasswordAsync_excludes_soft_deleted_target()
+    {
+        await _repository.SoftDeleteAsync(new[] { 2 }, "DEMO", "admin", null);
+        var before = await GetEntityAsync(2);
+        var oldHash = before!.password;
+
+        var result = await _repository.TryResetPasswordAsync(
+            2, "DEMO", oldHash, before.changepass, PasswordHasher.Hash("TempPass1"), "admin", null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.NotFoundOrDeleted, result.Status);
+        var after = await GetEntityAsync(2);
+        Assert.Equal(oldHash, after!.password);
+    }
+
+    [Fact]
+    public async Task TrySetChangePassAsync_excludes_soft_deleted_target()
+    {
+        await _repository.SoftDeleteAsync(new[] { 2 }, "DEMO", "admin", null);
+        var before = await GetEntityAsync(2);
+        var oldHash = before!.password;
+
+        var result = await _repository.TrySetChangePassAsync(
+            2, "DEMO", oldHash, before.changepass, true, "admin", null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.NotFoundOrDeleted, result.Status);
+        var after = await GetEntityAsync(2);
+        Assert.False(after!.changepass);
+    }
+
+    [Fact]
+    public async Task LoginExistsAsync_reserves_deleted_login_id()
+    {
+        await _repository.SoftDeleteAsync(new[] { 2 }, "DEMO", "admin", null);
+
+        // The unique (id, CompanyCode) index still reserves "clerk" even after soft delete.
+        var exists = await _repository.LoginExistsAsync("DEMO", "clerk");
+
+        Assert.True(exists);
+    }
+
+    [Fact]
+    public async Task SoftDeleteAsync_is_all_or_none_when_a_row_is_protected()
+    {
+        await SeedUserAsync(SystemAdminUser(9));
+
+        var deleted = await _repository.SoftDeleteAsync(new[] { 2, 9 }, "DEMO", "admin", "SYSTEM_ADMIN");
+
+        Assert.Equal(0, deleted);
+        var clerk = await GetEntityAsync(2);
+        Assert.NotNull(clerk);
+        Assert.True(clerk!.active);
+        Assert.NotEqual("deleted", clerk.UpdatedUID);
+        var sysadmin = await GetEntityAsync(9);
+        Assert.NotNull(sysadmin);
+        Assert.True(sysadmin!.active);
+    }
+
+    [Fact]
+    public async Task SoftDeleteAsync_is_all_or_none_when_a_row_is_cross_company()
+    {
+        var deleted = await _repository.SoftDeleteAsync(new[] { 2, 3 }, "DEMO", "admin", null);
+
+        Assert.Equal(0, deleted);
+        var clerk = await GetEntityAsync(2);
+        Assert.NotNull(clerk);
+        Assert.True(clerk!.active);
+        Assert.NotEqual("deleted", clerk.UpdatedUID);
+    }
+
+    [Fact]
+    public async Task TryResetPasswordAsync_denies_protected_role_target()
+    {
+        await SeedUserAsync(SystemAdminUser(9));
+        var before = await GetEntityAsync(9);
+        var oldHash = before!.password;
+
+        var result = await _repository.TryResetPasswordAsync(
+            9, "DEMO", oldHash, before.changepass, PasswordHasher.Hash("TempPass1"), "admin", "SYSTEM_ADMIN");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.ProtectedTarget, result.Status);
+        var after = await GetEntityAsync(9);
+        Assert.Equal(oldHash, after!.password);
+    }
+
+    [Fact]
+    public async Task UpdateProfileAsync_denies_protected_role_target()
+    {
+        await SeedUserAsync(SystemAdminUser(9));
+
+        var ok = await _repository.UpdateProfileAsync(
+            new EditUserRequest
+            {
+                Uid = 9,
+                Name = "Renamed",
+                RoleCode = "SYSTEM_ADMIN",
+                Active = true
+            },
+            "DEMO",
+            "admin",
+            "SYSTEM_ADMIN");
+
+        Assert.False(ok);
+        var after = await GetEntityAsync(9);
+        Assert.Equal("Sys Admin", after!.name);
+    }
+
+    // ── Phase 7: compare-and-set concurrency guards ─────────────────────────
+
+    [Fact]
+    public async Task TryResetPasswordAsync_conflict_when_hash_changed()
+    {
+        var before = await GetEntityAsync(2);
+        var originalHash = before!.password;
+
+        // A concurrent reset replaced the hash; our inspected hash is now stale.
+        var newer = await _repository.TryResetPasswordAsync(
+            2, "DEMO", originalHash, before.changepass, PasswordHasher.Hash("NewerPass1"), "other", null);
+        Assert.True(newer.Succeeded);
+
+        var stale = await _repository.TryResetPasswordAsync(
+            2, "DEMO", originalHash, before.changepass, PasswordHasher.Hash("StalePass1"), "admin", null);
+
+        Assert.False(stale.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.ConcurrencyConflict, stale.Status);
+
+        var after = await GetEntityAsync(2);
+        Assert.NotEqual(originalHash, after!.password);          // newer hash preserved
+        Assert.False(PasswordHasher.Verify("StalePass1", after.password)); // stale reset did not win
+        Assert.True(PasswordHasher.Verify("NewerPass1", after.password));
+    }
+
+    [Fact]
+    public async Task TryResetPasswordAsync_conflict_when_changepass_changed()
+    {
+        var before = await GetEntityAsync(2);
+        var originalHash = before!.password;
+
+        // A concurrent force-change flipped changepass; our inspected flag is now stale.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var row = await db.UserLogins.FirstAsync(x => x.uid == 2);
+            row.changepass = true;
+            await db.SaveChangesAsync();
+        }
+
+        var stale = await _repository.TryResetPasswordAsync(
+            2, "DEMO", originalHash, false, PasswordHasher.Hash("StalePass1"), "admin", null);
+
+        Assert.False(stale.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.ConcurrencyConflict, stale.Status);
+        var after = await GetEntityAsync(2);
+        Assert.Equal(originalHash, after!.password);
+        Assert.True(after.changepass);
+    }
+
+    [Fact]
+    public async Task Stale_force_clear_cannot_defeat_concurrent_reset()
+    {
+        var before = await GetEntityAsync(2);
+        var originalHash = before!.password;
+
+        // Another admin resets the password (new hash, changepass=true).
+        var reset = await _repository.TryResetPasswordAsync(
+            2, "DEMO", originalHash, before.changepass, PasswordHasher.Hash("ResetPass1"), "other", null);
+        Assert.True(reset.Succeeded);
+
+        // A stale force-clear based on the pre-reset state must not clear the newer requirement.
+        var staleClear = await _repository.TrySetChangePassAsync(
+            2, "DEMO", originalHash, before.changepass, false, "admin", null);
+
+        Assert.False(staleClear.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.ConcurrencyConflict, staleClear.Status);
+
+        var after = await GetEntityAsync(2);
+        Assert.True(after!.changepass);                          // newer reset requirement preserved
+        Assert.False(PasswordHasher.Verify("Clerk@12", after.password));
+        Assert.True(PasswordHasher.Verify("ResetPass1", after.password));
+    }
+
+    [Fact]
+    public async Task TrySetChangePassAsync_conflict_when_hash_changed()
+    {
+        var before = await GetEntityAsync(2);
+        var originalHash = before!.password;
+
+        var reset = await _repository.TryResetPasswordAsync(
+            2, "DEMO", originalHash, before.changepass, PasswordHasher.Hash("ResetPass1"), "other", null);
+        Assert.True(reset.Succeeded);
+
+        var stale = await _repository.TrySetChangePassAsync(
+            2, "DEMO", originalHash, before.changepass, true, "admin", null);
+
+        Assert.False(stale.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.ConcurrencyConflict, stale.Status);
+        var after = await GetEntityAsync(2);
+        Assert.True(after!.changepass);
+    }
+
+    [Fact]
+    public async Task TrySetChangePassAsync_denies_protected_role_target()
+    {
+        await SeedUserAsync(SystemAdminUser(9));
+        var before = await GetEntityAsync(9);
+
+        var result = await _repository.TrySetChangePassAsync(
+            9, "DEMO", before!.password, before.changepass, true, "admin", "SYSTEM_ADMIN");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(UserSecurityMutationStatus.ProtectedTarget, result.Status);
+        var after = await GetEntityAsync(9);
+        Assert.False(after!.changepass);
+    }
+
+    [Fact]
+    public async Task GetAdminSecurityAsync_excludes_soft_deleted_and_cross_company()
+    {
+        await _repository.SoftDeleteAsync(new[] { 2 }, "DEMO", "admin", null);
+
+        Assert.Null(await _repository.GetAdminSecurityAsync(2, "DEMO")); // soft-deleted
+        Assert.Null(await _repository.GetAdminSecurityAsync(3, "DEMO")); // other company
+
+        var target = await _repository.GetAdminSecurityAsync(1, "DEMO");
+        Assert.NotNull(target);
+        Assert.Equal("admin", target!.LoginId);
+        Assert.Equal("ADMIN", target.RoleCode);
+        Assert.False(string.IsNullOrWhiteSpace(target.PasswordHash));
+    }
+
+    private static UserLogin SystemAdminUser(int uid) => new()
+    {
+        uid = uid,
+        id = "sysadmin",
+        name = "Sys Admin",
+        password = PasswordHasher.Hash("Sys@12345"),
+        CompanyCode = "DEMO",
+        BranchCode = "HQ",
+        LocationCode = "MAIN",
+        UserID = "sysadmin",
+        active = true,
+        changepass = false,
+        userlevel = "SYSTEM_ADMIN"
+    };
+
+    private async Task SeedUserAsync(UserLogin user)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        db.UserLogins.Add(user);
+        await db.SaveChangesAsync();
     }
 
     private async Task<UserLogin?> GetEntityAsync(int uid)
