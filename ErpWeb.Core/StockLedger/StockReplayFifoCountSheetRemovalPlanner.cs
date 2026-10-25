@@ -717,10 +717,14 @@ public static class StockReplayFifoCountSheetRemovalPlanner
         var active = await StockCountGenerationResolver.ResolveActiveAsync(
             db, sheet.CompanyCode, sheet.BranchCode, lineIds,
             cancellationToken);
+        var repostedIds = await ReadRepostedGenerationIdsAsync(db,
+            sheet.CompanyCode, sheet.BranchCode, active.Values,
+            cancellationToken);
         if (active.Count != lineIds.Length || sheet.Lines.Any(l =>
                 !active.TryGetValue(l.CountLineId, out var generation)
                 || generation.IsRemoval
                 || generation.PreviousGenerationId is not null
+                    && !repostedIds.Contains(generation.Id)
                 || generation.AnchorPostingId != sheet.AnchorPostingId
                 || generation.WritePostingId != sheet.AnchorPostingId
                 || generation.Id != -l.Physical.RemovedActiveEvent.EventId
@@ -777,6 +781,28 @@ public static class StockReplayFifoCountSheetRemovalPlanner
                     tailEvidenceHash)));
         }
         return items;
+    }
+
+    internal static async Task<HashSet<long>> ReadRepostedGenerationIdsAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        IEnumerable<StockCountReplayGeneration> generations,
+        CancellationToken cancellationToken)
+    {
+        var rows = generations.Where(g => g.PreviousGenerationId.HasValue)
+            .ToArray();
+        var parentIds = rows.Select(g => g.PreviousGenerationId!.Value)
+            .Distinct().ToArray();
+        if (parentIds.Length == 0)
+            return [];
+        var parents = await db.StockCountReplayGenerations.AsNoTracking()
+            .Where(g => g.CompanyCode == companyCode
+                && g.BranchCode == branchCode && parentIds.Contains(g.Id))
+            .ToDictionaryAsync(g => g.Id, cancellationToken);
+        return rows.Where(g => parents.TryGetValue(
+                g.PreviousGenerationId!.Value, out var parent)
+                && parent.IsRemoval
+                && parent.StockCountLineId == g.StockCountLineId)
+            .Select(g => g.Id).ToHashSet();
     }
 
     private static bool ValidItem(StockReplayCountSheetRemovalPlan sheet,

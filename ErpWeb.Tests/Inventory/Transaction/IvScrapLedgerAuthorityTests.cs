@@ -292,6 +292,289 @@ public sealed class IvScrapLedgerAuthorityTests : IAsyncLifetime
             c => c.IssueKey.LineIdentity == $"H{earlierHistoryId:D10}");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Public_standard_backdated_scrap_posts_and_rolls_back_before_later_issue(
+        bool laterIsScrap)
+    {
+        var balId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 6.5m);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 6.5m, StockCostMethods.Standard);
+        }
+        int laterBatchNo;
+        if (laterIsScrap)
+        {
+            var laterScrap = InventoryLedgerTestFixture.CreateScrap(
+                _factory, FixedToday);
+            var later = await laterScrap.SaveNewAsync(Request(balId, 8m));
+            Assert.True(later.Succeeded, later.ErrorMessage);
+            Assert.True((await laterScrap.PostAsync([later.BatchNo])).Succeeded);
+            laterBatchNo = later.BatchNo;
+        }
+        else
+        {
+            var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+            var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+            {
+                TrxDate = FixedToday,
+                Lines = [new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = balId, ICode = "A100",
+                    FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = 8m, Uom = "EA",
+                    IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+                }]
+            });
+            Assert.True(later.Succeeded, later.ErrorMessage);
+            Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+            laterBatchNo = later.BatchNo;
+        }
+        var scrap = InventoryLedgerTestFixture.CreateScrap(_factory,
+            FixedToday, enableBackdatedReplay: true);
+        var request = Request(balId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await scrap.SaveNewAsync(request);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        Assert.True((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        await using (var posted = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(6m, (await posted.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(39m,
+                (await posted.StockCostStates.SingleAsync()).InventoryValue);
+            var history = await posted.IvTrxHistories.SingleAsync(h =>
+                h.BatchNo == earlier.BatchNo && h.EntryRole == "ORIGINAL");
+            var fact = await posted.StockValuationFacts.SingleAsync(f =>
+                f.InventoryHistoryId == history.Id
+                && f.OriginalValuationFactId == null);
+            Assert.Equal("SCRAP_OUT", fact.MovementCode);
+            Assert.Equal(6.5m, fact.CostAmount);
+        }
+        Assert.True((await scrap.RollbackAsync([earlier.BatchNo])).Succeeded);
+        await using (var restored = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7m, (await restored.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(45.5m,
+                (await restored.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        await using (var tamper = await _factory.CreateDbContextAsync())
+        {
+            var owner = await tamper.StockPostings.SingleAsync(p =>
+                p.SourceDocumentNo == laterBatchNo.ToString()
+                && p.PostingRole == "PRIMARY");
+            owner.SourceDocumentId = "999999";
+            await tamper.SaveChangesAsync();
+        }
+        Assert.False((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        await using (var unchanged = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7m, (await unchanged.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(45.5m,
+                (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
+            var owner = await unchanged.StockPostings.SingleAsync(p =>
+                p.SourceDocumentNo == laterBatchNo.ToString()
+                && p.PostingRole == "PRIMARY");
+            owner.SourceDocumentId = (await unchanged.IvTrxBatches.SingleAsync(b =>
+                b.BatchNo == laterBatchNo)).Id.ToString();
+            await unchanged.SaveChangesAsync();
+        }
+        Assert.True((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        Assert.True((await scrap.RollbackAsync([earlier.BatchNo])).Succeeded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Public_wac_backdated_scrap_posts_and_rolls_back_before_later_issue(
+        bool laterIsScrap)
+    {
+        var balId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 3m);
+        }
+        int laterBatchNo;
+        if (laterIsScrap)
+        {
+            var laterScrap = InventoryLedgerTestFixture.CreateScrap(
+                _factory, FixedToday);
+            var later = await laterScrap.SaveNewAsync(Request(balId, 8m));
+            Assert.True(later.Succeeded, later.ErrorMessage);
+            Assert.True((await laterScrap.PostAsync([later.BatchNo])).Succeeded);
+            laterBatchNo = later.BatchNo;
+        }
+        else
+        {
+            var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+            var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+            {
+                TrxDate = FixedToday,
+                Lines = [new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = balId, ICode = "A100",
+                    FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = 8m, Uom = "EA",
+                    IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+                }]
+            });
+            Assert.True(later.Succeeded, later.ErrorMessage);
+            Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+            laterBatchNo = later.BatchNo;
+        }
+        var scrap = InventoryLedgerTestFixture.CreateScrap(_factory,
+            FixedToday, enableBackdatedReplay: true);
+        var request = Request(balId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await scrap.SaveNewAsync(request);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        Assert.True((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        await using (var posted = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(6m, (await posted.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(18m,
+                (await posted.StockCostStates.SingleAsync()).InventoryValue);
+            var history = await posted.IvTrxHistories.SingleAsync(h =>
+                h.BatchNo == earlier.BatchNo && h.EntryRole == "ORIGINAL");
+            var fact = await posted.StockValuationFacts.SingleAsync(f =>
+                f.InventoryHistoryId == history.Id
+                && f.OriginalValuationFactId == null);
+            Assert.Equal("SCRAP_OUT", fact.MovementCode);
+            Assert.Equal(3m, fact.CostAmount);
+        }
+        Assert.True((await scrap.RollbackAsync([earlier.BatchNo])).Succeeded);
+        await using (var restored = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7m, (await restored.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(21m,
+                (await restored.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        await using (var tamper = await _factory.CreateDbContextAsync())
+        {
+            var owner = await tamper.StockPostings.SingleAsync(p =>
+                p.SourceDocumentNo == laterBatchNo.ToString()
+                && p.PostingRole == "PRIMARY");
+            owner.SourceDocumentId = "999999";
+            await tamper.SaveChangesAsync();
+        }
+        Assert.False((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        await using (var unchanged = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7m, (await unchanged.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(21m,
+                (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
+            var owner = await unchanged.StockPostings.SingleAsync(p =>
+                p.SourceDocumentNo == laterBatchNo.ToString()
+                && p.PostingRole == "PRIMARY");
+            owner.SourceDocumentId = (await unchanged.IvTrxBatches.SingleAsync(b =>
+                b.BatchNo == laterBatchNo)).Id.ToString();
+            await unchanged.SaveChangesAsync();
+        }
+        Assert.True((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        Assert.True((await scrap.RollbackAsync([earlier.BatchNo])).Succeeded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Public_fifo_backdated_scrap_posts_and_rolls_back_before_later_issue(
+        bool laterIsScrap)
+    {
+        var balId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+            [
+                new FifoLayerSeed(5m, 3m, new DateTime(2026, 2, 1)),
+                new FifoLayerSeed(10m, 4m, new DateTime(2026, 3, 1))
+            ]);
+        }
+        int laterBatchNo;
+        if (laterIsScrap)
+        {
+            var laterScrap = InventoryLedgerTestFixture.CreateScrap(
+                _factory, FixedToday);
+            var later = await laterScrap.SaveNewAsync(Request(balId, 8m));
+            Assert.True(later.Succeeded, later.ErrorMessage);
+            Assert.True((await laterScrap.PostAsync([later.BatchNo])).Succeeded);
+            laterBatchNo = later.BatchNo;
+        }
+        else
+        {
+            var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+            var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+            {
+                TrxDate = FixedToday,
+                Lines = [new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = balId, ICode = "A100",
+                    FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = 8m, Uom = "EA",
+                    IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+                }]
+            });
+            Assert.True(later.Succeeded, later.ErrorMessage);
+            Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+            laterBatchNo = later.BatchNo;
+        }
+
+        var scrap = InventoryLedgerTestFixture.CreateScrap(_factory,
+            FixedToday, enableBackdatedReplay: true);
+        var request = Request(balId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await scrap.SaveNewAsync(request);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        Assert.True((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        await using (var posted = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(6m, (await posted.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(24m,
+                (await posted.StockCostStates.SingleAsync()).InventoryValue);
+            var laterHistory = await posted.IvTrxHistories.SingleAsync(h =>
+                h.BatchNo == laterBatchNo && h.EntryRole == "ORIGINAL");
+            var active = await StockReplayValuationGenerationResolver.ResolveAsync(
+                posted, InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, [laterHistory]);
+            Assert.Equal(28m, active[laterHistory.Id].Sum(f => f.CostAmount));
+        }
+        Assert.True((await scrap.RollbackAsync([earlier.BatchNo])).Succeeded);
+        await using (var restored = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7m, (await restored.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(28m,
+                (await restored.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        await using (var tamper = await _factory.CreateDbContextAsync())
+        {
+            var owner = await tamper.StockPostings.SingleAsync(p =>
+                p.SourceDocumentNo == laterBatchNo.ToString()
+                && p.PostingRole == "PRIMARY");
+            owner.SourceDocumentId = "999999";
+            await tamper.SaveChangesAsync();
+        }
+        Assert.False((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        await using (var unchanged = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7m, (await unchanged.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(28m,
+                (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
+            var owner = await unchanged.StockPostings.SingleAsync(p =>
+                p.SourceDocumentNo == laterBatchNo.ToString()
+                && p.PostingRole == "PRIMARY");
+            owner.SourceDocumentId = (await unchanged.IvTrxBatches.SingleAsync(b =>
+                b.BatchNo == laterBatchNo)).Id.ToString();
+            await unchanged.SaveChangesAsync();
+        }
+        Assert.True((await scrap.PostAsync([earlier.BatchNo])).Succeeded);
+        Assert.True((await scrap.RollbackAsync([earlier.BatchNo])).Succeeded);
+    }
+
     [Fact]
     public async Task Standard_scrap_uses_effective_standard_cost()
     {

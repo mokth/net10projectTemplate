@@ -58,16 +58,23 @@ public static class StockReplayWacTransferRepricingWriter
                 activeEvent.Key, originals) != activeEvent
             || originals.Any(f => f.CostMethod != StockCostMethods.MovingAverage
                 || f.ValuationSource != StockValuationSources.MovingAverage
-                || f.TransactionCurrency is not null
-                || f.TransactionCostAmount is not null
-                || f.ExchangeRate is not null
                 || f.BaseCostAmount != f.CostAmount))
             throw Invalid($"History {activeHistoryId} has unsupported WAC transfer facts.");
         var outbound = originals.Where(f => f.Direction < 0).ToArray();
         var inbound = originals.Where(f => f.Direction > 0).ToArray();
         if (outbound.Length == 0 || inbound.Length == 0
             || outbound.Sum(f => f.BaseQty) != history.FrStdQty
-            || inbound.Sum(f => f.BaseQty) != history.ToStdQty)
+            || inbound.Sum(f => f.BaseQty) != history.ToStdQty
+            || outbound.Any(f => f.TransactionCurrency is not null
+                || f.TransactionCostAmount is not null
+                || f.ExchangeRate is not null)
+            || inbound.Any(f => f.TransactionCurrency is not null
+                || f.TransactionCostAmount is < 0m
+                || f.TransactionCostAmount is > 0m
+                    && f.ExchangeRate != Rate(f.CostAmount
+                        / f.TransactionCostAmount.Value)
+                || f.TransactionCostAmount is null or 0m
+                    && f.ExchangeRate is not null))
             throw Invalid($"History {activeHistoryId} has incomplete transfer legs.");
         var oldAmount = StockLedgerPrecision.Money(
             outbound.Sum(f => f.CostAmount));
@@ -167,6 +174,11 @@ public static class StockReplayWacTransferRepricingWriter
                 CostAmount = amounts[i],
                 BaseCurrency = original.BaseCurrency,
                 BaseCostAmount = amounts[i],
+                TransactionCurrency = original.TransactionCurrency,
+                TransactionCostAmount = original.TransactionCostAmount,
+                ExchangeRate = original.TransactionCostAmount is > 0m
+                    ? Rate(amounts[i] / original.TransactionCostAmount.Value)
+                    : null,
                 ValuationSource = StockValuationSources.MovingAverage,
                 ValuationStatus = StockValuationStatuses.Valued,
                 ValuationVersion = checked(original.ValuationVersion + 1),
@@ -185,6 +197,9 @@ public static class StockReplayWacTransferRepricingWriter
         db.StockValuationFacts.AddRange(replacements);
         return replacements;
     }
+
+    private static decimal Rate(decimal value) =>
+        decimal.Round(value, 8, MidpointRounding.AwayFromZero);
 
     private static StockLedgerException Invalid(string message) =>
         new(new StockLedgerError(StockLedgerErrorCodes.LedgerMismatch, message));

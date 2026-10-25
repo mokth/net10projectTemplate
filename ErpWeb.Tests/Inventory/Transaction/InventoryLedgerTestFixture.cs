@@ -386,11 +386,33 @@ internal static class InventoryLedgerTestFixture
             NullLogger<IvMiscIssueService>.Instance);
     }
 
-    public static IvScrapService CreateScrap(
+    public static IvMiscReceiptService CreateMiscReceipt(
         IDbContextFactory<AppDbContext> factory,
         DateTime today,
         string company = CompanyCode,
         string branch = BranchCode)
+    {
+        var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
+        var access = Allow();
+        var postingRepo = new IvStockPostingRepository();
+        return new IvMiscReceiptService(
+            factory, tenant, access, new RunningNumberService(),
+            new FixedCurrentDateService(today),
+            new IvStockMasterRepository(factory),
+            new IvStockCommonRepository(factory),
+            new IvStockTransactionRepository(), postingRepo,
+            CreateInventoryPosting(factory, company, branch, access),
+            new PoSupplierRepository(factory),
+            new IvUomConversionService(factory),
+            NullLogger<IvMiscReceiptService>.Instance);
+    }
+
+    public static IvScrapService CreateScrap(
+        IDbContextFactory<AppDbContext> factory,
+        DateTime today,
+        string company = CompanyCode,
+        string branch = BranchCode,
+        bool enableBackdatedReplay = false)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -405,7 +427,8 @@ internal static class InventoryLedgerTestFixture
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),
             postingRepo,
-            CreateInventoryPosting(factory, company, branch, access),
+            CreateInventoryPosting(factory, company, branch, access,
+                enableBackdatedReplay: enableBackdatedReplay),
             NullLogger<IvScrapService>.Instance);
     }
 
@@ -508,7 +531,8 @@ internal static class InventoryLedgerTestFixture
         IDbContextFactory<AppDbContext> factory,
         DateTime today,
         string company = CompanyCode,
-        string branch = BranchCode)
+        string branch = BranchCode,
+        bool enableBackdatedReplay = false)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -523,7 +547,15 @@ internal static class InventoryLedgerTestFixture
             new IvStockTransactionRepository(),
             postingRepo,
             CreateInventoryPosting(factory, company, branch, access),
-            NullLogger<IvStockCountService>.Instance);
+            NullLogger<IvStockCountService>.Instance,
+            coordinator: enableBackdatedReplay
+                ? CreateCoordinator(factory, company, branch) : null,
+            configuration: enableBackdatedReplay
+                ? new ConfigurationManager
+                {
+                    ["OpenPeriodBackdatedReplayEnabled"] = "true"
+                }
+                : null);
     }
 
     public static IAccessRightService Allow()

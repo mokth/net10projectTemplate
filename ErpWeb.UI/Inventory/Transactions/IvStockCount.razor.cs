@@ -2,6 +2,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 
@@ -52,6 +53,10 @@ public partial class IvStockCount : PageBase
     protected bool PreviewVisible;
     protected IvStockCountPostPreview? Preview;
     protected bool StaleAcknowledged;
+    protected bool FifoCostApprovalVisible;
+    protected decimal? FifoApprovedUnitCost;
+    protected string FifoApprovalReason = string.Empty;
+    protected string? FifoApprovalError;
 
     protected bool RollbackVisible;
     protected string RollbackReason = string.Empty;
@@ -134,6 +139,10 @@ public partial class IvStockCount : PageBase
         _loadedKey = key;
         IsLoading = true;
         ErrorMessage = null;
+        FifoCostApprovalVisible = false;
+        FifoApprovedUnitCost = null;
+        FifoApprovalReason = string.Empty;
+        FifoApprovalError = null;
         try
         {
             if (NormalizedMode == "new" || string.IsNullOrWhiteSpace(CountNo))
@@ -577,9 +586,20 @@ public partial class IvStockCount : PageBase
             ErrorMessage = null;
             try
             {
-                var result = await StockCount.PreviewPostAsync(_id);
+                var result = await StockCount.PreviewPostAsync(_id,
+                    costApprovals: CurrentFifoCostApprovals());
                 if (!result.Succeeded || result.Preview is null)
                 {
+                    if (Header.Status == IvStockCountStatuses.Counted
+                        && Lines.Count == 1 && Lines[0].PhysicalQty > 0m
+                        && result.ErrorMessage?.Contains(
+                            "requires verified FIFO layer cost evidence or explicit approval",
+                            StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        FifoApprovalError = null;
+                        FifoCostApprovalVisible = true;
+                        return;
+                    }
                     ErrorMessage = result.ErrorMessage;
                     return;
                 }
@@ -595,6 +615,30 @@ public partial class IvStockCount : PageBase
         }
     }
 
+    protected async Task OnFifoCostApprovedAsync()
+    {
+        if (FifoApprovedUnitCost is null || FifoApprovedUnitCost < 0m
+            || string.IsNullOrWhiteSpace(FifoApprovalReason))
+        {
+            FifoApprovalError = "Enter a non-negative fallback unit cost and a reason.";
+            return;
+        }
+        FifoApprovalError = null;
+        FifoCostApprovalVisible = false;
+        await OnPreviewPostAsync();
+    }
+
+    private IReadOnlyCollection<StockCountCostApprovalRequest> CurrentFifoCostApprovals()
+    {
+        if (Header.Status != IvStockCountStatuses.Counted
+            || Lines.Count != 1 || Lines[0].PhysicalQty is not > 0m
+            || FifoApprovedUnitCost is not decimal unitCost)
+            return [];
+        return [new StockCountCostApprovalRequest(Lines[0].Id,
+            unitCost == 0m ? "ZERO_COST_APPROVED" : "MANUAL_APPROVED",
+            unitCost, FifoApprovalReason.Trim())];
+    }
+
     protected async Task OnPostConfirmedAsync()
     {
         PreviewVisible = false;
@@ -606,7 +650,8 @@ public partial class IvStockCount : PageBase
             StatusMessage = null;
             try
             {
-                var result = await StockCount.PostAsync(_id);
+                var result = await StockCount.PostAsync(_id,
+                    costApprovals: CurrentFifoCostApprovals());
                 if (!result.Succeeded)
                 {
                     ErrorMessage = result.ErrorMessage;
@@ -619,6 +664,8 @@ public partial class IvStockCount : PageBase
                     : "No variance found. The sheet is POSTED with no batch.";
 
                 await LoadDocumentAsync(_countNo!);
+                FifoApprovedUnitCost = null;
+                FifoApprovalReason = string.Empty;
             }
             finally
             {

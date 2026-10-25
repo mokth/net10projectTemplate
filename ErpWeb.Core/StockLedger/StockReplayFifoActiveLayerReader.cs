@@ -549,6 +549,14 @@ public static class StockReplayFifoActiveLayerReader
             .Distinct().ToArray();
         var active = await StockCountGenerationResolver.ResolveActiveAsync(db,
             companyCode, branchCode, lineIds, cancellationToken);
+        var lineage = await db.StockCountReplayGenerations.AsNoTracking()
+            .Where(g => g.CompanyCode == companyCode
+                && g.BranchCode == branchCode
+                && lineIds.Contains(g.StockCountLineId))
+            .ToArrayAsync(cancellationToken);
+        var byGeneration = lineage.ToDictionary(g => g.Id);
+        var children = lineage.Where(g => g.PreviousGenerationId.HasValue)
+            .ToDictionary(g => g.PreviousGenerationId!.Value);
         var allOriginalIds = await db.StockValuationFacts.AsNoTracking()
             .Where(f => f.SourceDocumentType == "IV_STOCK_COUNT"
                 && f.InventoryHistoryId.HasValue
@@ -571,7 +579,10 @@ public static class StockReplayFifoActiveLayerReader
             var historyId = generation.AdjustmentHistoryId!.Value;
             if (!active.TryGetValue(generation.StockCountLineId,
                     out var leaf)
-                || generation.PreviousGenerationId is not null
+                || generation.PreviousGenerationId is long parentId
+                    && (!byGeneration.TryGetValue(parentId, out var parent)
+                        || !parent.IsRemoval
+                        || parent.StockCountLineId != generation.StockCountLineId)
                 || generation.WritePostingId != generation.AnchorPostingId
                 || generation.SignedAdjustmentQty == 0m)
                 throw Invalid("FIFO count needs one unchanged initial adjustment origin.");
@@ -583,11 +594,13 @@ public static class StockReplayFifoActiveLayerReader
                     $"C{generation.StockCountLineId:D10}", 0));
                 continue;
             }
-            if (!leaf.IsRemoval || leaf.PreviousGenerationId != generation.Id
-                || leaf.AnchorPostingId != generation.AnchorPostingId
-                || leaf.AnchorPostingSequence
+            if (!children.TryGetValue(generation.Id, out var removal)
+                || !removal.IsRemoval
+                || removal.StockCountLineId != generation.StockCountLineId
+                || removal.AnchorPostingId != generation.AnchorPostingId
+                || removal.AnchorPostingSequence
                     != generation.AnchorPostingSequence
-                || leaf.ReversalHistoryId is not int reversalHistoryId
+                || removal.ReversalHistoryId is not int reversalHistoryId
                 || originalFacts.Where(f => f.InventoryHistoryId == historyId)
                     .Any(f => !reversalByOriginal.TryGetValue(f.Id,
                             out var reversals)
@@ -595,11 +608,11 @@ public static class StockReplayFifoActiveLayerReader
                         || reversals[0].InventoryHistoryId
                             != reversalHistoryId
                         || reversals[0].StockPostingId
-                            != leaf.WritePostingId
+                            != removal.WritePostingId
                         || reversals[0].SourceDocumentType
                             != "IV_STOCK_COUNT"))
                 throw Invalid("FIFO count removal has incomplete fact reversals.");
-            removed.Add(historyId, leaf);
+            removed.Add(historyId, removal);
             removedHistoryIds.Add(historyId);
             removedHistoryIds.Add(reversalHistoryId);
         }

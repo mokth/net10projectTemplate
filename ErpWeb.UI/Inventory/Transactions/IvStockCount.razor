@@ -427,6 +427,44 @@
         </Content>
     </DxPopup>
 
+    <DxPopup HeaderText="Approve FIFO count cost"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@FifoCostApprovalVisible">
+        <Content>
+            <p class="sa-hint">A positive FIFO count needs an approved fallback cost. If stock exists before the count, the adjustment uses that FIFO pool cost.</p>
+            @if (!string.IsNullOrWhiteSpace(FifoApprovalError))
+            {
+                <p class="sa-popup-error">@FifoApprovalError</p>
+            }
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Fallback unit cost" ColSpanMd="12">
+                    <Template>
+                        <DxSpinEdit @bind-Value="@FifoApprovedUnitCost" MinValue="0m" Increment="0.01m" DisplayFormat="n6" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Approval reason" ColSpanMd="12">
+                    <Template>
+                        <DxMemo @bind-Text="@FifoApprovalReason" Rows="2" maxlength="250" />
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+            <div class="sa-popup-footer">
+                <div class="sa-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@(() => FifoCostApprovalVisible = false)"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Preview with approval"
+                              Click="@OnFifoCostApprovedAsync"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
     <DxPopup HeaderText="Post preview"
              CloseOnOutsideClick="false"
              Width="900px"
@@ -450,11 +488,17 @@
                 @if (Preview.RequiresStaleConfirmation)
                 {
                     <p class="sa-popup-hint">
-                        @Preview.StaleLines line(s) changed on the shelf between GENERATE and now.
-                        The adjustment is computed against the current live quantity.
+                        @if (Preview.Lines.Any(l => l.HistoricalPreCountQty.HasValue))
+                        {
+                            <span>@Preview.StaleLines line(s) differ from the generated snapshot. The adjustment uses stock immediately before the count date ends.</span>
+                        }
+                        else
+                        {
+                            <span>@Preview.StaleLines line(s) changed on the shelf between GENERATE and now. The adjustment is computed against the current live quantity.</span>
+                        }
                     </p>
                     <DxCheckBox @bind-Checked="@StaleAcknowledged" AllowIndeterminateState="false">
-                        I understand and want to post against live stock.
+                        I understand and want to post with this quantity.
                     </DxCheckBox>
                 }
                 <div class="sa-preview-grid">
@@ -472,9 +516,11 @@
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.WHCode)" Caption="WH" Width="80px" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.LocCode)" Caption="Loc" Width="80px" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.SystemQty)" Caption="System" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.HistoricalPreCountQty)" Caption="Before Count" Width="110px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.LiveQty)" Caption="Live" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.PhysicalQty)" Caption="Counted" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.Variance)" Caption="Variance" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
+                            <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.ProjectedFinalQty)" Caption="Projected" Width="100px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.Direction)" Caption="Direction" Width="100px" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.IsStale)" Caption="Stale" Width="70px" />
                             <DxGridDataColumn FieldName="@nameof(IvStockCountPreviewLine.Error)" Caption="Problem" Width="260px" />

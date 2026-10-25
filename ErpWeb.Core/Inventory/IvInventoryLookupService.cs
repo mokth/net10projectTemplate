@@ -1,6 +1,8 @@
 using ErpWeb.Core.Lookups;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 
@@ -77,7 +79,7 @@ public sealed class IvOnHandSearchRequest
     public string? SearchText { get; set; }
     public int Skip { get; set; }
     public int Take { get; set; } = 20;
-    /// <summary>When set, only balances with TransDate on or before this date are returned (INV-03).</summary>
+    /// <summary>Inclusive business date for historical on-hand quantity.</summary>
     public DateTime? AsOfDate { get; set; }
 }
 
@@ -282,6 +284,38 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
         }
 
         request ??= new IvOnHandSearchRequest();
+        if (request.AsOfDate is DateTime asOfDate)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            var epochs = await db.StockLedgerEpochs.AsNoTracking()
+                .Where(e => e.CompanyCode == ctx.CompanyCode
+                    && e.BranchCode == ctx.BranchCode
+                    && e.Status == StockLedgerEpochStatuses.Active
+                    && e.Version == 2)
+                .Select(e => e.EffectiveFrom).ToArrayAsync(cancellationToken);
+            if (epochs.Length > 1)
+                return IvOnHandSearchResult.Fail(
+                    "Historical on-hand lookup needs one active V2 epoch.");
+            if (epochs.Length == 1)
+            {
+                var cutoff = asOfDate.Date == DateTime.MaxValue.Date
+                    ? DateTime.MaxValue
+                    : asOfDate.Date.AddDays(1).AddTicks(-1);
+                if (epochs[0] > cutoff)
+                    return IvOnHandSearchResult.Fail(
+                        "The requested date precedes the active V2 stock ledger.");
+                try
+                {
+                    return await SearchStrictAsOfOnHandAsync(db,
+                        ctx.CompanyCode!, ctx.BranchCode!, request, cutoff,
+                        cancellationToken);
+                }
+                catch (StockLedgerException ex)
+                {
+                    return IvOnHandSearchResult.Fail(ex.Error.Message);
+                }
+            }
+        }
         var (rows, total) = await _common.SearchOnHandPagedAsync(
             ctx.CompanyCode!,
             ctx.BranchCode!,
@@ -293,8 +327,87 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
             cancellationToken);
 
         return IvOnHandSearchResult.Ok(
-            rows.Select(MapOnHand).ToList(),
+            rows.Select(row => MapOnHand(row)).ToList(),
             total);
+    }
+
+    private static async Task<IvOnHandSearchResult> SearchStrictAsOfOnHandAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        IvOnHandSearchRequest request, DateTime cutoff,
+        CancellationToken cancellationToken)
+    {
+        var query =
+            from bal in db.IvBalLocs.AsNoTracking()
+            join sm in db.IvStockMasters.AsNoTracking()
+                on new { bal.CompanyCode, bal.ICode }
+                equals new { sm.CompanyCode, sm.ICode }
+            join lot in db.IvLots.AsNoTracking()
+                on bal.LotId equals lot.Id into lots
+            from lot in lots.DefaultIfEmpty()
+            where bal.CompanyCode == companyCode
+                && bal.BranchCode == branchCode
+                && sm.IsActive && sm.StockControl
+            select new { bal, sm, lot };
+        if (!string.IsNullOrWhiteSpace(request.ICode))
+        {
+            var code = request.ICode.Trim();
+            query = query.Where(x => x.bal.ICode == code);
+        }
+        if (!string.IsNullOrWhiteSpace(request.SearchText))
+        {
+            var term = request.SearchText.Trim();
+            query = query.Where(x => x.bal.ICode.Contains(term)
+                || x.sm.IDesc != null && x.sm.IDesc.Contains(term)
+                || x.bal.WhCode.Contains(term)
+                || x.bal.LocCode.Contains(term)
+                || x.bal.LotNo.Contains(term));
+        }
+        var ordered = query.OrderBy(x => x.bal.ICode)
+            .ThenBy(x => x.bal.WhCode).ThenBy(x => x.bal.LocCode)
+            .ThenBy(x => x.bal.LotNo).ThenBy(x => x.bal.Id)
+            .Select(x => new IvOnHandBalanceRow
+            {
+                Id = x.bal.Id, ICode = x.bal.ICode,
+                IDesc = x.sm.IDesc, WhCode = x.bal.WhCode,
+                LocCode = x.bal.LocCode, LotNo = x.bal.LotNo,
+                StdQty = x.bal.StdQty,
+                StdUom = x.bal.StdUom ?? x.sm.StdUom,
+                IStatus = x.bal.IStatus,
+                ExpiryDate = x.lot != null ? x.lot.ExpiryDate : null,
+                TransDate = x.bal.TransDate,
+                IClassCode = x.sm.IClassCode,
+                LotControl = x.sm.LotControl,
+                PurchasePrice = x.sm.PurchasePrice,
+                LotId = x.bal.LotId
+            });
+        var skip = Math.Max(0, request.Skip);
+        var take = Math.Clamp(request.Take, 1, 100);
+        var selected = new List<IvBalLocLookupRow>(take);
+        var total = 0;
+        const int pageSize = 500;
+        for (var offset = 0; ; offset += pageSize)
+        {
+            var page = await ordered.Skip(offset).Take(pageSize)
+                .ToArrayAsync(cancellationToken);
+            if (page.Length == 0)
+                break;
+            var quantities = await StockReplayPhysicalAsOfReader.ReadAsync(
+                db, companyCode, branchCode,
+                page.Select(x => x.Id).ToArray(), cutoff,
+                cancellationToken);
+            foreach (var row in page)
+            {
+                var historical = quantities[row.Id].AsOfBaseQty;
+                if (historical <= 0m)
+                    continue;
+                if (total >= skip && (long)total < (long)skip + take)
+                    selected.Add(MapOnHand(row, historical));
+                total++;
+            }
+            if (page.Length < pageSize)
+                break;
+        }
+        return IvOnHandSearchResult.Ok(selected, total);
     }
 
     public async Task<IvItemResolveResult> ResolveItemAsync(
@@ -607,7 +720,8 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
             PurchaseGlCode = x.PurchaseGlCode
         };
 
-    private static IvBalLocLookupRow MapOnHand(IvOnHandBalanceRow x) =>
+    private static IvBalLocLookupRow MapOnHand(
+        IvOnHandBalanceRow x, decimal? quantity = null) =>
         new()
         {
             Id = x.Id,
@@ -616,7 +730,7 @@ public sealed class IvInventoryLookupService : IIvInventoryLookupService
             WhCode = x.WhCode,
             LocCode = x.LocCode,
             LotNo = x.LotNo,
-            StdQty = x.StdQty,
+            StdQty = quantity ?? x.StdQty,
             StdUom = x.StdUom,
             IStatus = x.IStatus,
             ExpiryDate = x.ExpiryDate,

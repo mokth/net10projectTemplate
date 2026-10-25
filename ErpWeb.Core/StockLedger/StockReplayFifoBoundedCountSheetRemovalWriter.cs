@@ -83,9 +83,14 @@ public static class StockReplayFifoBoundedCountSheetRemovalWriter
         var active = await StockCountGenerationResolver.ResolveActiveAsync(db,
             sheet.CompanyCode, sheet.BranchCode, lineIds,
             cancellationToken);
+        var repostedIds = await StockReplayFifoCountSheetRemovalPlanner
+            .ReadRepostedGenerationIdsAsync(db, sheet.CompanyCode,
+                sheet.BranchCode, active.Values, cancellationToken);
         if (active.Count != lineIds.Length || lines.Any(l =>
                 !active.TryGetValue(l.CountLineId, out var g)
-                || g.IsRemoval || g.PreviousGenerationId is not null
+                || g.IsRemoval
+                || g.PreviousGenerationId is not null
+                    && !repostedIds.Contains(g.Id)
                 || g.Id != -l.Physical.RemovedActiveEvent.EventId
                 || g.AnchorPostingId != sheet.AnchorPostingId
                 || g.WritePostingId != sheet.AnchorPostingId

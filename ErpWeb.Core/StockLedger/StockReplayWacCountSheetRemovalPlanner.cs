@@ -26,8 +26,8 @@ public sealed record StockReplayWacCountSheetRemovalPlan(
 /// <summary>
 /// Projects removal of every count line from its item's shared WAC pool.
 /// Later Inventory receipts retain their fixed approved value. Counted piles
-/// of one item share a projection that reprices later Inventory issues.
-/// Other descendants need a shared financial replay projection and writer.
+/// of one item share a projection that reprices later Inventory issues and
+/// verifies paired, unchanged Inventory transfers.
 /// </summary>
 public static class StockReplayWacCountSheetRemovalPlanner
 {
@@ -166,48 +166,71 @@ public static class StockReplayWacCountSheetRemovalPlanner
                     f.InventoryHistoryId!.Value)
                 .ToDictionary(g => g.Key,
                     g => (IReadOnlyList<StockValuationFact>)g.ToArray());
-            var hasIssue = later.Any(e => e.OldSignedQuantity < 0m);
+            var hasRepriceable = later.Any(e => e.OldSignedQuantity <= 0m);
+            var transferNumbers = laterHistories.Where(h =>
+                    h.TrxType == IvTrxTypes.StockTransfer)
+                .Select(h => h.BatchNo).Distinct().ToArray();
+            var transferBatches = await db.IvTrxBatches.AsNoTracking()
+                .Where(b => b.CompanyCode == sheet.CompanyCode
+                    && b.BranchCode == sheet.BranchCode
+                    && transferNumbers.Contains(b.BatchNo))
+                .ToArrayAsync(cancellationToken);
             if (targetIds.Count != lines.Length
                 || removed.Length != lines.Length
                 || removed.Any(e => e.AbsoluteCountQty is null)
                 || later.Any(e => e.EventId is <= 0 or > int.MaxValue
                     || e.Key.CompareTo(
                         lines[^1].Physical.RemovedActiveEvent.Key) <= 0
-                    || e.OldSignedQuantity == 0m
                     || e.ReplaySignedQuantity != e.OldSignedQuantity
-                    || (e.OldSignedQuantity > 0m
+                    || (e.OldSignedQuantity >= 0m
                         ? e.FixedSignedValue != e.OldSignedValue
                         : e.FixedSignedValue is not null)
                     || e.AbsoluteCountQty is not null)
-                || physicalEvents.Length != tail.LaterEvents.Count
                 || physicalEvents.Select(e => e.EventId).Distinct().Count()
-                    != physicalEvents.Length
+                    != tail.LaterEvents.Count
                 || !physicalEvents.Select(e => e.EventId).Order()
-                    .SequenceEqual(tail.LaterEvents.Select(e => e.EventId).Order())
+                    .Distinct().SequenceEqual(tail.LaterEvents
+                        .Select(e => e.EventId).Order())
                 || laterHistories.Length != later.Length
+                || transferBatches.Length != transferNumbers.Length
                 || laterHistories.Any(h =>
                     h.TrxType is not (IvTrxTypes.MiscellaneousReceipt
-                        or IvTrxTypes.MiscellaneousIssue)
+                        or IvTrxTypes.MiscellaneousIssue
+                        or IvTrxTypes.StockTransfer)
                     || h.StockPostingId is not long id
                     || !owners.TryGetValue(id, out var owner)
                     || owner.SealedAtUtc is null
                     || owner.CompanyCode != sheet.CompanyCode
                     || owner.BranchCode != sheet.BranchCode
-                    || owner.SourceModule != "INVENTORY"
-                    || owner.SourceDocumentType != "IV_TRX"
-                    || owner.CommandType != (h.TrxType
-                        == IvTrxTypes.MiscellaneousReceipt
-                            ? "IV_MR_POST" : "IV_MI_POST")
+                    || !(StockReplayInventoryMiscPostingOwner.Matches(owner,
+                            h.TrxType)
+                        || h.TrxType == IvTrxTypes.StockTransfer
+                            && transferBatches.Any(b => b.BatchNo == h.BatchNo
+                                && b.TrxType == IvTrxTypes.StockTransfer
+                                && b.BatchStatus == IvBatchStatuses.Posted
+                                && owner.SourceModule == "INVENTORY"
+                                && owner.SourceDocumentType == h.TrxType
+                                && owner.CommandType == $"IV_POST_{h.TrxType}"
+                                && owner.PostingRole == "PRIMARY"
+                                && owner.SourceDocumentId == b.Id.ToString(
+                                    System.Globalization.CultureInfo.InvariantCulture)
+                                && owner.SourceDocumentNo == h.BatchNo.ToString(
+                                    System.Globalization.CultureInfo.InvariantCulture)))
                     || !activeFacts.TryGetValue(h.Id, out var facts)
                     || facts.Count == 0 || facts.Count > 1000
+                    || h.TrxType == IvTrxTypes.StockTransfer
+                        && facts.Any(f => f.StockPostingId != h.StockPostingId)
                     || h.TrxType == IvTrxTypes.MiscellaneousReceipt
                         && facts.Count != 1
                     || !HasValidLaterFactLineage(h, facts,
                         originsByHistory.GetValueOrDefault(h.Id), owners,
                         sheet.CompanyCode, sheet.BranchCode))
-                || hasIssue && later.Any(e => e.OldSignedQuantity < 0m
+                || hasRepriceable && later.Any(e => e.OldSignedQuantity < 0m
                     && !laterHistories.Any(h => h.Id == e.EventId
-                        && h.TrxType == IvTrxTypes.MiscellaneousIssue)))
+                        && h.TrxType == IvTrxTypes.MiscellaneousIssue)
+                    || e.OldSignedQuantity == 0m
+                    && !laterHistories.Any(h => h.Id == e.EventId
+                        && h.TrxType == IvTrxTypes.StockTransfer)))
                 throw Invalid("The count item needs later financial replay.");
             var eventById = removed.ToDictionary(e => e.EventId);
             if (lines.Any(l => !eventById.TryGetValue(
@@ -223,7 +246,7 @@ public static class StockReplayWacCountSheetRemovalPlanner
                         != IvQty.Round(current - e.OldSignedQuantity)))
                 throw Invalid("The count's WAC and physical removals disagree.");
             StockReplayWacRemovalResult? repricing = null;
-            if (hasIssue)
+            if (hasRepriceable)
             {
                 repricing = StockReplayWacTailProjector
                     .SimulateCountSheetRemoval(tail,

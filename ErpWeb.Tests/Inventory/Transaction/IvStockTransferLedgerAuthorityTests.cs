@@ -1,10 +1,14 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.StockLedger;
+using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace ErpWeb.Tests.Inventory.Transaction;
 
@@ -87,6 +91,65 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
     }
 
     public async Task DisposeAsync() => await _connection.DisposeAsync();
+
+    [Fact]
+    public async Task Dated_on_hand_lookup_uses_historical_quantity_after_later_issue()
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.IvBalLocs.SingleAsync(b => b.Id == sourceId)).TransDate
+                = FixedToday.AddDays(-1);
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 3m);
+            await db.SaveChangesAsync();
+        }
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+        var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = sourceId, ICode = "A100",
+                FrWarehouse = "MAIN", FrLocation = "BIN1",
+                FrLotNo = string.Empty, Quantity = 15m, Uom = "EA",
+                IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+            }]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+        var current = new Mock<ICurrentUserService>();
+        current.SetupGet(x => x.IsAuthenticated).Returns(true);
+        current.SetupGet(x => x.CompanyCode)
+            .Returns(InventoryLedgerTestFixture.CompanyCode);
+        current.SetupGet(x => x.BranchCode)
+            .Returns(InventoryLedgerTestFixture.BranchCode);
+        var lookups = new IvInventoryLookupService(current.Object,
+            new IvStockMasterRepository(_factory),
+            new IvStockCommonRepository(_factory), _factory);
+        var historical = await lookups.SearchOnHandAsync(
+            new IvOnHandSearchRequest
+            {
+                ICode = "A100", AsOfDate = FixedToday.AddDays(-1)
+            });
+        Assert.True(historical.Succeeded, historical.ErrorMessage);
+        Assert.Equal(1, historical.TotalCount);
+        Assert.Equal(15m, Assert.Single(historical.Rows).StdQty);
+        var currentDay = await lookups.SearchOnHandAsync(
+            new IvOnHandSearchRequest
+            {
+                ICode = "A100", AsOfDate = FixedToday
+            });
+        Assert.True(currentDay.Succeeded, currentDay.ErrorMessage);
+        Assert.Equal(0, currentDay.TotalCount);
+        var beforeEpoch = await lookups.SearchOnHandAsync(
+            new IvOnHandSearchRequest
+            {
+                ICode = "A100", AsOfDate = new DateTime(2020, 1, 1)
+            });
+        Assert.False(beforeEpoch.Succeeded);
+    }
 
     [Fact]
     public async Task Moving_average_transfer_is_value_neutral_and_ignores_request_price()
@@ -528,7 +591,380 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Backdated_fifo_transfer_rejects_later_issue_without_mutation()
+    public async Task Backdated_wac_transfer_posts_rolls_back_and_reposts_before_later_transfer()
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+            });
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 3m);
+            await db.SaveChangesAsync();
+        }
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var later = await transfer.SaveNewAsync(Request(sourceId, 8m));
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        Assert.True((await transfer.PostAsync([later.BatchNo])).Succeeded);
+        var earlierRequest = Request(sourceId, 1m);
+        earlierRequest.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await transfer.SaveNewAsync(earlierRequest);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        var post = await transfer.PostAsync([earlier.BatchNo]);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(6m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(9m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            var state = await verify.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal(15m, state.OnHandBaseQty);
+            Assert.Equal(45m, state.InventoryValue);
+            var history = await verify.IvTrxHistories.SingleAsync(h =>
+                h.BatchNo == earlier.BatchNo && h.EntryRole == "ORIGINAL");
+            var facts = (await StockReplayValuationGenerationResolver.ResolveAsync(
+                verify, InventoryLedgerTestFixture.CompanyCode,
+                InventoryLedgerTestFixture.BranchCode, [history]))[history.Id];
+            Assert.Equal(3m, facts.Where(f => f.Direction < 0)
+                .Sum(f => f.CostAmount));
+            Assert.Equal(3m, facts.Where(f => f.Direction > 0)
+                .Sum(f => f.CostAmount));
+        }
+        var rollback = await transfer.RollbackAsync([earlier.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using (var restored = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7m, (await restored.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(8m, (await restored.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            var state = await restored.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal(15m, state.OnHandBaseQty);
+            Assert.Equal(45m, state.InventoryValue);
+        }
+        var repost = await transfer.PostAsync([earlier.BatchNo]);
+        Assert.True(repost.Succeeded, repost.ErrorMessage);
+        var secondRollback = await transfer.RollbackAsync([earlier.BatchNo]);
+        Assert.True(secondRollback.Succeeded, secondRollback.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var owner = await db.StockPostings.SingleAsync(p =>
+                p.SourceDocumentNo == later.BatchNo.ToString()
+                && p.PostingRole == "PRIMARY");
+            owner.SourceDocumentId = "999999";
+            await db.SaveChangesAsync();
+        }
+        var tampered = await transfer.PostAsync([earlier.BatchNo]);
+        Assert.False(tampered.Succeeded);
+        await using var unchanged = await _factory.CreateDbContextAsync();
+        Assert.Equal(7m, (await unchanged.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(8m, (await unchanged.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+    }
+
+    [Theory]
+    [InlineData(4, true)]
+    [InlineData(15, false)]
+    public async Task Backdated_wac_transfer_preserves_later_issue_or_rejects_shortage(
+        int laterIssueQuantity, bool canPost)
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = canPost ? 0m : 1m,
+                StdUom = "EA", TransDate = FixedToday
+            });
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", canPost ? 15m : 16m, 3m);
+            await db.SaveChangesAsync();
+        }
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+        var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = sourceId, ICode = "A100",
+                FrWarehouse = "MAIN", FrLocation = "BIN1",
+                FrLotNo = string.Empty, Quantity = laterIssueQuantity, Uom = "EA",
+                IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+            }]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        if (!canPost)
+        {
+            int destinationId;
+            await using (var db = await _factory.CreateDbContextAsync())
+                destinationId = await db.IvBalLocs.Where(b => b.LocCode == "BIN2")
+                    .Select(b => b.Id).SingleAsync();
+            var reverseRequest = Request(destinationId, 1m);
+            reverseRequest.Lines![0].FrLocation = "BIN2";
+            reverseRequest.Lines[0].ToLocation = "BIN1";
+            var reverse = await transfer.SaveNewAsync(reverseRequest);
+            Assert.True(reverse.Succeeded, reverse.ErrorMessage);
+            var reversePost = await transfer.PostAsync([reverse.BatchNo]);
+            Assert.True(reversePost.Succeeded, reversePost.ErrorMessage);
+        }
+        var request = Request(sourceId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var draft = await transfer.SaveNewAsync(request);
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var posted = await transfer.PostAsync([draft.BatchNo]);
+        if (!canPost)
+        {
+            Assert.False(posted.Succeeded);
+            Assert.Contains("negative", posted.ErrorMessage,
+                StringComparison.OrdinalIgnoreCase);
+            await using var unchanged = await _factory.CreateDbContextAsync();
+            Assert.Equal(IvBatchStatuses.New, (await unchanged.IvTrxBatches
+                .SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            Assert.Equal(1m, (await unchanged.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(0m, (await unchanged.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(1m, (await unchanged.StockCostStates.SingleAsync()).OnHandBaseQty);
+            Assert.Equal(3m, (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
+            Assert.False(await unchanged.IvTrxHistories.AnyAsync(h =>
+                h.BatchNo == draft.BatchNo));
+            return;
+        }
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(1m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(11m, (await verify.StockCostStates.SingleAsync()).OnHandBaseQty);
+            Assert.Equal(33m, (await verify.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        var rolledBack = await transfer.RollbackAsync([draft.BatchNo]);
+        Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(11m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(0m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(11m, (await restored.StockCostStates.SingleAsync()).OnHandBaseQty);
+        Assert.Equal(33m, (await restored.StockCostStates.SingleAsync()).InventoryValue);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Backdated_transfer_posts_and_rolls_back_before_later_receipt(
+        bool fifo)
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+            });
+            db.PoSuppliers.Add(new PoSupplier
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                SuppCode = "SUP01", SuppName = "Supplier",
+                Currency = "MYR", GlCode = "AP001",
+                IsActive = true, RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            if (fifo)
+            {
+                await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+                [
+                    new FifoLayerSeed(5m, 3m, new DateTime(2026, 2, 1)),
+                    new FifoLayerSeed(10m, 4m, new DateTime(2026, 3, 1))
+                ]);
+            }
+            else
+            {
+                await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                    "A100", 15m, 3m);
+            }
+            await db.SaveChangesAsync();
+        }
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday);
+        var later = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday, VendCode = "SUP01",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN2",
+                Quantity = 2m, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", UnitPrice = 3m,
+                PriceConfirmed = true, Reason = "ADJ"
+            }]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        var receiptPost = await receipt.PostAsync([later.BatchNo]);
+        Assert.True(receiptPost.Succeeded, receiptPost.ErrorMessage);
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var request = Request(sourceId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var draft = await transfer.SaveNewAsync(request);
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var posted = await transfer.PostAsync([draft.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(14m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(3m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(17m, (await verify.StockCostStates.SingleAsync()).OnHandBaseQty);
+            Assert.Equal(fifo ? 61m : 51m,
+                (await verify.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        var rollback = await transfer.RollbackAsync([draft.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(15m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(2m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(17m, (await restored.StockCostStates.SingleAsync()).OnHandBaseQty);
+        Assert.Equal(fifo ? 61m : 51m,
+            (await restored.StockCostStates.SingleAsync()).InventoryValue);
+    }
+
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    [InlineData(true, 2)]
+    public async Task Backdated_transfer_posts_and_rolls_back_before_later_other_pair_transfer(
+        bool fifo, int thirdPileCount)
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvLocations.Add(new IvLocation
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                WarehouseCode = "MAIN", LocCode = "BIN3", IsActive = true
+            });
+            if (thirdPileCount == 2)
+                db.IvLocations.Add(new IvLocation
+                {
+                    CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                    BranchCode = InventoryLedgerTestFixture.BranchCode,
+                    WarehouseCode = "MAIN", LocCode = "BIN4", IsActive = true
+                });
+            foreach (var location in thirdPileCount == 2
+                ? new[] { "BIN2", "BIN3", "BIN4" }
+                : new[] { "BIN2", "BIN3" })
+                db.IvBalLocs.Add(new IvBalLoc
+                {
+                    CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                    BranchCode = InventoryLedgerTestFixture.BranchCode,
+                    ICode = "A100", WhCode = "MAIN", LocCode = location,
+                    LotNo = string.Empty, IStatus = "ACTIVE",
+                    StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+                });
+            if (fifo)
+            {
+                await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+                [
+                    new FifoLayerSeed(5m, 3m, new DateTime(2026, 2, 1)),
+                    new FifoLayerSeed(10m, 4m, new DateTime(2026, 3, 1))
+                ]);
+            }
+            else
+            {
+                await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                    "A100", 15m, 3m);
+            }
+            await db.SaveChangesAsync();
+        }
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var laterRequest = Request(sourceId, 4m);
+        laterRequest.Lines![0].ToLocation = "BIN3";
+        var later = await transfer.SaveNewAsync(laterRequest);
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        var laterPost = await transfer.PostAsync([later.BatchNo]);
+        Assert.True(laterPost.Succeeded, laterPost.ErrorMessage);
+        if (thirdPileCount == 2)
+        {
+            var anotherRequest = Request(sourceId, 3m);
+            anotherRequest.Lines![0].ToLocation = "BIN4";
+            var another = await transfer.SaveNewAsync(anotherRequest);
+            Assert.True(another.Succeeded, another.ErrorMessage);
+            var anotherPost = await transfer.PostAsync([another.BatchNo]);
+            Assert.True(anotherPost.Succeeded, anotherPost.ErrorMessage);
+        }
+        var earlierRequest = Request(sourceId, 1m);
+        earlierRequest.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await transfer.SaveNewAsync(earlierRequest);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        var posted = await transfer.PostAsync([earlier.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(thirdPileCount == 2 ? 7m : 10m,
+                (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(1m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(4m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN3")).StdQty);
+            if (thirdPileCount == 2)
+                Assert.Equal(3m, (await verify.IvBalLocs.SingleAsync(b =>
+                    b.LocCode == "BIN4")).StdQty);
+            Assert.Equal(fifo ? 55m : 45m,
+                (await verify.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        var rollback = await transfer.RollbackAsync([earlier.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(thirdPileCount == 2 ? 8m : 11m,
+            (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(0m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(4m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN3")).StdQty);
+        if (thirdPileCount == 2)
+            Assert.Equal(3m, (await restored.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN4")).StdQty);
+        Assert.Equal(fifo ? 55m : 45m,
+            (await restored.StockCostStates.SingleAsync()).InventoryValue);
+    }
+
+    [Fact]
+    public async Task Backdated_fifo_transfer_posts_and_rolls_back_before_later_issue()
     {
         var sourceId = await SeedBalanceAsync(15m);
         await using (var db = await _factory.CreateDbContextAsync())
@@ -569,17 +1005,42 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
         request.TrxDate = FixedToday.AddDays(-1);
         var draft = await transfer.SaveNewAsync(request);
         Assert.True(draft.Succeeded, draft.ErrorMessage);
-        var rejected = await transfer.PostAsync([draft.BatchNo]);
-        Assert.False(rejected.Succeeded);
-        await using var verify = await _factory.CreateDbContextAsync();
-        Assert.Equal(IvBatchStatuses.New, (await verify.IvTrxBatches
-            .SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
-        Assert.Equal(11m, (await verify.IvBalLocs.SingleAsync(b =>
+        var posted = await transfer.PostAsync([draft.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(1m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(11m, (await verify.StockCostStates.SingleAsync()).OnHandBaseQty);
+            Assert.Equal(43m, (await verify.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        var rollback = await transfer.RollbackAsync([draft.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(11m, (await restored.IvBalLocs.SingleAsync(b =>
             b.LocCode == "BIN1")).StdQty);
-        Assert.Equal(0m, (await verify.IvBalLocs.SingleAsync(b =>
+        Assert.Equal(0m, (await restored.IvBalLocs.SingleAsync(b =>
             b.LocCode == "BIN2")).StdQty);
-        Assert.False(await verify.IvTrxHistories.AnyAsync(h =>
-            h.BatchNo == draft.BatchNo));
+        Assert.Equal(11m, (await restored.StockCostStates.SingleAsync()).OnHandBaseQty);
+        Assert.Equal(43m, (await restored.StockCostStates.SingleAsync()).InventoryValue);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var owner = await db.StockPostings.SingleAsync(p =>
+                p.SourceDocumentNo == later.BatchNo.ToString()
+                && p.PostingRole == "PRIMARY");
+            owner.SourceDocumentId = "999999";
+            await db.SaveChangesAsync();
+        }
+        var tampered = await transfer.PostAsync([draft.BatchNo]);
+        Assert.False(tampered.Succeeded);
+        await using var unchanged = await _factory.CreateDbContextAsync();
+        Assert.Equal(11m, (await unchanged.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(0m, (await unchanged.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(43m, (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
     }
 
     [Fact]
@@ -1064,6 +1525,377 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
         var state = await verify.StockCostStates.SingleAsync();
         Assert.Equal(100m, state.OnHandBaseQty);
         Assert.Equal(650m, state.InventoryValue);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Backdated_standard_transfer_posts_and_rolls_back_before_later_issue(
+        bool laterRevision, bool laterRevaluation)
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+            });
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 6.5m);
+            if (laterRevision)
+            {
+                var original = await db.ItemStandardCostRevisions.SingleAsync();
+                original.EffectiveTo = FixedToday;
+                await db.SaveChangesAsync();
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db,
+                    "A100", 7.5m, effectiveFrom: FixedToday);
+            }
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 6.5m, StockCostMethods.Standard);
+            await db.SaveChangesAsync();
+        }
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+        var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = sourceId, ICode = "A100",
+                FrWarehouse = "MAIN", FrLocation = "BIN1",
+                FrLotNo = string.Empty, Quantity = 4m, Uom = "EA",
+                IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+            }]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+        if (laterRevaluation)
+        {
+            var revaluation = new StandardCostRevaluationService(
+                InventoryLedgerTestFixture.CreateCoordinator(_factory),
+                new StockCostMethodResolver(), new ItemStandardCostResolver(),
+                new StockValueAdjustmentWriter());
+            var result = await revaluation.RevalueAsync(
+                new StandardCostRevaluationRequest
+                {
+                    EffectiveAt = FixedToday.AddHours(12),
+                    ItemCodes = ["A100"]
+                });
+            Assert.True(result.Succeeded, result.Error?.Message);
+            Assert.Equal(15m, Assert.Single(result.Value!).RevaluationAmount);
+        }
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var request = Request(sourceId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var draft = await transfer.SaveNewAsync(request);
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var posted = await transfer.PostAsync([draft.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(1m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            var facts = await verify.StockValuationFacts.Where(f =>
+                f.SourceDocumentNo == draft.BatchNo.ToString()
+                && (f.MovementCode == "TRANSFER_OUT"
+                    || f.MovementCode == "TRANSFER_IN")).ToArrayAsync();
+            Assert.Equal(2, facts.Length);
+            Assert.All(facts, f => Assert.Equal(6.5m, f.CostAmount));
+            var state = await verify.StockCostStates.SingleAsync();
+            Assert.Equal(11m, state.OnHandBaseQty);
+            Assert.Equal(laterRevaluation ? 82.5m
+                : laterRevision ? 67.5m : 71.5m,
+                state.InventoryValue);
+        }
+        var rollback = await transfer.RollbackAsync([draft.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(11m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(0m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(11m, (await restored.StockCostStates.SingleAsync()).OnHandBaseQty);
+        Assert.Equal(laterRevaluation ? 82.5m
+            : laterRevision ? 67.5m : 71.5m,
+            (await restored.StockCostStates.SingleAsync()).InventoryValue);
+        await using (var tamper = await _factory.CreateDbContextAsync())
+        {
+            var laterPostingId = laterRevaluation ? null
+                : (await tamper.IvTrxHistories.SingleAsync(h =>
+                    h.BatchNo == later.BatchNo
+                    && h.EntryRole == "ORIGINAL")).StockPostingId;
+            var laterOwner = laterRevaluation
+                ? await tamper.StockPostings.SingleAsync(p =>
+                    p.CommandType == "STANDARD_COST_REVALUATION")
+                : await tamper.StockPostings.SingleAsync(p =>
+                    p.Id == laterPostingId);
+            laterOwner.SourceDocumentId = "999999";
+            await tamper.SaveChangesAsync();
+        }
+        var rejected = await transfer.PostAsync([draft.BatchNo]);
+        Assert.False(rejected.Succeeded);
+        await using var unchanged = await _factory.CreateDbContextAsync();
+        Assert.Equal(11m, (await unchanged.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(0m, (await unchanged.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(laterRevaluation ? 82.5m
+            : laterRevision ? 67.5m : 71.5m,
+            (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
+    }
+
+    [Fact]
+    public async Task Backdated_standard_transfer_preserves_later_transfer_on_same_pair()
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+            });
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 6.5m);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 6.5m, StockCostMethods.Standard);
+            await db.SaveChangesAsync();
+        }
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var later = await transfer.SaveNewAsync(Request(sourceId, 4m));
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        Assert.True((await transfer.PostAsync([later.BatchNo])).Succeeded);
+        var request = Request(sourceId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await transfer.SaveNewAsync(request);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        var posted = await transfer.PostAsync([earlier.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(10m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(5m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(97.5m,
+                (await verify.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        var rollback = await transfer.RollbackAsync([earlier.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(11m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(4m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(97.5m,
+            (await restored.StockCostStates.SingleAsync()).InventoryValue);
+    }
+
+    [Fact]
+    public async Task Standard_transfer_rolls_back_after_later_issue_in_open_month()
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.IvBalLocs.SingleAsync(b => b.Id == sourceId)).TransDate
+                = FixedToday.AddDays(-1);
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA",
+                TransDate = FixedToday.AddDays(-1)
+            });
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 6.5m);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 6.5m, StockCostMethods.Standard);
+            await db.SaveChangesAsync();
+        }
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var earlierRequest = Request(sourceId, 1m);
+        earlierRequest.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await transfer.SaveNewAsync(earlierRequest);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        Assert.True((await transfer.PostAsync([earlier.BatchNo])).Succeeded);
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+        var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = sourceId, ICode = "A100",
+                FrWarehouse = "MAIN", FrLocation = "BIN1",
+                FrLotNo = string.Empty, Quantity = 4m, Uom = "EA",
+                IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+            }]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+        var rollback = await transfer.RollbackAsync([earlier.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(11m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(0m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(71.5m,
+            (await restored.StockCostStates.SingleAsync()).InventoryValue);
+    }
+
+    [Fact]
+    public async Task Backdated_standard_transfer_preserves_later_receipt()
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+            });
+            db.PoSuppliers.Add(new PoSupplier
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                SuppCode = "SUP01", SuppName = "Supplier",
+                Currency = "MYR", GlCode = "AP001",
+                IsActive = true, RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 6.5m);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 6.5m, StockCostMethods.Standard);
+            await db.SaveChangesAsync();
+        }
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday);
+        var later = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday, VendCode = "SUP01",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN2",
+                Quantity = 2m, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", UnitPrice = 3m,
+                PriceConfirmed = true, Reason = "ADJ"
+            }]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        Assert.True((await receipt.PostAsync([later.BatchNo])).Succeeded);
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var request = Request(sourceId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var earlier = await transfer.SaveNewAsync(request);
+        Assert.True(earlier.Succeeded, earlier.ErrorMessage);
+        var posted = await transfer.PostAsync([earlier.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(14m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(3m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(17m, (await verify.StockCostStates.SingleAsync()).OnHandBaseQty);
+            Assert.Equal(110.5m,
+                (await verify.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        var rollback = await transfer.RollbackAsync([earlier.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(15m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(2m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(110.5m,
+            (await restored.StockCostStates.SingleAsync()).InventoryValue);
+    }
+
+    [Fact]
+    public async Task Standard_transfer_rolls_back_and_reposts_before_later_revaluation_only()
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.IvBalLocs.SingleAsync(b => b.Id == sourceId)).TransDate
+                = FixedToday.AddDays(-1);
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA",
+                TransDate = FixedToday.AddDays(-1)
+            });
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 6.5m);
+            var original = await db.ItemStandardCostRevisions.SingleAsync();
+            original.EffectiveTo = FixedToday;
+            await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db,
+                "A100", 7.5m, effectiveFrom: FixedToday);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 15m, 6.5m, StockCostMethods.Standard);
+            await db.SaveChangesAsync();
+        }
+        var transfer = InventoryLedgerTestFixture.CreateStockTransfer(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var request = Request(sourceId, 1m);
+        request.TrxDate = FixedToday.AddDays(-1);
+        var draft = await transfer.SaveNewAsync(request);
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        Assert.True((await transfer.PostAsync([draft.BatchNo])).Succeeded);
+        var revaluation = new StandardCostRevaluationService(
+            InventoryLedgerTestFixture.CreateCoordinator(_factory),
+            new StockCostMethodResolver(), new ItemStandardCostResolver(),
+            new StockValueAdjustmentWriter());
+        var result = await revaluation.RevalueAsync(
+            new StandardCostRevaluationRequest
+            {
+                EffectiveAt = FixedToday.AddHours(12),
+                ItemCodes = ["A100"]
+            });
+        Assert.True(result.Succeeded, result.Error?.Message);
+        Assert.Equal(15m, Assert.Single(result.Value!).RevaluationAmount);
+        var rollback = await transfer.RollbackAsync([draft.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        var repost = await transfer.PostAsync([draft.BatchNo]);
+        Assert.True(repost.Succeeded, repost.ErrorMessage);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(14m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(1m, (await verify.IvBalLocs.SingleAsync(b =>
+                b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(112.5m,
+                (await verify.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        Assert.True((await transfer.RollbackAsync([draft.BatchNo])).Succeeded);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(15m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN1")).StdQty);
+        Assert.Equal(0m, (await restored.IvBalLocs.SingleAsync(b =>
+            b.LocCode == "BIN2")).StdQty);
+        Assert.Equal(112.5m,
+            (await restored.StockCostStates.SingleAsync()).InventoryValue);
     }
 
     [Fact]

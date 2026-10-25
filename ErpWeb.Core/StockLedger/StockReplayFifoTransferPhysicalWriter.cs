@@ -24,14 +24,30 @@ public static class StockReplayFifoTransferPhysicalWriter
         await StockReplayFifoTransferInsertionPlanner.ValidateWithinRootAsync(
             context, plan, cancellationToken);
         var authority = plan.DraftAuthority!;
-        if (batchNo != authority.BatchNo)
-            throw Invalid("The prepared FIFO transfer belongs to another batch.");
         var first = plan.Source.Candidate.Key.EffectiveAt.Date;
         var last = plan.Source.LaterEvents.Select(e => e.Key.EffectiveAt.Date)
             .Concat(plan.Destination.LaterEvents.Select(e => e.Key.EffectiveAt.Date))
             .Append(first).Max();
         await StockReplayFifoIssueRepricingWriter.ValidateFifoPolicyAsync(
             context, first, last, cancellationToken);
+        return await AppendPreparedAsync(context, plan.Source,
+            plan.Destination, authority, batchNo, cancellationToken);
+    }
+
+    internal static async Task<StockReplayFifoTransferPhysicalWriteResult>
+        AppendPreparedAsync(StockPostingContext context,
+        StockReplayPhysicalPlan sourcePlan,
+        StockReplayPhysicalPlan destinationPlan,
+        StockReplayFifoTransferDraftAuthority authority, int batchNo,
+        CancellationToken cancellationToken = default)
+    {
+        context.EnsureUnsealed();
+        await StockReplayPhysicalPlanner.ValidateWithinRootAsync(
+            context, sourcePlan, cancellationToken);
+        await StockReplayPhysicalPlanner.ValidateWithinRootAsync(
+            context, destinationPlan, cancellationToken);
+        if (batchNo != authority.BatchNo)
+            throw Invalid("The prepared transfer belongs to another batch.");
         var db = context.Db;
         var batch = await db.IvTrxBatches.SingleAsync(
             b => b.Id == authority.BatchId, cancellationToken);
@@ -49,11 +65,11 @@ public static class StockReplayFifoTransferPhysicalWriter
             || db.Entry(detail).State != EntityState.Unchanged
             || db.Entry(source).State != EntityState.Unchanged
             || db.Entry(destination).State != EntityState.Unchanged
-            || source.StdQty != plan.Source.CurrentQuantity
-            || destination.StdQty != plan.Destination.CurrentQuantity
-            || !source.RowVersion.SequenceEqual(plan.Source.BalanceRowVersion)
+            || source.StdQty != sourcePlan.CurrentQuantity
+            || destination.StdQty != destinationPlan.CurrentQuantity
+            || !source.RowVersion.SequenceEqual(sourcePlan.BalanceRowVersion)
             || !destination.RowVersion.SequenceEqual(
-                plan.Destination.BalanceRowVersion)
+                destinationPlan.BalanceRowVersion)
             || await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                 h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode
@@ -65,14 +81,14 @@ public static class StockReplayFifoTransferPhysicalWriter
         var now = DateTime.UtcNow;
         var user = context.UserId.Length > 10
             ? context.UserId[..10] : context.UserId;
-        source.StdQty = plan.Source.Projection.FinalQuantity;
-        destination.StdQty = plan.Destination.Projection.FinalQuantity;
-        source.TransDate = plan.Source.LaterEvents.Count == 0
+        source.StdQty = sourcePlan.Projection.FinalQuantity;
+        destination.StdQty = destinationPlan.Projection.FinalQuantity;
+        source.TransDate = sourcePlan.LaterEvents.Count == 0
             ? authority.EffectiveAt
-            : plan.Source.LaterEvents.Max(e => e.Key.EffectiveAt);
-        destination.TransDate = plan.Destination.LaterEvents.Count == 0
+            : sourcePlan.LaterEvents.Max(e => e.Key.EffectiveAt);
+        destination.TransDate = destinationPlan.LaterEvents.Count == 0
             ? authority.EffectiveAt
-            : plan.Destination.LaterEvents.Max(e => e.Key.EffectiveAt);
+            : destinationPlan.LaterEvents.Max(e => e.Key.EffectiveAt);
         source.ModifiedDate = now;
         destination.ModifiedDate = now;
         detail.ToBalLocId = destination.Id;

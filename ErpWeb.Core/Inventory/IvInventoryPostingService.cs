@@ -406,6 +406,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             && await TryPostBackdatedFifoMrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
+            && _coordinator is not null
+            && await TryPostBackdatedStandardMrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } standardReplayResult)
+            return standardReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -745,6 +751,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             && await TryRollBackBackdatedFifoMrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
+            && _coordinator is not null
+            && await TryRollBackBackdatedStandardMrAsync(companyCode, branchCode,
+                userId, batchNo, cancellationToken) is { } standardReplayResult)
+            return standardReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -2039,17 +2051,23 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         CancellationToken cancellationToken)
     {
         if (_openPeriodBackdatedReplayEnabled
-            && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
             && _coordinator is not null
             && await TryPostBackdatedWacMiAsync(companyCode, branchCode,
-                batchNo, cancellationToken) is { } replayResult)
+                batchNo, expectedTrxType, cancellationToken) is { } replayResult)
             return replayResult;
         if (_openPeriodBackdatedReplayEnabled
-            && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
             && _coordinator is not null
             && await TryPostBackdatedFifoMiAsync(companyCode, branchCode,
-                batchNo, cancellationToken) is { } fifoReplayResult)
+                batchNo, expectedTrxType, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
+            && _coordinator is not null
+            && await TryPostBackdatedStandardMiAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken) is { } standardReplayResult)
+            return standardReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -2316,18 +2334,25 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         CancellationToken cancellationToken)
     {
         if (_openPeriodBackdatedReplayEnabled
-            && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
             && _coordinator is not null
             && await TryRollBackBackdatedWacAsync(companyCode, branchCode,
                 userId, batchNo, expectedTrxType, cancellationToken)
                 is { } replayResult)
             return replayResult;
         if (_openPeriodBackdatedReplayEnabled
-            && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
             && _coordinator is not null
             && await TryRollBackBackdatedFifoMiAsync(companyCode, branchCode,
-                batchNo, cancellationToken) is { } fifoReplayResult)
+                batchNo, expectedTrxType, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
+            && _coordinator is not null
+            && await TryRollBackBackdatedStandardMiAsync(companyCode, branchCode,
+                userId, batchNo, expectedTrxType, cancellationToken)
+                is { } standardReplayResult)
+            return standardReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -2563,9 +2588,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         CancellationToken cancellationToken)
     {
         if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+            && await TryPostBackdatedWacTrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } wacReplayResult)
+            return wacReplayResult;
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
             && await TryPostBackdatedFifoTrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+            && await TryPostBackdatedStandardTrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } standardReplayResult)
+            return standardReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -3013,9 +3046,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         CancellationToken cancellationToken)
     {
         if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+            && await TryRollBackBackdatedWacTrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } wacReplayResult)
+            return wacReplayResult;
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
             && await TryRollBackBackdatedFifoTrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+            && await TryRollBackBackdatedStandardTrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } standardReplayResult)
+            return standardReplayResult;
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -3062,6 +3103,21 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, integrityError);
+        }
+
+        var v2Transfers = history.Where(h => h.LedgerVersion == 2
+            && h.EntryRole == "ORIGINAL").ToArray();
+        if (v2Transfers.Length > 0)
+        {
+            var activeFacts = await StockReplayValuationGenerationResolver.ResolveAsync(
+                db, companyCode, branchCode, v2Transfers, cancellationToken);
+            if (v2Transfers.Any(h => h.StockPostingId is not > 0
+                || activeFacts[h.Id].Any(f => f.StockPostingId != h.StockPostingId)))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    "This stock transfer has a replay-corrected valuation and needs replay-aware rollback.");
+            }
         }
 
         var netByBalLocId = new Dictionary<int, decimal>();

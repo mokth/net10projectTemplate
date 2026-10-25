@@ -9,6 +9,7 @@ using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Inventory;
@@ -45,6 +46,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
     private readonly IIvStockPostingRepository _postingRepo;
     private readonly IIvInventoryPostingService _posting;
     private readonly ILogger<IvStockCountService> _logger;
+    private readonly IStockPostingCoordinator? _coordinator;
+    private readonly bool _openPeriodBackdatedReplayEnabled;
 
     public IvStockCountService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -56,7 +59,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
         IIvStockTransactionRepository transactions,
         IIvStockPostingRepository postingRepo,
         IIvInventoryPostingService posting,
-        ILogger<IvStockCountService> logger)
+        ILogger<IvStockCountService> logger,
+        IStockPostingCoordinator? coordinator = null,
+        IConfiguration? configuration = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -68,6 +73,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
         _postingRepo = postingRepo;
         _posting = posting;
         _logger = logger;
+        _coordinator = coordinator;
+        _openPeriodBackdatedReplayEnabled =
+            configuration?.GetValue<bool>("OpenPeriodBackdatedReplayEnabled") == true;
     }
 
     // ── Read ─────────────────────────────────────────────────────────────────────────────────────
@@ -557,7 +565,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
                 $"A stock count can only be generated in DRAFT (status: {header.Status}). "
                 + "Use Cancel and create a new count, or re-count this one.");
         }
-        if (ValidateCountDate(header.CountDate) is string dateError)
+        if (ValidateCountDate(header.CountDate,
+                allowHistoricalOpenPeriod: _openPeriodBackdatedReplayEnabled) is string dateError)
             return IvStockCountOperationResult.Fail(dateError);
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!,
                 header.CountDate, cancellationToken) is string periodError)
@@ -578,14 +587,32 @@ public sealed partial class IvStockCountService : IIvStockCountService
         }
 
         var scope = BuildScope(header);
-        var (rows, total) = await _common.ListStockCountCandidatesAsync(
-            context.CompanyCode!,
-            context.BranchCode!,
-            scope,
-            skip: 0,
-            take: IvStockCountLimits.MaxCountLines + 1,
-            asOfDate: header.CountDate,
-            cancellationToken);
+        IReadOnlyList<StockReplayCountCandidate> rows;
+        int total;
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null)
+        {
+            try
+            {
+                (rows, total) = await StockReplayCountCandidateReader.ReadAsync(
+                    db, context.CompanyCode!, context.BranchCode!, scope,
+                    header.CountDate, 0, IvStockCountLimits.MaxCountLines + 1,
+                    cancellationToken);
+            }
+            catch (StockLedgerException ex)
+            {
+                return IvStockCountOperationResult.Fail(ex.Error.Message);
+            }
+        }
+        else
+        {
+            var (liveRows, liveTotal) = await _common.ListStockCountCandidatesAsync(
+                context.CompanyCode!, context.BranchCode!, scope,
+                skip: 0, take: IvStockCountLimits.MaxCountLines + 1,
+                asOfDate: header.CountDate, cancellationToken);
+            rows = liveRows.Select(r => new StockReplayCountCandidate(r, r.StdQty))
+                .ToArray();
+            total = liveTotal;
+        }
 
         if (total > IvStockCountLimits.MaxCountLines)
         {
@@ -598,8 +625,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
         header.Lines.Clear();
 
         short lineNo = 1;
-        foreach (var row in rows)
+        foreach (var candidate in rows)
         {
+            var row = candidate.Balance;
             header.Lines.Add(new IvStockCountLine
             {
                 StockCountId = header.Id,
@@ -613,7 +641,7 @@ public sealed partial class IvStockCountService : IIvStockCountService
                 IStatus = (row.IStatus ?? string.Empty).Trim(),
                 IClassCode = NullIfWhiteSpace(row.IClassCode),
                 StdUom = TruncateOptional(row.StdUom, 10),
-                SystemQty = IvQty.Round(row.StdQty),
+                SystemQty = IvQty.Round(candidate.HistoricalQty),
                 // Evidence only: posting resolves its own price from the locked balance (D15).
                 SnapshotUnitPrice = row.PurchasePrice is decimal price ? IvQty.Round(price) : null,
                 ExpiryDate = row.ExpiryDate,
@@ -679,7 +707,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
                 ? $"Stock count {header.CountNo} was cancelled and is kept as evidence. Create a new count."
                 : $"Stock count {header.CountNo} is POSTED, so its counted quantities are frozen.");
         }
-        if (ValidateCountDate(header.CountDate) is string dateError)
+        if (ValidateCountDate(header.CountDate,
+                allowHistoricalOpenPeriod: _openPeriodBackdatedReplayEnabled) is string dateError)
             return IvStockCountOperationResult.Fail(dateError);
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode!, context.BranchCode!,
                 header.CountDate, cancellationToken) is string periodError)
@@ -815,7 +844,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             return IvStockCountOperationResult.Fail("Stock count was not found.");
         }
-        if (ValidateCountDate(header.CountDate) is string dateError)
+        if (ValidateCountDate(header.CountDate,
+                allowHistoricalOpenPeriod: _openPeriodBackdatedReplayEnabled) is string dateError)
             return IvStockCountOperationResult.Fail(dateError);
 
         var itemLines = await db.IvStockCountLines
@@ -875,7 +905,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
 
     public async Task<IvStockCountOperationResult> PreviewPostAsync(
         int id,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<StockCountCostApprovalRequest>? costApprovals = null)
     {
         var context = ValidateUserContext();
         if (context.Error is not null)
@@ -887,6 +918,24 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             return IvStockCountOperationResult.Fail("Not authorized.");
         }
+
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null)
+        {
+            try
+            {
+                if (await TryPreviewBackdatedCountAsync(context, id,
+                        costApprovals ?? [], cancellationToken) is { } replayResult)
+                    return replayResult;
+            }
+            catch (StockLedgerException ex)
+            {
+                return IvStockCountOperationResult.Fail(ex.Error.Message);
+            }
+        }
+
+        if (costApprovals is { Count: > 0 })
+            return IvStockCountOperationResult.Fail(
+                "Explicit count cost approval requires an eligible historical replay sheet.");
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var header = await db.IvStockCountHdrs
@@ -1023,12 +1072,13 @@ public sealed partial class IvStockCountService : IIvStockCountService
     }
 
     /// <summary>
-    /// Posts through the guarded live-balance route. Historical count reset posting must use the
-    /// replay planner/writer once its financial and downstream reconciliation is complete.
+    /// Posts a bounded historical WAC count through replay when enabled; other sheets retain the
+    /// guarded live-balance route.
     /// </summary>
     public async Task<IvStockCountOperationResult> PostAsync(
         int id,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<StockCountCostApprovalRequest>? costApprovals = null)
     {
         var context = ValidateWriteContext();
         if (context.Error is not null)
@@ -1040,6 +1090,32 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             return IvStockCountOperationResult.Fail("Not authorized.");
         }
+
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null)
+        {
+            try
+            {
+                if (await TryPostBackdatedCountAsync(context, id,
+                        costApprovals ?? [], cancellationToken) is { } replayResult)
+                    return replayResult;
+            }
+            catch (StockLedgerException ex)
+            {
+                return IvStockCountOperationResult.Fail(ex.Error.Message);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return IvStockCountOperationResult.Fail(ConcurrencyMessage);
+            }
+            catch (DbUpdateException ex) when (SqlErrorClassifier.IsSerializationConflict(ex))
+            {
+                return IvStockCountOperationResult.Fail(ConcurrencyMessage);
+            }
+        }
+
+        if (costApprovals is { Count: > 0 })
+            return IvStockCountOperationResult.Fail(
+                "Explicit count cost approval requires an eligible historical replay sheet.");
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -1357,6 +1433,28 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail("A rollback reason is required.");
         }
 
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null)
+        {
+            try
+            {
+                if (await TryRollBackBackdatedCountAsync(context, id,
+                        reason, cancellationToken) is { } replayResult)
+                    return replayResult;
+            }
+            catch (StockLedgerException ex)
+            {
+                return IvStockCountOperationResult.Fail(ex.Error.Message);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return IvStockCountOperationResult.Fail(ConcurrencyMessage);
+            }
+            catch (DbUpdateException ex) when (SqlErrorClassifier.IsSerializationConflict(ex))
+            {
+                return IvStockCountOperationResult.Fail(ConcurrencyMessage);
+            }
+        }
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
         var header = await LoadHeaderAsync(db, context.CompanyCode!, context.BranchCode!, id, cancellationToken);
@@ -1531,7 +1629,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
     /// replay replace the live-balance ADJ path. Draft headers may be future dated
     /// within an OPEN period; Generate, count entry, Preview and Post use this gate.
     /// </summary>
-    private string? ValidateCountDate(DateTime countDate)
+    private string? ValidateCountDate(DateTime countDate,
+        bool allowHistoricalOpenPeriod = false)
     {
         var date = countDate.Date;
         var today = _currentDate.Today;
@@ -1540,6 +1639,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             return $"Count date {date:yyyy-MM-dd} is in the future. Use today or an earlier date.";
         }
+
+        if (allowHistoricalOpenPeriod)
+            return null;
 
         var oldest = today.AddDays(-IvStockCountLimits.MaxBackdateDays);
         if (date < oldest)

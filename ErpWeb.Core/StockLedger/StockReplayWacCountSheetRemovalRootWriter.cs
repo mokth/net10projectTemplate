@@ -14,7 +14,8 @@ public sealed record StockReplayWacCountSheetRemovalResult(
 
 /// <summary>
 /// Removes a WAC count sheet. Counted piles of an item share the projection
-/// used to reprice later Inventory issues; receipts retain their fixed value.
+/// used to reprice later Inventory issues and check paired transfers;
+/// receipts retain their fixed value.
 /// Original ADJ legs are reversed in one batch and every line gets a removal leaf.
 /// </summary>
 public static class StockReplayWacCountSheetRemovalRootWriter

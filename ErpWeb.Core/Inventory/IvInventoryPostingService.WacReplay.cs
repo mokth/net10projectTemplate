@@ -115,13 +115,13 @@ public sealed partial class IvInventoryPostingService
 
     private async Task<IvInventoryPostingBatchResult?> TryPostBackdatedWacMiAsync(
         string companyCode, string branchCode, int batchNo,
-        CancellationToken cancellationToken)
+        string expectedTrxType, CancellationToken cancellationToken)
     {
         await using var read = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var batch = await read.IvTrxBatches.AsNoTracking().SingleOrDefaultAsync(b =>
             b.CompanyCode == companyCode && b.BranchCode == branchCode
             && b.BatchNo == batchNo, cancellationToken);
-        if (batch is null || batch.TrxType != IvTrxTypes.MiscellaneousIssue
+        if (batch is null || batch.TrxType != expectedTrxType
             || batch.BatchStatus != IvBatchStatuses.New)
             return null;
         var details = await read.IvTrxBatchDetails.AsNoTracking()
@@ -407,15 +407,15 @@ public sealed partial class IvInventoryPostingService
     {
         if (events.Count == 0 || events.Count > 100
             || events.Any(e => e.EventId <= 0 || e.EventId > int.MaxValue
-                || e.OldSignedQuantity == 0m
                 || e.Key.EffectiveAt.Year != candidateDate.Year
                 || e.Key.EffectiveAt.Month != candidateDate.Month))
-            return "Backdated WAC replay supports at most 100 later Inventory MR/MI movements in the same open month.";
+            return "Backdated WAC replay supports at most 100 later Inventory MR/MI/Scrap/transfer movements in the same open month.";
         var ids = events.Select(e => checked((int)e.EventId)).ToArray();
         var eventById = events.ToDictionary(e => checked((int)e.EventId));
         var histories = await db.IvTrxHistories.AsNoTracking()
             .Where(h => ids.Contains(h.Id))
             .Select(h => new { h.Id, h.TrxType, h.StockPostingId,
+                h.CompanyCode, h.BranchCode, h.BatchNo,
                 h.PoNo, h.PoRelNo })
             .ToArrayAsync(cancellationToken);
         if (histories.Length != ids.Length
@@ -424,15 +424,18 @@ public sealed partial class IvInventoryPostingService
                 || h.PoRelNo is not null
                 || (h.TrxType == IvTrxTypes.MiscellaneousReceipt
                     ? eventById[h.Id].OldSignedQuantity <= 0m
-                    : h.TrxType != IvTrxTypes.MiscellaneousIssue
-                        || eventById[h.Id].OldSignedQuantity >= 0m)))
-            return "Backdated WAC replay has a dependent movement outside Inventory MR/MI.";
+                    : StockReplayFifoInventoryIssueKinds.IsSupported(h.TrxType)
+                        ? eventById[h.Id].OldSignedQuantity >= 0m
+                        : h.TrxType != IvTrxTypes.StockTransfer
+                            || eventById[h.Id].OldSignedQuantity != 0m)))
+            return "Backdated WAC replay has a dependent movement outside Inventory MR/MI/Scrap/transfer.";
         var ownerIds = histories.Select(h => h.StockPostingId!.Value)
             .Distinct().ToArray();
         var owners = await db.StockPostings.AsNoTracking()
             .Where(p => ownerIds.Contains(p.Id))
             .Select(p => new { p.Id, p.SourceModule, p.SourceDocumentType,
-                p.SealedAtUtc })
+                p.SourceDocumentId, p.SourceDocumentNo, p.PostingRole,
+                p.CommandType, p.SealedAtUtc })
             .ToArrayAsync(cancellationToken);
         var typeByOwner = histories.GroupBy(h => h.StockPostingId!.Value)
             .ToDictionary(g => g.Key, g => g.Select(h => h.TrxType).Distinct().ToArray());
@@ -440,8 +443,30 @@ public sealed partial class IvInventoryPostingService
             || owners.Any(p => p.SourceModule != "INVENTORY"
                 || p.SealedAtUtc is null
                 || !typeByOwner.TryGetValue(p.Id, out var types)
-                || types.Length != 1 || p.SourceDocumentType != types[0]))
-            return "Backdated WAC replay has a dependent posting outside Inventory MR/MI.";
+                || types.Length != 1 || p.SourceDocumentType != types[0]
+                || p.CommandType != $"IV_POST_{types[0]}"))
+            return "Backdated WAC replay has a dependent posting outside Inventory MR/MI/Scrap/transfer.";
+        var batchNumbers = histories.Select(h => h.BatchNo)
+            .Distinct().ToArray();
+        var batches = await db.IvTrxBatches.AsNoTracking()
+            .Where(b => b.CompanyCode == histories[0].CompanyCode
+                && b.BranchCode == histories[0].BranchCode
+                && batchNumbers.Contains(b.BatchNo))
+            .Select(b => new { b.Id, b.BatchNo, b.TrxType, b.BatchStatus })
+            .ToArrayAsync(cancellationToken);
+        if (batches.Length != batchNumbers.Length
+            || histories.Any(h => h.CompanyCode != histories[0].CompanyCode
+                || h.BranchCode != histories[0].BranchCode
+                || !batches.Any(b => b.BatchNo == h.BatchNo
+                    && b.TrxType == h.TrxType
+                    && b.BatchStatus == IvBatchStatuses.Posted
+                    && owners.Any(p => p.Id == h.StockPostingId
+                        && p.PostingRole == "PRIMARY"
+                        && p.SourceDocumentId == b.Id.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture)
+                        && p.SourceDocumentNo == h.BatchNo.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture)))))
+            return "Backdated WAC replay has a movement without its exact posted Inventory owner.";
         return null;
     }
 }

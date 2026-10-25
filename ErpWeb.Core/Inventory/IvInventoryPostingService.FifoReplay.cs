@@ -240,13 +240,13 @@ public sealed partial class IvInventoryPostingService
 
     private async Task<IvInventoryPostingBatchResult?> TryPostBackdatedFifoMiAsync(
         string companyCode, string branchCode, int batchNo,
-        CancellationToken cancellationToken)
+        string expectedTrxType, CancellationToken cancellationToken)
     {
         await using var read = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var batch = await read.IvTrxBatches.AsNoTracking().SingleOrDefaultAsync(b =>
             b.CompanyCode == companyCode && b.BranchCode == branchCode
             && b.BatchNo == batchNo, cancellationToken);
-        if (batch is null || batch.TrxType != IvTrxTypes.MiscellaneousIssue
+        if (batch is null || batch.TrxType != expectedTrxType
             || batch.BatchStatus != IvBatchStatuses.New)
             return null;
         var details = await read.IvTrxBatchDetails.AsNoTracking()
@@ -345,13 +345,13 @@ public sealed partial class IvInventoryPostingService
 
     private async Task<IvInventoryPostingBatchResult?> TryRollBackBackdatedFifoMiAsync(
         string companyCode, string branchCode, int batchNo,
-        CancellationToken cancellationToken)
+        string expectedTrxType, CancellationToken cancellationToken)
     {
         await using var read = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var batch = await read.IvTrxBatches.AsNoTracking().SingleOrDefaultAsync(b =>
             b.CompanyCode == companyCode && b.BranchCode == branchCode
             && b.BatchNo == batchNo, cancellationToken);
-        if (batch is null || batch.TrxType != IvTrxTypes.MiscellaneousIssue
+        if (batch is null || batch.TrxType != expectedTrxType
             || batch.BatchStatus != IvBatchStatuses.Posted)
             return null;
         var histories = await _posting.LoadHistoryForBatchAsync(read,
@@ -362,7 +362,7 @@ public sealed partial class IvInventoryPostingService
         if (original.EntryRole != "ORIGINAL" || original.LedgerVersion != 2
             || original.StockPostingId is not > 0
             || original.ICode is null
-            || original.TrxType != IvTrxTypes.MiscellaneousIssue
+            || original.TrxType != expectedTrxType
             || original.FromBalLocId is not > 0
             || original.FrStdQty is not > 0m)
             return null;
@@ -377,7 +377,7 @@ public sealed partial class IvInventoryPostingService
                 cancellationToken);
         if (owner is null || owner.SealedAtUtc is null
             || owner.SourceModule != "INVENTORY"
-            || owner.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
+            || owner.SourceDocumentType != expectedTrxType
             || owner.SourceDocumentId != batch.Id.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || owner.SourceDocumentNo != batchNo.ToString(
@@ -487,32 +487,70 @@ public sealed partial class IvInventoryPostingService
                     != candidateKey.EffectiveAt.Year
                 || l.ReceiptKey.Value.EffectiveAt.Month
                     != candidateKey.EffectiveAt.Month))
-            return "Backdated FIFO Inventory replay supports at most 100 later FIFO receipts and Inventory MI movements in the same open month.";
+            return "Backdated FIFO Inventory replay supports at most 100 later FIFO receipts and Inventory MI/Scrap movements in the same open month.";
         var ids = laterIssues.Select(i =>
             StockReplayFifoMiRootWriter.HistoryId(i.Key)).ToArray();
         var histories = await db.IvTrxHistories.AsNoTracking()
             .Where(h => ids.Contains(h.Id))
-            .Select(h => new { h.Id, h.TrxType, h.ICode,
-                h.EntryRole, h.BatchStatus, h.StockPostingId })
+            .Select(h => new { h.Id, h.BatchNo, h.TrxDtTime,
+                h.TrxType, h.ICode, h.EntryRole, h.BatchStatus,
+                h.StockPostingId, h.LedgerEpochId })
             .ToArrayAsync(cancellationToken);
         if (histories.Length != ids.Length || histories.Any(h =>
-                h.TrxType != IvTrxTypes.MiscellaneousIssue
+                !StockReplayFifoInventoryIssueKinds.IsSupported(h.TrxType)
                 || h.ICode != itemCode || h.EntryRole != "ORIGINAL"
                 || h.BatchStatus != IvBatchStatuses.Posted
-                || h.StockPostingId is null))
-            return "Backdated FIFO Inventory replay has a dependent movement outside Inventory MI.";
+                || h.StockPostingId is null || h.LedgerEpochId is null))
+            return "Backdated FIFO Inventory replay has a dependent movement outside Inventory MI/Scrap.";
+        var issueByHistory = laterIssues.ToDictionary(i =>
+            StockReplayFifoMiRootWriter.HistoryId(i.Key));
+        if (histories.Any(h => !issueByHistory.TryGetValue(h.Id,
+                out var issue) || issue.Key.EffectiveAt != h.TrxDtTime))
+            return "Backdated FIFO Inventory replay has a mismatched later issue key.";
         var ownerIds = histories.Select(h => h.StockPostingId!.Value)
             .Distinct().ToArray();
         var owners = await db.StockPostings.AsNoTracking()
             .Where(p => ownerIds.Contains(p.Id))
             .Select(p => new { p.Id, p.SourceModule,
-                p.SourceDocumentType, p.SealedAtUtc })
+                p.SourceDocumentType, p.SourceDocumentId,
+                p.SourceDocumentNo, p.PostingRole, p.CommandType,
+                p.EffectiveAt, p.PostingSequence, p.LedgerEpochId,
+                p.SealedAtUtc })
             .ToArrayAsync(cancellationToken);
         if (owners.Length != ownerIds.Length || owners.Any(p =>
                 p.SourceModule != "INVENTORY"
-                || p.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
+                || !StockReplayFifoInventoryIssueKinds.IsSupported(
+                    p.SourceDocumentType)
                 || p.SealedAtUtc is null))
-            return "Backdated FIFO Inventory replay has an unsealed or foreign MI descendant.";
+            return "Backdated FIFO Inventory replay has an unsealed or foreign issue descendant.";
+        var byOwner = owners.ToDictionary(p => p.Id);
+        var batchNumbers = histories.Select(h => h.BatchNo).Distinct().ToArray();
+        var batches = await db.IvTrxBatches.AsNoTracking()
+            .Where(b => b.CompanyCode == snapshot.CompanyCode
+                && b.BranchCode == snapshot.BranchCode
+                && batchNumbers.Contains(b.BatchNo))
+            .Select(b => new { b.Id, b.BatchNo, b.TrxType,
+                b.TrxDtTime, b.BatchStatus })
+            .ToArrayAsync(cancellationToken);
+        if (batches.Length != batchNumbers.Length || histories.Any(h =>
+                !byOwner.TryGetValue(h.StockPostingId!.Value,
+                    out var owner)
+                || !issueByHistory.TryGetValue(h.Id, out var issue)
+                || !batches.Any(b => b.BatchNo == h.BatchNo
+                    && b.TrxType == h.TrxType
+                    && b.TrxDtTime == h.TrxDtTime
+                    && b.BatchStatus == IvBatchStatuses.Posted
+                    && owner.SourceDocumentType == h.TrxType
+                    && owner.SourceDocumentId == b.Id.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)
+                    && owner.SourceDocumentNo == h.BatchNo.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)
+                    && owner.PostingRole == "PRIMARY"
+                    && owner.CommandType == $"IV_POST_{h.TrxType}"
+                    && owner.EffectiveAt == h.TrxDtTime
+                    && owner.PostingSequence == issue.Key.OriginalPostingSequence
+                    && owner.LedgerEpochId == h.LedgerEpochId)))
+            return "Backdated FIFO Inventory replay has no exact later issue owner.";
         var receiptOwnerIds = laterReceipts.Select(l => l.OriginPostingId)
             .Distinct().ToArray();
         var receiptOwners = await db.StockPostings.AsNoTracking()
@@ -558,7 +596,7 @@ public sealed partial class IvInventoryPostingService
                 && (f.InventoryHistoryId is not int historyId
                     || !issueHistoryIds.Contains(historyId)
                         && !validReversalIds.Contains(historyId))))
-            return "Backdated FIFO Inventory replay has a later valuation outside its verified receipt and MI tail.";
+            return "Backdated FIFO Inventory replay has a later valuation outside its verified receipt and MI/Scrap tail.";
         return null;
     }
 }

@@ -1,3 +1,5 @@
+using ErpWeb.Core.StockLedger;
+
 namespace ErpWeb.Core.Inventory;
 
 /// <summary>
@@ -256,8 +258,10 @@ public sealed class IvStockCountPreviewLine
     public string? Uom { get; init; }
     public decimal SystemQty { get; init; }
     public decimal? LiveQty { get; init; }
+    public decimal? HistoricalPreCountQty { get; init; }
     public decimal? PhysicalQty { get; init; }
     public decimal? Variance { get; init; }
+    public decimal? ProjectedFinalQty { get; init; }
     public string? Direction { get; init; }
     public bool IsStale { get; init; }
     public decimal? SnapshotUnitPrice { get; init; }
@@ -364,11 +368,13 @@ public interface IIvStockCountService
 
     Task<IvStockCountOperationResult> PreviewPostAsync(
         int id,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<StockCountCostApprovalRequest>? costApprovals = null);
 
     Task<IvStockCountOperationResult> PostAsync(
         int id,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<StockCountCostApprovalRequest>? costApprovals = null);
 
     Task<IvStockCountOperationResult> RollbackAsync(
         int id,

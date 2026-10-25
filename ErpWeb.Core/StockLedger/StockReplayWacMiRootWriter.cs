@@ -23,7 +23,8 @@ public static class StockReplayWacMiRootWriter
             || plan.Projection.Candidate.SignedQuantity != candidate.SignedDelta
             || plan.Projection.Candidate.SignedValue > 0m
             || context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
+            || !StockReplayFifoInventoryIssueKinds.IsSupported(
+                context.Posting.SourceDocumentType)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || context.Posting.PostingRole != "PRIMARY"
@@ -39,7 +40,7 @@ public static class StockReplayWacMiRootWriter
         if (batches.Length != 1)
             throw Invalid("The MI draft batch is missing or ambiguous.");
         var batch = batches[0];
-        if (batch.TrxType != IvTrxTypes.MiscellaneousIssue
+        if (batch.TrxType != context.Posting.SourceDocumentType
             || batch.BatchStatus != IvBatchStatuses.New
             || batch.DeletedAtUtc is not null || batch.ForceCloseDate is not null
             || batch.TrxDtTime != candidate.Key.EffectiveAt
@@ -57,7 +58,7 @@ public static class StockReplayWacMiRootWriter
             || detail.BatchNo != batchNo
             || detail.DocumentRevision != context.Posting.DocumentRevision
             || detail.TrxLineNo <= 0
-            || detail.TrxType != IvTrxTypes.MiscellaneousIssue
+            || detail.TrxType != context.Posting.SourceDocumentType
             || detail.ICode != plan.ItemCode
             || detail.FromBalLocId != physical.BalLocId
             || detail.FrStdQty != quantity
@@ -164,7 +165,8 @@ public static class StockReplayWacMiRootWriter
             WarehouseCode = BlankToNull(history.FrWarehouse),
             LocationCode = BlankToNull(history.FrLocation),
             ItemStatus = BlankToNull(history.IStatus),
-            BaseUom = history.FrStdUom!, MovementCode = "ISSUE_OUT",
+            BaseUom = history.FrStdUom!, MovementCode =
+                StockReplayFifoInventoryIssueKinds.MovementCode(history.TrxType),
             Direction = -1, BaseQty = quantity,
             CostMethod = StockCostMethods.MovingAverage,
             UnitCost = StockLedgerPrecision.Money(amount / quantity),

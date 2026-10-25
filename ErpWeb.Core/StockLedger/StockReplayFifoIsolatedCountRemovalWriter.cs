@@ -60,10 +60,15 @@ public static class StockReplayFifoIsolatedCountRemovalWriter
         var active = await StockCountGenerationResolver.ResolveActiveAsync(db,
             sheet.CompanyCode, sheet.BranchCode, lineIds,
             cancellationToken);
+        var repostedIds = await StockReplayFifoCountSheetRemovalPlanner
+            .ReadRepostedGenerationIdsAsync(db, sheet.CompanyCode,
+                sheet.BranchCode, active.Values, cancellationToken);
         if (active.Count != lineIds.Length
             || sheet.Lines.Where(l => l.CountLineId != line.CountLineId)
                 .Any(l => !active.TryGetValue(l.CountLineId, out var zero)
-                    || zero.IsRemoval || zero.PreviousGenerationId is not null
+                    || zero.IsRemoval
+                    || zero.PreviousGenerationId is not null
+                        && !repostedIds.Contains(zero.Id)
                     || zero.Id != -l.Physical.RemovedActiveEvent.EventId
                     || zero.AnchorPostingId != sheet.AnchorPostingId
                     || zero.WritePostingId != sheet.AnchorPostingId
@@ -71,7 +76,9 @@ public static class StockReplayFifoIsolatedCountRemovalWriter
                     || zero.AdjustmentHistoryId is not null
                     || zero.AdjustmentBatchNo is not null)
             || !active.TryGetValue(line.CountLineId, out var generation)
-            || generation.IsRemoval || generation.PreviousGenerationId is not null
+            || generation.IsRemoval
+            || generation.PreviousGenerationId is not null
+                && !repostedIds.Contains(generation.Id)
             || generation.AdjustmentHistoryId is not int historyId
             || generation.Id != -line.Physical.RemovedActiveEvent.EventId
             || generation.AnchorPostingId != sheet.AnchorPostingId
