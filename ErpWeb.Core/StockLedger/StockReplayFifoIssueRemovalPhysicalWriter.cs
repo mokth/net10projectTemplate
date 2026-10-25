@@ -38,7 +38,7 @@ public static class StockReplayFifoIssueRemovalPhysicalWriter
             || permit.ChangedPileId != physical.BalLocId
             || permit.ChangedPileFinalQuantity != physical.Projection.FinalQuantity
             || context.Posting.SourceModule != "INVENTORY"
-            || !StockReplayFifoInventoryIssueKinds.IsSupported(
+            || !StockReplayFifoInventoryIssueKinds.IsSupportedFifoRoot(
                 context.Posting.SourceDocumentType)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
@@ -99,6 +99,15 @@ public static class StockReplayFifoIssueRemovalPhysicalWriter
                 StringComparison.OrdinalIgnoreCase)
             || detail.IStatus != history.IStatus)
             throw Invalid("The posted MI detail differs from its prepared issue.");
+        if (history.TrxType == IvTrxTypes.VendorReturn
+            && (string.IsNullOrWhiteSpace(history.PoNo)
+                || history.PoRelNo is null || history.PoLineNo is null
+                || detail.PoNo != history.PoNo
+                || detail.PoRelNo != history.PoRelNo
+                || detail.PoLineNo != history.PoLineNo
+                || detail.FrPurQty != history.FrPurQty
+                || detail.FrPurUom != history.FrPurUom))
+            throw Invalid("The FIFO Vendor Return PO line differs from its posted history.");
         var owner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(
             p => p.Id == history.StockPostingId, cancellationToken);
         if (owner is null || owner.SealedAtUtc is null

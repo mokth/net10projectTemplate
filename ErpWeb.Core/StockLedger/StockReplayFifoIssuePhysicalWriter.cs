@@ -35,7 +35,7 @@ public static class StockReplayFifoIssuePhysicalWriter
             || context.CompanyCode != plan.CompanyCode
             || context.BranchCode != plan.BranchCode
             || context.Posting.SourceModule != "INVENTORY"
-            || !StockReplayFifoInventoryIssueKinds.IsSupported(
+            || !StockReplayFifoInventoryIssueKinds.IsSupportedFifoRoot(
                 context.Posting.SourceDocumentType)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
@@ -76,6 +76,10 @@ public static class StockReplayFifoIssuePhysicalWriter
             || detail.FrStdQty != quantity
             || detail.ToBalLocId is not null || detail.ToStdQty is not null)
             throw Invalid("The staged MI line differs from its prepared physical event.");
+        if (detail.TrxType == IvTrxTypes.VendorReturn
+            && (string.IsNullOrWhiteSpace(detail.PoNo)
+                || detail.PoRelNo is null || detail.PoLineNo is null))
+            throw Invalid("The FIFO Vendor Return has no exact PO line.");
         if (await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                 h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode
@@ -133,6 +137,9 @@ public static class StockReplayFifoIssuePhysicalWriter
             FrStdUom = detail.FrStdUom,
             FrPurQty = detail.FrPurQty,
             FrPurUom = detail.FrPurUom,
+            PoNo = detail.TrxType == IvTrxTypes.VendorReturn ? detail.PoNo : null,
+            PoRelNo = detail.TrxType == IvTrxTypes.VendorReturn ? detail.PoRelNo : null,
+            PoLineNo = detail.TrxType == IvTrxTypes.VendorReturn ? detail.PoLineNo : null,
             IStatus = detail.IStatus,
             Remarks = detail.Remarks,
             PriceEvidence = detail.PriceEvidence,

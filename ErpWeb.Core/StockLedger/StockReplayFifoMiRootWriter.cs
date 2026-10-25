@@ -26,7 +26,7 @@ public static class StockReplayFifoMiRootWriter
             || permit.Operation != "INSERT" || permit.PlanHash != plan.PlanHash
             || permit.RootPostingId != context.Posting.Id
             || context.Posting.SourceModule != "INVENTORY"
-            || !StockReplayFifoInventoryIssueKinds.IsSupported(
+            || !StockReplayFifoInventoryIssueKinds.IsSupportedFifoRoot(
                 context.Posting.SourceDocumentType)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
@@ -73,7 +73,7 @@ public static class StockReplayFifoMiRootWriter
             || permit.Operation != "REMOVE" || permit.PlanHash != plan.PlanHash
             || permit.RootPostingId != context.Posting.Id
             || context.Posting.SourceModule != "INVENTORY"
-            || !StockReplayFifoInventoryIssueKinds.IsSupported(
+            || !StockReplayFifoInventoryIssueKinds.IsSupportedFifoRoot(
                 context.Posting.SourceDocumentType)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)

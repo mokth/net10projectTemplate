@@ -300,6 +300,19 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, lockedClosed);
         }
+        if (expectedTrxType == IvTrxTypes.VendorReturn)
+        {
+            var currentDetail = await write.IvTrxBatchDetails.AsNoTracking()
+                .SingleAsync(d => d.BatchId == batch.Id, cancellationToken);
+            if (currentDetail.PoNo != detail.PoNo
+                || currentDetail.PoRelNo != detail.PoRelNo
+                || currentDetail.PoLineNo != detail.PoLineNo
+                || currentDetail.FrPurQty != detail.FrPurQty
+                || currentDetail.FrPurUom != detail.FrPurUom)
+                throw new StockLedgerException(new(
+                    StockLedgerErrorCodes.LedgerMismatch,
+                    "The FIFO Vendor Return PO line changed after replay planning."));
+        }
         await StockReplayFifoIssueRepricingWriter.ValidateFifoPolicyAsync(
             context, batch.TrxDtTime.Date,
             new DateTime(batch.TrxDtTime.Year, batch.TrxDtTime.Month,
@@ -309,6 +322,20 @@ public sealed partial class IvInventoryPostingService
             context, financial, cancellationToken);
         var written = await StockReplayFifoMiRootWriter.InsertAsync(
             context, financial, permit, batchNo, cancellationToken);
+        if (expectedTrxType == IvTrxTypes.VendorReturn)
+        {
+            var postedDetails = await _posting.LoadDetailsForBatchAsync(
+                write, batch.Id, cancellationToken);
+            var poError = await ApplyVendorReturnPoQtyAsync(write,
+                companyCode, branchCode, postedDetails, sign: +1,
+                context.UserId, cancellationToken);
+            if (poError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+            }
+            await write.SaveChangesAsync(cancellationToken);
+        }
         await _coordinator!.CompleteReplayInTransactionAsync(
             context, written.RequiredActiveHistoryIds, cancellationToken);
         await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
@@ -425,6 +452,20 @@ public sealed partial class IvInventoryPostingService
             context, financial, cancellationToken);
         var written = await StockReplayFifoMiRootWriter.RemoveAsync(
             context, financial, permit, batchNo, cancellationToken);
+        if (expectedTrxType == IvTrxTypes.VendorReturn)
+        {
+            var postedDetails = await _posting.LoadDetailsForBatchAsync(
+                write, batch.Id, cancellationToken);
+            var poError = await ApplyVendorReturnPoQtyAsync(write,
+                companyCode, branchCode, postedDetails, sign: -1,
+                context.UserId, cancellationToken);
+            if (poError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+            }
+            await write.SaveChangesAsync(cancellationToken);
+        }
         await _coordinator!.CompleteReplayInTransactionAsync(
             context, written.RequiredActiveHistoryIds, cancellationToken);
         await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(

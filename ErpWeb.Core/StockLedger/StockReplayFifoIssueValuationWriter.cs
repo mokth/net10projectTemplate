@@ -66,7 +66,7 @@ public static class StockReplayFifoIssueValuationWriter
             || history.LedgerEpochId != context.Epoch.Id
             || history.LedgerVersion != 2 || history.EntryRole != "ORIGINAL"
             || history.TrxType != context.Posting.SourceDocumentType
-            || !StockReplayFifoInventoryIssueKinds.IsSupported(history.TrxType)
+            || !StockReplayFifoInventoryIssueKinds.IsSupportedFifoRoot(history.TrxType)
             || history.BatchStatus != IvBatchStatuses.Posted
             || history.ICode != plan.ItemCode
             || history.FromBalLocId != plan.PhysicalPlan.BalLocId

@@ -394,28 +394,39 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
-        if (_openPeriodBackdatedReplayEnabled
+        var needsReplay = _openPeriodBackdatedReplayEnabled
+            && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay;
+        if (needsReplay
             && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
             && _coordinator is not null
             && await TryPostBackdatedWacMrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } replayResult)
             return replayResult;
-        if (_openPeriodBackdatedReplayEnabled
+        if (needsReplay
             && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
             && _coordinator is not null
             && await TryPostBackdatedFifoMrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
-        if (_openPeriodBackdatedReplayEnabled
+        if (needsReplay
             && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
             && _coordinator is not null
             && await TryPostBackdatedStandardMrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } standardReplayResult)
             return standardReplayResult;
+        if (needsReplay)
+            return UnsupportedHistoricalInventoryPost(batchNo, expectedTrxType);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+        if (await RejectFastPathStalenessAsync(db, companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
@@ -757,10 +768,20 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             && await TryRollBackBackdatedStandardMrAsync(companyCode, branchCode,
                 userId, batchNo, cancellationToken) is { } standardReplayResult)
             return standardReplayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && (await ReadInventoryRollbackRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay)
+            return UnsupportedHistoricalInventoryRollback(batchNo, expectedTrxType);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+        if (await RejectFastRollbackStalenessAsync(db, companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
@@ -955,9 +976,21 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.GoodsReceive
+            && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay)
+            return UnsupportedHistoricalInventoryPost(batchNo, expectedTrxType);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+        if (expectedTrxType == IvTrxTypes.GoodsReceive
+            && await RejectFastPathStalenessAsync(db, companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var snapshot = await LoadGoodsReceiptSnapshotAsync(db, companyCode, branchCode, batchNo, expectedTrxType, cancellationToken);
         if (snapshot.Error is not null)
@@ -1018,15 +1051,37 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.GoodsReceive
+            && (await ReadInventoryRollbackRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay)
+            return UnsupportedHistoricalInventoryRollback(batchNo, expectedTrxType);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+        if (expectedTrxType == IvTrxTypes.GoodsReceive
+            && await RejectFastRollbackStalenessAsync(db, companyCode,
+                branchCode, batchNo, expectedTrxType,
+                cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var snapshot = await LoadGoodsReceiptSnapshotAsync(db, companyCode, branchCode, batchNo, expectedTrxType, cancellationToken);
         if (snapshot.Error is not null)
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, snapshot.Error);
+        }
+
+        var identityError = await ValidateGoodsReceiptRollbackIdentityAsync(
+            db, companyCode, branchCode, snapshot.Batch!, snapshot.Details!,
+            cancellationToken);
+        if (identityError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, identityError);
         }
 
         var locked = await LockGoodsReceiptPurchaseOrdersAsync(db, companyCode, branchCode, snapshot.Details!, cancellationToken);
@@ -1224,6 +1279,20 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled)
+        {
+            await using var read = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            var countOwned = await read.StockCountReplayGenerations.AsNoTracking()
+                .AnyAsync(g => g.CompanyCode == companyCode
+                    && g.BranchCode == branchCode
+                    && (g.AdjustmentBatchNo == batchNo
+                        || g.ReversalBatchNo == batchNo), cancellationToken);
+            if (!countOwned && (await StockReplayInventoryRouteSelector.ReadAsync(
+                    read, companyCode, branchCode, batchNo,
+                    IvTrxTypes.StockAdjustment, cancellationToken)).RequiresReplay)
+                return UnsupportedHistoricalInventoryPost(batchNo,
+                    IvTrxTypes.StockAdjustment);
+        }
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
@@ -1234,6 +1303,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 cancellationToken))
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "This adjustment belongs to a V2 Stock Count. Use the Stock Count workflow.");
+
+        if (await RejectFastPathStalenessAsync(db, companyCode, branchCode,
+                batchNo, IvTrxTypes.StockAdjustment,
+                cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
@@ -1528,6 +1605,20 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled)
+        {
+            await using var read = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            var countOwned = await read.StockCountReplayGenerations.AsNoTracking()
+                .AnyAsync(g => g.CompanyCode == companyCode
+                    && g.BranchCode == branchCode
+                    && (g.AdjustmentBatchNo == batchNo
+                        || g.ReversalBatchNo == batchNo), cancellationToken);
+            if (!countOwned && (await StockReplayInventoryRouteSelector.ReadRollbackAsync(
+                    read, companyCode, branchCode, batchNo,
+                    IvTrxTypes.StockAdjustment, cancellationToken)).RequiresReplay)
+                return UnsupportedHistoricalInventoryRollback(batchNo,
+                    IvTrxTypes.StockAdjustment);
+        }
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
@@ -1538,6 +1629,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 cancellationToken))
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "This adjustment belongs to a V2 Stock Count. Use the Stock Count workflow.");
+
+        if (await RejectFastRollbackStalenessAsync(db, companyCode,
+                branchCode, batchNo, IvTrxTypes.StockAdjustment,
+                cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
@@ -2050,28 +2149,39 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
-        if (_openPeriodBackdatedReplayEnabled
+        var needsReplay = _openPeriodBackdatedReplayEnabled
+            && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay;
+        if (needsReplay
             && StockReplayFifoInventoryIssueKinds.IsSupportedWac(expectedTrxType)
             && _coordinator is not null
             && await TryPostBackdatedWacMiAsync(companyCode, branchCode,
                 batchNo, expectedTrxType, cancellationToken) is { } replayResult)
             return replayResult;
-        if (_openPeriodBackdatedReplayEnabled
-            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
+        if (needsReplay
+            && StockReplayFifoInventoryIssueKinds.IsSupportedFifoRoot(expectedTrxType)
             && _coordinator is not null
             && await TryPostBackdatedFifoMiAsync(companyCode, branchCode,
                 batchNo, expectedTrxType, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
-        if (_openPeriodBackdatedReplayEnabled
-            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
+        if (needsReplay
+            && StockReplayFifoInventoryIssueKinds.IsSupportedStandard(expectedTrxType)
             && _coordinator is not null
             && await TryPostBackdatedStandardMiAsync(companyCode, branchCode,
                 batchNo, expectedTrxType, cancellationToken) is { } standardReplayResult)
             return standardReplayResult;
+        if (needsReplay)
+            return UnsupportedHistoricalInventoryPost(batchNo, expectedTrxType);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+        if (await RejectFastPathStalenessAsync(db, companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
@@ -2293,6 +2403,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 FrLotNo = detail.FrLotNo,
                 FrStdQty = detail.FrStdQty,
                 FrStdUom = detail.FrStdUom,
+                FrPurQty = detail.FrPurQty,
+                FrPurUom = detail.FrPurUom,
+                PoNo = expectedTrxType == IvTrxTypes.VendorReturn ? detail.PoNo : null,
+                PoRelNo = expectedTrxType == IvTrxTypes.VendorReturn ? detail.PoRelNo : null,
+                PoLineNo = expectedTrxType == IvTrxTypes.VendorReturn ? detail.PoLineNo : null,
                 IStatus = detail.IStatus,
                 Remarks = detail.Remarks,
                 PriceEvidence = detail.PriceEvidence,
@@ -2341,22 +2456,32 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 is { } replayResult)
             return replayResult;
         if (_openPeriodBackdatedReplayEnabled
-            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
+            && StockReplayFifoInventoryIssueKinds.IsSupportedFifoRoot(expectedTrxType)
             && _coordinator is not null
             && await TryRollBackBackdatedFifoMiAsync(companyCode, branchCode,
                 batchNo, expectedTrxType, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
         if (_openPeriodBackdatedReplayEnabled
-            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
+            && StockReplayFifoInventoryIssueKinds.IsSupportedStandard(expectedTrxType)
             && _coordinator is not null
             && await TryRollBackBackdatedStandardMiAsync(companyCode, branchCode,
                 userId, batchNo, expectedTrxType, cancellationToken)
                 is { } standardReplayResult)
             return standardReplayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && (await ReadInventoryRollbackRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay)
+            return UnsupportedHistoricalInventoryRollback(batchNo, expectedTrxType);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+        if (await RejectFastRollbackStalenessAsync(db, companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
@@ -2587,22 +2712,34 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         CancellationToken cancellationToken)
     {
-        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+        var needsReplay = _openPeriodBackdatedReplayEnabled
+            && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
+                batchNo, IvTrxTypes.StockTransfer, cancellationToken)).RequiresReplay;
+        if (needsReplay && _coordinator is not null
             && await TryPostBackdatedWacTrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } wacReplayResult)
             return wacReplayResult;
-        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+        if (needsReplay && _coordinator is not null
             && await TryPostBackdatedFifoTrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } fifoReplayResult)
             return fifoReplayResult;
-        if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
+        if (needsReplay && _coordinator is not null
             && await TryPostBackdatedStandardTrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } standardReplayResult)
             return standardReplayResult;
+        if (needsReplay)
+            return UnsupportedHistoricalInventoryPost(batchNo, IvTrxTypes.StockTransfer);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+        if (await RejectFastPathStalenessAsync(db, companyCode, branchCode,
+                batchNo, IvTrxTypes.StockTransfer,
+                cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: false, cancellationToken);
@@ -3057,10 +3194,23 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             && await TryRollBackBackdatedStandardTrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } standardReplayResult)
             return standardReplayResult;
+        if (_openPeriodBackdatedReplayEnabled
+            && (await ReadInventoryRollbackRouteAsync(companyCode, branchCode,
+                batchNo, IvTrxTypes.StockTransfer,
+                cancellationToken)).RequiresReplay)
+            return UnsupportedHistoricalInventoryRollback(batchNo,
+                IvTrxTypes.StockTransfer);
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(db, companyCode, branchCode, cancellationToken);
+        if (await RejectFastRollbackStalenessAsync(db, companyCode, branchCode,
+                batchNo, IvTrxTypes.StockTransfer,
+                cancellationToken) is { } staleRoute)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return staleRoute;
+        }
 
         var ledger = await BeginStandaloneLedgerAsync(
             db, companyCode, branchCode, batchNo, reversal: true, cancellationToken);
@@ -3833,6 +3983,47 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         return (null, batch, batch.Details.OrderBy(x => x.PoNo).ThenBy(x => x.PoRelNo).ThenBy(x => x.PoLineNo).ToList());
+    }
+
+    private async Task<string?> ValidateGoodsReceiptRollbackIdentityAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        IvTrxBatch batch, IReadOnlyList<IvTrxBatchDetail> details,
+        CancellationToken cancellationToken)
+    {
+        if (batch.BatchStatus != IvBatchStatuses.Posted)
+            return "Only POSTED goods receipts can be rolled back.";
+        var histories = await _posting.LoadHistoryForBatchAsync(
+            db, companyCode, branchCode, batch.BatchNo, cancellationToken);
+        if (histories.Count != details.Count
+            || histories.Any(h => h.EntryRole is not (null or "ORIGINAL")
+                || h.BatchStatus != IvBatchStatuses.Posted
+                || h.TrxType != batch.TrxType
+                || h.TrxDtTime != batch.TrxDtTime)
+            || histories.Select(h => h.TrxLineNo).Distinct().Count()
+                != histories.Count
+            || details.Select(d => d.TrxLineNo).Distinct().Count()
+                != details.Count)
+            return "The goods receipt has no exact posted history for rollback.";
+        var historyByLine = histories.ToDictionary(h => h.TrxLineNo);
+        foreach (var detail in details)
+        {
+            if (!historyByLine.TryGetValue(detail.TrxLineNo, out var history)
+                || detail.TrxType != history.TrxType
+                || history.DocumentRevision is int revision
+                    && detail.DocumentRevision != revision
+                || detail.ICode != history.ICode
+                || detail.PoNo != history.PoNo
+                || detail.PoRelNo != history.PoRelNo
+                || detail.PoLineNo != history.PoLineNo
+                || detail.ToPurQty != history.ToPurQty
+                || detail.ToPurUom != history.ToPurUom
+                || detail.ToStdQty != history.ToStdQty
+                || detail.ToStdUom != history.ToStdUom
+                || detail.ToBalLocId != history.ToBalLocId
+                || detail.ToLotId != history.ToLotId)
+                return "The posted goods receipt line or PO quantity changed before rollback.";
+        }
+        return null;
     }
 
     private async Task<(string? Error, Dictionary<string, PoOrder>? Orders)> LockGoodsReceiptPurchaseOrdersAsync(

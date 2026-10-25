@@ -50,7 +50,7 @@ public static class StockReplayFifoIssueRemovalValuationWriter
         if (original is null || reversal is null
             || original.ICode != plan.ItemCode
             || original.TrxType != context.Posting.SourceDocumentType
-            || !StockReplayFifoInventoryIssueKinds.IsSupported(original.TrxType)
+            || !StockReplayFifoInventoryIssueKinds.IsSupportedFifoRoot(original.TrxType)
             || original.EntryRole != "ORIGINAL"
             || original.ValuationStatus != StockValuationStatuses.Valued
             || original.FrStdQty != -removed.SignedDelta

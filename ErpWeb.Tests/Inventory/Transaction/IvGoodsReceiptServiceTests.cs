@@ -304,6 +304,46 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Rollback_rejects_changed_purchase_quantity_before_stock_or_po_write()
+    {
+        await EnsureActiveStockLedgerAsync();
+        var po = await CreatePoAsync(qty: 10m, unitPrice: 3.50m);
+        var sut = CreateGrSut(withLedger: true);
+        var save = await sut.SaveNewAsync(GrRequest(po, recvQty: 3m));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        Assert.True((await sut.PostAsync([save.BatchNo])).Succeeded);
+
+        await using (var tamper = await _factory.CreateDbContextAsync())
+        {
+            var line = await tamper.IvTrxBatchDetails.SingleAsync(d =>
+                d.BatchNo == save.BatchNo);
+            line.ToPurQty = 1m;
+            await tamper.SaveChangesAsync();
+        }
+        var rejected = await sut.RollbackAsync([save.BatchNo]);
+        Assert.False(rejected.Succeeded);
+        Assert.Contains("changed before rollback",
+            rejected.ErrorMessage ?? string.Empty);
+        await using (var unchanged = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(3m, (await unchanged.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(3m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
+            Assert.Equal(IvBatchStatuses.Posted,
+                (await unchanged.IvTrxBatches.SingleAsync(b =>
+                    b.BatchNo == save.BatchNo)).BatchStatus);
+            var line = await unchanged.IvTrxBatchDetails.SingleAsync(d =>
+                d.BatchNo == save.BatchNo);
+            line.ToPurQty = 3m;
+            await unchanged.SaveChangesAsync();
+        }
+        var rollback = await sut.RollbackAsync([save.BatchNo]);
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using var restored = await _factory.CreateDbContextAsync();
+        Assert.Equal(0m, (await restored.IvBalLocs.SingleAsync()).StdQty);
+        Assert.Equal(0m, (await restored.PoOrderDetails.SingleAsync()).RecvQty);
+    }
+
+    [Fact]
     public async Task Ledger_post_rollback_repost_updates_status_and_RecvQty()
     {
         await EnsureActiveStockLedgerAsync();

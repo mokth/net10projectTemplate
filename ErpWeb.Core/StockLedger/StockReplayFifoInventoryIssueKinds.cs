@@ -10,6 +10,14 @@ internal static class StockReplayFifoInventoryIssueKinds
     internal static bool IsSupportedWac(string? type) =>
         IsSupported(type) || type == IvTrxTypes.VendorReturn;
 
+    internal static bool IsSupportedStandard(string? type) =>
+        IsSupportedWac(type);
+
+    // A Vendor Return may be the replay root; later FIFO descendants remain
+    // limited to Inventory MI/Scrap until PO-dependent corrections are modeled.
+    internal static bool IsSupportedFifoRoot(string? type) =>
+        IsSupportedWac(type);
+
     internal static string MovementCode(string type) => type switch
     {
         IvTrxTypes.MiscellaneousIssue => "ISSUE_OUT",

@@ -38,7 +38,9 @@ public sealed partial class IvInventoryPostingService
     private sealed record StandardMiDraft(
         int BatchId, int BatchNo, string TrxType, int DetailId, int Revision,
         string ItemCode, int PileId, DateTime EffectiveAt,
-        decimal Quantity, string BaseUom, int? LotId, string LotNo);
+        decimal Quantity, string BaseUom, int? LotId, string LotNo,
+        string? PoNo, short? PoRelNo, short? PoLineNo,
+        decimal? PurchaseQty, string? PurchaseUom);
 
     private sealed record StandardMiInsertion(
         StockReplayStandardFinancialTail Tail,
@@ -84,11 +86,17 @@ public sealed partial class IvInventoryPostingService
             || !await StockReplayInventoryIssuePileAuthority.MatchesAsync(
                 db, master, balance, detail, cancellationToken))
             throw InvalidStandardTransfer("The Standard MI source differs from its exact pile or lot.");
+        if (expectedTrxType == IvTrxTypes.VendorReturn
+            && (string.IsNullOrWhiteSpace(detail.PoNo)
+                || detail.PoRelNo is null || detail.PoLineNo is null))
+            throw InvalidStandardTransfer("The Standard Vendor Return has no exact PO line.");
         return new(batch.Id, batchNo, expectedTrxType,
             detail.Id, detail.DocumentRevision,
             detail.ICode!, balance.Id, batch.TrxDtTime,
             detail.FrStdQty.Value, detail.FrStdUom!,
-            balance.LotId, balance.LotNo ?? string.Empty);
+            balance.LotId, balance.LotNo ?? string.Empty,
+            detail.PoNo, detail.PoRelNo, detail.PoLineNo,
+            detail.FrPurQty, detail.FrPurUom);
     }
 
     private static async Task<(StandardMiInsertion? Plan, string? Error)>
@@ -254,6 +262,20 @@ public sealed partial class IvInventoryPostingService
             physical, authority, cancellationToken);
         await AppendStandardMiValueAsync(root, authority,
             current.Plan.Revision, historyId, cancellationToken);
+        if (expectedTrxType == IvTrxTypes.VendorReturn)
+        {
+            var postedDetails = await _posting.LoadDetailsForBatchAsync(
+                write, authority.BatchId, cancellationToken);
+            var poError = await ApplyVendorReturnPoQtyAsync(write,
+                companyCode, branchCode, postedDetails, sign: +1,
+                root.UserId, cancellationToken);
+            if (poError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+            }
+            await write.SaveChangesAsync(cancellationToken);
+        }
         var permit = new StockReplayStandardWritePermit(root,
             authority.ItemCode, current.Plan.Fingerprint,
             current.Plan.Tail.CurrentQuantity,
@@ -336,6 +358,9 @@ public sealed partial class IvInventoryPostingService
             FrStdUom = detail.FrStdUom,
             FrPurQty = detail.FrPurQty,
             FrPurUom = detail.FrPurUom,
+            PoNo = authority.TrxType == IvTrxTypes.VendorReturn ? detail.PoNo : null,
+            PoRelNo = authority.TrxType == IvTrxTypes.VendorReturn ? detail.PoRelNo : null,
+            PoLineNo = authority.TrxType == IvTrxTypes.VendorReturn ? detail.PoLineNo : null,
             IStatus = detail.IStatus,
             Remarks = detail.Remarks,
             PriceEvidence = detail.PriceEvidence,
@@ -521,6 +546,14 @@ public sealed partial class IvInventoryPostingService
                 history.FrLotNo ?? string.Empty,
                 StringComparison.OrdinalIgnoreCase)
             || detail.IStatus != history.IStatus
+            || expectedTrxType == IvTrxTypes.VendorReturn
+                && (string.IsNullOrWhiteSpace(history.PoNo)
+                    || history.PoRelNo is null || history.PoLineNo is null
+                    || detail.PoNo != history.PoNo
+                    || detail.PoRelNo != history.PoRelNo
+                    || detail.PoLineNo != history.PoLineNo
+                    || detail.FrPurQty != history.FrPurQty
+                    || detail.FrPurUom != history.FrPurUom)
             || currentBatch.TrxDtTime != history.TrxDtTime
             || owner is null || owner.SealedAtUtc is null
             || owner.CompanyCode != companyCode
@@ -626,6 +659,17 @@ public sealed partial class IvInventoryPostingService
         {
             await tx.RollbackAsync(cancellationToken);
             return result;
+        }
+        if (expectedTrxType == IvTrxTypes.VendorReturn)
+        {
+            var poError = await ApplyVendorReturnPoQtyAsync(write,
+                companyCode, branchCode, details, sign: -1,
+                userId, cancellationToken);
+            if (poError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+            }
         }
         await write.SaveChangesAsync(cancellationToken);
         var finalPile = await write.IvBalLocs.AsNoTracking()
