@@ -141,6 +141,10 @@ public static class StockReplayFifoMrReceiptCandidateBinder
             || details[0].ToBalLocId != physical.BalLocId
             || details[0].ToStdQty != candidate.SignedDelta
             || details[0].ToStdUom != plan.ReceiptBaseUom
+            || details[0].ToLotId != history.ToLotId
+            || !string.Equals(details[0].ToLotNo ?? string.Empty,
+                history.ToLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || details[0].UnitPrice != history.UnitPrice
             || details[0].CostEvidenceType != history.CostEvidenceType
             || details[0].PriceEvidence != history.PriceEvidence
@@ -152,13 +156,16 @@ public static class StockReplayFifoMrReceiptCandidateBinder
             || details[0].CostPrice is not null
             || details[0].BaseUnitPrices is not null)
             throw Invalid("The saved MR history differs from its staged approval.");
-        var pileQuantity = await db.IvBalLocs.AsNoTracking()
+        var pile = await db.IvBalLocs.AsNoTracking()
             .Where(b => b.Id == physical.BalLocId
                 && b.CompanyCode == context.CompanyCode
                 && b.BranchCode == context.BranchCode)
-            .Select(b => (decimal?)b.StdQty)
             .SingleOrDefaultAsync(cancellationToken);
-        if (pileQuantity != physical.Projection.FinalQuantity)
+        if (pile is null || pile.StdQty != physical.Projection.FinalQuantity
+            || pile.LotId != history.ToLotId
+            || !string.Equals(pile.LotNo ?? string.Empty,
+                history.ToLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase))
             throw Invalid("FIFO MR pile does not hold its projected final quantity.");
 
         var key = candidate.Key with { LineIdentity = $"H{historyId:D10}" };

@@ -47,6 +47,11 @@ public sealed partial class IvInventoryPostingService
         if (detail.FromBalLocId is not > 0 || detail.FrStdQty is not > 0m)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC transfer needs an existing source pile and positive quantity.");
+        if (await read.IvStockMasters.AsNoTracking().AnyAsync(m =>
+                m.CompanyCode == companyCode && m.ICode == itemCode
+                && m.LotControl, cancellationToken))
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "Backdated lot transfer requires a new destination lot and pile; historical replay for that creation is not supported yet.");
         var destinations = await read.IvBalLocs.AsNoTracking()
             .Where(b => b.CompanyCode == companyCode
                 && b.BranchCode == branchCode && b.ICode == itemCode
@@ -59,22 +64,12 @@ public sealed partial class IvInventoryPostingService
             || destinations[0] == detail.FromBalLocId.Value)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC transfer needs a distinct existing non-lot destination pile.");
-        var watermark = await read.StockPostingBranchSequences.AsNoTracking()
-            .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode)
-            .Select(s => (long?)s.LastSequence)
-            .SingleOrDefaultAsync(cancellationToken) ?? 0L;
-        var key = new StockReplayEventKey(batch.TrxDtTime,
-            StockReplayEventKey.OrdinaryClass, checked(watermark + 1),
-            "H9999999999", 0);
         var quantity = detail.FrStdQty.Value;
-        var sourcePlan = await StockReplayPhysicalPlanner.BuildInsertionAsync(
-            read, companyCode, branchCode, detail.FromBalLocId.Value,
-            new StockReplayPhysicalEvent(long.MaxValue - 1, key, -quantity),
-            cancellationToken);
-        var destPlan = await StockReplayPhysicalPlanner.BuildInsertionAsync(
-            read, companyCode, branchCode, destinations[0],
-            new StockReplayPhysicalEvent(long.MaxValue - 1, key, quantity),
-            cancellationToken);
+        var (sourcePlan, destPlan) = await StockReplayInventoryCandidatePlanner
+            .BuildTransferAsync(read, companyCode, branchCode,
+                detail.FromBalLocId.Value, destinations[0], batch.TrxDtTime,
+                quantity, cancellationToken);
+        var key = sourcePlan.Candidate.Key;
         var authority = await StockReplayFifoTransferDraftAuthorityReader.ReadAsync(
             read, companyCode, branchCode, batchNo,
             sourcePlan.BalLocId, destPlan.BalLocId, cancellationToken);

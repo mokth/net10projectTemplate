@@ -60,13 +60,18 @@ public static class StockReplayFifoMrReceiptRemovalValuationWriter
             || reversal.ReversesHistoryId != originalId
             || reversal.StockPostingId != context.Posting.Id
             || reversal.FromBalLocId != plan.PhysicalPlan.BalLocId
-            || reversal.FrStdQty != removed.SignedDelta)
+            || reversal.FrStdQty != removed.SignedDelta
+            || reversal.FromLotId != original.ToLotId)
             throw Invalid("The removed MR has no exact root reversal history.");
         var active = (await StockReplayValuationGenerationResolver.ResolveAsync(
             db, context.CompanyCode, context.BranchCode,
             [original], cancellationToken))[originalId];
         if (active.Count != 1 || active[0].Id != layer.OriginFactId
             || active[0].MovementCode != "RECEIPT_IN"
+            || active[0].LotId != original.ToLotId
+            || !string.Equals(active[0].LotNo ?? string.Empty,
+                original.ToLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || active[0].Direction != 1
             || active[0].BaseQty != layer.OriginalQuantity
             || active[0].CostAmount != layer.OriginalValue

@@ -90,6 +90,10 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
             || detail.ToStdUom != history.ToStdUom
             || detail.ToWarehouse != history.ToWarehouse
             || detail.ToLocation != history.ToLocation
+            || detail.ToLotId != history.ToLotId
+            || !string.Equals(detail.ToLotNo ?? string.Empty,
+                history.ToLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || detail.IStatus != history.IStatus
             || detail.CostEvidenceType != history.CostEvidenceType
             || detail.PriceEvidence != history.PriceEvidence
@@ -111,15 +115,18 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
         var master = await db.IvStockMasters.AsNoTracking()
             .SingleOrDefaultAsync(m => m.CompanyCode == context.CompanyCode
                 && m.ICode == plan.ItemCode, cancellationToken);
-        if (master is null || !master.IsActive
-            || !master.StockControl || master.LotControl)
-            throw Invalid("FIFO MR rollback needs an active non-lot item.");
+        if (master is null || !master.IsActive || !master.StockControl)
+            throw Invalid("FIFO MR rollback needs an active stock item.");
         var balance = await db.IvBalLocs.SingleOrDefaultAsync(b =>
             b.CompanyCode == context.CompanyCode
             && b.BranchCode == context.BranchCode
             && b.Id == physical.BalLocId, cancellationToken);
         if (balance is null || balance.ICode != plan.ItemCode
-            || balance.LotId is not null || !string.IsNullOrEmpty(balance.LotNo)
+            || balance.LotId != history.ToLotId
+            || !string.Equals(balance.LotNo ?? string.Empty,
+                history.ToLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
+            || master.LotControl != (balance.LotId is > 0)
             || balance.WhCode != detail.ToWarehouse
             || balance.LocCode != (detail.ToLocation ?? string.Empty)
             || balance.IStatus != detail.IStatus
@@ -127,6 +134,12 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
             || balance.StdQty != physical.CurrentQuantity
             || !balance.RowVersion.SequenceEqual(physical.BalanceRowVersion))
             throw Invalid("The MR destination pile changed after preparation.");
+        if (balance.LotId is int lotId
+            && !await db.IvLots.AsNoTracking().AnyAsync(l =>
+                l.Id == lotId && l.CompanyCode == context.CompanyCode
+                && l.ICode == plan.ItemCode && l.LotNo == balance.LotNo,
+                cancellationToken))
+            throw Invalid("The MR destination lot changed before rollback.");
         var timeline = await StockReplayPhysicalTimelineReader.ReadLaterAsync(
             db, context.CompanyCode, context.BranchCode, physical.BalLocId,
             new StockReplayEventKey(new DateTime(1753, 1, 1), 0, 0L, "", 0),

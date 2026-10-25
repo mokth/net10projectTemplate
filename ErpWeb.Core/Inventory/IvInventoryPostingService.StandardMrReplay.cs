@@ -49,31 +49,18 @@ public sealed partial class IvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, closed);
         if (FuturePostDateError(batch) is string future)
             return IvInventoryPostingBatchResult.Fail(batchNo, future);
-        var piles = await read.IvBalLocs.AsNoTracking()
-            .Where(b => b.CompanyCode == companyCode
-                && b.BranchCode == branchCode && b.ICode == detail.ICode
-                && b.WhCode == detail.ToWarehouse
-                && b.LocCode == (detail.ToLocation ?? string.Empty)
-                && b.IStatus == detail.IStatus && b.LotId == null
-                && (b.LotNo == null || b.LotNo == ""))
-            .Select(b => b.Id).ToArrayAsync(cancellationToken);
-        if (piles.Length != 1)
+        var pileId = await StockReplayInventoryReceiptPileLocator.FindUniqueAsync(
+            read, companyCode, branchCode, detail, cancellationToken);
+        if (pileId is not > 0)
             return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Backdated Standard MR needs one existing non-lot destination pile.");
+                "Backdated Standard MR needs one existing destination pile.");
         var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
-            read, companyCode, branchCode, batchNo, piles[0],
-            cancellationToken);
-        var watermark = await read.StockPostingBranchSequences.AsNoTracking()
-            .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode)
-            .Select(s => (long?)s.LastSequence)
-            .SingleOrDefaultAsync(cancellationToken) ?? 0L;
-        var key = new StockReplayEventKey(authority.EffectiveAt,
-            StockReplayEventKey.OrdinaryClass, checked(watermark + 1),
-            "H9999999999", 0);
-        var physical = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            read, companyCode, branchCode, batchNo, pileId.Value,
+            cancellationToken, allowExistingLot: true);
+        var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, authority.BalLocId,
-            new StockReplayPhysicalEvent(long.MaxValue - 1, key,
-                authority.Quantity), cancellationToken);
+            authority.EffectiveAt, authority.Quantity, cancellationToken);
+        var key = physical.Candidate.Key;
         var prepared = await ReadStandardMrInsertionAsync(read,
             authority, physical, cancellationToken);
         if (prepared.Error is string unsupported)
@@ -120,7 +107,8 @@ public sealed partial class IvInventoryPostingService
             physical, cancellationToken);
         var currentAuthority = await StockReplayFifoMrReceiptAuthorityReader
             .ReadAsync(write, companyCode, branchCode, batchNo,
-                physical.BalLocId, cancellationToken);
+                physical.BalLocId, cancellationToken,
+                allowExistingLot: true);
         var current = await ReadStandardMrInsertionAsync(write,
             currentAuthority, physical, cancellationToken);
         if (currentAuthority != authority || current.Error is not null
@@ -241,6 +229,10 @@ public sealed partial class IvInventoryPostingService
             || db.Entry(batch).State != EntityState.Unchanged
             || db.Entry(detail).State != EntityState.Unchanged
             || balance.StdQty != plan.CurrentQuantity
+            || balance.LotId != authority.LotId
+            || !string.Equals(balance.LotNo ?? string.Empty,
+                authority.LotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || !balance.RowVersion.SequenceEqual(plan.BalanceRowVersion)
             || await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                 h.CompanyCode == root.CompanyCode
@@ -266,7 +258,7 @@ public sealed partial class IvInventoryPostingService
             : plan.LaterEvents.Max(e => e.Key.EffectiveAt);
         balance.ModifiedDate = now;
         detail.ToBalLocId = balance.Id;
-        detail.ToLotId = null;
+        detail.ToLotId = authority.LotId;
         var history = new IvTrxHistory
         {
             CompanyCode = root.CompanyCode,
@@ -304,6 +296,7 @@ public sealed partial class IvInventoryPostingService
             BaseUnitPrices = detail.BaseUnitPrices,
             LocationCode = detail.LocationCode,
             ToBalLocId = balance.Id,
+            ToLotId = authority.LotId,
             CreatedDate = now,
             CreatedBy = user
         };
@@ -357,6 +350,8 @@ public sealed partial class IvInventoryPostingService
             ItemCode = authority.ItemCode,
             WarehouseCode = history.ToWarehouse,
             LocationCode = history.ToLocation,
+            LotId = authority.LotId,
+            LotNo = authority.LotNo,
             ItemStatus = history.IStatus,
             BaseUom = authority.BaseUom,
             MovementCode = "RECEIPT_IN",
@@ -460,6 +455,10 @@ public sealed partial class IvInventoryPostingService
             || detail.ToStdUom != history.ToStdUom
             || detail.ToWarehouse != history.ToWarehouse
             || detail.ToLocation != history.ToLocation
+            || detail.ToLotId != history.ToLotId
+            || !string.Equals(detail.ToLotNo ?? string.Empty,
+                history.ToLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || detail.IStatus != history.IStatus
             || currentBatch.TrxDtTime != history.TrxDtTime
             || owner is null || owner.SealedAtUtc is null
@@ -489,13 +488,26 @@ public sealed partial class IvInventoryPostingService
                 && b.CompanyCode == companyCode
                 && b.BranchCode == branchCode, cancellationToken);
         if (balance is null || balance.ICode != history.ICode
-            || balance.LotId is not null
-            || !string.IsNullOrWhiteSpace(balance.LotNo)
+            || balance.LotId != history.ToLotId
+            || !string.Equals(balance.LotNo ?? string.Empty,
+                history.ToLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || balance.WhCode != history.ToWarehouse
             || balance.LocCode != (history.ToLocation ?? string.Empty)
             || balance.IStatus != history.IStatus
             || balance.StdUom != history.ToStdUom)
             throw InvalidStandardTransfer("The Standard MR pile differs from its original receipt.");
+        var master = await write.IvStockMasters.AsNoTracking()
+            .SingleOrDefaultAsync(m => m.CompanyCode == companyCode
+                && m.ICode == history.ICode, cancellationToken);
+        if (master is null || !master.StockControl
+            || master.LotControl != (balance.LotId is > 0)
+            || balance.LotId is int lotId
+                && !await write.IvLots.AsNoTracking().AnyAsync(l =>
+                    l.Id == lotId && l.CompanyCode == companyCode
+                    && l.ICode == history.ICode && l.LotNo == balance.LotNo,
+                    cancellationToken))
+            throw InvalidStandardTransfer("The Standard MR destination lot changed.");
         if (await IvPeriodCloseGuard.EnsureOpenAsync(write, companyCode,
                 branchCode, history.TrxDtTime, cancellationToken) is string closed)
         {
@@ -530,6 +542,10 @@ public sealed partial class IvInventoryPostingService
             || active[0].ValuationSource != StockValuationSources.Standard
             || active[0].MovementCode != "RECEIPT_IN"
             || active[0].ToBalLocId != pileId
+            || active[0].LotId != history.ToLotId
+            || !string.Equals(active[0].LotNo ?? string.Empty,
+                history.ToLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || active[0].Direction != 1
             || active[0].BaseQty != quantity.Value
             || active[0].CostAmount != amount
@@ -568,7 +584,8 @@ public sealed partial class IvInventoryPostingService
         if (finalPile.StdQty != physical.Projection.FinalQuantity
             || reversals.Length != 1
             || reversals[0].FromBalLocId != pileId
-            || reversals[0].FrStdQty != quantity)
+            || reversals[0].FrStdQty != quantity
+            || reversals[0].FromLotId != history.ToLotId)
             throw InvalidStandardTransfer("The Standard MR physical reversal differs from its projection.");
         await StockReplayValuationReversalWriter.AppendAsync(root,
             history.Id, [new StockReplayValuationReversalLine(

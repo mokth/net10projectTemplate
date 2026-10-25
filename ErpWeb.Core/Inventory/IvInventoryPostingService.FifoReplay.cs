@@ -43,31 +43,18 @@ public sealed partial class IvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, closed);
         if (FuturePostDateError(batch) is string future)
             return IvInventoryPostingBatchResult.Fail(batchNo, future);
-        var piles = await read.IvBalLocs.AsNoTracking()
-            .Where(b => b.CompanyCode == companyCode
-                && b.BranchCode == branchCode && b.ICode == itemCode
-                && b.WhCode == detail.ToWarehouse
-                && b.LocCode == (detail.ToLocation ?? string.Empty)
-                && b.IStatus == detail.IStatus
-                && b.LotId == null && (b.LotNo == null || b.LotNo == ""))
-            .Select(b => b.Id).ToArrayAsync(cancellationToken);
-        if (piles.Length != 1)
+        var pileId = await StockReplayInventoryReceiptPileLocator.FindUniqueAsync(
+            read, companyCode, branchCode, detail, cancellationToken);
+        if (pileId is not > 0)
             return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Backdated FIFO MR needs one existing non-lot destination pile.");
+                "Backdated FIFO MR needs one existing destination pile.");
         var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
-            read, companyCode, branchCode, batchNo, piles[0], cancellationToken);
-        var watermark = await read.StockPostingBranchSequences.AsNoTracking()
-            .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode)
-            .Select(s => (long?)s.LastSequence)
-            .SingleOrDefaultAsync(cancellationToken) ?? 0L;
-        var key = new StockReplayEventKey(authority.EffectiveAt,
-            StockReplayEventKey.OrdinaryClass, checked(watermark + 1),
-            "H9999999999", 0);
-        var candidate = new StockReplayPhysicalEvent(long.MaxValue - 1,
-            key, authority.Quantity);
-        var physical = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+            read, companyCode, branchCode, batchNo, pileId.Value,
+            cancellationToken, allowExistingLot: true);
+        var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, authority.BalLocId,
-            candidate, cancellationToken);
+            authority.EffectiveAt, authority.Quantity, cancellationToken);
+        var key = physical.Candidate.Key;
         var financial = await StockReplayFifoInsertionPlanner.BuildMiscReceiptAsync(
             read, companyCode, branchCode, batchNo, physical,
             cancellationToken);
@@ -278,18 +265,10 @@ public sealed partial class IvInventoryPostingService
             || IvQty.Round(detail.FrStdQty.Value) != detail.FrStdQty.Value)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated FIFO MI needs one valid source pile and quantity.");
-        var watermark = await read.StockPostingBranchSequences.AsNoTracking()
-            .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode)
-            .Select(s => (long?)s.LastSequence)
-            .SingleOrDefaultAsync(cancellationToken) ?? 0L;
-        var key = new StockReplayEventKey(batch.TrxDtTime,
-            StockReplayEventKey.OrdinaryClass, checked(watermark + 1),
-            "H9999999999", 0);
-        var candidate = new StockReplayPhysicalEvent(long.MaxValue - 1,
-            key, -detail.FrStdQty.Value);
-        var physical = await StockReplayPhysicalPlanner.BuildInsertionAsync(
+        var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, detail.FromBalLocId.Value,
-            candidate, cancellationToken);
+            batch.TrxDtTime, -detail.FrStdQty.Value, cancellationToken);
+        var key = physical.Candidate.Key;
         var financial = await StockReplayFifoInsertionPlanner.BuildAsync(
             read, companyCode, branchCode, itemCode, physical,
             cancellationToken: cancellationToken);

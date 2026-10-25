@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.StockLedger;
 
-/// <summary>Writes one non-lot Inventory MI at its historical WAC cost.</summary>
+/// <summary>Writes one exact-pile Inventory MI or Scrap at its historical WAC cost.</summary>
 public static class StockReplayWacMiRootWriter
 {
     public static async Task<IReadOnlyList<int>> InsertAsync(
@@ -23,7 +23,7 @@ public static class StockReplayWacMiRootWriter
             || plan.Projection.Candidate.SignedQuantity != candidate.SignedDelta
             || plan.Projection.Candidate.SignedValue > 0m
             || context.Posting.SourceModule != "INVENTORY"
-            || !StockReplayFifoInventoryIssueKinds.IsSupported(
+            || !StockReplayFifoInventoryIssueKinds.IsSupportedWac(
                 context.Posting.SourceDocumentType)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
@@ -78,17 +78,12 @@ public static class StockReplayWacMiRootWriter
         var balance = await db.IvBalLocs.SingleOrDefaultAsync(b =>
             b.CompanyCode == context.CompanyCode && b.BranchCode == context.BranchCode
             && b.Id == physical.BalLocId, cancellationToken);
-        if (master is null || !master.IsActive || !master.StockControl
-            || master.LotControl || balance is null
-            || balance.ICode != plan.ItemCode
-            || balance.LotId is not null || !string.IsNullOrWhiteSpace(balance.LotNo)
-            || balance.WhCode != detail.FrWarehouse
-            || balance.LocCode != (detail.FrLocation ?? string.Empty)
-            || balance.IStatus != detail.IStatus
-            || balance.StdUom != detail.FrStdUom
+        if (master is null || balance is null
+            || !await StockReplayInventoryIssuePileAuthority.MatchesAsync(
+                db, master, balance, detail, cancellationToken)
             || balance.StdQty != physical.CurrentQuantity
             || !balance.RowVersion.SequenceEqual(physical.BalanceRowVersion))
-            throw Invalid("The non-lot MI source pile changed after replay planning.");
+            throw Invalid("The MI source pile or lot changed after replay planning.");
         var now = DateTime.UtcNow;
         var user = context.UserId.Length > 10 ? context.UserId[..10] : context.UserId;
         balance.StdQty = physical.Projection.FinalQuantity;
@@ -111,6 +106,9 @@ public static class StockReplayWacMiRootWriter
             FrLotNo = detail.FrLotNo, FrStdQty = detail.FrStdQty,
             FrStdUom = detail.FrStdUom, FrPurQty = detail.FrPurQty,
             FrPurUom = detail.FrPurUom, IStatus = detail.IStatus,
+            PoNo = detail.TrxType == IvTrxTypes.VendorReturn ? detail.PoNo : null,
+            PoRelNo = detail.TrxType == IvTrxTypes.VendorReturn ? detail.PoRelNo : null,
+            PoLineNo = detail.TrxType == IvTrxTypes.VendorReturn ? detail.PoLineNo : null,
             Remarks = detail.Remarks, PriceEvidence = detail.PriceEvidence,
             CostEvidenceType = detail.CostEvidenceType,
             CostOverrideReason = detail.CostOverrideReason,
@@ -175,6 +173,7 @@ public static class StockReplayWacMiRootWriter
             ValuationSource = StockValuationSources.MovingAverage,
             ValuationStatus = StockValuationStatuses.Valued,
             ValuationVersion = 1, InventoryHistoryId = history.Id,
+            LotId = balance.LotId, LotNo = BlankToNull(balance.LotNo),
             FromBalLocId = balance.Id, CreatedAtUtc = now,
             CreatedBy = context.UserId
         });

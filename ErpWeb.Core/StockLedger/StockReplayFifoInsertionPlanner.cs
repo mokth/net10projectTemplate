@@ -28,7 +28,7 @@ public static class StockReplayFifoInsertionPlanner
         ArgumentNullException.ThrowIfNull(physicalPlan);
         var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
             db, companyCode, branchCode, batchNo, physicalPlan.BalLocId,
-            cancellationToken);
+            cancellationToken, allowExistingLot: true);
         if (physicalPlan.Candidate.SignedDelta != authority.Quantity
             || physicalPlan.Candidate.Key.EffectiveAt != authority.EffectiveAt)
             throw Invalid("The physical MR candidate differs from its approved cost line.");
@@ -46,7 +46,8 @@ public static class StockReplayFifoInsertionPlanner
         ArgumentNullException.ThrowIfNull(plan);
         var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
             context.Db, context.CompanyCode, context.BranchCode,
-            batchNo, plan.PhysicalPlan.BalLocId, cancellationToken);
+            batchNo, plan.PhysicalPlan.BalLocId, cancellationToken,
+            allowExistingLot: true);
         if (context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
             || context.Posting.PostingRole != "PRIMARY"

@@ -9,7 +9,8 @@ namespace ErpWeb.Core.StockLedger;
 public sealed record StockReplayFifoMrReceiptAuthority(
     int BatchId, int BatchNo, int DetailId, int DocumentRevision,
     string ItemCode, int BalLocId, DateTime EffectiveAt,
-    decimal Quantity, string BaseUom, decimal UnitCost, decimal Value);
+    decimal Quantity, string BaseUom, decimal UnitCost, decimal Value,
+    int? LotId, string? LotNo);
 
 /// <summary>
 /// Derives a fixed, company-base FIFO receipt cost from a single approved
@@ -20,7 +21,8 @@ public static class StockReplayFifoMrReceiptAuthorityReader
     public static async Task<StockReplayFifoMrReceiptAuthority> ReadAsync(
         AppDbContext db, string companyCode, string branchCode,
         int batchNo, int balLocId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowExistingLot = false)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (batchNo <= 0 || balLocId <= 0)
@@ -55,9 +57,8 @@ public static class StockReplayFifoMrReceiptAuthorityReader
             || detail.FrStdQty is not null
             || detail.ToBalLocId is not null
             || detail.ToLotId is not null
-            || !string.IsNullOrWhiteSpace(detail.ToLotNo)
             || string.IsNullOrWhiteSpace(detail.Reason))
-            throw Invalid("The draft MR line is not one supported non-lot inbound leg.");
+            throw Invalid("The draft MR line is not one supported inbound leg.");
         var evidence = InventoryCostEvidenceTypes.Normalize(
             detail.CostEvidenceType);
         var expectedPriceEvidence = evidence switch
@@ -95,18 +96,73 @@ public static class StockReplayFifoMrReceiptAuthorityReader
             .Where(m => m.CompanyCode == companyCode
                 && m.ICode == detail.ICode).ToArrayAsync(cancellationToken);
         if (masters.Length != 1 || !masters[0].IsActive
-            || !masters[0].StockControl || masters[0].LotControl
+            || !masters[0].StockControl
             || balance.ICode != detail.ICode
-            || balance.LotId is not null || !string.IsNullOrWhiteSpace(balance.LotNo)
             || balance.WhCode != detail.ToWarehouse
             || balance.LocCode != (detail.ToLocation ?? string.Empty)
             || balance.IStatus != detail.IStatus
             || balance.StdUom != detail.ToStdUom)
-            throw Invalid("The approved MR line does not match its non-lot destination pile.");
+            throw Invalid("The approved MR line does not match its destination pile.");
+        if (!IvExpiryControlModes.TryNormalize(masters[0].ExpiryControl,
+                out var expiryControl)
+            || !masters[0].LotControl
+                && expiryControl != IvExpiryControlModes.None
+            || masters[0].LotControl
+                && expiryControl == IvExpiryControlModes.Required
+                && detail.ExpiryDate is null
+            || masters[0].LotControl
+                && expiryControl != IvExpiryControlModes.None
+                && detail.ExpiryDate is DateTime expiry
+                && expiry.Date < batch.TrxDtTime.Date)
+            throw Invalid("The MR expiry date no longer satisfies the item policy.");
+        if (!await db.IvWarehouses.AsNoTracking().AnyAsync(w =>
+                w.CompanyCode == companyCode && w.BranchCode == branchCode
+                && w.WarehouseCode == balance.WhCode && w.IsActive,
+                cancellationToken)
+            || !await db.IvStatuses.AsNoTracking().AnyAsync(s =>
+                s.CompanyCode == companyCode && s.IStatus == balance.IStatus
+                && s.IsActive, cancellationToken))
+            throw Invalid("The MR destination warehouse or item status is inactive.");
+        if (string.IsNullOrWhiteSpace(balance.LocCode))
+        {
+            if (await db.IvLocations.AsNoTracking().AnyAsync(l =>
+                    l.CompanyCode == companyCode && l.BranchCode == branchCode
+                    && l.WarehouseCode == balance.WhCode && l.IsActive,
+                    cancellationToken))
+                throw Invalid("The MR destination warehouse requires a location.");
+        }
+        else if (!await db.IvLocations.AsNoTracking().AnyAsync(l =>
+                     l.CompanyCode == companyCode
+                     && l.BranchCode == branchCode
+                     && l.WarehouseCode == balance.WhCode
+                     && l.LocCode == balance.LocCode && l.IsActive,
+                     cancellationToken))
+            throw Invalid("The MR destination location is inactive.");
+        if (masters[0].LotControl)
+        {
+            if (!allowExistingLot || balance.LotId is not > 0
+                || string.IsNullOrWhiteSpace(detail.ToLotNo)
+                || !string.Equals(balance.LotNo, detail.ToLotNo,
+                    StringComparison.OrdinalIgnoreCase))
+                throw Invalid("The approved MR needs one existing destination lot.");
+            var lot = await db.IvLots.AsNoTracking().SingleOrDefaultAsync(l =>
+                l.Id == balance.LotId && l.CompanyCode == companyCode
+                && l.ICode == detail.ICode, cancellationToken);
+            if (lot is null || !lot.IsActive
+                || !string.Equals(lot.LotNo, balance.LotNo,
+                    StringComparison.OrdinalIgnoreCase)
+                || await db.ProductionFinishedGoodLotOriginRows.AsNoTracking()
+                    .AnyAsync(o => o.LotId == lot.Id, cancellationToken))
+                throw Invalid("The MR destination lot is inactive or owned by production.");
+        }
+        else if (balance.LotId is not null
+            || !string.IsNullOrWhiteSpace(balance.LotNo)
+            || !string.IsNullOrWhiteSpace(detail.ToLotNo))
+            throw Invalid("The approved MR line does not match its non-lot pile.");
         var value = StockLedgerPrecision.Money(quantity * unit);
         return new(batch.Id, batchNo, detail.Id, detail.DocumentRevision,
             detail.ICode!, balLocId, batch.TrxDtTime, quantity,
-            detail.ToStdUom!, unit, value);
+            detail.ToStdUom!, unit, value, balance.LotId, balance.LotNo);
     }
 
     private static StockLedgerException Invalid(string message) =>

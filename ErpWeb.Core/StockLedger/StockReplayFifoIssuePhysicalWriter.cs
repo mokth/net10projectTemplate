@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ErpWeb.Core.StockLedger;
 
 /// <summary>
-/// Applies one prepared, non-lot Inventory issue under a validated replay
+/// Applies one prepared exact-pile Inventory issue under a validated replay
 /// root. The caller must write its FIFO valuation, descendant corrections and
 /// reconciled cost state before sealing; this method never commits the root.
 /// </summary>
@@ -88,9 +88,8 @@ public static class StockReplayFifoIssuePhysicalWriter
         var masters = await db.IvStockMasters.AsNoTracking()
             .Where(m => m.CompanyCode == context.CompanyCode
                 && m.ICode == plan.ItemCode).ToArrayAsync(cancellationToken);
-        if (masters.Length != 1 || !masters[0].IsActive
-            || !masters[0].StockControl || masters[0].LotControl)
-            throw Invalid("FIFO replay MI currently needs an active non-lot stock item.");
+        if (masters.Length != 1)
+            throw Invalid("FIFO replay MI has no exact stock item.");
         var balances = await db.IvBalLocs
             .Where(b => b.CompanyCode == context.CompanyCode
                 && b.BranchCode == context.BranchCode
@@ -98,12 +97,8 @@ public static class StockReplayFifoIssuePhysicalWriter
         if (balances.Length != 1)
             throw Invalid("The prepared FIFO source pile is missing.");
         var balance = balances[0];
-        if (balance.ICode != plan.ItemCode
-            || balance.LotId is not null || !string.IsNullOrEmpty(balance.LotNo)
-            || balance.WhCode != detail.FrWarehouse
-            || balance.LocCode != (detail.FrLocation ?? string.Empty)
-            || balance.IStatus != detail.IStatus
-            || balance.StdUom != detail.FrStdUom
+        if (!await StockReplayInventoryIssuePileAuthority.MatchesAsync(
+                db, masters[0], balance, detail, cancellationToken)
             || balance.StdQty != physical.CurrentQuantity
             || !balance.RowVersion.SequenceEqual(physical.BalanceRowVersion))
             throw Invalid("The FIFO source pile changed after replay preparation.");

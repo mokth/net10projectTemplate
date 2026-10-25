@@ -2051,7 +2051,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         CancellationToken cancellationToken)
     {
         if (_openPeriodBackdatedReplayEnabled
-            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
+            && StockReplayFifoInventoryIssueKinds.IsSupportedWac(expectedTrxType)
             && _coordinator is not null
             && await TryPostBackdatedWacMiAsync(companyCode, branchCode,
                 batchNo, expectedTrxType, cancellationToken) is { } replayResult)
@@ -2334,7 +2334,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         CancellationToken cancellationToken)
     {
         if (_openPeriodBackdatedReplayEnabled
-            && StockReplayFifoInventoryIssueKinds.IsSupported(expectedTrxType)
+            && StockReplayFifoInventoryIssueKinds.IsSupportedWac(expectedTrxType)
             && _coordinator is not null
             && await TryRollBackBackdatedWacAsync(companyCode, branchCode,
                 userId, batchNo, expectedTrxType, cancellationToken)

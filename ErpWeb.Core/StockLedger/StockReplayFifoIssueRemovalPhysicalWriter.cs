@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ErpWeb.Core.StockLedger;
 
 /// <summary>
-/// Reverses one posted, non-lot Inventory issue under a prepared FIFO root.
+/// Reverses one posted exact-pile Inventory issue under a prepared FIFO root.
 /// The caller must reverse valuation, correct descendants and reconcile state
 /// before sealing the enclosing transaction.
 /// </summary>
@@ -93,6 +93,10 @@ public static class StockReplayFifoIssueRemovalPhysicalWriter
             || detail.FrWarehouse != history.FrWarehouse
             || detail.FrLocation != history.FrLocation
             || detail.FrStdUom != history.FrStdUom
+            || detail.FromLotId != history.FromLotId
+            || !string.Equals(detail.FrLotNo ?? string.Empty,
+                history.FrLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || detail.IStatus != history.IStatus)
             throw Invalid("The posted MI detail differs from its prepared issue.");
         var owner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(
@@ -104,9 +108,8 @@ public static class StockReplayFifoIssueRemovalPhysicalWriter
         var masters = await db.IvStockMasters.AsNoTracking()
             .Where(m => m.CompanyCode == context.CompanyCode
                 && m.ICode == plan.ItemCode).ToArrayAsync(cancellationToken);
-        if (masters.Length != 1 || !masters[0].IsActive
-            || !masters[0].StockControl || masters[0].LotControl)
-            throw Invalid("FIFO replay MI rollback needs an active non-lot stock item.");
+        if (masters.Length != 1)
+            throw Invalid("FIFO replay MI rollback has no exact stock item.");
         var balances = await db.IvBalLocs
             .Where(b => b.CompanyCode == context.CompanyCode
                 && b.BranchCode == context.BranchCode
@@ -114,12 +117,13 @@ public static class StockReplayFifoIssueRemovalPhysicalWriter
         if (balances.Length != 1)
             throw Invalid("The removed MI source pile is missing.");
         var balance = balances[0];
-        if (balance.ICode != plan.ItemCode
-            || balance.LotId is not null || !string.IsNullOrEmpty(balance.LotNo)
-            || balance.WhCode != detail.FrWarehouse
-            || balance.LocCode != (detail.FrLocation ?? string.Empty)
-            || balance.IStatus != detail.IStatus
-            || balance.StdUom != detail.FrStdUom
+        if (!await StockReplayInventoryIssuePileAuthority.MatchesAsync(
+                db, masters[0], balance, detail, cancellationToken,
+                requireActive: false)
+            || balance.LotId != history.FromLotId
+            || !string.Equals(balance.LotNo ?? string.Empty,
+                history.FrLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || balance.StdQty != physical.CurrentQuantity
             || !balance.RowVersion.SequenceEqual(physical.BalanceRowVersion))
             throw Invalid("The removed MI source pile changed after preparation.");

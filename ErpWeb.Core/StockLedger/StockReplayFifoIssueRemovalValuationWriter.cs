@@ -78,6 +78,10 @@ public static class StockReplayFifoIssueRemovalValuationWriter
             || active.Any(f => !byFact.TryGetValue(f.Id, out var c)
                 || f.ItemCode != plan.ItemCode
                 || f.InventoryHistoryId != originalId
+                || f.LotId != original.FromLotId
+                || !string.Equals(f.LotNo ?? string.Empty,
+                    original.FrLotNo ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase)
                 || f.MovementCode !=
                     StockReplayFifoInventoryIssueKinds.MovementCode(
                         original.TrxType)

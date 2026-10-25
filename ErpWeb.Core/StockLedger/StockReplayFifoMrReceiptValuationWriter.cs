@@ -86,6 +86,8 @@ public static class StockReplayFifoMrReceiptValuationWriter
             ItemCode = plan.ItemCode,
             WarehouseCode = BlankToNull(history.ToWarehouse),
             LocationCode = BlankToNull(history.ToLocation),
+            LotId = history.ToLotId,
+            LotNo = history.ToLotNo,
             ItemStatus = BlankToNull(history.IStatus),
             BaseUom = plan.ReceiptBaseUom!,
             MovementCode = "RECEIPT_IN",

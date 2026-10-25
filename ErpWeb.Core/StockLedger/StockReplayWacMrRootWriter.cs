@@ -22,7 +22,7 @@ public static class StockReplayWacMrRootWriter
         var physical = plan.PhysicalPlan;
         var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
             context.Db, context.CompanyCode, context.BranchCode, batchNo,
-            physical.BalLocId, cancellationToken);
+            physical.BalLocId, cancellationToken, allowExistingLot: true);
         if (context.CostMethod != StockCostMethods.MovingAverage
             || context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
@@ -59,6 +59,10 @@ public static class StockReplayWacMrRootWriter
             || db.Entry(batch).State != EntityState.Unchanged
             || db.Entry(detail).State != EntityState.Unchanged
             || balance.StdQty != physical.CurrentQuantity
+            || balance.LotId != authority.LotId
+            || !string.Equals(balance.LotNo ?? string.Empty,
+                authority.LotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || !balance.RowVersion.SequenceEqual(physical.BalanceRowVersion)
             || await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                 h.CompanyCode == context.CompanyCode
@@ -84,7 +88,7 @@ public static class StockReplayWacMrRootWriter
             ? authority.EffectiveAt : physical.LaterEvents.Max(e => e.Key.EffectiveAt);
         balance.ModifiedDate = now;
         detail.ToBalLocId = balance.Id;
-        detail.ToLotId = null;
+        detail.ToLotId = authority.LotId;
         var history = new IvTrxHistory
         {
             CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
@@ -108,6 +112,7 @@ public static class StockReplayWacMrRootWriter
             UnitPrice = detail.UnitPrice, Cost = detail.Cost,
             CostPrice = detail.CostPrice, BaseUnitPrices = detail.BaseUnitPrices,
             LocationCode = detail.LocationCode, ToBalLocId = balance.Id,
+            ToLotId = authority.LotId,
             CreatedDate = now, CreatedBy = user
         };
         new IvInventoryHistoryWriter().StampGeneration(
@@ -153,6 +158,7 @@ public static class StockReplayWacMrRootWriter
             ItemCode = authority.ItemCode,
             WarehouseCode = BlankToNull(history.ToWarehouse),
             LocationCode = BlankToNull(history.ToLocation),
+            LotId = authority.LotId, LotNo = authority.LotNo,
             ItemStatus = BlankToNull(history.IStatus),
             BaseUom = authority.BaseUom, MovementCode = "RECEIPT_IN",
             Direction = 1, BaseQty = authority.Quantity,

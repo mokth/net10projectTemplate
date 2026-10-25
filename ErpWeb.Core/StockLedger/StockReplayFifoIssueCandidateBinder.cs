@@ -102,7 +102,11 @@ public static class StockReplayFifoIssueCandidateBinder
             || details[0].BranchCode != context.BranchCode
             || details[0].BatchNo != history.BatchNo
             || details[0].FromBalLocId != physical.BalLocId
-            || details[0].FrStdQty != -candidate.SignedDelta)
+            || details[0].FrStdQty != -candidate.SignedDelta
+            || details[0].FromLotId != history.FromLotId
+            || !string.Equals(details[0].FrLotNo ?? string.Empty,
+                history.FrLotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase))
             throw Invalid("FIFO candidate history differs from its staged Inventory line.");
 
         var pileQuantity = await db.IvBalLocs.AsNoTracking()

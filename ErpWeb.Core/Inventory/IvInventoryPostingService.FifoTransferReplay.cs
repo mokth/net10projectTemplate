@@ -46,6 +46,11 @@ public sealed partial class IvInventoryPostingService
         if (detail.FromBalLocId is not > 0)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated FIFO transfer needs an existing source pile.");
+        if (await read.IvStockMasters.AsNoTracking().AnyAsync(m =>
+                m.CompanyCode == companyCode && m.ICode == itemCode
+                && m.LotControl, cancellationToken))
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "Backdated lot transfer requires a new destination lot and pile; historical replay for that creation is not supported yet.");
         var destinations = await read.IvBalLocs.AsNoTracking()
             .Where(b => b.CompanyCode == companyCode
                 && b.BranchCode == branchCode && b.ICode == itemCode
@@ -58,25 +63,15 @@ public sealed partial class IvInventoryPostingService
             || destinations[0] == detail.FromBalLocId.Value)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated FIFO transfer needs a distinct existing non-lot destination pile.");
-        var watermark = await read.StockPostingBranchSequences.AsNoTracking()
-            .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode)
-            .Select(s => (long?)s.LastSequence)
-            .SingleOrDefaultAsync(cancellationToken) ?? 0L;
-        var key = new StockReplayEventKey(batch.TrxDtTime,
-            StockReplayEventKey.OrdinaryClass, checked(watermark + 1),
-            "H9999999999", 0);
         if (detail.FrStdQty is not > 0m)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated FIFO transfer needs a positive quantity.");
         var quantity = detail.FrStdQty.Value;
-        var source = await StockReplayPhysicalPlanner.BuildInsertionAsync(
-            read, companyCode, branchCode, detail.FromBalLocId.Value,
-            new StockReplayPhysicalEvent(long.MaxValue - 1, key, -quantity),
-            cancellationToken);
-        var destination = await StockReplayPhysicalPlanner.BuildInsertionAsync(
-            read, companyCode, branchCode, destinations[0],
-            new StockReplayPhysicalEvent(long.MaxValue - 1, key, quantity),
-            cancellationToken);
+        var (source, destination) = await StockReplayInventoryCandidatePlanner
+            .BuildTransferAsync(read, companyCode, branchCode,
+                detail.FromBalLocId.Value, destinations[0], batch.TrxDtTime,
+                quantity, cancellationToken);
+        var key = source.Candidate.Key;
         var plan = await StockReplayFifoTransferInsertionPlanner.BuildDraftAsync(
             read, companyCode, branchCode, batchNo, source, destination,
             cancellationToken);

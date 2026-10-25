@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ErpWeb.Core.StockLedger;
 
 /// <summary>
-/// Stages one approved non-lot MR receipt in an existing pile under its
+/// Stages one approved MR receipt in an existing pile under its
 /// prepared FIFO root. The caller must append the valued receipt and layer,
 /// correct later issues, reconcile state and seal before committing.
 /// </summary>
@@ -44,7 +44,8 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
         var candidate = physical.Candidate;
         var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
             context.Db, context.CompanyCode, context.BranchCode,
-            batchNo, physical.BalLocId, cancellationToken);
+            batchNo, physical.BalLocId, cancellationToken,
+            allowExistingLot: true);
         if (candidate.SignedDelta != authority.Quantity
             || candidate.Key.EffectiveAt != authority.EffectiveAt
             || plan.ReceiptValue != authority.Value
@@ -76,6 +77,10 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
             cancellationToken);
         if (balance.ICode != authority.ItemCode
             || balance.StdQty != physical.CurrentQuantity
+            || balance.LotId != authority.LotId
+            || !string.Equals(balance.LotNo ?? string.Empty,
+                authority.LotNo ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase)
             || !balance.RowVersion.SequenceEqual(physical.BalanceRowVersion))
             throw Invalid("The FIFO MR pile changed after preparation.");
         var now = DateTime.UtcNow;
@@ -95,7 +100,7 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
             : physical.LaterEvents.Max(e => e.Key.EffectiveAt);
         balance.ModifiedDate = now;
         detail.ToBalLocId = balance.Id;
-        detail.ToLotId = null;
+        detail.ToLotId = authority.LotId;
         var history = new IvTrxHistory
         {
             CompanyCode = context.CompanyCode,
@@ -133,6 +138,7 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
             BaseUnitPrices = detail.BaseUnitPrices,
             LocationCode = detail.LocationCode,
             ToBalLocId = balance.Id,
+            ToLotId = authority.LotId,
             CreatedDate = now,
             CreatedBy = user
         };
