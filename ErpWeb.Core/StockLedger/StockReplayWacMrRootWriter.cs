@@ -7,25 +7,32 @@ using Microsoft.EntityFrameworkCore;
 namespace ErpWeb.Core.StockLedger;
 
 /// <summary>
-/// Writes a single approved MR into an existing WAC pile and reprices only
-/// ordinary Inventory issue descendants. The caller owns the transaction and seal.
+/// Writes a single approved MR or bounded GR into an existing WAC pile and
+/// reprices supported Inventory descendants. The caller owns transaction and seal.
 /// </summary>
 public static class StockReplayWacMrRootWriter
 {
     public static async Task<IReadOnlyList<int>> InsertAsync(
         StockPostingContext context, StockReplayWacInsertionPlan plan,
-        int batchNo, CancellationToken cancellationToken = default)
+        int batchNo, CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
         context.EnsureUnsealed();
         var physical = plan.PhysicalPlan;
-        var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
-            context.Db, context.CompanyCode, context.BranchCode, batchNo,
-            physical.BalLocId, cancellationToken, allowExistingLot: true);
+        var authority = goodsReceipt
+            ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
+                context.Db, context.CompanyCode, context.BranchCode, batchNo,
+                physical.BalLocId, cancellationToken)
+            : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
+                context.Db, context.CompanyCode, context.BranchCode, batchNo,
+                physical.BalLocId, cancellationToken, allowExistingLot: true);
+        var receiptType = goodsReceipt
+            ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt;
         if (context.CostMethod != StockCostMethods.MovingAverage
             || context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || context.Posting.SourceDocumentType != receiptType
             || context.Posting.SourceDocumentId != authority.BatchId.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
@@ -39,7 +46,7 @@ public static class StockReplayWacMrRootWriter
             || plan.Candidate.FixedSignedValue != authority.Value
             || plan.Projection.Candidate.SignedValue != authority.Value
             || plan.Candidate.ReplaySignedQuantity != authority.Quantity)
-            throw Invalid("The WAC MR root differs from its approved draft or projection.");
+            throw Invalid("The WAC receipt root differs from its approved draft or projection.");
 
         var permit = await StockReplayWacInsertionPlanner.PrepareWithinRootAsync(
             context, plan, cancellationToken);
@@ -54,8 +61,9 @@ public static class StockReplayWacMrRootWriter
         db.ChangeTracker.DetectChanges();
         if (batch.BatchStatus != IvBatchStatuses.New
             || detail.DocumentRevision != authority.DocumentRevision
-            || !string.IsNullOrWhiteSpace(detail.PoNo)
-            || detail.PoRelNo is not null
+            || (goodsReceipt
+                ? string.IsNullOrWhiteSpace(detail.PoNo) || detail.PoRelNo is null
+                : !string.IsNullOrWhiteSpace(detail.PoNo) || detail.PoRelNo is not null)
             || db.Entry(batch).State != EntityState.Unchanged
             || db.Entry(detail).State != EntityState.Unchanged
             || balance.StdQty != physical.CurrentQuantity
@@ -71,7 +79,7 @@ public static class StockReplayWacMrRootWriter
                         && h.DocumentRevision == authority.DocumentRevision)
                     || h.StockPostingId == context.Posting.Id),
                 cancellationToken))
-            throw Invalid("The approved MR draft, pile, or replay root changed.");
+            throw Invalid("The approved receipt draft, pile, or replay root changed.");
 
         var now = DateTime.UtcNow;
         var user = context.UserId.Length > 10 ? context.UserId[..10] : context.UserId;
@@ -93,7 +101,7 @@ public static class StockReplayWacMrRootWriter
         {
             CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
             BatchNo = batchNo, TrxLineNo = detail.TrxLineNo,
-            TrxType = IvTrxTypes.MiscellaneousReceipt,
+            TrxType = receiptType,
             BatchStatus = IvBatchStatuses.Posted, RefNo = batch.RefNo,
             ProdCode = detail.ProdCode ?? detail.ICode,
             ProdDesc = detail.ProdDesc ?? detail.IDesc,
@@ -132,13 +140,13 @@ public static class StockReplayWacMrRootWriter
             || history.StockPostingId != context.Posting.Id
             || history.LedgerEpochId != context.Epoch.Id
             || history.EntryRole != "ORIGINAL")
-            throw Invalid("The MR history does not match its replay candidate.");
+            throw Invalid("The receipt history does not match its replay candidate.");
         var baseCurrency = await db.Companies.AsNoTracking()
             .Where(c => c.CompanyCode == context.CompanyCode)
             .Select(c => c.CurrencyCode)
             .SingleOrDefaultAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(baseCurrency))
-            throw Invalid("The MR company has no base currency.");
+            throw Invalid("The receipt company has no base currency.");
         var sourceLine = history.TrxLineNo.ToString(
             System.Globalization.CultureInfo.InvariantCulture);
         db.StockValuationFacts.Add(new StockValuationFact

@@ -11,7 +11,8 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
     public static async Task<int> AppendAsync(
         StockPostingContext context, StockReplayFifoRemovalPlan plan,
         StockReplayFifoWritePermit permit, int batchNo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -37,7 +38,8 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
             || permit.ChangedPileId != physical.BalLocId
             || permit.ChangedPileFinalQuantity != physical.Projection.FinalQuantity
             || context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || context.Posting.SourceDocumentType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || context.Posting.PostingRole != "REVERSAL"
@@ -48,7 +50,8 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
             b.CompanyCode == context.CompanyCode
             && b.BranchCode == context.BranchCode
             && b.BatchNo == batchNo, cancellationToken);
-        if (batch is null || batch.TrxType != IvTrxTypes.MiscellaneousReceipt
+        if (batch is null || batch.TrxType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || batch.BatchStatus != IvBatchStatuses.Posted
             || batch.DeletedAtUtc is not null || batch.ForceCloseDate is not null
             || batch.TrxDtTime != removed.Key.EffectiveAt
@@ -75,7 +78,8 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
             || history.EntryRole != "ORIGINAL" || history.LedgerVersion != 2
             || history.LedgerEpochId != context.Epoch.Id
             || history.BatchStatus != IvBatchStatuses.Posted
-            || history.TrxType != IvTrxTypes.MiscellaneousReceipt
+            || history.TrxType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || history.ValuationStatus != StockValuationStatuses.Valued
             || history.TrxDtTime != removed.Key.EffectiveAt
             || history.ICode != plan.ItemCode
@@ -101,9 +105,18 @@ public static class StockReplayFifoMrReceiptRemovalPhysicalWriter
             || detail.CostApprovedBy != history.CostApprovedBy
             || detail.CostApprovedAtUtc != history.CostApprovedAtUtc
             || detail.UnitPrice != history.UnitPrice
-            || string.IsNullOrWhiteSpace(detail.Reason)
-            || detail.Cost is not null || detail.CostPrice is not null
-            || detail.BaseUnitPrices is not null)
+            || (goodsReceipt
+                ? string.IsNullOrWhiteSpace(detail.PoNo)
+                    || detail.PoNo != history.PoNo
+                    || detail.PoRelNo != history.PoRelNo
+                    || detail.PoLineNo != history.PoLineNo
+                    || detail.ToPurQty != history.ToPurQty
+                    || detail.ToPurUom != history.ToPurUom
+                    || detail.CostPrice != history.CostPrice
+                    || detail.BaseUnitPrices != history.BaseUnitPrices
+                : string.IsNullOrWhiteSpace(detail.Reason)
+                    || detail.Cost is not null || detail.CostPrice is not null
+                    || detail.BaseUnitPrices is not null))
             throw Invalid("The posted MR detail differs from its receipt origin.");
         var owner = await db.StockPostings.AsNoTracking()
             .SingleOrDefaultAsync(p => p.Id == history.StockPostingId,

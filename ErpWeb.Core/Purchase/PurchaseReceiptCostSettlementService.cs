@@ -32,7 +32,8 @@ public interface IPurchaseReceiptCostSettlementService
         string costMethod,
         long stockPostingId,
         string userId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        StockPostingContext? replayRoot = null);
 
     Task<PurchaseReceiptSettlementResult> ReverseInvoiceAsync(
         AppDbContext db,
@@ -60,7 +61,8 @@ public interface IPurchaseReceiptCostSettlementService
 }
 
 /// <summary>
-/// Allocates a stock-controlled purchase invoice against immutable, sealed GR valuation facts.
+/// Allocates a stock-controlled purchase invoice against immutable GR valuation facts.
+/// An unsealed receipt is eligible only when it belongs to the current GR replay root.
 /// This service deliberately does not infer cost from the current PO or item master.
 /// </summary>
 public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostSettlementService
@@ -73,7 +75,8 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         string costMethod,
         long stockPostingId,
         string userId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        StockPostingContext? replayRoot = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(invoice);
@@ -86,6 +89,34 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             return PurchaseReceiptSettlementResult.Fail("An active inventory cost method is required for purchase settlement.");
         if (invoice.CurrRate <= 0m)
             return PurchaseReceiptSettlementResult.Fail("Invoice currency rate must be greater than zero.");
+
+        var ownUnsealedReceiptId = 0L;
+        if (replayRoot is not null)
+        {
+            replayRoot.EnsureUnsealed();
+            var root = replayRoot.Posting;
+            if (!ReferenceEquals(replayRoot.Db, db)
+                || root.Id != stockPostingId
+                || root.CompanyCode != invoice.CompanyCode
+                || root.BranchCode != invoice.BranchCode
+                || root.SourceModule != "INVENTORY"
+                || root.SourceDocumentType != IvTrxTypes.GoodsReceive
+                || root.PostingRole != "PRIMARY"
+                || root.ReversesPostingId is not null
+                || root.SealedAtUtc is not null
+                || !await db.StockPostings.AsNoTracking().AnyAsync(p =>
+                    p.Id == root.Id && p.CompanyCode == root.CompanyCode
+                    && p.BranchCode == root.BranchCode
+                    && p.SourceModule == root.SourceModule
+                    && p.SourceDocumentType == root.SourceDocumentType
+                    && p.SourceDocumentId == root.SourceDocumentId
+                    && p.PostingRole == "PRIMARY"
+                    && p.SealedAtUtc == null,
+                    cancellationToken))
+                return PurchaseReceiptSettlementResult.Fail(
+                    "Only this transaction's unsealed GR root may supply a receipt to PI replay.");
+            ownUnsealedReceiptId = root.Id;
+        }
 
         var lines = invoice.Details
             .OrderBy(x => x.Line)
@@ -142,7 +173,8 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                   && history.PoLineNo != null
                   && poLineNos.Contains(history.PoLineNo.Value)
                   && itemCodes.Contains(history.ICode)
-                  && posting.SealedAtUtc != null
+                  && (posting.SealedAtUtc != null
+                      || posting.Id == ownUnsealedReceiptId)
                   && !db.StockValuationFacts.Any(reversal =>
                       reversal.CompanyCode == fact.CompanyCode
                       && reversal.BranchCode == fact.BranchCode
@@ -166,7 +198,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             .ToListAsync(cancellationToken);
 
         if (candidates.Count == 0)
-            return PurchaseReceiptSettlementResult.Fail("No sealed goods-receipt valuation facts match the invoice lines.");
+            return PurchaseReceiptSettlementResult.Fail("No eligible goods-receipt valuation facts match the invoice lines.");
 
         var factIds = candidates.Select(x => x.FactId).Distinct().ToArray();
         var priorSettlements = await db.PurchaseReceiptCostSettlements.AsNoTracking()
@@ -201,7 +233,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             if (!candidateMap.TryGetValue(key, out var lineCandidates))
             {
                 return PurchaseReceiptSettlementResult.Fail(
-                    $"Line {line.Line}: no sealed GR valuation fact matches PO {line.PoNo}/{line.PoRelNo} line {line.PoLineNo} item {line.ICode}.");
+                    $"Line {line.Line}: no eligible GR valuation fact matches PO {line.PoNo}/{line.PoRelNo} line {line.PoLineNo} item {line.ICode}.");
             }
 
             var lineQty = StockLedgerPrecision.Quantity(line.StdQty);
@@ -294,7 +326,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             if (remainingQty > Epsilon)
             {
                 return PurchaseReceiptSettlementResult.Fail(
-                    $"Line {line.Line}: quantity {lineQty:0.######} cannot be fully mapped to active sealed GR receipt quantity.");
+                    $"Line {line.Line}: quantity {lineQty:0.######} cannot be fully mapped to active eligible GR receipt quantity.");
             }
         }
 
@@ -319,7 +351,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         if (stockPostingId <= 0)
             return PurchaseReceiptSettlementResult.Fail("A sealed stock posting identity is required for purchase reversal.");
 
-        var originals = await db.PurchaseReceiptCostSettlements
+        var roots = await db.PurchaseReceiptCostSettlements
             .Where(x => x.CompanyCode == invoice.CompanyCode
                         && x.BranchCode == invoice.BranchCode
                         && x.PiDocNo == invoice.DocNo
@@ -327,18 +359,19 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                         && x.ReversesSettlementId == null)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
-        if (originals.Count == 0)
+        var rootIds = roots.Select(x => x.Id).ToArray();
+        var reversedSettlementIds = await db.PurchaseReceiptCostSettlements.AsNoTracking()
+            .Where(x => x.ReversesSettlementId != null
+                && rootIds.Contains(x.ReversesSettlementId.Value))
+            .Select(x => x.ReversesSettlementId!.Value)
+            .ToArrayAsync(cancellationToken);
+        var reversedSettlements = reversedSettlementIds.ToHashSet();
+        var originals = roots.Where(x => !reversedSettlements.Contains(x.Id)).ToArray();
+        if (originals.Length == 0)
             return PurchaseReceiptSettlementResult.Fail(
                 $"No active receipt settlements were found for invoice {invoice.DocNo} revision {invoice.CostingRevision}.");
 
-        var originalIds = originals.Select(x => x.Id).ToArray();
-        var alreadyReversed = await db.PurchaseReceiptCostSettlements.AsNoTracking()
-            .AnyAsync(x => x.ReversesSettlementId != null
-                           && originalIds.Contains(x.ReversesSettlementId.Value), cancellationToken);
-        if (alreadyReversed)
-            return PurchaseReceiptSettlementResult.Fail("The purchase invoice settlement has already been reversed.");
-
-        var adjustments = await db.PurchaseCostAdjustments
+        var adjustmentRoots = await db.PurchaseCostAdjustments
             .Where(x => x.CompanyCode == invoice.CompanyCode
                         && x.BranchCode == invoice.BranchCode
                         && x.SourceDocumentType == "PO_INVOICE"
@@ -347,14 +380,15 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                         && x.ReversesAdjustmentId == null)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
-        var adjustmentIds = adjustments.Select(x => x.Id).ToArray();
-        if (adjustmentIds.Length > 0
-            && await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(
-                x => x.ReversesAdjustmentId != null
-                     && adjustmentIds.Contains(x.ReversesAdjustmentId.Value), cancellationToken))
-        {
-            return PurchaseReceiptSettlementResult.Fail("The purchase invoice adjustment has already been reversed.");
-        }
+        var adjustmentRootIds = adjustmentRoots.Select(x => x.Id).ToArray();
+        var reversedAdjustmentIds = await db.PurchaseCostAdjustments.AsNoTracking()
+            .Where(x => x.ReversesAdjustmentId != null
+                && adjustmentRootIds.Contains(x.ReversesAdjustmentId.Value))
+            .Select(x => x.ReversesAdjustmentId!.Value)
+            .ToArrayAsync(cancellationToken);
+        var reversedAdjustments = reversedAdjustmentIds.ToHashSet();
+        var adjustments = adjustmentRoots
+            .Where(x => !reversedAdjustments.Contains(x.Id)).ToArray();
 
         var factIds = adjustments.Where(x => x.InventoryAdjustmentFactId is not null)
             .Select(x => x.InventoryAdjustmentFactId!.Value)
@@ -366,7 +400,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                 .Where(x => factIds.Contains(x.Id))
                 .ToDictionaryAsync(x => x.Id, x => x.BaseUom, cancellationToken);
 
-        var reversalSettlements = new List<PurchaseReceiptCostSettlement>(originals.Count);
+        var reversalSettlements = new List<PurchaseReceiptCostSettlement>(originals.Length);
         foreach (var original in originals)
         {
             var reversal = new PurchaseReceiptCostSettlement
@@ -400,7 +434,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             db.PurchaseReceiptCostSettlements.Add(reversal);
         }
 
-        var reversalRequests = new List<PurchaseCostAdjustmentRequest>(adjustments.Count);
+        var reversalRequests = new List<PurchaseCostAdjustmentRequest>(adjustments.Length);
         var splitByLine = new Dictionary<int, int>();
         foreach (var original in adjustments)
         {

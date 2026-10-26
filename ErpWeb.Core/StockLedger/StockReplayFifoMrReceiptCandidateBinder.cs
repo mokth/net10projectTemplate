@@ -20,7 +20,8 @@ public static class StockReplayFifoMrReceiptCandidateBinder
     public static async Task<StockReplayFifoBoundReceiptCandidate> BindAsync(
         StockPostingContext context, StockReplayFifoInsertionPlan plan,
         StockReplayFifoWritePermit permit, int historyId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -47,8 +48,8 @@ public static class StockReplayFifoMrReceiptCandidateBinder
             || permit.FinalQuantity != plan.Projection.FinalQuantity
             || permit.FinalValue != plan.Projection.FinalValue
             || context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType
-                != IvTrxTypes.MiscellaneousReceipt
+            || context.Posting.SourceDocumentType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || context.Posting.PostingRole != "PRIMARY"
             || context.Posting.EffectiveAt != candidate.Key.EffectiveAt)
             throw Invalid("FIFO MR candidate binding needs its prepared root permit.");
@@ -61,6 +62,8 @@ public static class StockReplayFifoMrReceiptCandidateBinder
         if (rootHistories.Length != 1 || rootHistories[0].Id != historyId)
             throw Invalid("FIFO MR binding requires one saved root history.");
         var history = rootHistories[0];
+        var receiptUnit = goodsReceipt
+            ? history.BaseUnitPrices : history.UnitPrice;
         var evidence = InventoryCostEvidenceTypes.Normalize(
             history.CostEvidenceType);
         var expectedPriceEvidence = evidence switch
@@ -80,7 +83,8 @@ public static class StockReplayFifoMrReceiptCandidateBinder
             || history.EntryRole != "ORIGINAL"
             || history.ReversesHistoryId is not null
             || history.BatchStatus != IvBatchStatuses.Posted
-            || history.TrxType != IvTrxTypes.MiscellaneousReceipt
+            || history.TrxType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || history.ICode != plan.ItemCode
             || history.TrxDtTime != candidate.Key.EffectiveAt
             || history.ToBalLocId != physical.BalLocId
@@ -89,13 +93,18 @@ public static class StockReplayFifoMrReceiptCandidateBinder
             || history.FromBalLocId is not null
             || history.FrStdQty is not null
             || history.ValuationStatus is not null
-            || history.UnitPrice is not decimal unit
+            || receiptUnit is not decimal unit
             || StockLedgerPrecision.Money(unit * candidate.SignedDelta)
                 != plan.ReceiptValue
-            || history.BaseUnitPrices is not null
-            || history.Cost is not null || history.CostPrice is not null)
+            || (goodsReceipt
+                ? history.CostEvidenceType is not null
+                    || history.CostPrice is null
+                    || string.IsNullOrWhiteSpace(history.PoNo)
+                    || history.PoRelNo is null || history.PoLineNo is null
+                : history.BaseUnitPrices is not null
+                    || history.Cost is not null || history.CostPrice is not null))
             throw Invalid("The saved MR history differs from its approved receipt.");
-        if (expectedPriceEvidence is null
+        if (!goodsReceipt && (expectedPriceEvidence is null
             || history.PriceEvidence != expectedPriceEvidence
             || string.IsNullOrWhiteSpace(history.CostApprovedBy)
             || history.CostApprovedAtUtc is null
@@ -105,7 +114,7 @@ public static class StockReplayFifoMrReceiptCandidateBinder
             || evidence == InventoryCostEvidenceTypes.ManualApproved
                 && approvedUnit <= 0m
             || evidence == InventoryCostEvidenceTypes.ZeroCostApproved
-                && approvedUnit != 0m)
+                && approvedUnit != 0m))
             throw Invalid("The posted FIFO MR lost its approved cost evidence.");
         var batches = await db.IvTrxBatches.AsNoTracking()
             .Where(b => b.CompanyCode == context.CompanyCode
@@ -151,10 +160,18 @@ public static class StockReplayFifoMrReceiptCandidateBinder
             || details[0].CostApprovedBy != history.CostApprovedBy
             || details[0].CostApprovedAtUtc != history.CostApprovedAtUtc
             || details[0].CostOverrideReason != history.CostOverrideReason
-            || string.IsNullOrWhiteSpace(details[0].Reason)
-            || details[0].Cost is not null
-            || details[0].CostPrice is not null
-            || details[0].BaseUnitPrices is not null)
+            || (goodsReceipt
+                ? details[0].PoNo != history.PoNo
+                    || details[0].PoRelNo != history.PoRelNo
+                    || details[0].PoLineNo != history.PoLineNo
+                    || details[0].ToPurQty != history.ToPurQty
+                    || details[0].ToPurUom != history.ToPurUom
+                    || details[0].CostPrice != history.CostPrice
+                    || details[0].BaseUnitPrices != history.BaseUnitPrices
+                : string.IsNullOrWhiteSpace(details[0].Reason)
+                    || details[0].Cost is not null
+                    || details[0].CostPrice is not null
+                    || details[0].BaseUnitPrices is not null))
             throw Invalid("The saved MR history differs from its staged approval.");
         var pile = await db.IvBalLocs.AsNoTracking()
             .Where(b => b.Id == physical.BalLocId

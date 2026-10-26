@@ -23,12 +23,17 @@ public static class StockReplayFifoInsertionPlanner
     public static async Task<StockReplayFifoInsertionPlan> BuildMiscReceiptAsync(
         AppDbContext db, string companyCode, string branchCode,
         int batchNo, StockReplayPhysicalPlan physicalPlan,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(physicalPlan);
-        var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
-            db, companyCode, branchCode, batchNo, physicalPlan.BalLocId,
-            cancellationToken, allowExistingLot: true);
+        var authority = goodsReceipt
+            ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
+                db, companyCode, branchCode, batchNo, physicalPlan.BalLocId,
+                cancellationToken)
+            : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
+                db, companyCode, branchCode, batchNo, physicalPlan.BalLocId,
+                cancellationToken, allowExistingLot: true);
         if (physicalPlan.Candidate.SignedDelta != authority.Quantity
             || physicalPlan.Candidate.Key.EffectiveAt != authority.EffectiveAt)
             throw Invalid("The physical MR candidate differs from its approved cost line.");
@@ -40,16 +45,22 @@ public static class StockReplayFifoInsertionPlanner
     public static async Task<StockReplayFifoWritePermit>
         PrepareMiscReceiptWithinRootAsync(
             StockPostingContext context, StockReplayFifoInsertionPlan plan,
-            int batchNo, CancellationToken cancellationToken = default)
+            int batchNo, CancellationToken cancellationToken = default,
+            bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
-        var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
-            context.Db, context.CompanyCode, context.BranchCode,
-            batchNo, plan.PhysicalPlan.BalLocId, cancellationToken,
-            allowExistingLot: true);
+        var authority = goodsReceipt
+            ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
+                context.Db, context.CompanyCode, context.BranchCode,
+                batchNo, plan.PhysicalPlan.BalLocId, cancellationToken)
+            : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
+                context.Db, context.CompanyCode, context.BranchCode,
+                batchNo, plan.PhysicalPlan.BalLocId, cancellationToken,
+                allowExistingLot: true);
         if (context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || context.Posting.SourceDocumentType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || context.Posting.PostingRole != "PRIMARY"
             || context.Posting.SourceDocumentId != authority.BatchId.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)

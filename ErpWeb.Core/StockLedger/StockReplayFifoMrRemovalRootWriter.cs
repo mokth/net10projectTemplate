@@ -14,7 +14,8 @@ public static class StockReplayFifoMrRemovalRootWriter
     public static async Task<StockReplayFifoMrRemovalWriteResult> RemoveAsync(
         StockPostingContext context, StockReplayFifoRemovalPlan plan,
         StockReplayFifoWritePermit permit, int batchNo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -27,7 +28,8 @@ public static class StockReplayFifoMrRemovalRootWriter
             || permit.PlanHash != plan.PlanHash
             || permit.RootPostingId != context.Posting.Id
             || context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || context.Posting.SourceDocumentType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || context.Posting.PostingRole != "REVERSAL")
@@ -51,9 +53,11 @@ public static class StockReplayFifoMrRemovalRootWriter
             line += 2;
         }
         var reversalHistoryId = await StockReplayFifoMrReceiptRemovalPhysicalWriter
-            .AppendAsync(context, plan, permit, batchNo, cancellationToken);
+            .AppendAsync(context, plan, permit, batchNo, cancellationToken,
+                goodsReceipt);
         await StockReplayFifoMrReceiptRemovalValuationWriter.AppendAsync(
-            context, plan, permit, reversalHistoryId, 1, cancellationToken);
+            context, plan, permit, reversalHistoryId, 1, cancellationToken,
+            goodsReceipt);
         await StockReplayFifoStateWriter.ApplyMiscReceiptRemovalAsync(
             context, plan, permit, cancellationToken);
         return new(reversalHistoryId, required);

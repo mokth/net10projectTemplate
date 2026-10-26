@@ -12,7 +12,8 @@ public static class StockReplayFifoMrReceiptRemovalValuationWriter
     public static async Task<StockValuationFact> AppendAsync(
         StockPostingContext context, StockReplayFifoRemovalPlan plan,
         StockReplayFifoWritePermit permit, int reversalHistoryId,
-        int postingLineNo, CancellationToken cancellationToken = default)
+        int postingLineNo, CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -50,7 +51,8 @@ public static class StockReplayFifoMrReceiptRemovalValuationWriter
                 cancellationToken);
         if (original is null || reversal is null
             || original.ICode != plan.ItemCode
-            || original.TrxType != IvTrxTypes.MiscellaneousReceipt
+            || original.TrxType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || original.EntryRole != "ORIGINAL"
             || original.ValuationStatus != StockValuationStatuses.Valued
             || original.ToBalLocId != plan.PhysicalPlan.BalLocId

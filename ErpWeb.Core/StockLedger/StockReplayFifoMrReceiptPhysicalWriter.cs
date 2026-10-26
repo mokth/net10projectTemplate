@@ -14,7 +14,8 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
     public static async Task<int> AppendAsync(
         StockPostingContext context, StockReplayFifoInsertionPlan plan,
         StockReplayFifoWritePermit permit, int batchNo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -22,7 +23,7 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
         context.EnsureUnsealed();
         var prepared = await StockReplayFifoInsertionPlanner
             .PrepareMiscReceiptWithinRootAsync(context, plan, batchNo,
-                cancellationToken);
+                cancellationToken, goodsReceipt);
         if (permit.Operation != "INSERT"
             || permit.RootPostingId != prepared.RootPostingId
             || permit.RootPostingSequence != prepared.RootPostingSequence
@@ -42,10 +43,14 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
             throw Invalid("FIFO MR physical write needs its prepared receipt permit.");
         var physical = plan.PhysicalPlan;
         var candidate = physical.Candidate;
-        var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
-            context.Db, context.CompanyCode, context.BranchCode,
-            batchNo, physical.BalLocId, cancellationToken,
-            allowExistingLot: true);
+        var authority = goodsReceipt
+            ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
+                context.Db, context.CompanyCode, context.BranchCode,
+                batchNo, physical.BalLocId, cancellationToken)
+            : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
+                context.Db, context.CompanyCode, context.BranchCode,
+                batchNo, physical.BalLocId, cancellationToken,
+                allowExistingLot: true);
         if (candidate.SignedDelta != authority.Quantity
             || candidate.Key.EffectiveAt != authority.EffectiveAt
             || plan.ReceiptValue != authority.Value
@@ -90,7 +95,8 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
         {
             balance.UnitPrice = authority.UnitCost;
             balance.Cost = authority.UnitCost;
-            balance.PriceEvidence = "EXPLICIT_COMPANY_BASE_PRICE";
+            balance.PriceEvidence = goodsReceipt
+                ? detail.PriceEvidence : "EXPLICIT_COMPANY_BASE_PRICE";
         }
         else if (balance.UnitPrice != authority.UnitCost)
             balance.PriceEvidence = null;
@@ -107,7 +113,8 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
             BranchCode = context.BranchCode,
             BatchNo = batchNo,
             TrxLineNo = detail.TrxLineNo,
-            TrxType = IvTrxTypes.MiscellaneousReceipt,
+            TrxType = goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt,
             BatchStatus = IvBatchStatuses.Posted,
             RefNo = batch.RefNo,
             ProdCode = detail.ProdCode ?? detail.ICode,

@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ErpWeb.Core.StockLedger;
 
 /// <summary>
-/// Locates the one existing Inventory MR destination pile for a replay draft.
+/// Locates the one existing Inventory receipt destination pile for a replay draft.
 /// The receipt authority rechecks the full item, lot and cost identity.
 /// </summary>
 internal static class StockReplayInventoryReceiptPileLocator

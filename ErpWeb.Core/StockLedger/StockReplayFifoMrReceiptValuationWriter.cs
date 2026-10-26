@@ -19,7 +19,8 @@ public static class StockReplayFifoMrReceiptValuationWriter
     public static async Task<StockReplayFifoMrReceiptValuation> AppendAsync(
         StockPostingContext context, StockReplayFifoInsertionPlan plan,
         StockReplayFifoWritePermit permit, int historyId,
-        int postingLineNo, CancellationToken cancellationToken = default)
+        int postingLineNo, CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -28,7 +29,8 @@ public static class StockReplayFifoMrReceiptValuationWriter
         if (postingLineNo <= 0)
             throw Invalid("FIFO MR valuation needs a positive root line.");
         var bound = await StockReplayFifoMrReceiptCandidateBinder.BindAsync(
-            context, plan, permit, historyId, cancellationToken);
+            context, plan, permit, historyId, cancellationToken,
+            goodsReceipt);
         if (bound.RootPostingId != context.Posting.Id
             || bound.PreparedPlanHash != plan.PlanHash
             || bound.FinancialProjection.CandidateReceipt is not { } receipt
@@ -52,8 +54,10 @@ public static class StockReplayFifoMrReceiptValuationWriter
             throw Invalid("The FIFO MR history or root valuation line is already used.");
         var history = await db.IvTrxHistories.SingleAsync(
             h => h.Id == historyId, cancellationToken);
+        var receiptUnit = goodsReceipt
+            ? history.BaseUnitPrices : history.UnitPrice;
         if (history.ValuationStatus is not null
-            || history.UnitPrice is not decimal unitCost
+            || receiptUnit is not decimal unitCost
             || StockLedgerPrecision.Money(
                 unitCost * receipt.OriginalQuantity) != receipt.OriginalValue
             || history.ToStdQty != receipt.OriginalQuantity)

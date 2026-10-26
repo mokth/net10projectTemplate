@@ -1237,7 +1237,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 currency,
                 netPurchaseUnitCost,
                 baseStockUnitCost,
-                $"PO_PROVISIONAL|PO={row.Po.PoNo}/{row.Po.PoRelNo}/{row.PoLine.Line}|CUR={currency}|RATE={rate:0.########}");
+                $"PO_PROVISIONAL|PO={row.Po.PoNo}/{row.Po.PoRelNo}/{row.PoLine.Line}|CUR={currency}|RATE={rate.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture)}");
         }
 
         return (result, null);

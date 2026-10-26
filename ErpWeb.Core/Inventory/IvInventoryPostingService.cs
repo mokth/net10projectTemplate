@@ -978,6 +978,32 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     {
         if (_openPeriodBackdatedReplayEnabled
             && expectedTrxType == IvTrxTypes.GoodsReceive
+            && _coordinator is not null
+            && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay
+            && await TryPostBackdatedWacGrAsync(companyCode, branchCode,
+                userId, batchNo, cancellationToken) is { } wacReplay)
+            return wacReplay;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.GoodsReceive
+            && _coordinator is not null
+            && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay
+            && await TryPostBackdatedStandardMrAsync(companyCode, branchCode,
+                batchNo, cancellationToken, IvTrxTypes.GoodsReceive, userId)
+                is { } standardReplay)
+            return standardReplay;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.GoodsReceive
+            && _coordinator is not null
+            && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay
+            && await TryPostBackdatedFifoMrAsync(companyCode, branchCode,
+                batchNo, cancellationToken, IvTrxTypes.GoodsReceive, userId)
+                is { } fifoReplay)
+            return fifoReplay;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.GoodsReceive
             && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
                 batchNo, expectedTrxType, cancellationToken)).RequiresReplay)
             return UnsupportedHistoricalInventoryPost(batchNo, expectedTrxType);
@@ -1051,6 +1077,33 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.GoodsReceive
+            && _coordinator is not null
+            && (await ReadInventoryRollbackRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay
+            && await TryRollBackBackdatedWacAsync(companyCode, branchCode,
+                userId, batchNo, expectedTrxType, cancellationToken)
+                is { } wacReplay)
+            return wacReplay;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.GoodsReceive
+            && _coordinator is not null
+            && (await ReadInventoryRollbackRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay
+            && await TryRollBackBackdatedStandardMrAsync(companyCode,
+                branchCode, userId, batchNo, cancellationToken,
+                IvTrxTypes.GoodsReceive) is { } standardReplay)
+            return standardReplay;
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.GoodsReceive
+            && _coordinator is not null
+            && (await ReadInventoryRollbackRouteAsync(companyCode, branchCode,
+                batchNo, expectedTrxType, cancellationToken)).RequiresReplay
+            && await TryRollBackBackdatedFifoMrAsync(companyCode, branchCode,
+                batchNo, cancellationToken, IvTrxTypes.GoodsReceive, userId)
+                is { } fifoReplay)
+            return fifoReplay;
         if (_openPeriodBackdatedReplayEnabled
             && expectedTrxType == IvTrxTypes.GoodsReceive
             && (await ReadInventoryRollbackRouteAsync(companyCode, branchCode,

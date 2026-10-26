@@ -12,12 +12,15 @@ public sealed partial class IvInventoryPostingService
 {
     private async Task<IvInventoryPostingBatchResult?> TryPostBackdatedStandardMrAsync(
         string companyCode, string branchCode, int batchNo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string receiptType = IvTrxTypes.MiscellaneousReceipt,
+        string? userId = null)
     {
+        var goodsReceipt = receiptType == IvTrxTypes.GoodsReceive;
         await using var read = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var batch = await read.IvTrxBatches.AsNoTracking().SingleOrDefaultAsync(b =>
             b.CompanyCode == companyCode && b.BranchCode == branchCode
-            && b.BatchNo == batchNo && b.TrxType == IvTrxTypes.MiscellaneousReceipt
+            && b.BatchNo == batchNo && b.TrxType == receiptType
             && b.BatchStatus == IvBatchStatuses.New, cancellationToken);
         if (batch is null)
             return null;
@@ -28,7 +31,7 @@ public sealed partial class IvInventoryPostingService
                 branchCode, batch.TrxDtTime,
                 details.Select(d => d.ICode), cancellationToken)
                 ? IvInventoryPostingBatchResult.Fail(batchNo,
-                    "Backdated Standard MR currently needs one valid receipt line.")
+                    $"Backdated Standard {receiptType} currently needs one valid receipt line.")
                 : null;
         var detail = details[0];
         var method = await read.StockCostStates.AsNoTracking()
@@ -53,10 +56,14 @@ public sealed partial class IvInventoryPostingService
             read, companyCode, branchCode, detail, cancellationToken);
         if (pileId is not > 0)
             return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Backdated Standard MR needs one existing destination pile.");
-        var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
-            read, companyCode, branchCode, batchNo, pileId.Value,
-            cancellationToken, allowExistingLot: true);
+                $"Backdated Standard {receiptType} needs one existing destination pile.");
+        var authority = goodsReceipt
+            ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
+                read, companyCode, branchCode, batchNo, pileId.Value,
+                cancellationToken)
+            : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
+                read, companyCode, branchCode, batchNo, pileId.Value,
+                cancellationToken, allowExistingLot: true);
         var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, authority.BalLocId,
             authority.EffectiveAt, authority.Quantity, cancellationToken);
@@ -72,6 +79,26 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        Dictionary<string, ErpWeb.Model.Entities.Purchase.PoOrder>? grOrders = null;
+        IReadOnlyList<IvTrxBatchDetail>? grDetails = null;
+        if (goodsReceipt)
+        {
+            var snapshot = await LoadGoodsReceiptSnapshotAsync(write,
+                companyCode, branchCode, batchNo, receiptType,
+                cancellationToken);
+            if (snapshot.Error is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, snapshot.Error);
+            grDetails = snapshot.Details!;
+            var locked = await LockGoodsReceiptPurchaseOrdersAsync(write,
+                companyCode, branchCode, grDetails, cancellationToken);
+            if (locked.Error is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, locked.Error);
+            grOrders = locked.Orders!;
+            var poError = await ValidateGoodsReceiptPoQtyAsync(write,
+                grOrders, grDetails, +1, receiptType, cancellationToken);
+            if (poError is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+        }
         var ledger = await BeginStandaloneLedgerAsync(write, companyCode,
             branchCode, batchNo, reversal: false, cancellationToken);
         await using var postingScope = new StockPostingAbortScope(
@@ -85,7 +112,7 @@ public sealed partial class IvInventoryPostingService
         if (root is not null)
             root.CostMethod = StockCostMethods.Standard;
         if (root is null || root.Posting.SourceModule != "INVENTORY"
-            || root.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || root.Posting.SourceDocumentType != receiptType
             || root.Posting.SourceDocumentId != authority.BatchId.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || root.Posting.SourceDocumentNo != batchNo.ToString(
@@ -95,7 +122,7 @@ public sealed partial class IvInventoryPostingService
             || root.Posting.EffectiveAt != authority.EffectiveAt
             || root.Posting.PostingSequence != key.OriginalPostingSequence
             || root.Epoch.Id != physical.LedgerEpochId)
-            throw InvalidStandardTransfer("The Standard MR root differs from its draft.");
+            throw InvalidStandardTransfer("The Standard receipt root differs from its draft.");
         if (await IvPeriodCloseGuard.EnsureOpenAsync(write, companyCode,
                 branchCode, authority.EffectiveAt, cancellationToken)
             is string lockedClosed)
@@ -105,8 +132,12 @@ public sealed partial class IvInventoryPostingService
         }
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,
             physical, cancellationToken);
-        var currentAuthority = await StockReplayFifoMrReceiptAuthorityReader
-            .ReadAsync(write, companyCode, branchCode, batchNo,
+        var currentAuthority = goodsReceipt
+            ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
+                write, companyCode, branchCode, batchNo, physical.BalLocId,
+                cancellationToken)
+            : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
+                write, companyCode, branchCode, batchNo,
                 physical.BalLocId, cancellationToken,
                 allowExistingLot: true);
         var current = await ReadStandardMrInsertionAsync(write,
@@ -117,9 +148,9 @@ public sealed partial class IvInventoryPostingService
             || StandardMrFingerprint(physical, currentAuthority,
                 current.Tail, current.Projection, current.Revision)
                 != fingerprint)
-            throw InvalidStandardTransfer("The Standard MR tail changed before posting.");
+            throw InvalidStandardTransfer("The Standard receipt tail changed before posting.");
         var historyId = await AppendStandardMrPhysicalAsync(root,
-            physical, authority, cancellationToken);
+            physical, authority, cancellationToken, receiptType);
         await AppendStandardMrValueAsync(root, authority,
             current.Revision, historyId, cancellationToken);
         var permit = new StockReplayStandardWritePermit(root,
@@ -130,6 +161,10 @@ public sealed partial class IvInventoryPostingService
                 physical.BalLocId, physical.Projection.FinalQuantity));
         await StockReplayStandardCostStateWriter.ApplyAsync(root,
             permit, cancellationToken);
+        if (goodsReceipt)
+            await ApplyGoodsReceiptPoQtyAsync(write, grOrders!, grDetails!,
+                +1, authority.EffectiveAt, userId ?? root.UserId,
+                cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(root,
             [historyId], cancellationToken);
         postingScope.MarkCompleted();
@@ -214,7 +249,8 @@ public sealed partial class IvInventoryPostingService
     private static async Task<int> AppendStandardMrPhysicalAsync(
         StockPostingContext root, StockReplayPhysicalPlan plan,
         StockReplayFifoMrReceiptAuthority authority,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string receiptType = IvTrxTypes.MiscellaneousReceipt)
     {
         var db = root.Db;
         var batch = await db.IvTrxBatches.SingleAsync(b =>
@@ -265,7 +301,7 @@ public sealed partial class IvInventoryPostingService
             BranchCode = root.BranchCode,
             BatchNo = authority.BatchNo,
             TrxLineNo = detail.TrxLineNo,
-            TrxType = IvTrxTypes.MiscellaneousReceipt,
+            TrxType = receiptType,
             BatchStatus = IvBatchStatuses.Posted,
             RefNo = batch.RefNo,
             ProdCode = detail.ProdCode ?? detail.ICode,
@@ -375,13 +411,15 @@ public sealed partial class IvInventoryPostingService
 
     private async Task<IvInventoryPostingBatchResult?> TryRollBackBackdatedStandardMrAsync(
         string companyCode, string branchCode, string userId, int batchNo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string receiptType = IvTrxTypes.MiscellaneousReceipt)
     {
+        var goodsReceipt = receiptType == IvTrxTypes.GoodsReceive;
         await using var read = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var batch = await read.IvTrxBatches.AsNoTracking().SingleOrDefaultAsync(b =>
             b.CompanyCode == companyCode && b.BranchCode == branchCode
             && b.BatchNo == batchNo
-            && b.TrxType == IvTrxTypes.MiscellaneousReceipt
+            && b.TrxType == receiptType
             && b.BatchStatus == IvBatchStatuses.Posted, cancellationToken);
         if (batch is null)
             return null;
@@ -446,7 +484,7 @@ public sealed partial class IvInventoryPostingService
         var quantity = history.ToStdQty;
         if (history.EntryRole != "ORIGINAL" || history.LedgerVersion != 2
             || history.ValuationStatus != StockValuationStatuses.Valued
-            || history.TrxType != IvTrxTypes.MiscellaneousReceipt
+            || history.TrxType != receiptType
             || history.ICode is null || pileId is not > 0
             || quantity is not > 0m || history.FromBalLocId is not null
             || detail.DocumentRevision != root.Posting.DocumentRevision
@@ -465,18 +503,18 @@ public sealed partial class IvInventoryPostingService
             || owner.CompanyCode != companyCode
             || owner.BranchCode != branchCode
             || owner.SourceModule != "INVENTORY"
-            || owner.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || owner.SourceDocumentType != receiptType
             || owner.SourceDocumentId != batch.Id.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || owner.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || owner.PostingRole != "PRIMARY"
-            || owner.CommandType != $"IV_POST_{IvTrxTypes.MiscellaneousReceipt}"
+            || owner.CommandType != $"IV_POST_{receiptType}"
             || owner.EffectiveAt != history.TrxDtTime
             || owner.LedgerEpochId != history.LedgerEpochId
             || root.Posting.PostingRole != "REVERSAL"
             || root.Posting.SourceModule != "INVENTORY"
-            || root.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || root.Posting.SourceDocumentType != receiptType
             || root.Posting.SourceDocumentId != owner.SourceDocumentId
             || root.Posting.SourceDocumentNo != owner.SourceDocumentNo
             || root.Posting.ReversesPostingId != owner.Id
@@ -566,14 +604,54 @@ public sealed partial class IvInventoryPostingService
                 companyCode, branchCode, history.ICode, key,
                 tail.LaterEvents, cancellationToken) is not null)
             throw InvalidStandardTransfer("The Standard MR rollback changes a later movement.");
+        Dictionary<string, ErpWeb.Model.Entities.Purchase.PoOrder>? grOrders = null;
+        IReadOnlyList<IvTrxBatchDetail>? grDetails = null;
+        if (goodsReceipt)
+        {
+            var snapshot = await LoadGoodsReceiptSnapshotAsync(write,
+                companyCode, branchCode, batchNo, receiptType,
+                cancellationToken);
+            if (snapshot.Error is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    snapshot.Error);
+            grDetails = snapshot.Details!;
+            var identityError = await ValidateGoodsReceiptRollbackIdentityAsync(
+                write, companyCode, branchCode, currentBatch, grDetails,
+                cancellationToken);
+            if (identityError is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    identityError);
+            if (await write.PurchaseReceiptCostSettlements.AsNoTracking()
+                .AnyAsync(s => s.CompanyCode == companyCode
+                    && s.BranchCode == branchCode
+                    && s.ReceiptInventoryHistoryId == history.Id,
+                    cancellationToken))
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    "The goods receipt has invoice settlement and needs procurement replay before historical rollback.");
+            var locked = await LockGoodsReceiptPurchaseOrdersAsync(write,
+                companyCode, branchCode, grDetails, cancellationToken);
+            if (locked.Error is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    locked.Error);
+            grOrders = locked.Orders!;
+            var poError = await ValidateGoodsReceiptPoQtyAsync(write,
+                grOrders, grDetails, -1, receiptType, cancellationToken);
+            if (poError is not null || grOrders.Values.SelectMany(o => o.Details)
+                    .Any(d => d.InvoicedQty != 0m))
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    poError ?? "Historical GR rollback needs procurement replay while the purchase order is invoiced.");
+        }
         var result = await RollBackInventoryMRCoreAsync(write,
             companyCode, branchCode, userId, batchNo,
-            IvTrxTypes.MiscellaneousReceipt, cancellationToken, root);
+            receiptType, cancellationToken, root);
         if (!result.Succeeded)
         {
             await tx.RollbackAsync(cancellationToken);
             return result;
         }
+        if (goodsReceipt)
+            await ApplyGoodsReceiptPoQtyAsync(write, grOrders!, grDetails!,
+                -1, history.TrxDtTime, userId, cancellationToken);
         await write.SaveChangesAsync(cancellationToken);
         var finalPile = await write.IvBalLocs.AsNoTracking()
             .SingleAsync(b => b.Id == pileId.Value, cancellationToken);

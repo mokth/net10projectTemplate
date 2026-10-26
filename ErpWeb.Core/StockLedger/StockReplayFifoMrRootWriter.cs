@@ -15,7 +15,8 @@ public static class StockReplayFifoMrRootWriter
     public static async Task<StockReplayFifoMrWriteResult> InsertAsync(
         StockPostingContext context, StockReplayFifoInsertionPlan plan,
         StockReplayFifoWritePermit permit, int batchNo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool goodsReceipt = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -25,7 +26,8 @@ public static class StockReplayFifoMrRootWriter
             || permit.RootPostingId != context.Posting.Id
             || permit.PlanHash != plan.PlanHash
             || context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || context.Posting.SourceDocumentType != (goodsReceipt
+                ? IvTrxTypes.GoodsReceive : IvTrxTypes.MiscellaneousReceipt)
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || context.Posting.PostingRole != "PRIMARY")
@@ -34,10 +36,11 @@ public static class StockReplayFifoMrRootWriter
         var changed = StockReplayFifoMiRootWriter.ChangedIssues(
             plan.Projection);
         var historyId = await StockReplayFifoMrReceiptPhysicalWriter
-            .AppendAsync(context, plan, permit, batchNo, cancellationToken);
+            .AppendAsync(context, plan, permit, batchNo, cancellationToken,
+                goodsReceipt);
         var receipt = await StockReplayFifoMrReceiptValuationWriter
             .AppendAsync(context, plan, permit, historyId, 1,
-                cancellationToken);
+                cancellationToken, goodsReceipt);
         var required = new List<int>(changed.Count + 1) { historyId };
         var line = 2;
         foreach (var issue in changed)

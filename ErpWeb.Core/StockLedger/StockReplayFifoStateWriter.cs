@@ -21,8 +21,9 @@ public static class StockReplayFifoStateWriter
         if (removed is null || !plan.Projection.IsRemoval
             || plan.PhysicalPlan.RemovedActiveEvent.SignedDelta <= 0m
             || removed.ReceiptKey != plan.PhysicalPlan.RemovedActiveEvent.Key
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt)
-            throw Invalid("FIFO receipt removal state needs its original MR layer.");
+            || context.Posting.SourceDocumentType is not (
+                IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive))
+            throw Invalid("FIFO receipt removal state needs its original Inventory receipt layer.");
         var first = plan.PhysicalPlan.RemovedActiveEvent.Key.EffectiveAt.Date;
         await StockReplayFifoIssueRepricingWriter.ValidateFifoPolicyAsync(
             context, first, plan.PhysicalPlan.LaterEvents
@@ -41,9 +42,10 @@ public static class StockReplayFifoStateWriter
         CancellationToken cancellationToken = default)
     {
         StockReplayFifoReceiptLayerBinding.Validate(plan, receipt.LayerId);
-        if (context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+        if (context.Posting.SourceDocumentType is not (
+                IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
             || permit.Operation != "INSERT")
-            throw Invalid("FIFO receipt state needs an MR insertion root.");
+            throw Invalid("FIFO receipt state needs an Inventory receipt insertion root.");
         await StockReplayFifoIssueRepricingWriter.ValidateFifoPolicyAsync(
             context, plan, cancellationToken);
         await ApplyCoreAsync(context, plan.ItemCode, plan.Snapshot,
