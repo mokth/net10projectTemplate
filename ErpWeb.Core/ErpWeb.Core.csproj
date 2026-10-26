@@ -23,7 +23,7 @@
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.3.0" />
     <PackageReference Include="ClosedXML" Version="0.105.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.2" />
+    <PackageReference Include="SkiaSharp" Version="4.153.1" />
     <!-- MailKit replaces System.Net.Mail.SmtpClient for outbound mail: SmtpClient cannot do
          implicit TLS (port 465), which is the only TLS mode this provider's mail host supports. -->
     <PackageReference Include="MailKit" Version="4.18.1" />

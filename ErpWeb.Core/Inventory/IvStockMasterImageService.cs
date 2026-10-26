@@ -8,12 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.Formats.Webp;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace ErpWeb.Core.Inventory;
 
@@ -22,6 +17,8 @@ public sealed class IvStockMasterImageService : IIvStockMasterImageService
     private const string WebpContentType = "image/webp";
     private const string ManagedExtension = ".webp";
     private const int CopyBufferSize = 80 * 1024;
+    private const int RgbaBytesPerPixel = 4;
+    private static readonly SKSamplingOptions PhotoSampling = new(SKCubicResampler.Mitchell);
 
     private readonly IIvStockMasterRepository _stockMasters;
     private readonly IDbContextFactory<AppDbContext>? _dbFactory;
@@ -87,86 +84,94 @@ public sealed class IvStockMasterImageService : IIvStockMasterImageService
 
         try
         {
-            using var identifyStream = new MemoryStream(source, writable: false);
-            var info = await Image.IdentifyAsync(identifyStream, cancellationToken);
-            if (info is null || !IsAllowedFormat(info.Metadata.DecodedImageFormat))
+            cancellationToken.ThrowIfCancellationRequested();
+            using var encodedData = SKData.CreateCopy(source);
+            using var inspectCodec = SKCodec.Create(encodedData);
+            if (inspectCodec is null)
+            {
+                return Fail<IvPreparedStockImage>("The selected file is not a valid image.");
+            }
+
+            if (!IsAllowedEncodedFormat(inspectCodec.EncodedFormat))
             {
                 return Fail<IvPreparedStockImage>("Only JPG, PNG, or WebP images are allowed.");
             }
 
-            if (info.Width > _options.MaxInputSide || info.Height > _options.MaxInputSide)
+            var encodedWidth = inspectCodec.Info.Width;
+            var encodedHeight = inspectCodec.Info.Height;
+            if (encodedWidth <= 0
+                || encodedHeight <= 0
+                || encodedWidth > _options.MaxInputSide
+                || encodedHeight > _options.MaxInputSide
+                || (long)encodedWidth * encodedHeight > _options.MaxInputPixels)
             {
                 return Fail<IvPreparedStockImage>("Image dimensions are too large.");
             }
 
-            if ((long)info.Width * info.Height > _options.MaxInputPixels)
-            {
-                return Fail<IvPreparedStockImage>("Image dimensions are too large.");
-            }
-
-            if (info.FrameCount > 1 || info.FrameMetadataCollection.Count > 1)
+            if (IsMultiFrame(inspectCodec))
             {
                 return Fail<IvPreparedStockImage>("Animated or multi-frame images are not supported.");
             }
 
-            using var image = await Image.LoadAsync(
-                new MemoryStream(source, writable: false),
-                cancellationToken);
-            if (image.Frames.Count != 1)
+            var origin = inspectCodec.EncodedOrigin;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Frame inspection can consume the first codec. Decode from a second codec over the same bytes.
+            using var decodeCodec = SKCodec.Create(encodedData);
+            if (decodeCodec is null)
             {
-                return Fail<IvPreparedStockImage>("Animated or multi-frame images are not supported.");
+                return Fail<IvPreparedStockImage>("The selected file is not a valid image.");
             }
 
-            // Orientation must be applied before the metadata is stripped.
-            image.Mutate(processing => processing.AutoOrient());
-            image.Metadata.ExifProfile = null;
-            image.Metadata.XmpProfile = null;
-            image.Metadata.IptcProfile = null;
-            image.Metadata.IccProfile = null;
-
-            if (image.Width > _options.MaxDimension || image.Height > _options.MaxDimension)
+            var decoded = DecodeSingleFrameStrict(decodeCodec);
+            if (decoded is null)
             {
-                image.Mutate(processing => processing.Resize(new ResizeOptions
+                return Fail<IvPreparedStockImage>("The selected file is not a valid image.");
+            }
+
+            var orientationReplacedSource = false;
+            var resizeAllocated = false;
+            SKBitmap? oriented = null;
+            SKBitmap? resized = null;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                oriented = NormalizeOrientation(decoded, origin, out orientationReplacedSource);
+                cancellationToken.ThrowIfCancellationRequested();
+                resized = ResizeIfRequired(oriented, out resizeAllocated);
+                cancellationToken.ThrowIfCancellationRequested();
+                var output = EncodeLossyWebp(resized);
+                if (output.Length <= 0 || output.Length > _options.MaxProcessedBytes)
                 {
-                    Mode = ResizeMode.Max,
-                    Size = new Size(_options.MaxDimension, _options.MaxDimension)
-                }));
+                    return Fail<IvPreparedStockImage>("The processed image is too large.");
+                }
+
+                return IvMasterOperationResult<IvPreparedStockImage>.Ok(new IvPreparedStockImage
+                {
+                    Content = output,
+                    Width = resized.Width,
+                    Height = resized.Height,
+                    ContentType = WebpContentType
+                });
             }
-
-            using var output = new MemoryStream();
-            await image.SaveAsync(
-                output,
-                new WebpEncoder { Quality = _options.WebpQuality },
-                cancellationToken);
-
-            if (output.Length <= 0 || output.Length > _options.MaxProcessedBytes)
+            finally
             {
-                return Fail<IvPreparedStockImage>("The processed image is too large.");
+                if (resizeAllocated)
+                {
+                    resized?.Dispose();
+                }
+
+                if (orientationReplacedSource)
+                {
+                    oriented?.Dispose();
+                }
+
+                decoded.Dispose();
             }
-
-            return IvMasterOperationResult<IvPreparedStockImage>.Ok(new IvPreparedStockImage
-            {
-                Content = output.ToArray(),
-                Width = image.Width,
-                Height = image.Height,
-                ContentType = WebpContentType
-            });
         }
         catch (OperationCanceledException)
         {
             throw;
-        }
-        catch (UnknownImageFormatException)
-        {
-            return Fail<IvPreparedStockImage>("The selected file is not a valid image.");
-        }
-        catch (ImageFormatException)
-        {
-            return Fail<IvPreparedStockImage>("The selected file is not a valid image.");
-        }
-        catch (NotSupportedException)
-        {
-            return Fail<IvPreparedStockImage>("Only JPG, PNG, or WebP images are allowed.");
         }
     }
 
@@ -564,11 +569,215 @@ public sealed class IvStockMasterImageService : IIvStockMasterImageService
         return true;
     }
 
-    private static bool IsAllowedFormat(IImageFormat? format) =>
-        format is not null
-        && (string.Equals(format.Name, JpegFormat.Instance.Name, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(format.Name, PngFormat.Instance.Name, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(format.Name, WebpFormat.Instance.Name, StringComparison.OrdinalIgnoreCase));
+    private static bool IsAllowedEncodedFormat(SKEncodedImageFormat format) =>
+        format is SKEncodedImageFormat.Jpeg
+            or SKEncodedImageFormat.Png
+            or SKEncodedImageFormat.Webp;
+
+    private static bool IsMultiFrame(SKCodec codec)
+    {
+        if (codec.FrameCount > 1)
+        {
+            return true;
+        }
+
+        var frames = codec.FrameInfo;
+        return frames is { Length: > 1 };
+    }
+
+    private static SKBitmap? DecodeSingleFrameStrict(SKCodec codec)
+    {
+        var info = new SKImageInfo(
+            codec.Info.Width,
+            codec.Info.Height,
+            SKColorType.Rgba8888,
+            SKAlphaType.Unpremul);
+        var bitmap = new SKBitmap(info);
+        var pixels = bitmap.GetPixels();
+        if (pixels == IntPtr.Zero)
+        {
+            bitmap.Dispose();
+            return null;
+        }
+
+        var result = codec.GetPixels(info, pixels);
+        if (result != SKCodecResult.Success)
+        {
+            bitmap.Dispose();
+            return null;
+        }
+
+        return bitmap;
+    }
+
+    private static SKBitmap NormalizeOrientation(
+        SKBitmap source,
+        SKEncodedOrigin origin,
+        out bool created)
+    {
+        if (origin is SKEncodedOrigin.TopLeft || origin == default)
+        {
+            created = false;
+            return source;
+        }
+
+        created = true;
+        return RemapPixels(source, origin);
+    }
+
+    private static bool SwapsAxes(SKEncodedOrigin origin) =>
+        origin is SKEncodedOrigin.LeftTop
+            or SKEncodedOrigin.RightTop
+            or SKEncodedOrigin.RightBottom
+            or SKEncodedOrigin.LeftBottom;
+
+    private static SKBitmap RemapPixels(SKBitmap source, SKEncodedOrigin origin)
+    {
+        var swap = SwapsAxes(origin);
+        var destination = new SKBitmap(new SKImageInfo(
+            swap ? source.Height : source.Width,
+            swap ? source.Width : source.Height,
+            SKColorType.Rgba8888,
+            SKAlphaType.Unpremul));
+        var sourcePixels = source.GetPixelSpan();
+        var destinationPixels = destination.GetPixelSpan();
+        var sourceRowBytes = source.RowBytes;
+        var destinationRowBytes = destination.RowBytes;
+        for (var y = 0; y < source.Height; y++)
+        {
+            for (var x = 0; x < source.Width; x++)
+            {
+                MapPixel(origin, x, y, source.Width, source.Height, out var destX, out var destY);
+                var sourceIndex = (y * sourceRowBytes) + (x * RgbaBytesPerPixel);
+                var destinationIndex = (destY * destinationRowBytes) + (destX * RgbaBytesPerPixel);
+                destinationPixels[destinationIndex] = sourcePixels[sourceIndex];
+                destinationPixels[destinationIndex + 1] = sourcePixels[sourceIndex + 1];
+                destinationPixels[destinationIndex + 2] = sourcePixels[sourceIndex + 2];
+                destinationPixels[destinationIndex + 3] = sourcePixels[sourceIndex + 3];
+            }
+        }
+
+        return destination;
+    }
+
+    private static void MapPixel(
+        SKEncodedOrigin origin,
+        int x,
+        int y,
+        int width,
+        int height,
+        out int destX,
+        out int destY)
+    {
+        switch (origin)
+        {
+            case SKEncodedOrigin.TopRight:
+                destX = width - 1 - x;
+                destY = y;
+                return;
+            case SKEncodedOrigin.BottomRight:
+                destX = width - 1 - x;
+                destY = height - 1 - y;
+                return;
+            case SKEncodedOrigin.BottomLeft:
+                destX = x;
+                destY = height - 1 - y;
+                return;
+            case SKEncodedOrigin.LeftTop:
+                destX = y;
+                destY = x;
+                return;
+            case SKEncodedOrigin.RightTop:
+                destX = height - 1 - y;
+                destY = x;
+                return;
+            case SKEncodedOrigin.RightBottom:
+                destX = height - 1 - y;
+                destY = width - 1 - x;
+                return;
+            case SKEncodedOrigin.LeftBottom:
+                destX = y;
+                destY = width - 1 - x;
+                return;
+            default:
+                destX = x;
+                destY = y;
+                return;
+        }
+    }
+
+    private SKBitmap ResizeIfRequired(SKBitmap source, out bool created)
+    {
+        var (targetWidth, targetHeight) = CalculateTargetSize(
+            source.Width,
+            source.Height,
+            _options.MaxDimension);
+        if (targetWidth == source.Width && targetHeight == source.Height)
+        {
+            created = false;
+            return source;
+        }
+
+        var resized = source.Resize(
+            new SKImageInfo(
+                targetWidth,
+                targetHeight,
+                SKColorType.Rgba8888,
+                SKAlphaType.Unpremul),
+            PhotoSampling);
+        if (resized is null)
+        {
+            _logger.LogError("Item image resize failed for operation {Operation}", "prepare");
+            throw new InvalidOperationException("Item image encoding failed.");
+        }
+
+        created = true;
+        return resized;
+    }
+
+    private static (int Width, int Height) CalculateTargetSize(int width, int height, int maxDimension)
+    {
+        if (width <= maxDimension && height <= maxDimension)
+        {
+            return (width, height);
+        }
+
+        var scale = maxDimension / (double)Math.Max(width, height);
+        return (ScaleSide(width, scale, maxDimension), ScaleSide(height, scale, maxDimension));
+    }
+
+    private static int ScaleSide(int side, double scale, int maxDimension)
+    {
+        var scaled = (int)Math.Round(side * scale, MidpointRounding.AwayFromZero);
+        if (scaled < 1)
+        {
+            return 1;
+        }
+
+        return scaled > maxDimension ? maxDimension : scaled;
+    }
+
+    private byte[] EncodeLossyWebp(SKBitmap bitmap)
+    {
+        using var pixmap = bitmap.PeekPixels();
+        if (pixmap is null)
+        {
+            _logger.LogError("Item image pixels were unavailable for operation {Operation}", "prepare");
+            throw new InvalidOperationException("Item image encoding failed.");
+        }
+
+        var options = new SKWebpEncoderOptions(
+            SKWebpEncoderCompression.Lossy,
+            _options.WebpQuality);
+        using var encoded = SKWebpEncoder.Encode(pixmap, options);
+        if (encoded is null)
+        {
+            _logger.LogError("Item image WebP encode failed for operation {Operation}", "prepare");
+            throw new InvalidOperationException("Item image encoding failed.");
+        }
+
+        return encoded.ToArray();
+    }
 
     private static async Task<byte[]> ReadBoundedAsync(
         Stream content,
