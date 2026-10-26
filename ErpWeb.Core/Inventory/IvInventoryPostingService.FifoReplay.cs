@@ -655,14 +655,129 @@ public sealed partial class IvInventoryPostingService
         var receiptOwners = await db.StockPostings.AsNoTracking()
             .Where(p => receiptOwnerIds.Contains(p.Id))
             .Select(p => new { p.Id, p.SourceModule,
-                p.SourceDocumentType, p.SealedAtUtc })
+                p.SourceDocumentType, p.SourceDocumentId,
+                p.SourceDocumentNo, p.PostingRole, p.CommandType,
+                p.EffectiveAt, p.PostingSequence, p.SealedAtUtc })
             .ToArrayAsync(cancellationToken);
         if (receiptOwners.Length != receiptOwnerIds.Length
             || receiptOwners.Any(p => p.SourceModule != "INVENTORY"
                 || p.SourceDocumentType != "OPENING"
                     && p.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+                    && p.SourceDocumentType != IvTrxTypes.GoodsReceive
                 || p.SealedAtUtc is null))
-            return "Backdated FIFO Inventory replay has a later receipt outside opening stock or Inventory MR.";
+            return "Backdated FIFO Inventory replay has a later receipt outside opening stock or Inventory MR/GR.";
+        var laterGrOwnerIds = receiptOwners.Where(p =>
+            p.SourceDocumentType == IvTrxTypes.GoodsReceive)
+            .Select(p => p.Id).ToHashSet();
+        var laterGrFactIds = laterReceipts.Where(l =>
+            laterGrOwnerIds.Contains(l.OriginPostingId))
+            .Select(l => l.OriginFactId).ToArray();
+        if (laterGrFactIds.Length > 0)
+        {
+            var grFacts = await db.StockValuationFacts.AsNoTracking()
+                .Where(f => laterGrFactIds.Contains(f.Id))
+                .Select(f => new { f.Id, f.CompanyCode, f.BranchCode,
+                    f.ItemCode, f.InventoryHistoryId, f.StockPostingId,
+                    f.LedgerEpochId, f.SourceDocumentType,
+                    f.SourceDocumentId, f.SourceDocumentNo,
+                    f.EffectiveAt, f.ToBalLocId, f.BaseQty,
+                    f.Direction, f.CostMethod, f.ValuationSource })
+                .ToArrayAsync(cancellationToken);
+            var grHistoryIds = grFacts.Where(f =>
+                f.InventoryHistoryId is not null)
+                .Select(f => f.InventoryHistoryId!.Value).ToArray();
+            var grHistories = await db.IvTrxHistories.AsNoTracking()
+                .Where(h => grHistoryIds.Contains(h.Id))
+                .ToArrayAsync(cancellationToken);
+            if (grFacts.Length != laterGrFactIds.Length
+                || grHistories.Length != grFacts.Length
+                || grFacts.Any(f => f.InventoryHistoryId is not int id
+                    || f.CompanyCode != snapshot.CompanyCode
+                    || f.BranchCode != snapshot.BranchCode
+                    || f.ItemCode != itemCode
+                    || f.CostMethod != StockCostMethods.Fifo
+                    || f.ValuationSource != StockValuationSources.Fifo
+                    || f.SourceDocumentType != IvTrxTypes.GoodsReceive
+                    || f.Direction != 1 || f.BaseQty <= 0m
+                    || !laterGrOwnerIds.Contains(f.StockPostingId)
+                    || grHistories.Count(h => h.Id == id
+                        && h.CompanyCode == snapshot.CompanyCode
+                        && h.BranchCode == snapshot.BranchCode
+                        && h.ICode == itemCode
+                        && h.TrxType == IvTrxTypes.GoodsReceive
+                        && h.EntryRole == "ORIGINAL"
+                        && h.BatchStatus == IvBatchStatuses.Posted
+                        && h.StockPostingId == f.StockPostingId
+                        && h.LedgerEpochId == f.LedgerEpochId
+                        && h.TrxDtTime == f.EffectiveAt
+                        && h.ToBalLocId == f.ToBalLocId
+                        && h.ToStdQty == f.BaseQty
+                        && h.FromBalLocId is null
+                        && !string.IsNullOrWhiteSpace(h.PoNo)
+                        && h.PoRelNo is not null
+                        && h.PoLineNo is not null) != 1))
+                return "A later FIFO GR has no exact receipt and purchase-order line.";
+            var grBatchNos = grHistories.Select(h => h.BatchNo)
+                .Distinct().ToArray();
+            var grBatches = await db.IvTrxBatches.AsNoTracking()
+                .Where(b => b.CompanyCode == snapshot.CompanyCode
+                    && b.BranchCode == snapshot.BranchCode
+                    && grBatchNos.Contains(b.BatchNo))
+                .Select(b => new { b.Id, b.BatchNo, b.TrxType,
+                    b.TrxDtTime, b.BatchStatus })
+                .ToArrayAsync(cancellationToken);
+            var grOwnersById = receiptOwners.ToDictionary(p => p.Id);
+            if (grBatches.Length != grBatchNos.Length
+                || grHistories.Any(h => h.StockPostingId is not long ownerId
+                    || !grOwnersById.TryGetValue(ownerId, out var owner)
+                    || !grBatches.Any(b => b.BatchNo == h.BatchNo
+                        && b.TrxType == IvTrxTypes.GoodsReceive
+                        && b.BatchStatus == IvBatchStatuses.Posted
+                        && b.TrxDtTime == h.TrxDtTime
+                        && owner.SourceDocumentId == b.Id.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture)
+                        && owner.SourceDocumentNo == h.BatchNo.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture)
+                        && grFacts.Any(f => f.InventoryHistoryId == h.Id
+                            && f.SourceDocumentId == owner.SourceDocumentId
+                            && f.SourceDocumentNo == owner.SourceDocumentNo)
+                        && owner.PostingRole == "PRIMARY"
+                        && owner.CommandType == $"IV_POST_{IvTrxTypes.GoodsReceive}"
+                        && owner.EffectiveAt == h.TrxDtTime
+                        && laterReceipts.Any(l =>
+                            l.OriginPostingId == owner.Id
+                            && l.OriginPostingSequence
+                                == owner.PostingSequence
+                            && l.OriginFactId == grFacts.Single(f =>
+                                f.InventoryHistoryId == h.Id).Id))))
+                return "A later FIFO GR has no exact sealed posting owner.";
+            if (await db.PurchaseReceiptCostSettlements.AsNoTracking()
+                .AnyAsync(s => s.CompanyCode == snapshot.CompanyCode
+                    && s.BranchCode == snapshot.BranchCode
+                    && s.ReceiptInventoryHistoryId != null
+                    && grHistoryIds.Contains(s.ReceiptInventoryHistoryId.Value),
+                    cancellationToken))
+                return "Backdated FIFO replay needs procurement settlement replay for a later invoiced GR.";
+            var poNos = grHistories.Select(h => h.PoNo!).Distinct().ToArray();
+            var poLines = await db.PoOrderDetails.AsNoTracking()
+                .Where(d => d.CompanyCode == snapshot.CompanyCode
+                    && d.BranchCode == snapshot.BranchCode
+                    && poNos.Contains(d.PoNo))
+                .Select(d => new { d.PoNo, d.PoRelNo, d.Line,
+                    d.InvoicedQty })
+                .ToArrayAsync(cancellationToken);
+            if (grHistories.Any(h => poLines.Count(d =>
+                    string.Equals(d.PoNo, h.PoNo,
+                        StringComparison.OrdinalIgnoreCase)
+                    && d.PoRelNo == h.PoRelNo
+                    && d.Line == h.PoLineNo) != 1
+                || poLines.Any(d => string.Equals(d.PoNo, h.PoNo,
+                        StringComparison.OrdinalIgnoreCase)
+                    && d.PoRelNo == h.PoRelNo
+                    && d.Line == h.PoLineNo
+                    && d.InvoicedQty != 0m)))
+                return "Backdated FIFO replay needs procurement replay for a later invoiced or unresolved GR purchase-order line.";
+        }
         var receiptFactIds = laterReceipts.Select(l => l.OriginFactId)
             .ToHashSet();
         var issueHistoryIds = ids.ToHashSet();

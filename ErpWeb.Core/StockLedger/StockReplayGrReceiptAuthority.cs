@@ -15,7 +15,8 @@ public static class StockReplayGrReceiptAuthorityReader
 {
     public static async Task<StockReplayFifoMrReceiptAuthority> ReadAsync(
         AppDbContext db, string companyCode, string branchCode,
-        int batchNo, int balLocId, CancellationToken cancellationToken = default)
+        int batchNo, int balLocId, CancellationToken cancellationToken = default,
+        bool allowInvoiced = false)
     {
         if (batchNo <= 0 || balLocId <= 0)
             throw Invalid("Historical GR authority needs a batch and existing pile.");
@@ -60,7 +61,8 @@ public static class StockReplayGrReceiptAuthorityReader
             && p.PoNo == detail.PoNo && p.PoRelNo == detail.PoRelNo
             && p.Line == detail.PoLineNo, cancellationToken);
         if (po is null || poLine is null || poLine.ICode != detail.ICode
-            || poLine.PoPurQty <= 0m || poLine.InvoicedQty != 0m
+            || poLine.PoPurQty <= 0m
+            || !allowInvoiced && poLine.InvoicedQty != 0m
             || poLine.PurchaseUom != detail.ToPurUom
             || poLine.StdUom != detail.ToStdUom
             || poLine.PoUnitPrice != detail.UnitPrice)

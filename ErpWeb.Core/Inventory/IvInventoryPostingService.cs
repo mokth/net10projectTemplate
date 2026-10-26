@@ -26,6 +26,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     private readonly ICurrentDateService _currentDate;
     private readonly IIvInventoryHistoryWriter? _historyWriter;
     private readonly IStockPostingCoordinator? _coordinator;
+    private readonly IPurchaseCostAdjustmentPostingService? _purchaseCostAdjustments;
     private readonly bool _openPeriodBackdatedReplayEnabled;
     private static readonly HashSet<string> NormalInventoryFutureDraftTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -51,7 +52,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         ICurrentDateService currentDate,
         IIvInventoryHistoryWriter? historyWriter = null,
         IStockPostingCoordinator? coordinator = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        IPurchaseCostAdjustmentPostingService? purchaseCostAdjustments = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -63,6 +65,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         _currentDate = currentDate;
         _historyWriter = historyWriter;
         _coordinator = coordinator;
+        _purchaseCostAdjustments = purchaseCostAdjustments;
         _openPeriodBackdatedReplayEnabled =
             configuration?.GetValue<bool>("OpenPeriodBackdatedReplayEnabled") == true;
     }

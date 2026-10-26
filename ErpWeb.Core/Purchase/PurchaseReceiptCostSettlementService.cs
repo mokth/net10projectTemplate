@@ -42,6 +42,13 @@ public interface IPurchaseReceiptCostSettlementService
         string userId,
         CancellationToken cancellationToken = default);
 
+    Task<PurchaseReceiptSettlementResult> RemapZeroVarianceInvoiceAsync(
+        StockPostingContext replayRoot,
+        PoInvoice invoice,
+        IPurchaseCostAdjustmentPostingService adjustmentWriter,
+        CancellationToken cancellationToken = default,
+        bool removingReceipt = false);
+
     Task<PurchaseReceiptSettlementResult> ReverseCreditNoteAsync(
         AppDbContext db,
         PoInvoice creditNote,
@@ -68,6 +75,108 @@ public interface IPurchaseReceiptCostSettlementService
 public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostSettlementService
 {
     private const decimal Epsilon = 0.0000005m;
+
+    /// <summary>
+    /// Rebuilds one posted PI's active receipt allocation in an existing GR replay
+    /// transaction. This bounded path accepts only zero-variance generations;
+    /// callers must roll back their transaction if this method throws.
+    /// </summary>
+    public async Task<PurchaseReceiptSettlementResult> RemapZeroVarianceInvoiceAsync(
+        StockPostingContext replayRoot,
+        PoInvoice invoice,
+        IPurchaseCostAdjustmentPostingService adjustmentWriter,
+        CancellationToken cancellationToken = default,
+        bool removingReceipt = false)
+    {
+        ArgumentNullException.ThrowIfNull(replayRoot);
+        ArgumentNullException.ThrowIfNull(invoice);
+        ArgumentNullException.ThrowIfNull(adjustmentWriter);
+        replayRoot.EnsureUnsealed();
+        var db = replayRoot.Db;
+        var root = replayRoot.Posting;
+        var persistedInvoice = await db.PoInvoices.AsNoTracking()
+            .Include(x => x.Details)
+            .SingleOrDefaultAsync(x =>
+                x.CompanyCode == invoice.CompanyCode
+                && x.BranchCode == invoice.BranchCode
+                && x.DocNo == invoice.DocNo,
+                cancellationToken);
+        if (db.Database.CurrentTransaction is null
+            || root.Id <= 0
+            || root.CompanyCode != invoice.CompanyCode
+            || root.BranchCode != invoice.BranchCode
+            || root.SourceModule != "INVENTORY"
+            || root.SourceDocumentType != IvTrxTypes.GoodsReceive
+            || root.PostingRole != (removingReceipt ? "REVERSAL" : "PRIMARY")
+            || invoice.Type != PoInvoiceTypes.Invoice
+            || invoice.Status != PoInvoiceStatuses.Posted
+            || replayRoot.CostMethod != StockCostMethods.MovingAverage
+            || persistedInvoice is null
+            || persistedInvoice.Type != PoInvoiceTypes.Invoice
+            || persistedInvoice.Status != PoInvoiceStatuses.Posted
+            || persistedInvoice.CostingRevision != invoice.CostingRevision)
+            return PurchaseReceiptSettlementResult.Fail(
+                "Zero-variance PI remap needs one posted invoice and an active WAC GR replay transaction.");
+        invoice = persistedInvoice;
+
+        if (await db.PoInvoices.AsNoTracking().AnyAsync(x =>
+                x.CompanyCode == invoice.CompanyCode
+                && x.BranchCode == invoice.BranchCode
+                && x.Type == PoInvoiceTypes.CreditNote
+                && x.InvNo == invoice.DocNo
+                && x.DeletedAtUtc == null
+                && (x.Status == PoInvoiceStatuses.New
+                    || x.Status == PoInvoiceStatuses.Posted),
+                cancellationToken)
+            || await db.PoCdns.AsNoTracking().AnyAsync(x =>
+                x.CompanyCode == invoice.CompanyCode
+                && x.BranchCode == invoice.BranchCode
+                && x.InvNo == invoice.DocNo
+                && (x.Status == PoCdnStatuses.New
+                    || x.Status == PoCdnStatuses.Posted),
+                cancellationToken))
+            return PurchaseReceiptSettlementResult.Fail(
+                "A purchase credit/debit note depends on this invoice; PI remap needs CN generation replay.");
+
+        var reverse = await ReverseInvoiceAsync(db, invoice, root.Id,
+            replayRoot.UserId, cancellationToken);
+        if (!reverse.Succeeded)
+            throw new StockLedgerException(new(
+                StockLedgerErrorCodes.ReversalDependency,
+                reverse.Error ?? "The active invoice generation cannot be reversed."));
+        if (!HasZeroVariance(reverse.Adjustments))
+            throw new StockLedgerException(new(
+                StockLedgerErrorCodes.ReversalDependency,
+                "The active invoice has purchase price variance and needs full cost replay."));
+
+        await adjustmentWriter.AppendInTransactionAsync(replayRoot,
+            reverse.Adjustments, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var replacement = await AllocateInvoiceAsync(db, invoice,
+            replayRoot.CostMethod, root.Id, replayRoot.UserId,
+            cancellationToken, removingReceipt ? null : replayRoot);
+        if (!replacement.Succeeded)
+            throw new StockLedgerException(new(
+                StockLedgerErrorCodes.ReversalDependency,
+                replacement.Error ?? "The invoice could not be reallocated after GR replay."));
+        if (!HasZeroVariance(replacement.Adjustments))
+            throw new StockLedgerException(new(
+                StockLedgerErrorCodes.ReversalDependency,
+                "The revised invoice allocation has purchase price variance and needs full cost replay."));
+        await adjustmentWriter.AppendInTransactionAsync(replayRoot,
+            replacement.Adjustments, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        return replacement;
+    }
+
+    private static bool HasZeroVariance(
+        IReadOnlyList<PurchaseCostAdjustmentRequest> adjustments) =>
+        adjustments.Count > 0 && adjustments.All(x =>
+            x.TotalAdjustmentAmount == 0m
+            && x.InventoryAdjustmentAmount == 0m
+            && x.ConsumedVarianceAmount == 0m
+            && x.ValueAdjustment is null);
 
     public async Task<PurchaseReceiptSettlementResult> AllocateInvoiceAsync(
         AppDbContext db,
@@ -351,7 +460,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         if (stockPostingId <= 0)
             return PurchaseReceiptSettlementResult.Fail("A sealed stock posting identity is required for purchase reversal.");
 
-        var roots = await db.PurchaseReceiptCostSettlements
+        var roots = await db.PurchaseReceiptCostSettlements.AsNoTracking()
             .Where(x => x.CompanyCode == invoice.CompanyCode
                         && x.BranchCode == invoice.BranchCode
                         && x.PiDocNo == invoice.DocNo
@@ -371,7 +480,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             return PurchaseReceiptSettlementResult.Fail(
                 $"No active receipt settlements were found for invoice {invoice.DocNo} revision {invoice.CostingRevision}.");
 
-        var adjustmentRoots = await db.PurchaseCostAdjustments
+        var adjustmentRoots = await db.PurchaseCostAdjustments.AsNoTracking()
             .Where(x => x.CompanyCode == invoice.CompanyCode
                         && x.BranchCode == invoice.BranchCode
                         && x.SourceDocumentType == "PO_INVOICE"
@@ -389,6 +498,28 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         var reversedAdjustments = reversedAdjustmentIds.ToHashSet();
         var adjustments = adjustmentRoots
             .Where(x => !reversedAdjustments.Contains(x.Id)).ToArray();
+
+        // A receipt remap can leave older roots in the audit trail. Before
+        // reversing the active PI generation, require its cost adjustments to
+        // cover the same active slices; otherwise a rollback would remove
+        // settlement quantity while leaving inventory/consumed variance live.
+        if (adjustments.Length != originals.Length
+            || originals.GroupBy(x => new
+                {
+                    Key = CostingKey(x.PiLineNo, x.ItemCode,
+                        x.PoNo, x.PoRelNo, x.PoLineNo).ToUpperInvariant(),
+                    Qty = x.SettledBaseQty,
+                    Actual = x.AllocatedActualBaseAmount
+                })
+                .Any(group => adjustments.Count(x => string.Equals(
+                    CostingKey(x.SourceDocumentLine, x.ItemCode, x.PoNo,
+                        x.PoRelNo, x.PoLineNo), group.Key.Key,
+                    StringComparison.OrdinalIgnoreCase)
+                    && x.BaseQty == group.Key.Qty
+                    && x.ActualBaseAmount == group.Key.Actual)
+                    != group.Count()))
+            return PurchaseReceiptSettlementResult.Fail(
+                $"Invoice {invoice.DocNo} has incomplete active purchase-cost adjustment evidence.");
 
         var factIds = adjustments.Where(x => x.InventoryAdjustmentFactId is not null)
             .Select(x => x.InventoryAdjustmentFactId!.Value)

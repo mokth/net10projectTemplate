@@ -254,11 +254,58 @@ public sealed partial class IvInventoryPostingService
                 || h.StockPostingId is not > 0
                 || h.TrxType is not (IvTrxTypes.StockTransfer
                     or IvTrxTypes.MiscellaneousReceipt
+                    or IvTrxTypes.GoodsReceive
                     or IvTrxTypes.MiscellaneousIssue
                     or IvTrxTypes.Scrap)))
             return "A later Standard movement has no original Inventory history.";
+        var laterGr = histories.Where(h =>
+            h.TrxType == IvTrxTypes.GoodsReceive).ToArray();
+        if (laterGr.Any(h => h.ToStdQty is not > 0m
+                || h.FromBalLocId is not null
+                || string.IsNullOrWhiteSpace(h.PoNo)
+                || h.PoRelNo is null || h.PoLineNo is null))
+            return "A later Standard GR has no exact receipt and purchase-order line.";
+        if (laterGr.Length > 0)
+        {
+            var laterGrIds = laterGr.Select(h => h.Id).ToArray();
+            if (await db.PurchaseReceiptCostSettlements.AsNoTracking()
+                .AnyAsync(s => s.CompanyCode == companyCode
+                    && s.BranchCode == branchCode
+                    && s.ReceiptInventoryHistoryId != null
+                    && laterGrIds.Contains(s.ReceiptInventoryHistoryId.Value),
+                    cancellationToken))
+                return "Backdated Standard replay needs procurement settlement replay for a later invoiced GR.";
+            var poNos = laterGr.Select(h => h.PoNo!).Distinct().ToArray();
+            var poLines = await db.PoOrderDetails.AsNoTracking()
+                .Where(d => d.CompanyCode == companyCode
+                    && d.BranchCode == branchCode
+                    && poNos.Contains(d.PoNo))
+                .Select(d => new { d.PoNo, d.PoRelNo, d.Line,
+                    d.InvoicedQty })
+                .ToArrayAsync(cancellationToken);
+            if (laterGr.Any(h => poLines.Count(d =>
+                    string.Equals(d.PoNo, h.PoNo,
+                        StringComparison.OrdinalIgnoreCase)
+                    && d.PoRelNo == h.PoRelNo
+                    && d.Line == h.PoLineNo) != 1
+                || poLines.Any(d => string.Equals(d.PoNo, h.PoNo,
+                        StringComparison.OrdinalIgnoreCase)
+                    && d.PoRelNo == h.PoRelNo
+                    && d.Line == h.PoLineNo
+                    && d.InvoicedQty != 0m)))
+                return "Backdated Standard replay needs procurement replay for a later invoiced or unresolved GR purchase-order line.";
+        }
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(
             db, companyCode, branchCode, histories, cancellationToken);
+        if (laterGr.Any(h => active[h.Id].Count != 1
+                || active[h.Id][0].SourceDocumentType
+                    != IvTrxTypes.GoodsReceive
+                || active[h.Id][0].SourceDocumentNo != h.BatchNo
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture)
+                || active[h.Id][0].EffectiveAt != h.TrxDtTime
+                || active[h.Id][0].Direction != 1
+                || active[h.Id][0].ToBalLocId != h.ToBalLocId))
+            return "A later Standard GR has inconsistent receipt valuation provenance.";
         if (histories.Any(h => active[h.Id].Any(f =>
                 f.StockPostingId != h.StockPostingId
                 || f.OriginalValuationFactId is not null
@@ -295,6 +342,9 @@ public sealed partial class IvInventoryPostingService
                         System.Globalization.CultureInfo.InvariantCulture)
                     && owner.SourceDocumentNo == h.BatchNo.ToString(
                         System.Globalization.CultureInfo.InvariantCulture)
+                    && (h.TrxType != IvTrxTypes.GoodsReceive
+                        || active[h.Id][0].SourceDocumentId
+                            == owner.SourceDocumentId)
                     && owner.PostingRole == "PRIMARY"
                     && owner.CommandType == $"IV_POST_{h.TrxType}"
                     && owner.EffectiveAt == h.TrxDtTime)))

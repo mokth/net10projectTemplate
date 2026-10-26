@@ -30,7 +30,7 @@ public sealed record StockReplayFifoActiveLayerSnapshot(
     string SnapshotHash);
 
 /// <summary>
-/// Reads an exact current FIFO layer base for historical simulation. Exact MR
+/// Reads an exact current FIFO layer base for historical simulation. Exact MR/GR
 /// receipt reversals and direct initial-count removals are supported; other
 /// receipt reversals and layer value adjustments fail closed.
 /// </summary>
@@ -240,8 +240,9 @@ public static class StockReplayFifoActiveLayerReader
                         || !reversalOwners.TryGetValue(
                             reversal.StockPostingId, out var reversalOwner)
                         || originalHistory.EntryRole != "ORIGINAL"
-                        || originalHistory.TrxType
-                            != IvTrxTypes.MiscellaneousReceipt
+                        || originalHistory.TrxType is not (
+                            IvTrxTypes.MiscellaneousReceipt
+                            or IvTrxTypes.GoodsReceive)
                             && (!removedCount
                                 || originalHistory.TrxType
                                     != IvTrxTypes.StockAdjustment)
