@@ -2,6 +2,7 @@ using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
@@ -224,7 +225,8 @@ public sealed partial class IvInventoryPostingService
         AppDbContext db, string companyCode, string branchCode,
         string itemCode, StockReplayEventKey key,
         IReadOnlyList<StockReplayStandardEvent> events,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        PoInvoice? replayInvoice = null)
     {
         if (events.Count is 0 or > 100 || events.Any(e =>
                 e.Kind is not (StockReplayStandardEventKinds.Movement
@@ -268,12 +270,24 @@ public sealed partial class IvInventoryPostingService
         if (laterGr.Length > 0)
         {
             var laterGrIds = laterGr.Select(h => h.Id).ToArray();
-            if (await db.PurchaseReceiptCostSettlements.AsNoTracking()
-                .AnyAsync(s => s.CompanyCode == companyCode
+            var settlements = await db.PurchaseReceiptCostSettlements.AsNoTracking()
+                .Where(s => s.CompanyCode == companyCode
                     && s.BranchCode == branchCode
                     && s.ReceiptInventoryHistoryId != null
-                    && laterGrIds.Contains(s.ReceiptInventoryHistoryId.Value),
-                    cancellationToken))
+                    && laterGrIds.Contains(s.ReceiptInventoryHistoryId.Value)
+                    && s.ReversesSettlementId == null
+                    && !db.PurchaseReceiptCostSettlements.Any(r =>
+                        r.ReversesSettlementId == s.Id))
+                .Select(s => new { s.ReceiptInventoryHistoryId,
+                    s.PiDocNo, s.PiCostingRevision })
+                .ToArrayAsync(cancellationToken);
+            if (settlements.Any(s => replayInvoice is null
+                    || s.PiDocNo != replayInvoice.DocNo
+                    || s.PiCostingRevision != replayInvoice.CostingRevision
+                    || !laterGr.Any(h => h.Id == s.ReceiptInventoryHistoryId
+                        && replayInvoice.Details.Any(d =>
+                            d.PoNo == h.PoNo && d.PoRelNo == h.PoRelNo
+                            && d.PoLineNo == h.PoLineNo))))
                 return "Backdated Standard replay needs procurement settlement replay for a later invoiced GR.";
             var poNos = laterGr.Select(h => h.PoNo!).Distinct().ToArray();
             var poLines = await db.PoOrderDetails.AsNoTracking()
@@ -292,7 +306,12 @@ public sealed partial class IvInventoryPostingService
                         StringComparison.OrdinalIgnoreCase)
                     && d.PoRelNo == h.PoRelNo
                     && d.Line == h.PoLineNo
-                    && d.InvoicedQty != 0m)))
+                    && d.InvoicedQty != 0m
+                    && (replayInvoice is null
+                        || !replayInvoice.Details.Any(line =>
+                            line.PoNo == h.PoNo
+                            && line.PoRelNo == h.PoRelNo
+                            && line.PoLineNo == h.PoLineNo)))))
                 return "Backdated Standard replay needs procurement replay for a later invoiced or unresolved GR purchase-order line.";
         }
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(

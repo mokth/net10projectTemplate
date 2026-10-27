@@ -5,4 +5,7 @@ public static class StockReplayEffectTypes
 {
     public const string InventoryHistory = "IV_TRX_HISTORY";
     public const string PhysicalReplacement = "PHYSICAL_REPLACEMENT";
+    public const string PurchaseCreditNoteCostReplacement = "PO_CN_COST_REPLACEMENT";
+    public const string PurchaseReceiptSettlement = "PO_RECEIPT_SETTLEMENT";
+    public const string PurchaseCostAdjustment = "PO_COST_ADJUSTMENT";
 }

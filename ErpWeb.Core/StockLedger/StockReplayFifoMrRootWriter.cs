@@ -16,7 +16,7 @@ public static class StockReplayFifoMrRootWriter
         StockPostingContext context, StockReplayFifoInsertionPlan plan,
         StockReplayFifoWritePermit permit, int batchNo,
         CancellationToken cancellationToken = default,
-        bool goodsReceipt = false)
+        bool goodsReceipt = false, bool allowInvoiced = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -37,7 +37,7 @@ public static class StockReplayFifoMrRootWriter
             plan.Projection);
         var historyId = await StockReplayFifoMrReceiptPhysicalWriter
             .AppendAsync(context, plan, permit, batchNo, cancellationToken,
-                goodsReceipt);
+                goodsReceipt, allowInvoiced);
         var receipt = await StockReplayFifoMrReceiptValuationWriter
             .AppendAsync(context, plan, permit, historyId, 1,
                 cancellationToken, goodsReceipt);

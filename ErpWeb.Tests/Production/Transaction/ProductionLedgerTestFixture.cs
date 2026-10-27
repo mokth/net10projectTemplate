@@ -118,12 +118,13 @@ internal static class ProductionLedgerTestFixture
         string branch = "HQ",
         IAccessRightService? access = null,
         IInventoryValuationService? valuation = null,
-        int startingSequence = 2) =>
+        int startingSequence = 2,
+        DateTime? businessDate = null) =>
         new(
             factory,
             InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch),
             access ?? Allow(MenuCodes.PlanningDailyProduction),
-            new FixedCurrentDateService(new DateTime(2026, 10, 1)),
+            new FixedCurrentDateService(businessDate ?? new DateTime(2026, 10, 1)),
             new TestRunningNumberService(startingSequence - 1),
             CreateCoordinator(factory, company, branch, valuation));
 

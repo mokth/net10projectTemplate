@@ -24,13 +24,13 @@ public static class StockReplayFifoInsertionPlanner
         AppDbContext db, string companyCode, string branchCode,
         int batchNo, StockReplayPhysicalPlan physicalPlan,
         CancellationToken cancellationToken = default,
-        bool goodsReceipt = false)
+        bool goodsReceipt = false, bool allowInvoiced = false)
     {
         ArgumentNullException.ThrowIfNull(physicalPlan);
         var authority = goodsReceipt
             ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
                 db, companyCode, branchCode, batchNo, physicalPlan.BalLocId,
-                cancellationToken)
+                cancellationToken, allowInvoiced)
             : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
                 db, companyCode, branchCode, batchNo, physicalPlan.BalLocId,
                 cancellationToken, allowExistingLot: true);
@@ -46,14 +46,15 @@ public static class StockReplayFifoInsertionPlanner
         PrepareMiscReceiptWithinRootAsync(
             StockPostingContext context, StockReplayFifoInsertionPlan plan,
             int batchNo, CancellationToken cancellationToken = default,
-            bool goodsReceipt = false)
+            bool goodsReceipt = false, bool allowInvoiced = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
         var authority = goodsReceipt
             ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
                 context.Db, context.CompanyCode, context.BranchCode,
-                batchNo, plan.PhysicalPlan.BalLocId, cancellationToken)
+                batchNo, plan.PhysicalPlan.BalLocId, cancellationToken,
+                allowInvoiced)
             : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
                 context.Db, context.CompanyCode, context.BranchCode,
                 batchNo, plan.PhysicalPlan.BalLocId, cancellationToken,

@@ -4,6 +4,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Tests.Inventory.Transaction;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
@@ -239,6 +240,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         {
             db.IvBalLocs.Add(Balance(46, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
             await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "RM001", 10m, 2m);
         }
 
         var issueService = CreatePostingSut(CreateInventoryPosting());
@@ -381,6 +383,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         {
             db.IvBalLocs.Add(Balance(30, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
             await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "RM001", 10m, 2m);
         }
 
         var request = await CreatePostRequestAsync(materialId, 30, issueQty: 4m);
@@ -454,10 +457,19 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         Assert.Equal(0m, (await verify.ProductionWorkOrderMaterials.SingleAsync()).IssuedQty);
         Assert.Equal(ProductionWorkOrderStatuses.InProgress, (await verify.ProductionWorkOrders.SingleAsync()).Status);
         var links = await verify.ProductionPostingLinks.OrderBy(x => x.Uid).ToListAsync();
-        Assert.Equal(2, links.Count);
-        Assert.Equal(ProductionPostingLinkStatuses.Draft, links[0].Status);
-        Assert.Equal(ProductionPostingLinkStatuses.Succeeded, links[1].Status);
-        Assert.Equal(links[0].Uid, links[1].OriginalPostingLinkId);
+        Assert.Equal(3, links.Count);
+        var originalLink = Assert.Single(links, x =>
+            x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
+            && x.DocumentRevision == 1);
+        var rollbackLink = Assert.Single(links, x =>
+            x.CommandType == ProductionPostingCommandTypes.MaterialIssueRollback);
+        var nextLink = Assert.Single(links, x =>
+            x.CommandType == ProductionPostingCommandTypes.MaterialIssuePost
+            && x.DocumentRevision == 2);
+        Assert.Equal(ProductionPostingLinkStatuses.Succeeded, originalLink.Status);
+        Assert.Equal(ProductionPostingLinkStatuses.Succeeded, rollbackLink.Status);
+        Assert.Equal(originalLink.Uid, rollbackLink.OriginalPostingLinkId);
+        Assert.Equal(ProductionPostingLinkStatuses.Draft, nextLink.Status);
         Assert.Single(await verify.ProductionAuditEvents.Where(x => x.EventType == ProductionAuditEventTypes.MaterialIssueRolledBack).ToListAsync());
     }
 
@@ -469,6 +481,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         {
             db.IvBalLocs.Add(Balance(33, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
             await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "RM001", 10m, 2m);
         }
 
         var sut = CreatePostingSut(CreateInventoryPosting(), DateTime.Today);
@@ -524,18 +537,22 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
 
             db.ChangeTracker.Clear();
             var historical = await db.IvTrxBatchDetails.SingleAsync(x => x.Id == detailIdBeforeEdit);
-            var corrected = await db.IvTrxBatchDetails.SingleAsync(x => x.DocumentRevision == 1);
+            var corrected = await db.IvTrxBatchDetails
+                .OrderByDescending(x => x.DocumentRevision).FirstAsync();
             Assert.Equal(4m, historical.FrStdQty);
             Assert.NotEqual(detailIdBeforeEdit, corrected.Id);
+            Assert.True(corrected.DocumentRevision > historical.DocumentRevision);
             Assert.Equal(3m, corrected.FrStdQty);
             Assert.Equal(3m, (await db.ProductionMaterialIssueLines.SingleAsync()).IssueQty);
         }
 
-        var deleteBlocked = await sut.DeleteAsync([batchNo]);
-        Assert.True(deleteBlocked.Succeeded);
-        Assert.Equal(0, deleteBlocked.Data!.SucceededCount);
-        Assert.Equal(1, deleteBlocked.Data.FailedCount);
-        Assert.Contains("cancel", deleteBlocked.Data.Batches[0].Message, StringComparison.OrdinalIgnoreCase);
+        var archived = await sut.DeleteAsync([batchNo]);
+        Assert.True(archived.Succeeded);
+        Assert.Equal(1, archived.Data!.SucceededCount);
+        Assert.Equal(0, archived.Data.FailedCount);
+        await using var afterArchive = await _factory.CreateDbContextAsync();
+        Assert.NotNull((await afterArchive.IvTrxBatches.SingleAsync()).DeletedAtUtc);
+        Assert.True(await afterArchive.IvTrxHistories.AnyAsync());
     }
 
     [Fact]
@@ -546,6 +563,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         {
             db.IvBalLocs.Add(Balance(32, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
             await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "RM001", 10m, 2m);
         }
         var sut = CreatePostingSut(CreateInventoryPosting());
         var posted = await sut.PostAsync(await CreatePostRequestAsync(materialId, 32, issueQty: 4m));
@@ -594,6 +612,7 @@ public sealed class ProductionMaterialAllocationTests : IAsyncDisposable
         {
             db.IvBalLocs.Add(Balance(34, "", 10m, new DateTime(2026, 9, 1), null, "BIN-A", unitPrice: 2m));
             await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "RM001", 10m, 2m);
         }
         var sut = CreatePostingSut(CreateInventoryPosting());
 #pragma warning disable CS0618 // Compatibility adapter is intentional in this end-to-end regression.

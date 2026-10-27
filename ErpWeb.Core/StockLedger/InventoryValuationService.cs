@@ -844,12 +844,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
             throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
                 "A FIFO history reversal must identify the original history row.");
 
-        var originals = await context.Db.StockValuationFacts.AsNoTracking()
-            .Where(x => x.CompanyCode == context.CompanyCode
-                        && x.BranchCode == context.BranchCode
-                        && x.InventoryHistoryId == historyId)
-            .OrderBy(x => x.SplitOrdinal)
-            .ToListAsync(cancellationToken);
+        var originals = await ReadActiveHistoryValuationAsync(
+            context, historyId, cancellationToken);
         if (originals.Count == 0)
             throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
                 $"History {historyId} has no authoritative FIFO valuation to reverse.");
@@ -1585,6 +1581,30 @@ public sealed class InventoryValuationService : IInventoryValuationService
         return fact;
     }
 
+    private static async Task<IReadOnlyList<StockValuationFact>>
+        ReadActiveHistoryValuationAsync(
+            StockPostingContext context, int historyId,
+            CancellationToken cancellationToken)
+    {
+        var history = await context.Db.IvTrxHistories.AsNoTracking()
+            .SingleOrDefaultAsync(h => h.Id == historyId
+                && h.CompanyCode == context.CompanyCode
+                && h.BranchCode == context.BranchCode,
+                cancellationToken);
+        if (history is null || history.LedgerVersion != 2
+            || history.LedgerEpochId != context.Epoch.Id
+            || history.EntryRole != "ORIGINAL"
+            || history.BatchStatus != "POSTED"
+            || history.ValuationStatus != StockValuationStatuses.Valued)
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"History {historyId} has no active V2 valuation origin.");
+        var active = await StockReplayValuationGenerationResolver.ResolveAsync(
+            context.Db, context.CompanyCode, context.BranchCode,
+            [history], cancellationToken);
+        return active[historyId].OrderBy(f => f.SplitOrdinal)
+            .ThenBy(f => f.Id).ToArray();
+    }
+
     private static async Task AppendExactReversalAsync(
         StockPostingContext context,
         IvTrxHistory reversalHistory,
@@ -1597,12 +1617,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
             throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
                 "A V2 history reversal must identify the original history row.");
 
-        var originals = await context.Db.StockValuationFacts.AsNoTracking()
-            .Where(x => x.CompanyCode == context.CompanyCode
-                        && x.BranchCode == context.BranchCode
-                        && x.InventoryHistoryId == historyId)
-            .OrderBy(x => x.SplitOrdinal)
-            .ToListAsync(cancellationToken);
+        var originals = await ReadActiveHistoryValuationAsync(
+            context, historyId, cancellationToken);
         if (originals.Count == 0)
             throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
                 $"History {historyId} has no authoritative valuation to reverse.");
@@ -1897,10 +1913,19 @@ public sealed class InventoryValuationService : IInventoryValuationService
         }
 
         var originalIds = rows.Select(x => x.Id).ToArray();
+        var rootIds = rows.Select(x => x.OriginalValuationFactId ?? x.Id)
+            .Distinct().ToArray();
+        var lineageIds = await context.Db.StockValuationFacts.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                && x.BranchCode == context.BranchCode
+                && (rootIds.Contains(x.Id)
+                    || x.OriginalValuationFactId.HasValue
+                    && rootIds.Contains(x.OriginalValuationFactId.Value)))
+            .Select(x => x.Id).ToArrayAsync(cancellationToken);
         var priorAllocations = await context.Db.SalesReturnCostAllocations.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode
                         && x.BranchCode == context.BranchCode
-                        && originalIds.Contains(x.OriginalValuationFactId))
+                        && lineageIds.Contains(x.OriginalValuationFactId))
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
         var duplicateParents = priorAllocations
@@ -1916,6 +1941,14 @@ public sealed class InventoryValuationService : IInventoryValuationService
         var children = priorAllocations
             .Where(x => x.ReversesAllocationId is not null)
             .ToDictionary(x => x.ReversesAllocationId!.Value);
+        if (priorAllocations.Where(x => x.ReversesAllocationId is null
+                    && !originalIds.Contains(x.OriginalValuationFactId))
+            .Any(root => Math.Abs(SignedAllocationQuantity(
+                    BuildAllocationChain(root, children))) > Epsilon
+                || Math.Abs(SignedAllocationValue(
+                    BuildAllocationChain(root, children))) > Epsilon))
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                "Customer return needs replay of its original sale-cost allocation before another return can post.");
         var candidates = new List<ReturnCostCandidate>(rows.Count);
         foreach (var row in rows)
         {

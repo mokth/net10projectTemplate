@@ -42,12 +42,15 @@ public interface IPurchaseReceiptCostSettlementService
         string userId,
         CancellationToken cancellationToken = default);
 
-    Task<PurchaseReceiptSettlementResult> RemapZeroVarianceInvoiceAsync(
+    Task<PurchaseReceiptSettlementResult> RemapValueNeutralInvoiceAsync(
         StockPostingContext replayRoot,
         PoInvoice invoice,
         IPurchaseCostAdjustmentPostingService adjustmentWriter,
         CancellationToken cancellationToken = default,
-        bool removingReceipt = false);
+        bool removingReceipt = false,
+        bool allowPostedCreditNote = false,
+        string? replayPlanHash = null,
+        long? replayBranchWatermark = null);
 
     Task<PurchaseReceiptSettlementResult> ReverseCreditNoteAsync(
         AppDbContext db,
@@ -75,18 +78,23 @@ public interface IPurchaseReceiptCostSettlementService
 public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostSettlementService
 {
     private const decimal Epsilon = 0.0000005m;
+    private const int MaxCreditNoteReplayGenerations = 8;
 
     /// <summary>
     /// Rebuilds one posted PI's active receipt allocation in an existing GR replay
-    /// transaction. This bounded path accepts only zero-variance generations;
+    /// transaction. WAC and FIFO require zero variance; Standard permits
+    /// purchase variance only when it has no inventory-value effect.
     /// callers must roll back their transaction if this method throws.
     /// </summary>
-    public async Task<PurchaseReceiptSettlementResult> RemapZeroVarianceInvoiceAsync(
+    public async Task<PurchaseReceiptSettlementResult> RemapValueNeutralInvoiceAsync(
         StockPostingContext replayRoot,
         PoInvoice invoice,
         IPurchaseCostAdjustmentPostingService adjustmentWriter,
         CancellationToken cancellationToken = default,
-        bool removingReceipt = false)
+        bool removingReceipt = false,
+        bool allowPostedCreditNote = false,
+        string? replayPlanHash = null,
+        long? replayBranchWatermark = null)
     {
         ArgumentNullException.ThrowIfNull(replayRoot);
         ArgumentNullException.ThrowIfNull(invoice);
@@ -110,24 +118,74 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             || root.PostingRole != (removingReceipt ? "REVERSAL" : "PRIMARY")
             || invoice.Type != PoInvoiceTypes.Invoice
             || invoice.Status != PoInvoiceStatuses.Posted
-            || replayRoot.CostMethod != StockCostMethods.MovingAverage
+            || replayRoot.CostMethod is not (StockCostMethods.MovingAverage
+                or StockCostMethods.Standard or StockCostMethods.Fifo)
             || persistedInvoice is null
             || persistedInvoice.Type != PoInvoiceTypes.Invoice
             || persistedInvoice.Status != PoInvoiceStatuses.Posted
+            || persistedInvoice.DeletedAtUtc is not null
             || persistedInvoice.CostingRevision != invoice.CostingRevision)
             return PurchaseReceiptSettlementResult.Fail(
-                "Zero-variance PI remap needs one posted invoice and an active WAC GR replay transaction.");
+                "Value-neutral PI remap needs one posted invoice and an active GR replay transaction.");
         invoice = persistedInvoice;
 
-        if (await db.PoInvoices.AsNoTracking().AnyAsync(x =>
-                x.CompanyCode == invoice.CompanyCode
+        var dependentNotes = await db.PoInvoices.AsNoTracking()
+            .Where(x => x.CompanyCode == invoice.CompanyCode
                 && x.BranchCode == invoice.BranchCode
                 && x.Type == PoInvoiceTypes.CreditNote
                 && x.InvNo == invoice.DocNo
-                && x.DeletedAtUtc == null
-                && (x.Status == PoInvoiceStatuses.New
-                    || x.Status == PoInvoiceStatuses.Posted),
-                cancellationToken)
+                && (x.Status == PoInvoiceStatuses.Posted
+                    || x.Status == PoInvoiceStatuses.New))
+            .Select(x => new { x.DocNo, x.Status, x.RollbackDate })
+            .ToArrayAsync(cancellationToken);
+        var drafts = dependentNotes
+            .Where(x => x.Status == PoInvoiceStatuses.New).ToArray();
+        var hasUnsafeDraft = false;
+        if (drafts.Length > 0)
+        {
+            var docNos = drafts.Select(x => x.DocNo).ToArray();
+            var postings = await db.StockPostings.AsNoTracking()
+                .Where(p => p.CompanyCode == invoice.CompanyCode
+                    && p.BranchCode == invoice.BranchCode
+                    && p.SourceModule == "PROCUREMENT"
+                    && p.SourceDocumentType == "PO_INVOICE_CN"
+                    && docNos.Contains(p.SourceDocumentNo))
+                .Select(p => new { p.Id, p.SourceDocumentNo,
+                    p.PostingRole, p.ReversesPostingId, p.SealedAtUtc })
+                .ToArrayAsync(cancellationToken);
+            var adjustmentDocNos = await db.PurchaseCostAdjustments.AsNoTracking()
+                .Where(a => a.CompanyCode == invoice.CompanyCode
+                    && a.BranchCode == invoice.BranchCode
+                    && a.SourceDocumentType == "PO_INVOICE_CN"
+                    && docNos.Contains(a.SourceDocumentNo))
+                .Select(a => a.SourceDocumentNo)
+                .Distinct()
+                .ToArrayAsync(cancellationToken);
+            hasUnsafeDraft = drafts.Any(note =>
+            {
+                var notePostings = postings.Where(p =>
+                    p.SourceDocumentNo == note.DocNo).ToArray();
+                if (note.RollbackDate is null)
+                    return notePostings.Length != 0
+                        || adjustmentDocNos.Contains(note.DocNo);
+                var primaries = notePostings.Where(p =>
+                    p.PostingRole == "PRIMARY").ToArray();
+                return primaries.Length == 0
+                    || notePostings.Length != primaries.Length * 2
+                    || primaries.Any(primary =>
+                    primary.SealedAtUtc is null
+                    || notePostings.Count(reversal =>
+                        reversal.PostingRole == "REVERSAL"
+                        && reversal.ReversesPostingId == primary.Id
+                        && reversal.SealedAtUtc is not null) != 1);
+            });
+        }
+        var postedNotes = dependentNotes.Where(x =>
+            x.Status == PoInvoiceStatuses.Posted).ToArray();
+        if (postedNotes.Length > 1
+            || postedNotes.Length == 1 && (!allowPostedCreditNote
+                || postedNotes[0].RollbackDate is not null)
+            || hasUnsafeDraft
             || await db.PoCdns.AsNoTracking().AnyAsync(x =>
                 x.CompanyCode == invoice.CompanyCode
                 && x.BranchCode == invoice.BranchCode
@@ -138,16 +196,94 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             return PurchaseReceiptSettlementResult.Fail(
                 "A purchase credit/debit note depends on this invoice; PI remap needs CN generation replay.");
 
+        PoInvoice? postedNote = null;
+        long noteOwnerId = 0;
+        PurchaseReceiptSettlementResult? noteRemoval = null;
+        if (postedNotes.Length == 1)
+        {
+            if (replayPlanHash is null || replayPlanHash.Length != 64
+                || replayPlanHash.Any(c => !Uri.IsHexDigit(c))
+                || replayBranchWatermark is not long watermark
+                || watermark < 0 || root.PostingSequence <= 0
+                || watermark != root.PostingSequence - 1)
+                return PurchaseReceiptSettlementResult.Fail(
+                    "Posted credit-note replay needs the validated GR plan hash and branch watermark.");
+            postedNote = await db.PoInvoices.AsNoTracking()
+                .Include(x => x.Details)
+                .SingleAsync(x => x.CompanyCode == invoice.CompanyCode
+                    && x.BranchCode == invoice.BranchCode
+                    && x.DocNo == postedNotes[0].DocNo,
+                    cancellationToken);
+            var creditLine = postedNote.Details.SingleOrDefault();
+            var invoiceLine = invoice.Details.SingleOrDefault();
+            if (postedNote.DeletedAtUtc is not null
+                || creditLine is null || invoiceLine is null
+                || creditLine.ReferencedInvoiceLineNo != invoiceLine.Line
+                || creditLine.ICode != invoiceLine.ICode
+                || creditLine.PoNo != invoiceLine.PoNo
+                || creditLine.PoRelNo != invoiceLine.PoRelNo
+                || creditLine.PoLineNo != invoiceLine.PoLineNo
+                || creditLine.StdQty <= 0m
+                || creditLine.StdQty > invoiceLine.StdQty
+                || creditLine.Qty != creditLine.StdQty
+                || postedNote.DocDate.Year != root.EffectiveAt.Year
+                || postedNote.DocDate.Month != root.EffectiveAt.Month)
+                return PurchaseReceiptSettlementResult.Fail(
+                    "Posted credit note is outside the bounded single-line GR replay.");
+            var owners = await db.StockPostings.AsNoTracking()
+                .Where(x => x.CompanyCode == invoice.CompanyCode
+                    && x.BranchCode == invoice.BranchCode
+                    && x.SourceModule == "PROCUREMENT"
+                    && x.SourceDocumentType == "PO_INVOICE_CN"
+                    && x.SourceDocumentNo == postedNote.DocNo
+                    && x.DocumentRevision == postedNote.CostingRevision
+                    && x.PostingRole == "PRIMARY"
+                    && x.SealedAtUtc != null)
+                .Select(x => x.Id).ToArrayAsync(cancellationToken);
+            if (owners.Length != 1)
+                return PurchaseReceiptSettlementResult.Fail(
+                    "Posted credit note has no exact sealed costing owner.");
+            noteOwnerId = owners[0];
+            var priorEffects = await db.StockReplayEffects.AsNoTracking()
+                .CountAsync(x => x.CompanyCode == invoice.CompanyCode
+                    && x.BranchCode == invoice.BranchCode
+                    && x.BusinessOwnerPostingId == noteOwnerId
+                    && x.EffectKind == StockReplayEffectTypes
+                        .PurchaseCreditNoteCostReplacement,
+                    cancellationToken);
+            if (priorEffects >= MaxCreditNoteReplayGenerations * 2)
+                return PurchaseReceiptSettlementResult.Fail(
+                    "The posted credit note reached its supported GR replay generation limit.");
+            noteRemoval = await RollbackCreditNoteAsync(db, postedNote,
+                noteOwnerId, root.Id, replayRoot.UserId, cancellationToken);
+            if (!noteRemoval.Succeeded
+                || noteRemoval.Settlements.Count != 1
+                || noteRemoval.Adjustments.Count != 1
+                || !HasNoInventoryValueChangeForCreditNote(noteRemoval.Adjustments,
+                    replayRoot.CostMethod))
+                throw new StockLedgerException(new(
+                    StockLedgerErrorCodes.ReversalDependency,
+                    noteRemoval.Error ?? "The posted credit note cannot be reversed without changing inventory value."));
+            await adjustmentWriter.AppendInTransactionAsync(replayRoot,
+                noteRemoval.Adjustments, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
         var reverse = await ReverseInvoiceAsync(db, invoice, root.Id,
             replayRoot.UserId, cancellationToken);
         if (!reverse.Succeeded)
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.ReversalDependency,
                 reverse.Error ?? "The active invoice generation cannot be reversed."));
-        if (!HasZeroVariance(reverse.Adjustments))
+        if (!MatchesPostedInvoiceAmounts(reverse.Adjustments, invoice))
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.ReversalDependency,
-                "The active invoice has purchase price variance and needs full cost replay."));
+                "The posted invoice amount or quantity changed; its purchase price variance cannot be remapped."));
+        if (!HasNoInventoryValueChange(reverse.Adjustments,
+                replayRoot.CostMethod))
+            throw new StockLedgerException(new(
+                StockLedgerErrorCodes.ReversalDependency,
+                "The active invoice has inventory-affecting purchase price variance and needs full cost replay."));
 
         await adjustmentWriter.AppendInTransactionAsync(replayRoot,
             reverse.Adjustments, cancellationToken);
@@ -160,23 +296,142 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.ReversalDependency,
                 replacement.Error ?? "The invoice could not be reallocated after GR replay."));
-        if (!HasZeroVariance(replacement.Adjustments))
+        if (!HasNoInventoryValueChange(replacement.Adjustments,
+                replayRoot.CostMethod))
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.ReversalDependency,
-                "The revised invoice allocation has purchase price variance and needs full cost replay."));
+                "The revised invoice allocation has inventory-affecting purchase price variance and needs full cost replay."));
         await adjustmentWriter.AppendInTransactionAsync(replayRoot,
             replacement.Adjustments, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
+        if (postedNote is not null)
+        {
+            var noteReplacement = await ReverseCreditNoteAsync(db, postedNote,
+                invoice, replayRoot.CostMethod, root.Id,
+                replayRoot.UserId, cancellationToken);
+            if (!noteReplacement.Succeeded
+                || noteReplacement.Settlements.Count != 1
+                || noteReplacement.Adjustments.Count != 1
+                || !HasNoInventoryValueChangeForCreditNote(noteReplacement.Adjustments,
+                    replayRoot.CostMethod)
+                || noteReplacement.Settlements[0].SettledBaseQty
+                    != noteRemoval!.Settlements[0].SettledBaseQty
+                || noteReplacement.Adjustments[0].ActualBaseAmount
+                    != noteRemoval.Adjustments[0].ActualBaseAmount
+                || noteReplacement.Adjustments[0].ReferenceBaseAmount
+                    != noteRemoval.Adjustments[0].ReferenceBaseAmount
+                || noteReplacement.Adjustments[0].TotalAdjustmentAmount
+                    != -noteRemoval.Adjustments[0].TotalAdjustmentAmount)
+                throw new StockLedgerException(new(
+                    StockLedgerErrorCodes.ReversalDependency,
+                    noteReplacement.Error ?? "The posted credit note could not be reallocated without changing its costing."));
+            var replacementAdjustments = await adjustmentWriter
+                .AppendInTransactionAsync(replayRoot,
+                    noteReplacement.Adjustments, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            var oldSettlementId = noteRemoval.Settlements[0]
+                .ReversesSettlementId;
+            var oldAdjustmentId = noteRemoval.Adjustments[0]
+                .ReversesAdjustmentId;
+            if (oldSettlementId is null || oldAdjustmentId is null
+                || replacementAdjustments.Count != 1)
+                throw new StockLedgerException(new(
+                    StockLedgerErrorCodes.ReversalDependency,
+                    "Credit-note replacement has no exact prior generation."));
+            var now = DateTime.UtcNow;
+            var run = new StockReplayRun
+            {
+                CompanyCode = replayRoot.CompanyCode,
+                BranchCode = replayRoot.BranchCode,
+                RootStockPostingId = root.Id,
+                RootRequestId = root.RequestId,
+                RootDocumentType = root.SourceDocumentType,
+                RootDocumentId = root.SourceDocumentId,
+                EarliestEffectiveAt = root.EffectiveAt,
+                LatestEffectiveAt = root.EffectiveAt,
+                PlanWatermark = replayBranchWatermark!.Value,
+                PlanHash = replayPlanHash!,
+                AffectedHistoryCount = 0,
+                AffectedItemCount = 1,
+                AffectedProductionMovementCount = 0,
+                CreatedAtUtc = now,
+                CreatedBy = replayRoot.UserId
+            };
+            db.StockReplayRuns.Add(run);
+            await db.SaveChangesAsync(cancellationToken);
+            db.StockReplayEffects.AddRange(
+                new StockReplayEffect
+                {
+                    CompanyCode = replayRoot.CompanyCode,
+                    BranchCode = replayRoot.BranchCode,
+                    ReplayRunId = run.Id,
+                    RootStockPostingId = root.Id,
+                    BusinessOwnerPostingId = noteOwnerId,
+                    EffectKind = StockReplayEffectTypes.PurchaseCreditNoteCostReplacement,
+                    AffectedEntityType = StockReplayEffectTypes.PurchaseReceiptSettlement,
+                    AffectedEntityId = noteReplacement.Settlements[0].Id,
+                    OriginalEntityId = oldSettlementId,
+                    CreatedAtUtc = now
+                },
+                new StockReplayEffect
+                {
+                    CompanyCode = replayRoot.CompanyCode,
+                    BranchCode = replayRoot.BranchCode,
+                    ReplayRunId = run.Id,
+                    RootStockPostingId = root.Id,
+                    BusinessOwnerPostingId = noteOwnerId,
+                    EffectKind = StockReplayEffectTypes.PurchaseCreditNoteCostReplacement,
+                    AffectedEntityType = StockReplayEffectTypes.PurchaseCostAdjustment,
+                    AffectedEntityId = replacementAdjustments[0].Id,
+                    OriginalEntityId = oldAdjustmentId,
+                    CreatedAtUtc = now
+                });
+            await db.SaveChangesAsync(cancellationToken);
+        }
         return replacement;
     }
 
-    private static bool HasZeroVariance(
-        IReadOnlyList<PurchaseCostAdjustmentRequest> adjustments) =>
+    private static bool HasNoInventoryValueChange(
+        IReadOnlyList<PurchaseCostAdjustmentRequest> adjustments,
+        string costMethod) =>
         adjustments.Count > 0 && adjustments.All(x =>
-            x.TotalAdjustmentAmount == 0m
+            x.CostMethod == costMethod
             && x.InventoryAdjustmentAmount == 0m
-            && x.ConsumedVarianceAmount == 0m
-            && x.ValueAdjustment is null);
+            && x.ValueAdjustment is null
+            && (costMethod == StockCostMethods.Standard
+                ? x.ConsumedVarianceAmount == x.TotalAdjustmentAmount
+                    && x.TotalAdjustmentAmount == StockLedgerPrecision.Money(
+                        (x.ReversesAdjustmentId is null ? 1m : -1m)
+                        * (x.ActualBaseAmount - x.ReferenceBaseAmount))
+                : x.TotalAdjustmentAmount == 0m
+                    && x.ConsumedVarianceAmount == 0m));
+
+    // CN removal reverses a CN reversal; its Standard PPV sign is the opposite
+    // of PI removal even though both requests have ReversesAdjustmentId set.
+    private static bool HasNoInventoryValueChangeForCreditNote(
+        IReadOnlyList<PurchaseCostAdjustmentRequest> adjustments,
+        string costMethod) =>
+        adjustments.Count == 1 && adjustments.All(x =>
+            x.CostMethod == costMethod
+            && x.InventoryAdjustmentAmount == 0m
+            && x.ValueAdjustment is null
+            && x.ConsumedVarianceAmount == x.TotalAdjustmentAmount
+            && (costMethod == StockCostMethods.Standard
+                || x.TotalAdjustmentAmount == 0m));
+
+    private static bool MatchesPostedInvoiceAmounts(
+        IReadOnlyList<PurchaseCostAdjustmentRequest> adjustments,
+        PoInvoice invoice)
+    {
+        if (invoice.Details.Count != 1 || adjustments.Count == 0)
+            return false;
+        var line = invoice.Details.Single();
+        return adjustments.All(x => x.SourceDocumentLine == line.Line)
+            && StockLedgerPrecision.Quantity(adjustments.Sum(x => x.BaseQty))
+                == StockLedgerPrecision.Quantity(line.StdQty)
+            && StockLedgerPrecision.Money(adjustments.Sum(x => x.ActualBaseAmount))
+                == StockLedgerPrecision.Money(line.NetAmount * invoice.CurrRate);
+    }
 
     public async Task<PurchaseReceiptSettlementResult> AllocateInvoiceAsync(
         AppDbContext db,
@@ -460,22 +715,61 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         if (stockPostingId <= 0)
             return PurchaseReceiptSettlementResult.Fail("A sealed stock posting identity is required for purchase reversal.");
 
-        var roots = await db.PurchaseReceiptCostSettlements.AsNoTracking()
+        var settlementRows = await db.PurchaseReceiptCostSettlements.AsNoTracking()
             .Where(x => x.CompanyCode == invoice.CompanyCode
                         && x.BranchCode == invoice.BranchCode
                         && x.PiDocNo == invoice.DocNo
-                        && x.PiCostingRevision == invoice.CostingRevision
-                        && x.ReversesSettlementId == null)
+                        && x.PiCostingRevision == invoice.CostingRevision)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
-        var rootIds = roots.Select(x => x.Id).ToArray();
-        var reversedSettlementIds = await db.PurchaseReceiptCostSettlements.AsNoTracking()
-            .Where(x => x.ReversesSettlementId != null
-                && rootIds.Contains(x.ReversesSettlementId.Value))
-            .Select(x => x.ReversesSettlementId!.Value)
-            .ToArrayAsync(cancellationToken);
-        var reversedSettlements = reversedSettlementIds.ToHashSet();
-        var originals = roots.Where(x => !reversedSettlements.Contains(x.Id)).ToArray();
+        var settlementIds = settlementRows.Select(x => x.Id).ToHashSet();
+        var settlementChildrenRows = settlementRows
+            .Where(x => x.ReversesSettlementId is not null).ToArray();
+        if (settlementChildrenRows.Any(x =>
+                !settlementIds.Contains(x.ReversesSettlementId!.Value))
+            || settlementChildrenRows.GroupBy(x => x.ReversesSettlementId)
+                .Any(x => x.Count() != 1))
+            return PurchaseReceiptSettlementResult.Fail(
+                $"Invoice {invoice.DocNo} has invalid settlement reversal lineage.");
+        var settlementChildren = settlementChildrenRows.ToDictionary(
+            x => x.ReversesSettlementId!.Value);
+        var settlementLeafByRoot = new Dictionary<long, long>();
+        var activeSettlements = new List<PurchaseReceiptCostSettlement>();
+        foreach (var root in settlementRows.Where(x =>
+                     x.ReversesSettlementId is null))
+        {
+            var chain = BuildSettlementChain(root, settlementChildren);
+            var quantity = SignedSettlementAmount(chain, x => x.SettledBaseQty);
+            if (quantity == 0m)
+            {
+                if (chain.Count % 2 != 0
+                    || SignedSettlementMoney(chain,
+                        x => x.AllocatedActualBaseAmount) != 0m
+                    || SignedSettlementMoney(chain,
+                        x => x.ReceiptCommercialBaseAmount) != 0m
+                    || SignedSettlementMoney(chain,
+                        x => x.ReceiptValuationBaseAmount) != 0m)
+                    return PurchaseReceiptSettlementResult.Fail(
+                        $"Invoice {invoice.DocNo} has an unbalanced reversed settlement generation.");
+                continue;
+            }
+            if (quantity != root.SettledBaseQty
+                || SignedSettlementMoney(chain,
+                    x => x.AllocatedActualBaseAmount)
+                    != root.AllocatedActualBaseAmount
+                || SignedSettlementMoney(chain,
+                    x => x.ReceiptCommercialBaseAmount)
+                    != root.ReceiptCommercialBaseAmount
+                || SignedSettlementMoney(chain,
+                    x => x.ReceiptValuationBaseAmount)
+                    != root.ReceiptValuationBaseAmount
+                || chain.Count % 2 == 0)
+                return PurchaseReceiptSettlementResult.Fail(
+                    $"Invoice {invoice.DocNo} has a partially reversed settlement generation.");
+            activeSettlements.Add(root);
+            settlementLeafByRoot.Add(root.Id, chain[^1].Id);
+        }
+        var originals = activeSettlements.ToArray();
         if (originals.Length == 0)
             return PurchaseReceiptSettlementResult.Fail(
                 $"No active receipt settlements were found for invoice {invoice.DocNo} revision {invoice.CostingRevision}.");
@@ -489,15 +783,80 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                         && x.ReversesAdjustmentId == null)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
-        var adjustmentRootIds = adjustmentRoots.Select(x => x.Id).ToArray();
-        var reversedAdjustmentIds = await db.PurchaseCostAdjustments.AsNoTracking()
-            .Where(x => x.ReversesAdjustmentId != null
-                && adjustmentRootIds.Contains(x.ReversesAdjustmentId.Value))
-            .Select(x => x.ReversesAdjustmentId!.Value)
-            .ToArrayAsync(cancellationToken);
-        var reversedAdjustments = reversedAdjustmentIds.ToHashSet();
-        var adjustments = adjustmentRoots
-            .Where(x => !reversedAdjustments.Contains(x.Id)).ToArray();
+        var allAdjustments = adjustmentRoots.ToList();
+        var pendingAdjustmentIds = adjustmentRoots.Select(x => x.Id).ToArray();
+        while (pendingAdjustmentIds.Length > 0)
+        {
+            var children = await db.PurchaseCostAdjustments.AsNoTracking()
+                .Where(x => x.ReversesAdjustmentId != null
+                    && pendingAdjustmentIds.Contains(x.ReversesAdjustmentId.Value))
+                .OrderBy(x => x.Id).ToListAsync(cancellationToken);
+            if (children.Count == 0)
+                break;
+            var fresh = children.Where(x => allAdjustments.All(a => a.Id != x.Id))
+                .ToArray();
+            if (fresh.Length != children.Count)
+                return PurchaseReceiptSettlementResult.Fail(
+                    $"Invoice {invoice.DocNo} has cyclic adjustment reversal lineage.");
+            allAdjustments.AddRange(fresh);
+            pendingAdjustmentIds = fresh.Select(x => x.Id).ToArray();
+        }
+        var adjustmentChildrenRows = allAdjustments
+            .Where(x => x.ReversesAdjustmentId is not null).ToArray();
+        if (adjustmentChildrenRows.GroupBy(x => x.ReversesAdjustmentId)
+            .Any(x => x.Count() != 1))
+            return PurchaseReceiptSettlementResult.Fail(
+                $"Invoice {invoice.DocNo} has invalid adjustment reversal lineage.");
+        var adjustmentChildren = adjustmentChildrenRows.ToDictionary(
+            x => x.ReversesAdjustmentId!.Value);
+        var adjustmentLeafByRoot = new Dictionary<long, long>();
+        var activeAdjustments = new List<PurchaseCostAdjustment>();
+        foreach (var root in adjustmentRoots)
+        {
+            var chain = BuildAdjustmentChain(root, adjustmentChildren);
+            var quantity = SignedAdjustmentQuantity(chain);
+            if (quantity == 0m)
+            {
+                if (chain.Count % 2 != 0
+                    || SignedAdjustmentMoney(chain,
+                        x => x.ActualBaseAmount) != 0m
+                    || StockLedgerPrecision.Money(chain.Sum(x =>
+                        x.TotalAdjustmentAmount)) != 0m
+                    || StockLedgerPrecision.Money(chain.Sum(x =>
+                        x.InventoryAdjustmentAmount)) != 0m
+                    || StockLedgerPrecision.Money(chain.Sum(x =>
+                        x.ConsumedVarianceAmount)) != 0m)
+                    return PurchaseReceiptSettlementResult.Fail(
+                        $"Invoice {invoice.DocNo} has an unbalanced reversed purchase-cost adjustment generation.");
+                continue;
+            }
+            if (chain.Count > 1 && root.InventoryAdjustmentAmount != 0m)
+                return PurchaseReceiptSettlementResult.Fail(
+                    $"Invoice {invoice.DocNo} has a credit-note value adjustment that needs full inventory replay before PI rollback.");
+            if (quantity != root.BaseQty
+                || SignedAdjustmentMoney(chain,
+                    x => x.ActualBaseAmount) != root.ActualBaseAmount
+                || SignedAdjustmentMoney(chain,
+                    x => x.ReferenceBaseAmount) != root.ReferenceBaseAmount
+                || chain.Any(x => x.CommercialReferenceAmount.HasValue
+                    != root.CommercialReferenceAmount.HasValue)
+                || root.CommercialReferenceAmount is decimal commercialReference
+                    && SignedAdjustmentMoney(chain,
+                        x => x.CommercialReferenceAmount ?? 0m)
+                        != commercialReference
+                || StockLedgerPrecision.Money(chain.Sum(x =>
+                    x.TotalAdjustmentAmount)) != root.TotalAdjustmentAmount
+                || StockLedgerPrecision.Money(chain.Sum(x =>
+                    x.InventoryAdjustmentAmount)) != root.InventoryAdjustmentAmount
+                || StockLedgerPrecision.Money(chain.Sum(x =>
+                    x.ConsumedVarianceAmount)) != root.ConsumedVarianceAmount
+                || chain.Count % 2 == 0)
+                return PurchaseReceiptSettlementResult.Fail(
+                    $"Invoice {invoice.DocNo} has a partially restored purchase-cost adjustment generation.");
+            activeAdjustments.Add(root);
+            adjustmentLeafByRoot.Add(root.Id, chain[^1].Id);
+        }
+        var adjustments = activeAdjustments.ToArray();
 
         // A receipt remap can leave older roots in the audit trail. Before
         // reversing the active PI generation, require its cost adjustments to
@@ -557,7 +916,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                 CommercialVarianceAmount = original.CommercialVarianceAmount,
                 ValuationVarianceAmount = original.ValuationVarianceAmount,
                 StockPostingId = stockPostingId,
-                ReversesSettlementId = original.Id,
+                ReversesSettlementId = settlementLeafByRoot[original.Id],
                 CreatedAtUtc = DateTime.UtcNow,
                 CreatedBy = Truncate(userId, 100)
             };
@@ -616,7 +975,7 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                 PoNo: original.PoNo,
                 PoRelNo: original.PoRelNo,
                 PoLineNo: original.PoLineNo,
-                ReversesAdjustmentId: original.Id));
+                ReversesAdjustmentId: adjustmentLeafByRoot[original.Id]));
         }
 
         return PurchaseReceiptSettlementResult.Success(reversalSettlements, reversalRequests);
@@ -980,23 +1339,92 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         if (primaryStockPostingId <= 0 || rollbackStockPostingId <= 0)
             return PurchaseReceiptSettlementResult.Fail("Both credit-note posting identities are required for rollback.");
 
-        var settlementRows = await db.PurchaseReceiptCostSettlements.AsNoTracking()
+        var originalSettlementRows = await db.PurchaseReceiptCostSettlements.AsNoTracking()
             .Where(x => x.CompanyCode == creditNote.CompanyCode
                         && x.BranchCode == creditNote.BranchCode
                         && x.StockPostingId == primaryStockPostingId
                         && x.ReversesSettlementId != null)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
-        var adjustmentRows = await db.PurchaseCostAdjustments.AsNoTracking()
+        var originalAdjustmentRows = await db.PurchaseCostAdjustments.AsNoTracking()
             .Where(x => x.CompanyCode == creditNote.CompanyCode
                         && x.BranchCode == creditNote.BranchCode
                         && x.StockPostingId == primaryStockPostingId
                         && x.ReversesAdjustmentId != null)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
+        var activeGeneration = await ResolveCreditNoteCostGenerationAsync(
+            db, creditNote, primaryStockPostingId, originalSettlementRows,
+            originalAdjustmentRows, cancellationToken);
+        if (activeGeneration.Error is not null)
+            return PurchaseReceiptSettlementResult.Fail(activeGeneration.Error);
+        var settlementRows = activeGeneration.Settlements;
+        var adjustmentRows = activeGeneration.Adjustments;
         if (settlementRows.Count == 0 && adjustmentRows.Count == 0)
             return PurchaseReceiptSettlementResult.Fail(
                 $"No credit-note costing rows were found for posting {primaryStockPostingId}.");
+        if (settlementRows.Count != adjustmentRows.Count
+            || settlementRows.Any(x => x.PiDocNo != creditNote.InvNo)
+            || adjustmentRows.Any(x =>
+                x.SourceDocumentType != "PO_INVOICE_CN"
+                || x.SourceDocumentNo != creditNote.DocNo
+                || x.SourceCostingRevision != creditNote.CostingRevision))
+            return PurchaseReceiptSettlementResult.Fail(
+                $"Credit note {creditNote.DocNo} has incomplete or mismatched costing evidence.");
+        var creditLines = creditNote.Details.ToArray();
+        if (creditLines.Length == 0
+            || creditLines.Any(line => line.ReferencedInvoiceLineNo is null
+                || StockLedgerPrecision.Quantity(line.StdQty) <= 0m)
+            || creditLines.GroupBy(line => line.Line).Any(group => group.Count() != 1)
+            || creditLines.GroupBy(line => line.ReferencedInvoiceLineNo)
+                .Any(group => group.Count() != 1)
+            || creditLines.Any(line =>
+                StockLedgerPrecision.Quantity(settlementRows
+                    .Where(row => row.PiLineNo == line.ReferencedInvoiceLineNo
+                        && row.ItemCode == line.ICode
+                        && row.PoNo == line.PoNo
+                        && row.PoRelNo == line.PoRelNo
+                        && row.PoLineNo == line.PoLineNo)
+                    .Sum(row => row.SettledBaseQty))
+                    != StockLedgerPrecision.Quantity(line.StdQty)))
+            return PurchaseReceiptSettlementResult.Fail(
+                $"Credit note {creditNote.DocNo} has incomplete or mismatched costing evidence.");
+        var unmatchedAdjustments = adjustmentRows.ToList();
+        foreach (var settlement in settlementRows)
+        {
+            var matchingLine = creditLines.FirstOrDefault(line =>
+                line.ReferencedInvoiceLineNo == settlement.PiLineNo
+                && line.ICode == settlement.ItemCode
+                && line.PoNo == settlement.PoNo
+                && line.PoRelNo == settlement.PoRelNo
+                && line.PoLineNo == settlement.PoLineNo);
+            var adjustment = matchingLine is null ? null : unmatchedAdjustments
+                .FirstOrDefault(row => row.SourceDocumentLine == matchingLine.Line
+                    && row.ItemCode == settlement.ItemCode
+                    && row.PoNo == settlement.PoNo
+                    && row.PoRelNo == settlement.PoRelNo
+                    && row.PoLineNo == settlement.PoLineNo
+                    && StockLedgerPrecision.Quantity(row.BaseQty)
+                        == StockLedgerPrecision.Quantity(settlement.SettledBaseQty)
+                    && StockLedgerPrecision.Money(row.ActualBaseAmount)
+                        == StockLedgerPrecision.Money(settlement.AllocatedActualBaseAmount));
+            if (adjustment is null)
+                return PurchaseReceiptSettlementResult.Fail(
+                    $"Credit note {creditNote.DocNo} has incomplete or mismatched costing evidence.");
+            unmatchedAdjustments.Remove(adjustment);
+        }
+        var settlementIds = settlementRows.Select(x => x.Id).ToArray();
+        var adjustmentIds = adjustmentRows.Select(x => x.Id).ToArray();
+        if (await db.PurchaseReceiptCostSettlements.AsNoTracking().AnyAsync(x =>
+                x.ReversesSettlementId != null
+                && settlementIds.Contains(x.ReversesSettlementId.Value),
+                cancellationToken)
+            || await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(x =>
+                x.ReversesAdjustmentId != null
+                && adjustmentIds.Contains(x.ReversesAdjustmentId.Value),
+                cancellationToken))
+            return PurchaseReceiptSettlementResult.Fail(
+                $"Credit note {creditNote.DocNo} original costing generation was already reversed; active-generation lineage is required.");
 
         var factIds = adjustmentRows.Where(x => x.InventoryAdjustmentFactId is not null)
             .Select(x => x.InventoryAdjustmentFactId!.Value)
@@ -1128,6 +1556,200 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         return PurchaseReceiptSettlementResult.Success(reversalSettlements, reversalRequests);
     }
 
+    private static async Task<(
+        List<PurchaseReceiptCostSettlement> Settlements,
+        List<PurchaseCostAdjustment> Adjustments,
+        string? Error)> ResolveCreditNoteCostGenerationAsync(
+        AppDbContext db, PoInvoice creditNote, long primaryStockPostingId,
+        List<PurchaseReceiptCostSettlement> originalSettlements,
+        List<PurchaseCostAdjustment> originalAdjustments,
+        CancellationToken cancellationToken)
+    {
+        var effects = await db.StockReplayEffects.AsNoTracking()
+            .Where(x => x.CompanyCode == creditNote.CompanyCode
+                && x.BranchCode == creditNote.BranchCode
+                && x.BusinessOwnerPostingId == primaryStockPostingId
+                && x.EffectKind == StockReplayEffectTypes.PurchaseCreditNoteCostReplacement)
+            .ToArrayAsync(cancellationToken);
+        if (effects.Length == 0)
+            return (originalSettlements, originalAdjustments, null);
+
+        const string invalid = "Credit-note active costing generation has incomplete or mismatched replay ownership.";
+        if (originalSettlements.Count != 1 || originalAdjustments.Count != 1
+            || effects.Length < 2
+            || effects.Length > MaxCreditNoteReplayGenerations * 2
+            || effects.Length % 2 != 0)
+            return (originalSettlements, originalAdjustments, invalid);
+        var settlementEffects = effects.Where(x =>
+            x.AffectedEntityType == StockReplayEffectTypes.PurchaseReceiptSettlement)
+            .ToArray();
+        var adjustmentEffects = effects.Where(x =>
+            x.AffectedEntityType == StockReplayEffectTypes.PurchaseCostAdjustment)
+            .ToArray();
+        if (settlementEffects.Length != effects.Length / 2
+            || adjustmentEffects.Length != effects.Length / 2
+            || settlementEffects.Any(x => x.OriginalEntityId is null)
+            || adjustmentEffects.Any(x => x.OriginalEntityId is null)
+            || settlementEffects.GroupBy(x => x.OriginalEntityId).Any(x => x.Count() != 1)
+            || adjustmentEffects.GroupBy(x => x.OriginalEntityId).Any(x => x.Count() != 1))
+            return (originalSettlements, originalAdjustments, invalid);
+        var settlementByPrior = settlementEffects.ToDictionary(x =>
+            x.OriginalEntityId!.Value);
+        var adjustmentByPrior = adjustmentEffects.ToDictionary(x =>
+            x.OriginalEntityId!.Value);
+        var currentSettlement = originalSettlements[0];
+        var currentAdjustment = originalAdjustments[0];
+        var usedEffectIds = new HashSet<long>();
+        for (var generation = 0;
+             generation <= MaxCreditNoteReplayGenerations; generation++)
+        {
+            var hasSettlement = settlementByPrior.TryGetValue(
+                currentSettlement.Id, out var settlementEffect);
+            var hasAdjustment = adjustmentByPrior.TryGetValue(
+                currentAdjustment.Id, out var adjustmentEffect);
+            if (!hasSettlement && !hasAdjustment)
+            {
+                if (usedEffectIds.Count != effects.Length
+                    || await db.PurchaseReceiptCostSettlements.AsNoTracking()
+                        .AnyAsync(x => x.ReversesSettlementId
+                            == currentSettlement.Id, cancellationToken)
+                    || await db.PurchaseCostAdjustments.AsNoTracking()
+                        .AnyAsync(x => x.ReversesAdjustmentId
+                            == currentAdjustment.Id, cancellationToken))
+                    return (originalSettlements, originalAdjustments, invalid);
+                return ([currentSettlement], [currentAdjustment], null);
+            }
+            if (!hasSettlement || !hasAdjustment
+                || !usedEffectIds.Add(settlementEffect!.Id)
+                || !usedEffectIds.Add(adjustmentEffect!.Id)
+                || settlementEffect.ReplayRunId != adjustmentEffect.ReplayRunId
+                || settlementEffect.RootStockPostingId
+                    != adjustmentEffect.RootStockPostingId
+                || settlementEffect.AffectedEntityId <= 0
+                || adjustmentEffect.AffectedEntityId <= 0)
+                return (originalSettlements, originalAdjustments, invalid);
+
+        var rootId = settlementEffect.RootStockPostingId;
+        var owner = await db.StockPostings.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == primaryStockPostingId
+                && x.CompanyCode == creditNote.CompanyCode
+                && x.BranchCode == creditNote.BranchCode,
+                cancellationToken);
+        var root = await db.StockPostings.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == rootId
+                && x.CompanyCode == creditNote.CompanyCode
+                && x.BranchCode == creditNote.BranchCode,
+                cancellationToken);
+        var run = await db.StockReplayRuns.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == settlementEffect.ReplayRunId
+                && x.CompanyCode == creditNote.CompanyCode
+                && x.BranchCode == creditNote.BranchCode,
+                cancellationToken);
+        if (owner is null || owner.SourceModule != "PROCUREMENT"
+            || owner.SourceDocumentType != "PO_INVOICE_CN"
+            || owner.SourceDocumentNo != creditNote.DocNo
+            || owner.DocumentRevision != creditNote.CostingRevision
+            || owner.PostingRole != "PRIMARY" || owner.SealedAtUtc is null
+            || root is null || root.SourceModule != "INVENTORY"
+            || root.SourceDocumentType != IvTrxTypes.GoodsReceive
+            || root.PostingRole is not ("PRIMARY" or "REVERSAL")
+            || root.SealedAtUtc is null
+            || run is null || run.RootStockPostingId != rootId
+            || run.RootRequestId != root.RequestId
+            || run.RootDocumentType != root.SourceDocumentType
+            || run.RootDocumentId != root.SourceDocumentId
+            || string.IsNullOrWhiteSpace(run.PlanHash))
+            return (originalSettlements, originalAdjustments, invalid);
+
+        var replacementSettlement = await db.PurchaseReceiptCostSettlements
+            .AsNoTracking().SingleOrDefaultAsync(x =>
+                x.Id == settlementEffect.AffectedEntityId
+                && x.CompanyCode == creditNote.CompanyCode
+                && x.BranchCode == creditNote.BranchCode,
+                cancellationToken);
+        var replacementAdjustment = await db.PurchaseCostAdjustments
+            .AsNoTracking().SingleOrDefaultAsync(x =>
+                x.Id == adjustmentEffect.AffectedEntityId
+                && x.CompanyCode == creditNote.CompanyCode
+                && x.BranchCode == creditNote.BranchCode,
+                cancellationToken);
+        var replacementPiSettlement = replacementSettlement?.ReversesSettlementId
+            is long piSettlementId
+            ? await db.PurchaseReceiptCostSettlements.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == piSettlementId,
+                    cancellationToken)
+            : null;
+        var replacementPiAdjustment = replacementAdjustment?.ReversesAdjustmentId
+            is long piAdjustmentId
+            ? await db.PurchaseCostAdjustments.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == piAdjustmentId,
+                    cancellationToken)
+            : null;
+        var oldSettlement = currentSettlement;
+        var oldAdjustment = currentAdjustment;
+        if (replacementSettlement is null || replacementAdjustment is null
+            || replacementPiSettlement is null || replacementPiAdjustment is null
+            || replacementSettlement.StockPostingId != rootId
+            || replacementAdjustment.StockPostingId != rootId
+            || replacementPiSettlement.StockPostingId != rootId
+            || replacementPiAdjustment.StockPostingId != rootId
+            || replacementSettlement.PiDocNo != creditNote.InvNo
+            || replacementSettlement.PiCostingRevision != oldSettlement.PiCostingRevision
+            || replacementSettlement.PiLineNo != oldSettlement.PiLineNo
+            || replacementSettlement.ItemCode != oldSettlement.ItemCode
+            || replacementSettlement.PoNo != oldSettlement.PoNo
+            || replacementSettlement.PoRelNo != oldSettlement.PoRelNo
+            || replacementSettlement.PoLineNo != oldSettlement.PoLineNo
+            || replacementPiSettlement.ReversesSettlementId is not null
+            || replacementPiSettlement.PiDocNo != replacementSettlement.PiDocNo
+            || replacementPiSettlement.PiCostingRevision
+                != replacementSettlement.PiCostingRevision
+            || replacementPiSettlement.PiLineNo != replacementSettlement.PiLineNo
+            || replacementPiSettlement.ItemCode != replacementSettlement.ItemCode
+            || replacementPiSettlement.PoNo != replacementSettlement.PoNo
+            || replacementPiSettlement.PoRelNo != replacementSettlement.PoRelNo
+            || replacementPiSettlement.PoLineNo != replacementSettlement.PoLineNo
+            || replacementAdjustment.SourceDocumentType != "PO_INVOICE_CN"
+            || replacementAdjustment.SourceDocumentNo != creditNote.DocNo
+            || replacementAdjustment.SourceCostingRevision != creditNote.CostingRevision
+            || replacementPiAdjustment.ReversesAdjustmentId is not null
+            || replacementPiAdjustment.SourceDocumentType != "PO_INVOICE"
+            || replacementPiAdjustment.SourceDocumentNo != creditNote.InvNo
+            || replacementPiAdjustment.ItemCode != replacementAdjustment.ItemCode
+            || replacementPiAdjustment.PoNo != replacementAdjustment.PoNo
+            || replacementPiAdjustment.PoRelNo != replacementAdjustment.PoRelNo
+            || replacementPiAdjustment.PoLineNo != replacementAdjustment.PoLineNo
+            || replacementSettlement.SettledBaseQty != oldSettlement.SettledBaseQty
+            || replacementAdjustment.BaseQty != oldAdjustment.BaseQty
+            || replacementAdjustment.ActualBaseAmount != oldAdjustment.ActualBaseAmount
+            || oldAdjustment.InventoryAdjustmentAmount != 0m
+            || replacementAdjustment.InventoryAdjustmentAmount != 0m)
+            return (originalSettlements, originalAdjustments, invalid);
+
+        var settlementChildren = await db.PurchaseReceiptCostSettlements
+            .AsNoTracking().Where(x => x.ReversesSettlementId == oldSettlement.Id)
+            .ToArrayAsync(cancellationToken);
+        var adjustmentChildren = await db.PurchaseCostAdjustments
+            .AsNoTracking().Where(x => x.ReversesAdjustmentId == oldAdjustment.Id)
+            .ToArrayAsync(cancellationToken);
+        if (settlementChildren.Length != 1
+            || settlementChildren[0].ReversesSettlementId != oldSettlement.Id
+            || settlementChildren[0].StockPostingId != rootId
+            || settlementChildren[0].SettledBaseQty != oldSettlement.SettledBaseQty
+            || adjustmentChildren.Length != 1
+            || adjustmentChildren[0].ReversesAdjustmentId != oldAdjustment.Id
+            || adjustmentChildren[0].StockPostingId != rootId
+            || adjustmentChildren[0].BaseQty != oldAdjustment.BaseQty
+            || adjustmentChildren[0].ActualBaseAmount != oldAdjustment.ActualBaseAmount
+            || adjustmentChildren[0].TotalAdjustmentAmount
+                != -oldAdjustment.TotalAdjustmentAmount)
+            return (originalSettlements, originalAdjustments, invalid);
+            currentSettlement = replacementSettlement;
+            currentAdjustment = replacementAdjustment;
+        }
+        return (originalSettlements, originalAdjustments, invalid);
+    }
+
     private static IReadOnlyList<PurchaseReceiptCostSettlement> BuildSettlementChain(
         PurchaseReceiptCostSettlement root,
         IReadOnlyDictionary<long, PurchaseReceiptCostSettlement> children)
@@ -1172,6 +1794,35 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         for (var index = 0; index < chain.Count; index++)
             total += (index % 2 == 0 ? 1m : -1m) * selector(chain[index]);
         return StockLedgerPrecision.Quantity(total);
+    }
+
+    private static decimal SignedAdjustmentQuantity(
+        IReadOnlyList<PurchaseCostAdjustment> chain)
+    {
+        decimal total = 0m;
+        for (var index = 0; index < chain.Count; index++)
+            total += (index % 2 == 0 ? 1m : -1m) * chain[index].BaseQty;
+        return StockLedgerPrecision.Quantity(total);
+    }
+
+    private static decimal SignedSettlementMoney(
+        IReadOnlyList<PurchaseReceiptCostSettlement> chain,
+        Func<PurchaseReceiptCostSettlement, decimal> selector)
+    {
+        decimal total = 0m;
+        for (var index = 0; index < chain.Count; index++)
+            total += (index % 2 == 0 ? 1m : -1m) * selector(chain[index]);
+        return StockLedgerPrecision.Money(total);
+    }
+
+    private static decimal SignedAdjustmentMoney(
+        IReadOnlyList<PurchaseCostAdjustment> chain,
+        Func<PurchaseCostAdjustment, decimal> selector)
+    {
+        decimal total = 0m;
+        for (var index = 0; index < chain.Count; index++)
+            total += (index % 2 == 0 ? 1m : -1m) * selector(chain[index]);
+        return StockLedgerPrecision.Money(total);
     }
 
     private static PriorSettlementTotals CalculateActiveTotals(

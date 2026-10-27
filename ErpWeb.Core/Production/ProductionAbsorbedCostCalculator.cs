@@ -47,7 +47,8 @@ public sealed class ProductionAbsorbedCostCalculator
     public ProductionAbsorbedCostResult Calculate(
         ProductionWorkOrderOperation operation,
         decimal goodQty,
-        string? outputUom)
+        string? outputUom,
+        string? frozenRouteOutputUom = null)
     {
         ArgumentNullException.ThrowIfNull(operation);
 
@@ -56,7 +57,8 @@ public sealed class ProductionAbsorbedCostCalculator
             return ProductionAbsorbedCostResult.Success([]);
         }
 
-        var expectedUom = Normalize(operation.PlannedOutputUom);
+        var expectedUom = Normalize(operation.PlannedOutputUom)
+            ?? Normalize(frozenRouteOutputUom);
         var actualUom = Normalize(outputUom);
         if (expectedUom is null || actualUom is null || !string.Equals(expectedUom, actualUom, StringComparison.Ordinal))
         {

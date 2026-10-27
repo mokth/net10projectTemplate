@@ -3415,8 +3415,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
         }
 
-        var rollbackChronology = await ValidateRollbackChronologyAsync(
-            db, companyCode, branchCode, batchNo, history, cancellationToken);
+        // The replay selector has already checked the sealed active physical tail
+        // under this branch lock. Legacy chronology also counts reversed audit.
+        var rollbackChronology = _openPeriodBackdatedReplayEnabled
+            && v2Transfers.Length == history.Count
+            ? null
+            : await ValidateRollbackChronologyAsync(
+                db, companyCode, branchCode, batchNo, history,
+                cancellationToken);
         if (rollbackChronology is not null)
         {
             await tx.RollbackAsync(cancellationToken);

@@ -179,7 +179,12 @@ public sealed partial class IvInventoryPostingService
                 && (f.EffectiveAt > owner.EffectiveAt
                     || f.EffectiveAt == owner.EffectiveAt
                         && f.StockPosting!.PostingSequence > owner.PostingSequence)
-                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
+                && !(f.InventoryHistoryId == original.Id
+                    && f.EffectiveAt == owner.EffectiveAt)
+                && f.StockPosting!.SealedAtUtc != null
+                && f.ReversesValuationFactId == null
+                && !read.StockValuationFacts.Any(r =>
+                    r.ReversesValuationFactId == f.Id), cancellationToken);
         if (!hasLaterValue)
             return null;
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, companyCode,
@@ -409,10 +414,15 @@ public sealed partial class IvInventoryPostingService
                         && f.StockPosting!.PostingSequence
                             > candidateKey.OriginalPostingSequence)
                 && f.StockPosting!.SealedAtUtc != null)
-            .Select(f => f.InventoryHistoryId)
             .ToArrayAsync(cancellationToken);
-        if (laterFacts.Any(id => id is not int historyId
-                || !ids.Contains(historyId)))
+        var neutralizedFactIds = await ReadExactFifoReversalPairsAsync(
+            db, companyCode, branchCode, itemCode, laterFacts,
+            cancellationToken);
+        if (neutralizedFactIds is null)
+            return "Backdated FIFO transfer has an invalid later valuation reversal pair.";
+        if (laterFacts.Any(f => !neutralizedFactIds.Contains(f.Id)
+                && (f.InventoryHistoryId is not int historyId
+                    || !ids.Contains(historyId))))
             return "Backdated FIFO transfer has a later valuation outside its verified transfer tail.";
         return null;
     }

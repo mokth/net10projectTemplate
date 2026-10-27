@@ -135,6 +135,7 @@ internal static class StockReplayInventoryRouteSelector
         foreach (var group in originals.Where(h => !string.IsNullOrWhiteSpace(h.ICode))
                      .GroupBy(h => h.ICode!))
         {
+            var ownHistoryIds = group.Select(h => h.Id).ToArray();
             var firstOwner = group.Select(h => owners[h.StockPostingId!.Value])
                 .OrderBy(p => p.EffectiveAt).ThenBy(p => p.PostingSequence)
                 .First();
@@ -147,7 +148,13 @@ internal static class StockReplayInventoryRouteSelector
                 && f.StockPosting!.SealedAtUtc != null
                 && f.ReversesValuationFactId == null
                 && !db.StockValuationFacts.Any(r =>
-                    r.ReversesValuationFactId == f.Id), cancellationToken))
+                    r.ReversesValuationFactId == f.Id)
+                // Cost restatements are written by a later root, but inherit
+                // the original history's business key.
+                && !(f.InventoryHistoryId.HasValue
+                    && ownHistoryIds.Contains(f.InventoryHistoryId.Value)
+                    && f.EffectiveAt == firstOwner.EffectiveAt),
+                cancellationToken))
                 return new(false, true, false);
         }
         return new(false, false, false);

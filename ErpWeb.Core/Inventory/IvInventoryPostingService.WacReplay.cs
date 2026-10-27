@@ -138,10 +138,10 @@ public sealed partial class IvInventoryPostingService
         var authority = await StockReplayGrReceiptAuthorityReader.ReadAsync(
             read, companyCode, branchCode, batchNo, pileId.Value,
             cancellationToken, allowInvoiced: true);
-        var invoiceCheck = await LoadWacGrReplayInvoiceAsync(read, companyCode,
+        var invoiceCheck = await LoadSingleGrReplayInvoiceAsync(read, companyCode,
             branchCode, details[0].PoNo, details[0].PoRelNo,
             details[0].PoLineNo, itemCode, batch.TrxDtTime,
-            cancellationToken);
+            cancellationToken, allowPostedCreditNote: true);
         if (invoiceCheck.Error is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo, invoiceCheck.Error);
         var replayInvoice = invoiceCheck.Invoice;
@@ -180,8 +180,7 @@ public sealed partial class IvInventoryPostingService
         var lockedPoLine = locked.Orders!.GetValueOrDefault(lockedPoNo ?? string.Empty)?
             .Details.SingleOrDefault(d =>
                 d.Line == snapshot.Details[0].PoLineNo);
-        if (lockedPoLine is null
-            || (lockedPoLine.InvoicedQty != 0m) != (replayInvoice is not null))
+        if (lockedPoLine is null)
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo,
@@ -194,10 +193,11 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, poError);
         }
-        var currentInvoice = await LoadWacGrReplayInvoiceAsync(write,
+        var currentInvoice = await LoadSingleGrReplayInvoiceAsync(write,
             companyCode, branchCode, snapshot.Details![0].PoNo,
             snapshot.Details[0].PoRelNo, snapshot.Details[0].PoLineNo,
-            itemCode, batch.TrxDtTime, cancellationToken);
+            itemCode, batch.TrxDtTime, cancellationToken,
+            allowPostedCreditNote: true);
         if (currentInvoice.Error is not null
             || currentInvoice.Invoice?.DocNo != replayInvoice?.DocNo
             || currentInvoice.Invoice?.CostingRevision
@@ -206,6 +206,13 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 currentInvoice.Error ?? "The posted invoice changed after GR replay planning.");
+        }
+        if (await CheckSimpleWacTailAsync(write,
+                financial.Tail.LaterEvents, batch.TrxDtTime,
+                cancellationToken, replayInvoice) is string changedTail)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, changedTail);
         }
         var ledger = await BeginStandaloneLedgerAsync(write, companyCode,
             branchCode, batchNo, reversal: false, cancellationToken);
@@ -229,8 +236,11 @@ public sealed partial class IvInventoryPostingService
         if (replayInvoice is not null)
         {
             var remap = await new PurchaseReceiptCostSettlementService()
-                .RemapZeroVarianceInvoiceAsync(ledger.Context, replayInvoice,
-                    _purchaseCostAdjustments!, cancellationToken);
+                .RemapValueNeutralInvoiceAsync(ledger.Context, replayInvoice,
+                    _purchaseCostAdjustments!, cancellationToken,
+                    allowPostedCreditNote: true,
+                    replayPlanHash: financial.PlanHash,
+                    replayBranchWatermark: physical.BranchWatermark);
             if (!remap.Succeeded)
                 throw new StockLedgerException(new(
                     StockLedgerErrorCodes.ReversalDependency,
@@ -405,6 +415,8 @@ public sealed partial class IvInventoryPostingService
                 && (f.EffectiveAt > owner.EffectiveAt
                     || f.EffectiveAt == owner.EffectiveAt
                         && f.StockPosting!.PostingSequence > owner.PostingSequence)
+                && !(f.InventoryHistoryId == original.Id
+                    && f.EffectiveAt == owner.EffectiveAt)
                 && f.StockPosting!.SealedAtUtc != null, cancellationToken);
         if (!hasLaterValue)
             return null;
@@ -431,10 +443,11 @@ public sealed partial class IvInventoryPostingService
         PoInvoice? replayInvoice = null;
         if (trxType == IvTrxTypes.GoodsReceive)
         {
-            var invoiceCheck = await LoadWacGrReplayInvoiceAsync(read,
+            var invoiceCheck = await LoadSingleGrReplayInvoiceAsync(read,
                 companyCode, branchCode, original.PoNo,
                 original.PoRelNo, original.PoLineNo, original.ICode,
-                original.TrxDtTime, cancellationToken);
+                original.TrxDtTime, cancellationToken,
+                allowPostedCreditNote: true);
             if (invoiceCheck.Error is not null)
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     invoiceCheck.Error);
@@ -581,6 +594,9 @@ public sealed partial class IvInventoryPostingService
                 .AnyAsync(s => s.CompanyCode == companyCode
                     && s.BranchCode == branchCode
                     && s.ReceiptInventoryHistoryId == original.Id
+                    && s.ReversesSettlementId == null
+                    && !write.PurchaseReceiptCostSettlements.Any(r =>
+                        r.ReversesSettlementId == s.Id)
                     && (replayInvoice == null
                         || s.PiDocNo != replayInvoice.DocNo
                         || s.PiCostingRevision != replayInvoice.CostingRevision),
@@ -598,11 +614,11 @@ public sealed partial class IvInventoryPostingService
                 return IvInventoryPostingBatchResult.Fail(batchNo, grLocked.Error);
             }
             grOrders = grLocked.Orders!;
-            var currentInvoice = await LoadWacGrReplayInvoiceAsync(write,
+            var currentInvoice = await LoadSingleGrReplayInvoiceAsync(write,
                 companyCode, branchCode, details[0].PoNo,
                 details[0].PoRelNo, details[0].PoLineNo,
                 original.ICode, original.TrxDtTime,
-                cancellationToken);
+                cancellationToken, allowPostedCreditNote: true);
             if (currentInvoice.Error is not null
                 || currentInvoice.Invoice?.DocNo != replayInvoice?.DocNo
                 || currentInvoice.Invoice?.CostingRevision
@@ -611,6 +627,13 @@ public sealed partial class IvInventoryPostingService
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     currentInvoice.Error ?? "The posted invoice changed after GR rollback planning.");
+            }
+            if (await CheckSimpleWacTailAsync(write,
+                    financial.Tail.LaterEvents, original.TrxDtTime,
+                    cancellationToken, replayInvoice) is string changedTail)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, changedTail);
             }
             var grError = await ValidateGoodsReceiptPoQtyAsync(write,
                 grOrders, details, -1, trxType, cancellationToken);
@@ -705,9 +728,12 @@ public sealed partial class IvInventoryPostingService
         if (replayInvoice is not null)
         {
             var remap = await new PurchaseReceiptCostSettlementService()
-                .RemapZeroVarianceInvoiceAsync(context, replayInvoice,
+                .RemapValueNeutralInvoiceAsync(context, replayInvoice,
                     _purchaseCostAdjustments!, cancellationToken,
-                    removingReceipt: true);
+                    removingReceipt: true,
+                    allowPostedCreditNote: true,
+                    replayPlanHash: financial.PlanHash,
+                    replayBranchWatermark: physical.BranchWatermark);
             if (!remap.Succeeded)
                 throw new StockLedgerException(new(
                     StockLedgerErrorCodes.ReversalDependency,
@@ -721,11 +747,12 @@ public sealed partial class IvInventoryPostingService
     }
 
     private async Task<(PoInvoice? Invoice, string? Error)>
-        LoadWacGrReplayInvoiceAsync(
+        LoadSingleGrReplayInvoiceAsync(
         ErpWeb.Model.Data.AppDbContext db,
         string companyCode, string branchCode, string? poNo,
         short? poRelNo, short? poLineNo, string itemCode,
-        DateTime grDate, CancellationToken cancellationToken)
+        DateTime grDate, CancellationToken cancellationToken,
+        bool allowPostedCreditNote = false)
     {
         if (string.IsNullOrWhiteSpace(poNo)
             || poRelNo is null || poLineNo is null)
@@ -738,7 +765,25 @@ public sealed partial class IvInventoryPostingService
         if (line is null || line.ICode != itemCode)
             return (null, "The historical GR purchase-order line changed.");
         if (line.InvoicedQty == 0m)
-            return (null, null);
+        {
+            // A posted PI may be fully credited, leaving zero net PO quantity
+            // while its PI/CN settlement lineage still depends on later GRs.
+            var hasPostedInvoice = await db.PoInvoices.AsNoTracking()
+                .AnyAsync(x =>
+                    x.CompanyCode == companyCode
+                    && x.BranchCode == branchCode
+                    && x.Type == PoInvoiceTypes.Invoice
+                    && x.Status == PoInvoiceStatuses.Posted
+                    && x.Details.Any(d => d.PoNo == poNo
+                        && d.PoRelNo == poRelNo
+                        && d.PoLineNo == poLineNo),
+                    cancellationToken);
+            if (hasPostedInvoice && !allowPostedCreditNote)
+                return (null,
+                    "Historical GR has a posted PI on this PO line even though net invoice quantity is zero; its CN settlement needs replay.");
+            if (!hasPostedInvoice)
+                return (null, null);
+        }
         if (_purchaseCostAdjustments is null
             || line.InvoicedQty < 0m
             || !string.Equals(line.PurchaseUom, line.StdUom,
@@ -749,6 +794,8 @@ public sealed partial class IvInventoryPostingService
             .Include(x => x.Details)
             .Where(x => x.CompanyCode == companyCode
                 && x.BranchCode == branchCode
+                && x.Type == PoInvoiceTypes.Invoice
+                && x.DeletedAtUtc == null
                 && x.Details.Any(d => d.PoNo == poNo
                     && d.PoRelNo == poRelNo
                     && d.PoLineNo == poLineNo)
@@ -763,6 +810,36 @@ public sealed partial class IvInventoryPostingService
             || invoices[0].Details.Count != 1)
             return (null, "Historical GR PI replay needs one posted single-line invoice in the same open month.");
         var invoice = invoices[0];
+        var postedNotes = await db.PoInvoices.AsNoTracking()
+            .Include(x => x.Details)
+            .Where(x => x.CompanyCode == companyCode
+                && x.BranchCode == branchCode
+                && x.Type == PoInvoiceTypes.CreditNote
+                && x.InvNo == invoice.DocNo
+                && x.Status == PoInvoiceStatuses.Posted)
+            .ToArrayAsync(cancellationToken);
+        if (postedNotes.Length > 0 && !allowPostedCreditNote)
+            return (null,
+                "A posted purchase credit/debit note depends on this invoice; historical GR needs CN generation replay.");
+        if (postedNotes.Length > 1
+            || postedNotes.Length == 1 && (postedNotes[0].DeletedAtUtc is not null
+                || postedNotes[0].DocDate.Year != grDate.Year
+                || postedNotes[0].DocDate.Month != grDate.Month
+                || postedNotes[0].Details.Count != 1
+                || postedNotes[0].Details.Single().ReferencedInvoiceLineNo
+                    != invoice.Details.Single().Line
+                || postedNotes[0].Details.Single().ICode != itemCode
+                || postedNotes[0].Details.Single().PoNo != poNo
+                || postedNotes[0].Details.Single().PoRelNo != poRelNo
+                || postedNotes[0].Details.Single().PoLineNo != poLineNo
+                || postedNotes[0].Details.Single().Qty <= 0m
+                || postedNotes[0].Details.Single().Qty
+                    != postedNotes[0].Details.Single().StdQty
+                || await IvPeriodCloseGuard.EnsureOpenAsync(db,
+                    companyCode, branchCode, postedNotes[0].DocDate,
+                    cancellationToken) is not null))
+            return (null,
+                "Historical GR credit/debit note replay needs one exact unarchived posted single-line note in the same open month.");
         var detail = invoice.Details.Single();
         if (detail.ICode != itemCode
             || detail.PoNo != poNo
@@ -770,7 +847,9 @@ public sealed partial class IvInventoryPostingService
             || detail.PoLineNo != poLineNo
             || detail.Qty <= 0m
             || detail.Qty != detail.StdQty
-            || detail.Qty != line.InvoicedQty
+            || detail.Qty - (postedNotes.Length == 1
+                ? postedNotes[0].Details.Single().Qty : 0m)
+                != line.InvoicedQty
             || await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode,
                 branchCode, invoice.DocDate, cancellationToken) is not null)
             return (null, "Historical GR PI replay needs an exact posted open-period invoice quantity and purchase-order line.");
@@ -819,7 +898,10 @@ public sealed partial class IvInventoryPostingService
                 .Where(s => s.CompanyCode == histories[0].CompanyCode
                     && s.BranchCode == histories[0].BranchCode
                     && s.ReceiptInventoryHistoryId != null
-                    && laterGrIds.Contains(s.ReceiptInventoryHistoryId.Value))
+                    && laterGrIds.Contains(s.ReceiptInventoryHistoryId.Value)
+                    && s.ReversesSettlementId == null
+                    && !db.PurchaseReceiptCostSettlements.Any(r =>
+                        r.ReversesSettlementId == s.Id))
                 .Select(s => new { s.ReceiptInventoryHistoryId,
                     s.PiDocNo, s.PiCostingRevision })
                 .ToArrayAsync(cancellationToken);

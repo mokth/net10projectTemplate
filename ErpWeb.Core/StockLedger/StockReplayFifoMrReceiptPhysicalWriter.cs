@@ -15,7 +15,7 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
         StockPostingContext context, StockReplayFifoInsertionPlan plan,
         StockReplayFifoWritePermit permit, int batchNo,
         CancellationToken cancellationToken = default,
-        bool goodsReceipt = false)
+        bool goodsReceipt = false, bool allowInvoiced = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -23,7 +23,7 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
         context.EnsureUnsealed();
         var prepared = await StockReplayFifoInsertionPlanner
             .PrepareMiscReceiptWithinRootAsync(context, plan, batchNo,
-                cancellationToken, goodsReceipt);
+                cancellationToken, goodsReceipt, allowInvoiced);
         if (permit.Operation != "INSERT"
             || permit.RootPostingId != prepared.RootPostingId
             || permit.RootPostingSequence != prepared.RootPostingSequence
@@ -46,7 +46,8 @@ public static class StockReplayFifoMrReceiptPhysicalWriter
         var authority = goodsReceipt
             ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
                 context.Db, context.CompanyCode, context.BranchCode,
-                batchNo, physical.BalLocId, cancellationToken)
+                batchNo, physical.BalLocId, cancellationToken,
+                allowInvoiced)
             : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
                 context.Db, context.CompanyCode, context.BranchCode,
                 batchNo, physical.BalLocId, cancellationToken,

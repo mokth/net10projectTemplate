@@ -62,6 +62,8 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
         await SeedBalanceAsync(11, unitPrice: -1m, evidence: "X");
         await SeedBalanceAsync(12, unitPrice: 2m, evidence: "  ");
         await SeedBalanceAsync(13, unitPrice: 0m, evidence: ProductionLedgerTestFixture.TestPriceEvidence);
+        await SeedMovingAverageStateAsync("RM001", onHandQty: 40m,
+            inventoryValue: 0m, averageUnitCost: 0m);
         var sut = CreateIssueService();
 
         Assert.Contains("Cost evidence is missing", await PostIssueAsync(sut, materialId, 10));
@@ -83,6 +85,8 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
         await SeedActiveEpochAsync();
         var materialId = await SeedIssueGraphAsync();
         await SeedBalanceAsync(20, unitPrice: 5m, evidence: ProductionLedgerTestFixture.TestPriceEvidence);
+        await SeedMovingAverageStateAsync("RM001", onHandQty: 10m,
+            inventoryValue: 50m, averageUnitCost: 5m);
         var sut = CreateIssueService();
         var draft = await sut.CreateAsync(await IssueRequestAsync(materialId, 20));
         Assert.True(draft.Succeeded, draft.Message);
@@ -139,6 +143,8 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
         await SeedActiveEpochAsync();
         var materialId = await SeedIssueGraphAsync();
         await SeedBalanceAsync(21, unitPrice: 5m, evidence: ProductionLedgerTestFixture.TestPriceEvidence, qty: 20m);
+        await SeedMovingAverageStateAsync("RM001", onHandQty: 20m,
+            inventoryValue: 100m, averageUnitCost: 5m);
         var sut = CreateIssueService();
         var draft = await sut.CreateAsync(await IssueRequestAsync(materialId, 21));
         var first = await sut.PostAsync([draft.Data!.BatchNo]);
@@ -168,6 +174,8 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
         await SeedActiveEpochAsync();
         var materialId = await SeedIssueGraphAsync();
         await SeedBalanceAsync(22, unitPrice: 5m, evidence: ProductionLedgerTestFixture.TestPriceEvidence);
+        await SeedMovingAverageStateAsync("RM001", onHandQty: 10m,
+            inventoryValue: 50m, averageUnitCost: 5m);
         var sut = CreateIssueService();
         var draft = await sut.CreateAsync(await IssueRequestAsync(materialId, 22));
         ProductionMaterialIssueService.TestHookAfterIssueValuation = () =>
@@ -246,7 +254,8 @@ public sealed class ProductionCostGateTests : IAsyncDisposable
         Assert.Contains("reconciliation", await PostDailyAsync(sut, mismatch.OperationId));
 
         var none = await SeedDailyGraphAsync("WO-NONE", withMaterial: false);
-        Assert.Contains("no verified consumed cost basis", await PostDailyAsync(sut, none.OperationId));
+        Assert.Contains("no verified consumed or absorbed conversion cost basis",
+            await PostDailyAsync(sut, none.OperationId));
     }
 
     [Fact]

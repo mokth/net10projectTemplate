@@ -38,7 +38,7 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     {
         var graph = await SeedTwoProcessAsync("WO-H1");
         await SetPlannedOutputAsync(graph.Process1Id, 30m);
-        var sut = CreateService();
+        var sut = CreateService(new DateTime(2026, 10, 2));
 
         var p1 = await CreateAndPostAsync(sut, graph.Process1Id, 30m, date: new DateTime(2026, 10, 2, 8, 0, 0));
         Assert.True(p1.Succeeded, p1.Message);
@@ -199,14 +199,18 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
 
         var blankProducer = await SeedTwoProcessAsync("WO-H5B", blankProducerUom: true);
         await SetPlannedOutputAsync(blankProducer.Process1Id, 5m);
-        Assert.True((await CreateAndPostAsync(CreateService(), blankProducer.Process1Id, 5m)).Succeeded);
+        var blankProducerPost = await CreateAndPostAsync(CreateService(),
+            blankProducer.Process1Id, 5m);
+        Assert.True(blankProducerPost.Succeeded, blankProducerPost.Message);
 
         var blankConsumer = await SeedTwoProcessAsync("WO-H5C", blankConsumerUom: true);
         await SetPlannedOutputAsync(blankConsumer.Process1Id, 5m);
         var blankSut = CreateService();
         Assert.True((await CreateAndPostAsync(blankSut, blankConsumer.Process1Id, 5m)).Succeeded);
-        Assert.True((await CreateAndPostAsync(blankSut, blankConsumer.Process2Id, 5m,
-            date: new DateTime(2026, 10, 1, 9, 0, 0))).Succeeded);
+        var blankConsumerPost = await CreateAndPostAsync(blankSut,
+            blankConsumer.Process2Id, 5m,
+            date: new DateTime(2026, 10, 1, 9, 0, 0));
+        Assert.True(blankConsumerPost.Succeeded, blankConsumerPost.Message);
 
         var mismatchProducer = await SeedTwoProcessAsync("WO-H5D", producerUom: "KG");
         await SetPlannedOutputAsync(mismatchProducer.Process1Id, 5m);
@@ -234,9 +238,10 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
     {
         var graph = await SeedTwoProcessAsync("WO-H6");
         await SetPlannedOutputAsync(graph.Process1Id, 35m);
-        var sut = CreateService();
-        Assert.True((await CreateAndPostAsync(sut, graph.Process1Id, 20m,
-            date: new DateTime(2026, 10, 2, 12, 0, 0))).Succeeded);
+        var sut = CreateService(new DateTime(2026, 10, 4));
+        var firstPost = await CreateAndPostAsync(sut, graph.Process1Id, 20m,
+            date: new DateTime(2026, 10, 2, 12, 0, 0));
+        Assert.True(firstPost.Succeeded, firstPost.Message);
 
         var earlyConsume = await CreateAndPostAsync(sut, graph.Process2Id, 5m,
             date: new DateTime(2026, 10, 1, 8, 0, 0));
@@ -475,8 +480,9 @@ public sealed class ProductionProcessHandoffServiceTests : IAsyncDisposable
         return await sut.PostAsync(created.Data.Uid);
     }
 
-    private ProductionOutputService CreateService() =>
-        ProductionLedgerTestFixture.CreateProductionOutputService(_factory);
+    private ProductionOutputService CreateService(DateTime? businessDate = null) =>
+        ProductionLedgerTestFixture.CreateProductionOutputService(
+            _factory, businessDate: businessDate);
 
     private static Mock<IAccessRightService> AllowDailyAccessOnly()
     {

@@ -258,6 +258,126 @@ public sealed class IvStockReturnLedgerAuthorityTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Corrected_sale_with_unrestated_return_blocks_another_return_and_gp()
+    {
+        await SeedInvoiceAsync(InvoiceNo, posted: true);
+        await SeedOutboundSaleAsync(InvoiceNo, "1", OriginalQty,
+            OriginalUnitCost);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db,
+                "A100", 100m, 2m);
+        }
+
+        var service = InventoryLedgerTestFixture.CreateStockReturn(
+            _factory, FixedToday);
+        var first = await service.SaveNewAsync(Request(4m));
+        Assert.True(first.Succeeded, first.ErrorMessage);
+        var firstPost = await service.PostAsync([first.BatchNo]);
+        Assert.True(firstPost.Succeeded, firstPost.ErrorMessage);
+
+        var inquiry = new SalesGrossProfitInquiryService(_factory,
+            InventoryTenantTestHelper.CreateTenantContext());
+        var before = await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery
+        {
+            InvoiceNo = InvoiceNo, IncludeUnresolvedRows = true
+        });
+        Assert.True(Assert.Single(before.Rows).CogsResolved);
+        Assert.Equal(21m, before.Rows[0].Cogs);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var old = await db.StockValuationFacts.AsNoTracking()
+                .SingleAsync(f => f.MovementCode == "SALE_OUT");
+            db.StockValuationFacts.Add(new StockValuationFact
+            {
+                CompanyCode = old.CompanyCode,
+                BranchCode = old.BranchCode,
+                LedgerEpochId = old.LedgerEpochId,
+                StockPostingId = old.StockPostingId,
+                PostingLineNo = 2,
+                SourceLineId = old.SourceLineId,
+                SourceDocumentType = old.SourceDocumentType,
+                SourceDocumentId = old.SourceDocumentId,
+                SourceDocumentNo = old.SourceDocumentNo,
+                SourceDocumentLine = old.SourceDocumentLine,
+                EffectiveAt = old.EffectiveAt,
+                BusinessDate = old.BusinessDate,
+                PeriodKey = old.PeriodKey,
+                ItemCode = old.ItemCode,
+                BaseUom = old.BaseUom,
+                MovementCode = "SALE_OUT_REVERSAL",
+                Direction = 1,
+                BaseQty = old.BaseQty,
+                CostMethod = old.CostMethod,
+                UnitCost = old.UnitCost,
+                CostAmount = old.CostAmount,
+                BaseCostAmount = old.BaseCostAmount,
+                ValuationSource = StockValuationSources.OriginalReversal,
+                ValuationStatus = StockValuationStatuses.Reversed,
+                OriginalValuationFactId = old.Id,
+                ReversesValuationFactId = old.Id,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = "TEST"
+            });
+            db.StockValuationFacts.Add(new StockValuationFact
+            {
+                CompanyCode = old.CompanyCode,
+                BranchCode = old.BranchCode,
+                LedgerEpochId = old.LedgerEpochId,
+                StockPostingId = old.StockPostingId,
+                PostingLineNo = 3,
+                SourceLineId = old.SourceLineId,
+                SourceDocumentType = old.SourceDocumentType,
+                SourceDocumentId = old.SourceDocumentId,
+                SourceDocumentNo = old.SourceDocumentNo,
+                SourceDocumentLine = old.SourceDocumentLine,
+                EffectiveAt = old.EffectiveAt,
+                BusinessDate = old.BusinessDate,
+                PeriodKey = old.PeriodKey,
+                ItemCode = old.ItemCode,
+                BaseUom = old.BaseUom,
+                MovementCode = old.MovementCode,
+                Direction = -1,
+                BaseQty = old.BaseQty,
+                CostMethod = old.CostMethod,
+                UnitCost = 4.5m,
+                CostAmount = 45m,
+                BaseCostAmount = 45m,
+                ValuationSource = old.ValuationSource,
+                ValuationStatus = StockValuationStatuses.Valued,
+                OriginalValuationFactId = old.Id,
+                ValuationVersion = old.ValuationVersion + 1,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = "TEST"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var after = await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery
+        {
+            InvoiceNo = InvoiceNo, IncludeUnresolvedRows = true
+        });
+        var row = Assert.Single(after.Rows);
+        Assert.False(row.CogsResolved);
+        Assert.Null(row.Cogs);
+        Assert.Null(row.GrossProfit);
+
+        var second = await service.SaveNewAsync(Request(1m));
+        Assert.True(second.Succeeded, second.ErrorMessage);
+        var refused = await service.PostAsync([second.BatchNo]);
+        Assert.False(refused.Succeeded);
+        Assert.Contains("original sale-cost allocation",
+            refused.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Single(await verify.SalesReturnCostAllocations
+            .Where(a => a.ReversesAllocationId == null).ToArrayAsync());
+        Assert.Equal(IvBatchStatuses.New, (await verify.IvTrxBatches
+            .SingleAsync(b => b.BatchNo == second.BatchNo)).BatchStatus);
+    }
+
+    [Fact]
     public async Task Over_return_is_rejected_before_posting_when_the_invoice_quantity_is_exhausted()
     {
         await SeedInvoiceAsync(InvoiceNo, posted: true, stdQty: 4m);

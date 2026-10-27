@@ -1,8 +1,10 @@
 using System.Collections.Immutable;
+using ErpWeb.Core.Purchase;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
@@ -60,16 +62,28 @@ public sealed partial class IvInventoryPostingService
         var authority = goodsReceipt
             ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
                 read, companyCode, branchCode, batchNo, pileId.Value,
-                cancellationToken)
+                cancellationToken, allowInvoiced: true)
             : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
                 read, companyCode, branchCode, batchNo, pileId.Value,
                 cancellationToken, allowExistingLot: true);
+        PoInvoice? replayInvoice = null;
+        if (goodsReceipt)
+        {
+            var invoiceCheck = await LoadSingleGrReplayInvoiceAsync(read,
+                companyCode, branchCode, detail.PoNo, detail.PoRelNo,
+                detail.PoLineNo, authority.ItemCode, batch.TrxDtTime,
+                cancellationToken, allowPostedCreditNote: true);
+            if (invoiceCheck.Error is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    invoiceCheck.Error);
+            replayInvoice = invoiceCheck.Invoice;
+        }
         var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, authority.BalLocId,
             authority.EffectiveAt, authority.Quantity, cancellationToken);
         var key = physical.Candidate.Key;
         var prepared = await ReadStandardMrInsertionAsync(read,
-            authority, physical, cancellationToken);
+            authority, physical, cancellationToken, replayInvoice);
         if (prepared.Error is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
         var fingerprint = StandardMrFingerprint(physical, authority,
@@ -98,6 +112,17 @@ public sealed partial class IvInventoryPostingService
                 grOrders, grDetails, +1, receiptType, cancellationToken);
             if (poError is not null)
                 return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+            var currentInvoice = await LoadSingleGrReplayInvoiceAsync(write,
+                companyCode, branchCode, grDetails[0].PoNo,
+                grDetails[0].PoRelNo, grDetails[0].PoLineNo,
+                authority.ItemCode, batch.TrxDtTime, cancellationToken,
+                allowPostedCreditNote: true);
+            if (currentInvoice.Error is not null
+                || currentInvoice.Invoice?.DocNo != replayInvoice?.DocNo
+                || currentInvoice.Invoice?.CostingRevision
+                    != replayInvoice?.CostingRevision)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    currentInvoice.Error ?? "The posted invoice changed after Standard GR planning.");
         }
         var ledger = await BeginStandaloneLedgerAsync(write, companyCode,
             branchCode, batchNo, reversal: false, cancellationToken);
@@ -135,13 +160,13 @@ public sealed partial class IvInventoryPostingService
         var currentAuthority = goodsReceipt
             ? await StockReplayGrReceiptAuthorityReader.ReadAsync(
                 write, companyCode, branchCode, batchNo, physical.BalLocId,
-                cancellationToken)
+                cancellationToken, allowInvoiced: replayInvoice is not null)
             : await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
                 write, companyCode, branchCode, batchNo,
                 physical.BalLocId, cancellationToken,
                 allowExistingLot: true);
         var current = await ReadStandardMrInsertionAsync(write,
-            currentAuthority, physical, cancellationToken);
+            currentAuthority, physical, cancellationToken, replayInvoice);
         if (currentAuthority != authority || current.Error is not null
             || current.Tail is null || current.Projection is null
             || current.Revision is null
@@ -165,6 +190,18 @@ public sealed partial class IvInventoryPostingService
             await ApplyGoodsReceiptPoQtyAsync(write, grOrders!, grDetails!,
                 +1, authority.EffectiveAt, userId ?? root.UserId,
                 cancellationToken);
+        if (replayInvoice is not null)
+        {
+            var remap = await new PurchaseReceiptCostSettlementService()
+                .RemapValueNeutralInvoiceAsync(root, replayInvoice,
+                    _purchaseCostAdjustments!, cancellationToken,
+                    allowPostedCreditNote: true,
+                    replayPlanHash: fingerprint,
+                    replayBranchWatermark: physical.BranchWatermark);
+            if (!remap.Succeeded)
+                throw InvalidStandardTransfer(remap.Error
+                    ?? "The posted invoice could not be remapped.");
+        }
         await _coordinator!.CompleteReplayInTransactionAsync(root,
             [historyId], cancellationToken);
         postingScope.MarkCompleted();
@@ -179,7 +216,8 @@ public sealed partial class IvInventoryPostingService
         StockReplayStandardResult? Projection, EffectiveStandardCost? Revision,
         string? Error)> ReadStandardMrInsertionAsync(
         AppDbContext db, StockReplayFifoMrReceiptAuthority authority,
-        StockReplayPhysicalPlan physical, CancellationToken cancellationToken)
+        StockReplayPhysicalPlan physical, CancellationToken cancellationToken,
+        PoInvoice? replayInvoice = null)
     {
         var key = physical.Candidate.Key;
         if (physical.BalLocId != authority.BalLocId
@@ -223,7 +261,7 @@ public sealed partial class IvInventoryPostingService
             || await CheckStandardTransferDescendantsAsync(db,
                 physical.CompanyCode, physical.BranchCode,
                 authority.ItemCode, key, tail.LaterEvents,
-                cancellationToken) is not null)
+                cancellationToken, replayInvoice) is not null)
             return (null, null, null,
                 "The Standard MR changes a later cost or has an unsupported descendant.");
         return (tail, projection, revision, null);
@@ -239,6 +277,34 @@ public sealed partial class IvInventoryPostingService
         {
             physical.PlanHash, authority,
             revision.Id, revision.TotalStandardCost,
+            tail.CurrentQuantity, tail.CurrentValue, tail.LaterEvents,
+            Piles = tail.CurrentQuantityByPile.OrderBy(p => p.Key)
+                .Select(p => new { p.Key, p.Value,
+                    Events = tail.PhysicalByPile[p.Key] }).ToArray(),
+            projection
+        }, new { }).RequestFingerprint;
+
+    private static string StandardMrRemovalFingerprint(
+        StockReplayPhysicalRemovalPlan physical,
+        IvTrxHistory history,
+        StockReplayStandardFinancialTail tail,
+        EffectiveStandardCost revision,
+        IReadOnlyList<StockValuationFact> active,
+        StockReplayStandardEvent original,
+        StockReplayStandardRemovalResult projection) =>
+        StockPostingFingerprint.Create(new
+        {
+            physical.PlanHash,
+            HistoryId = history.Id,
+            RevisionId = revision.Id, revision.TotalStandardCost,
+            Active = active.OrderBy(f => f.Id).Select(f => new
+            {
+                f.Id, f.StockPostingId, f.ValuationSource,
+                f.MovementCode, f.Direction, f.BaseQty,
+                f.CostAmount, f.BaseCostAmount, f.ToBalLocId,
+                f.LotId, f.LotNo
+            }).ToArray(),
+            original,
             tail.CurrentQuantity, tail.CurrentValue, tail.LaterEvents,
             Piles = tail.CurrentQuantityByPile.OrderBy(p => p.Key)
                 .Select(p => new { p.Key, p.Value,
@@ -443,6 +509,42 @@ public sealed partial class IvInventoryPostingService
                 && f.StockPosting!.SealedAtUtc != null, cancellationToken);
         if (!hasLater)
             return null;
+        var priorHistory = prior[0];
+        if (priorHistory.ToBalLocId is not > 0
+            || priorHistory.ToStdQty is not > 0m)
+            return null;
+        var preparedOwner = await read.StockPostings.AsNoTracking()
+            .SingleOrDefaultAsync(p => p.Id == priorHistory.StockPostingId,
+                cancellationToken);
+        if (preparedOwner is null)
+            return null;
+        var preparedKey = new StockReplayEventKey(priorHistory.TrxDtTime,
+            StockReplayEventKey.OrdinaryClass,
+            preparedOwner.PostingSequence,
+            $"H{priorHistory.Id:D10}", 0);
+        var preparedPhysical = await StockReplayPhysicalPlanner.BuildRemovalAsync(
+            read, companyCode, branchCode, priorHistory.ToBalLocId.Value,
+            new StockReplayPhysicalEvent(priorHistory.Id, preparedKey,
+                priorHistory.ToStdQty.Value), cancellationToken);
+        var preparedTail = await StockReplayStandardFinancialTailReader
+            .ReadLaterAsync(read, companyCode, branchCode,
+                priorHistory.ICode, preparedKey, cancellationToken);
+        var preparedRevision = await new ItemStandardCostResolver().ResolveAsync(
+            read, companyCode, branchCode, priorHistory.ICode,
+            priorHistory.TrxDtTime, cancellationToken);
+        var preparedActive = (await StockReplayValuationGenerationResolver
+            .ResolveAsync(read, companyCode, branchCode, [priorHistory],
+                cancellationToken))[priorHistory.Id];
+        var preparedOriginal = StockReplayStandardHistoryEventFactory.Create(
+            priorHistory, priorHistory.Id, preparedKey, preparedActive,
+            preparedRevision);
+        var preparedProjection = StockReplayStandardSimulator.SimulateRemoval(
+            preparedTail.CurrentQuantity, preparedTail.CurrentValue,
+            preparedOriginal, preparedTail.LaterEvents);
+        var preparedFingerprint = StandardMrRemovalFingerprint(
+            preparedPhysical, priorHistory, preparedTail,
+            preparedRevision, preparedActive, preparedOriginal,
+            preparedProjection);
 
         await using var write = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
@@ -477,6 +579,19 @@ public sealed partial class IvInventoryPostingService
             throw InvalidStandardTransfer("The posted Standard MR changed before rollback.");
         var detail = details[0];
         var history = histories[0];
+        PoInvoice? replayInvoice = null;
+        if (goodsReceipt)
+        {
+            var invoiceCheck = await LoadSingleGrReplayInvoiceAsync(write,
+                companyCode, branchCode, history.PoNo,
+                history.PoRelNo, history.PoLineNo,
+                history.ICode!, history.TrxDtTime,
+                cancellationToken, allowPostedCreditNote: true);
+            if (invoiceCheck.Error is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    invoiceCheck.Error);
+            replayInvoice = invoiceCheck.Invoice;
+        }
         var owner = await write.StockPostings.AsNoTracking()
             .SingleOrDefaultAsync(p => p.Id == history.StockPostingId,
                 cancellationToken);
@@ -552,13 +667,16 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, closed);
         }
-        var key = new StockReplayEventKey(history.TrxDtTime,
-            StockReplayEventKey.OrdinaryClass, owner.PostingSequence,
-            $"H{history.Id:D10}", 0);
-        var physical = await StockReplayPhysicalPlanner.BuildRemovalAsync(
-            write, companyCode, branchCode, pileId.Value,
-            new StockReplayPhysicalEvent(history.Id, key, quantity.Value),
-            cancellationToken);
+        if (owner.Id != preparedOwner.Id
+            || owner.PostingSequence != preparedOwner.PostingSequence
+            || pileId.Value != preparedPhysical.BalLocId
+            || quantity.Value != preparedPhysical.RemovedActiveEvent.SignedDelta)
+            throw InvalidStandardTransfer(
+                "The Standard receipt changed after rollback planning.");
+        await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,
+            preparedPhysical, cancellationToken);
+        var key = preparedKey;
+        var physical = preparedPhysical;
         var tail = await StockReplayStandardFinancialTailReader.ReadLaterAsync(
             write, companyCode, branchCode, history.ICode, key,
             cancellationToken);
@@ -575,7 +693,9 @@ public sealed partial class IvInventoryPostingService
         var projection = StockReplayStandardSimulator.SimulateRemoval(
             tail.CurrentQuantity, tail.CurrentValue, original,
             tail.LaterEvents);
-        if (active.Count != 1 || active[0].StockPostingId != owner.Id
+        if (StandardMrRemovalFingerprint(physical, history, tail,
+                revision, active, original, projection) != preparedFingerprint
+            || active.Count != 1 || active[0].StockPostingId != owner.Id
             || active[0].OriginalValuationFactId is not null
             || active[0].ValuationSource != StockValuationSources.Standard
             || active[0].MovementCode != "RECEIPT_IN"
@@ -602,7 +722,8 @@ public sealed partial class IvInventoryPostingService
             || StockReplayFifoTransferTailGuard.ChangesPhysicalTail(physical)
             || await CheckStandardTransferDescendantsAsync(write,
                 companyCode, branchCode, history.ICode, key,
-                tail.LaterEvents, cancellationToken) is not null)
+                tail.LaterEvents, cancellationToken,
+                replayInvoice) is not null)
             throw InvalidStandardTransfer("The Standard MR rollback changes a later movement.");
         Dictionary<string, ErpWeb.Model.Entities.Purchase.PoOrder>? grOrders = null;
         IReadOnlyList<IvTrxBatchDetail>? grDetails = null;
@@ -624,7 +745,13 @@ public sealed partial class IvInventoryPostingService
             if (await write.PurchaseReceiptCostSettlements.AsNoTracking()
                 .AnyAsync(s => s.CompanyCode == companyCode
                     && s.BranchCode == branchCode
-                    && s.ReceiptInventoryHistoryId == history.Id,
+                    && s.ReceiptInventoryHistoryId == history.Id
+                    && s.ReversesSettlementId == null
+                    && !write.PurchaseReceiptCostSettlements.Any(r =>
+                        r.ReversesSettlementId == s.Id)
+                    && (replayInvoice == null
+                        || s.PiDocNo != replayInvoice.DocNo
+                        || s.PiCostingRevision != replayInvoice.CostingRevision),
                     cancellationToken))
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     "The goods receipt has invoice settlement and needs procurement replay before historical rollback.");
@@ -637,7 +764,8 @@ public sealed partial class IvInventoryPostingService
             var poError = await ValidateGoodsReceiptPoQtyAsync(write,
                 grOrders, grDetails, -1, receiptType, cancellationToken);
             if (poError is not null || grOrders.Values.SelectMany(o => o.Details)
-                    .Any(d => d.InvoicedQty != 0m))
+                    .Any(d => d.InvoicedQty != 0m)
+                    && replayInvoice is null)
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     poError ?? "Historical GR rollback needs procurement replay while the purchase order is invoiced.");
         }
@@ -671,13 +799,26 @@ public sealed partial class IvInventoryPostingService
             cancellationToken);
         reversals[0].ValuationStatus = StockValuationStatuses.Reversed;
         var permit = new StockReplayStandardWritePermit(root,
-            history.ICode, physical.PlanHash,
+            history.ICode, preparedFingerprint,
             tail.CurrentQuantity, tail.CurrentValue,
             projection.FinalQuantity, projection.FinalValue,
             ImmutableDictionary<int, decimal>.Empty.Add(
                 pileId.Value, physical.Projection.FinalQuantity));
         await StockReplayStandardCostStateWriter.ApplyAsync(root,
             permit, cancellationToken);
+        if (replayInvoice is not null)
+        {
+            var remap = await new PurchaseReceiptCostSettlementService()
+                .RemapValueNeutralInvoiceAsync(root, replayInvoice,
+                    _purchaseCostAdjustments!, cancellationToken,
+                    removingReceipt: true,
+                    allowPostedCreditNote: true,
+                    replayPlanHash: preparedFingerprint,
+                    replayBranchWatermark: physical.BranchWatermark);
+            if (!remap.Succeeded)
+                throw InvalidStandardTransfer(remap.Error
+                    ?? "The posted invoice could not be remapped.");
+        }
         await _coordinator!.CompleteReplayInTransactionAsync(root,
             [], cancellationToken);
         postingScope.MarkCompleted();

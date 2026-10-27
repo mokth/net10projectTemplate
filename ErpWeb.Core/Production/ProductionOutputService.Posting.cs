@@ -324,7 +324,8 @@ public sealed partial class ProductionOutputService
             var absorbedCost = ProductionAbsorbedCostResult.Success([]);
             if (absorbedCostEnabled && willProducePool && output.GoodQty > 0m)
             {
-                absorbedCost = _absorbedCostCalculator.Calculate(operation, output.GoodQty, output.OutputUom);
+                absorbedCost = _absorbedCostCalculator.Calculate(operation,
+                    output.GoodQty, output.OutputUom, routeStep.OutputUom);
                 if (!absorbedCost.Succeeded)
                     return Fail(absorbedCost.FailureMessage!);
             }
