@@ -22,6 +22,24 @@ public interface IPoSupplierLookupService
     Task<IReadOnlyList<IvCodeLookupRow>> ListPayCodesForAssignmentAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<IvCodeLookupRow>> ListBuyingTermsForAssignmentAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>SUPPLIER_TYPE values (generic lookup master, assignment read - no maintenance grant needed).</summary>
+    Task<IReadOnlyList<IvCodeLookupRow>> ListSupplierTypesForAssignmentAsync(
+        string? existingCode = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>SUPPLIER_SUBGROUP values (generic lookup master, assignment read).</summary>
+    Task<IReadOnlyList<IvCodeLookupRow>> ListSupplierSubGroupsForAssignmentAsync(
+        string? existingCode = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Active <c>PoCategory</c> rows for the current company. Deliberately NOT the permission-gated
+    /// <c>PoMasterRefService.ListCategoriesAsync</c>: supplier users need the list without Category maintenance rights.
+    /// </summary>
+    Task<IReadOnlyList<IvCodeLookupRow>> ListCategoriesForAssignmentAsync(
+        string? existingCode = null,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Supplier search for inquiry toolbar combos (Sales <c>SearchCustomersAsync</c> shape).</summary>
     Task<IReadOnlyList<IvCodeLookupRow>> SearchSuppliersAsync(
         string? searchText = null,
@@ -45,4 +63,7 @@ public interface IPoSupplierLookupService
     Task<bool> ValidateTaxGroupAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidatePayCodeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
     Task<bool> ValidateBuyingTermAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
+    Task<bool> ValidateSupplierTypeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
+    Task<bool> ValidateSupplierSubGroupAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
+    Task<bool> ValidateCategoryAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default);
 }

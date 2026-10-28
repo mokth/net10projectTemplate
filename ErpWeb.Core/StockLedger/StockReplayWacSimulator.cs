@@ -5,8 +5,8 @@ namespace ErpWeb.Core.StockLedger;
 
 /// <summary>
 /// One item-level WAC event. Old signed quantity/value rewind the active tail;
-/// fixed value is the immutable receipt or value-only authority on replay.
-/// Count events instead carry their frozen absolute physical observation.
+/// fixed value is the receipt or value-only authority on replay; a bound Sales
+/// return instead follows its repriced sale. Count events carry a frozen observation.
 /// </summary>
 public sealed record StockReplayWacEvent(
     long EventId,
@@ -17,7 +17,9 @@ public sealed record StockReplayWacEvent(
     decimal? FixedSignedValue = null,
     decimal? AbsoluteCountQty = null,
     decimal? CountFallbackUnitCost = null,
-    decimal? CountPreQuantity = null);
+    decimal? CountPreQuantity = null,
+    long? ReturnOfSaleEventId = null,
+    long? SalesReturnAllocationId = null);
 
 public sealed record StockReplayWacStep(
     long EventId,
@@ -98,8 +100,9 @@ public static class StockReplayWacSimulator
         var historicalQuantity = quantity;
         var historicalValue = value;
         var steps = new List<StockReplayWacStep>(later.Length);
+        var applied = new Dictionary<long, StockReplayWacStep>();
         foreach (var movement in later)
-            steps.Add(Apply(movement, ref quantity, ref value));
+            steps.Add(Apply(movement, ref quantity, ref value, applied));
         return new(historicalQuantity, historicalValue, steps,
             quantity, value);
     }
@@ -129,8 +132,9 @@ public static class StockReplayWacSimulator
         var historicalQuantity = quantity;
         var historicalValue = value;
         var steps = new List<StockReplayWacStep>(later.Length);
+        var applied = new Dictionary<long, StockReplayWacStep>();
         foreach (var movement in later)
-            steps.Add(Apply(movement, ref quantity, ref value));
+            steps.Add(Apply(movement, ref quantity, ref value, applied));
         return new(historicalQuantity, historicalValue, steps, quantity, value);
     }
 
@@ -155,10 +159,11 @@ public static class StockReplayWacSimulator
 
         var historicalQuantity = quantity;
         var historicalValue = value;
-        var candidateStep = Apply(candidate, ref quantity, ref value);
+        var applied = new Dictionary<long, StockReplayWacStep>();
+        var candidateStep = Apply(candidate, ref quantity, ref value, applied);
         var steps = new List<StockReplayWacStep>(later.Length);
         foreach (var movement in later)
-            steps.Add(Apply(movement, ref quantity, ref value));
+            steps.Add(Apply(movement, ref quantity, ref value, applied));
         return new(historicalQuantity, historicalValue,
             candidateStep, steps, quantity, value);
     }
@@ -197,7 +202,8 @@ public static class StockReplayWacSimulator
     }
 
     private static StockReplayWacStep Apply(
-        StockReplayWacEvent movement, ref decimal quantity, ref decimal value)
+        StockReplayWacEvent movement, ref decimal quantity, ref decimal value,
+        IDictionary<long, StockReplayWacStep> applied)
     {
         var beforeQty = quantity;
         var beforeValue = value;
@@ -215,6 +221,15 @@ public static class StockReplayWacSimulator
                     movement.EventId))
                 : IssueValue(deltaQty, beforeQty, beforeValue, movement.EventId);
         }
+        else if (movement.ReturnOfSaleEventId is long saleId)
+        {
+            if (!applied.TryGetValue(saleId, out var sale)
+                || sale.SignedQuantity >= 0m || sale.SignedValue > 0m
+                || deltaQty <= 0m || deltaQty > -sale.SignedQuantity)
+                throw Invalid(movement.EventId, "has no matching earlier replayed sale");
+            deltaValue = StockLedgerPrecision.Money(
+                -sale.SignedValue * deltaQty / -sale.SignedQuantity);
+        }
         else if (deltaQty > 0m)
         {
             deltaValue = movement.FixedSignedValue!.Value;
@@ -231,8 +246,11 @@ public static class StockReplayWacSimulator
         quantity = IvQty.Round(beforeQty + deltaQty);
         value = StockLedgerPrecision.Money(beforeValue + deltaValue);
         EnsureState(quantity, value, movement.EventId, "replaying");
-        return new(movement.EventId, beforeQty, beforeValue,
+        var step = new StockReplayWacStep(movement.EventId, beforeQty, beforeValue,
             deltaQty, deltaValue, quantity, value);
+        if (!applied.TryAdd(movement.EventId, step))
+            throw Invalid(movement.EventId, "has a repeated replay identity");
+        return step;
     }
 
     private static decimal IssueValue(
@@ -287,6 +305,8 @@ public static class StockReplayWacSimulator
                 || movement.CountPreQuantity is not decimal preQuantity
                 || preQuantity < 0m || IvQty.Round(preQuantity) != preQuantity
                 || movement.FixedSignedValue.HasValue
+                || movement.ReturnOfSaleEventId.HasValue
+                || movement.SalesReturnAllocationId.HasValue
                 || movement.Key.EffectiveAt
                     != StockReplayEventKey.CountEndOfDay(movement.Key.EffectiveAt))
                 throw new ArgumentException($"Count WAC event {movement.EventId} is invalid.");
@@ -294,6 +314,12 @@ public static class StockReplayWacSimulator
         else if (movement.AbsoluteCountQty.HasValue
             || movement.CountFallbackUnitCost.HasValue
             || movement.CountPreQuantity.HasValue
+            || movement.ReturnOfSaleEventId is long returnSaleId
+                && (returnSaleId <= 0 || returnSaleId == movement.EventId
+                    || movement.ReplaySignedQuantity <= 0m
+                    || movement.SalesReturnAllocationId is not > 0)
+            || movement.ReturnOfSaleEventId is null
+                && movement.SalesReturnAllocationId.HasValue
             || movement.ReplaySignedQuantity < 0m && movement.FixedSignedValue.HasValue
             || movement.ReplaySignedQuantity >= 0m
                 && movement.FixedSignedValue is not decimal authorizedValue

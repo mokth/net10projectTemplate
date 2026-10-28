@@ -57,6 +57,9 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
     protected IReadOnlyList<IvCodeLookupRow> TaxGroups { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> PayCodes { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> BuyingTerms { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> SupplierTypes { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> SupplierSubGroups { get; set; } = [];
+    protected IReadOnlyList<IvCodeLookupRow> Categories { get; set; } = [];
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
@@ -214,6 +217,7 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
 
         Model = Clone(result.Data);
         await LoadAttachmentsAsync(Model.SuppCode);
+        await LoadClassificationLookupsAsync();
         ValidationErrors.Clear();
         ErrorMessage = null;
         StatusMessage = "Loaded latest version.";
@@ -472,6 +476,7 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
                 }
 
                 AttachmentRows = [];
+                await LoadClassificationLookupsAsync();
                 CaptureCleanSnapshot();
                 return;
             }
@@ -482,6 +487,7 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
                 ErrorMessage = "Supplier code is required.";
                 Model = CreateBlank();
                 AttachmentRows = [];
+                await LoadClassificationLookupsAsync();
                 return;
             }
 
@@ -491,11 +497,13 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
                 ErrorMessage = result.Message ?? "Supplier was not found.";
                 Model = CreateBlank();
                 AttachmentRows = [];
+                await LoadClassificationLookupsAsync();
                 return;
             }
 
             Model = Clone(result.Data);
             await LoadAttachmentsAsync(Model.SuppCode);
+            await LoadClassificationLookupsAsync();
             CaptureCleanSnapshot();
         }
         finally
@@ -513,6 +521,17 @@ public partial class PoSuppEntry : PageBase, IAsyncDisposable
         TaxGroups = await Lookups.ListTaxGroupsForAssignmentAsync();
         PayCodes = await Lookups.ListPayCodesForAssignmentAsync();
         BuyingTerms = await Lookups.ListBuyingTermsForAssignmentAsync();
+    }
+
+    /// <summary>
+    /// Classification combos are reloaded after the supplier is bound to the form so an inactive/legacy
+    /// stored value is still shown (and preserved) on view/edit instead of appearing blank.
+    /// </summary>
+    private async Task LoadClassificationLookupsAsync()
+    {
+        SupplierTypes = await Lookups.ListSupplierTypesForAssignmentAsync(Model.SuppType);
+        SupplierSubGroups = await Lookups.ListSupplierSubGroupsForAssignmentAsync(Model.CreditorSubGroup);
+        Categories = await Lookups.ListCategoriesForAssignmentAsync(Model.CategoryCode);
     }
 
     private async Task LoadAttachmentsAsync(string? suppCode)

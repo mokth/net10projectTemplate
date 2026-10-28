@@ -179,8 +179,16 @@ public static class StockReplayFifoStateWriter
             .Where(f => f.ReversesValuationFactId.HasValue
                 && archivedFactIds.Contains(f.ReversesValuationFactId.Value))
             .Select(f => new { f.ReversesValuationFactId, f.Direction,
-                f.MovementCode, f.ValuationStatus,
-                SealedAtUtc = f.StockPosting!.SealedAtUtc })
+                f.MovementCode, f.ValuationStatus, f.ValuationSource,
+                f.CompanyCode, f.BranchCode, f.CostMethod, f.BaseQty, f.CostAmount,
+                OriginalMovement = f.ReversesValuationFact!.MovementCode,
+                OriginalType = f.ReversesValuationFact.SourceDocumentType,
+                OriginalPostingId = f.ReversesValuationFact.StockPostingId,
+                OriginalHistoryId = f.ReversesValuationFact.InventoryHistoryId,
+                ReversedHistoryId = f.InventoryHistory!.ReversesHistoryId,
+                PostingType = f.StockPosting!.SourceDocumentType,
+                f.StockPosting.PostingRole, f.StockPosting.ReversesPostingId,
+                SealedAtUtc = f.StockPosting.SealedAtUtc })
             .ToArrayAsync(cancellationToken);
         if (archived.Any(l => l.Status != StockFifoLayerStatuses.Closed
                 || l.RemainingQty != 0m || l.RemainingValue != 0m
@@ -188,8 +196,22 @@ public static class StockReplayFifoStateWriter
                 || archivedReversals.Count(f =>
                     f.ReversesValuationFactId == l.OriginValuationFactId
                     && f.Direction == -1
-                    && f.MovementCode == "RECEIPT_IN"
                     && f.ValuationStatus == StockValuationStatuses.Reversed
+                    && f.CompanyCode == context.CompanyCode
+                    && f.BranchCode == context.BranchCode
+                    && f.CostMethod == StockCostMethods.Fifo
+                    && (f.MovementCode == "RECEIPT_IN"
+                        || f.MovementCode == "SALE_RETURN_IN_REVERSAL"
+                            && f.ValuationSource == StockValuationSources.OriginalReversal
+                            && f.OriginalMovement == "SALE_RETURN_IN"
+                            && f.OriginalType == IvTrxTypes.CustomerReturn
+                            && f.OriginalPostingId == l.OriginStockPostingId
+                            && f.OriginalHistoryId == f.ReversedHistoryId
+                            && f.PostingType == IvTrxTypes.CustomerReturn
+                            && f.PostingRole == "REVERSAL"
+                            && f.ReversesPostingId == l.OriginStockPostingId
+                            && f.BaseQty == l.OriginalQty
+                            && f.CostAmount == l.OriginalValue)
                     && f.SealedAtUtc is not null) != 1)
             || archivedReversals.Length != archived.Length
             || layers.Length != beforeById.Count

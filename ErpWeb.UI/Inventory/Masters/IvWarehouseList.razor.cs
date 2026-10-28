@@ -1,7 +1,9 @@
 using DevExpress.Blazor;
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.UI.Components.Common.DataGrid;
+using Microsoft.AspNetCore.Components;
 
 namespace ErpWeb.UI.Inventory.Masters;
 
@@ -10,8 +12,17 @@ public partial class IvWarehouseList : IvRefListPageBase<IvWarehouseListRow>
     protected override string MenuCode => MenuCodes.InventoryWarehouse;
     protected override string EntityLabel => "Warehouse";
 
+    [Inject]
+    private IAdLookupService Lookups { get; set; } = default!;
+
     protected IvWarehouseEditVm EditModel { get; set; } = new();
     protected bool CanEditFromView { get; set; }
+
+    /// <summary>
+    /// Warehouse Type choices. Loaded through the assignment-read surface, so maintaining a warehouse
+    /// does NOT require the ADMIN_LOOKUPS maintenance grant.
+    /// </summary>
+    protected IReadOnlyList<IvCodeLookupRow> WarehouseTypes { get; private set; } = [];
 
     public List<GridColumnData> Columns() =>
     [
@@ -58,7 +69,11 @@ public partial class IvWarehouseList : IvRefListPageBase<IvWarehouseListRow>
         ..AuditColumns.For(startVisibleIndex: 6)
     ];
 
-    protected override async Task OnPageInitializedAsync() => await ReloadListAsync();
+    protected override async Task OnPageInitializedAsync()
+    {
+        WarehouseTypes = await Lookups.ListForAssignmentAsync(AdLookupTypes.WarehouseType);
+        await ReloadListAsync();
+    }
 
     protected override async Task ReloadListAsync()
     {
@@ -109,6 +124,7 @@ public partial class IvWarehouseList : IvRefListPageBase<IvWarehouseListRow>
         }
 
         EditModel = new IvWarehouseEditVm { IsActive = true };
+        WarehouseTypes = await Lookups.ListForAssignmentAsync(AdLookupTypes.WarehouseType);
         ErrorMessage = null;
         IsEditMode = false;
         EditEnabled = true;
@@ -202,6 +218,11 @@ public partial class IvWarehouseList : IvRefListPageBase<IvWarehouseListRow>
         }
 
         EditModel = result.Data;
+        // Include the currently bound value even when it is inactive/legacy, so View/Edit can display it
+        // without re-offering it as a new choice.
+        WarehouseTypes = await Lookups.ListForAssignmentAsync(
+            AdLookupTypes.WarehouseType,
+            EditModel.WarehouseType);
         ErrorMessage = null;
         return true;
     }

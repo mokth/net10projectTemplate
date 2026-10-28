@@ -318,7 +318,8 @@
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Group</label>
-                                    <DxTextBox @bind-Text="@Model.CategoryCode" maxlength="20" />
+                                    <IvCodeComboBox Data="@Categories" @bind-Value="@Model.CategoryCode" NullText="Select group" />
+                                    @FieldError("CategoryCode")
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Area</label>
@@ -342,7 +343,8 @@
                             <div class="iv-form-grid iv-form-grid--single">
                                 <div class="iv-field">
                                     <label class="iv-field__label">Type</label>
-                                    <DxTextBox @bind-Text="@Model.SuppType" maxlength="20" />
+                                    <IvCodeComboBox Data="@SupplierTypes" @bind-Value="@Model.SuppType" NullText="Select type" />
+                                    @FieldError("SuppType")
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">PO prefix</label>
@@ -358,7 +360,8 @@
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Sub group</label>
-                                    <DxTextBox @bind-Text="@Model.CreditorSubGroup" maxlength="20" />
+                                    <IvCodeComboBox Data="@SupplierSubGroups" @bind-Value="@Model.CreditorSubGroup" NullText="Select sub group" />
+                                    @FieldError("CreditorSubGroup")
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">MSIC code</label>

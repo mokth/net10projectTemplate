@@ -749,6 +749,22 @@ public sealed class PoSupplierService : IPoSupplierService
             errors["BuyingTerm"] = $"Buying term '{model.BuyingTerm}' is not valid.";
         }
 
+        if (!await _lookups.ValidateSupplierTypeAssignmentAsync(model.SuppType, existingSnapshot?.SuppType, cancellationToken))
+        {
+            errors["SuppType"] = $"Supplier type '{model.SuppType}' is not valid.";
+        }
+
+        if (!await _lookups.ValidateSupplierSubGroupAssignmentAsync(model.CreditorSubGroup, existingSnapshot?.CreditorSubGroup, cancellationToken))
+        {
+            errors["CreditorSubGroup"] = $"Supplier subgroup '{model.CreditorSubGroup}' is not valid.";
+        }
+
+        // PoCategory is the authoritative supplier category master (no generic SUPPLIER_GROUP family).
+        if (!await _lookups.ValidateCategoryAssignmentAsync(model.CategoryCode, existingSnapshot?.CategoryCode, cancellationToken))
+        {
+            errors["CategoryCode"] = $"Category '{model.CategoryCode}' is not valid.";
+        }
+
         for (var i = 0; i < model.Addresses.Count; i++)
         {
             var addr = model.Addresses[i];

@@ -1,3 +1,7 @@
+using ErpWeb.Core.Inventory;
+using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Model.Entities.StockLedger;
+
 namespace ErpWeb.Core.StockLedger;
 
 public sealed record StockReplayWacTailRepricingResult(
@@ -92,7 +96,8 @@ public static class StockReplayWacTailRepricingWriter
         StockReplayWacWritePermit wacPermit,
         StockReplayWacInsertionPlan plan,
         int firstRootPostingLineNo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowSalesReturn = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(wacPermit);
@@ -111,7 +116,7 @@ public static class StockReplayWacTailRepricingWriter
             throw Invalid("The prepared WAC insertion tail has no matching root permit.");
         return AppendTailAsync(context, wacPermit, plan.Tail.LaterEvents,
             plan.Projection.LaterSteps, firstRootPostingLineNo,
-            null, null, cancellationToken);
+            null, null, cancellationToken, allowSalesReturn);
     }
 
     public static Task<StockReplayWacTailRepricingResult> AppendPreparedInsertionTailAsync(
@@ -222,7 +227,8 @@ public static class StockReplayWacTailRepricingWriter
     public static Task<StockReplayWacTailRepricingResult> AppendPreparedRemovalTailAsync(
         StockPostingContext context, StockReplayWacWritePermit permit,
         StockReplayWacRemovalPlan plan, int firstRootPostingLineNo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowSalesReturn = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
@@ -240,7 +246,7 @@ public static class StockReplayWacTailRepricingWriter
             throw Invalid("The prepared WAC removal tail has no matching root permit.");
         return AppendTailAsync(context, permit, plan.Tail.LaterEvents,
             plan.Projection.LaterSteps, firstRootPostingLineNo,
-            null, null, cancellationToken);
+            null, null, cancellationToken, allowSalesReturn);
     }
 
     private static async Task<StockReplayWacTailRepricingResult> AppendTailAsync(
@@ -251,13 +257,19 @@ public static class StockReplayWacTailRepricingWriter
         int firstRootPostingLineNo,
         StockReplayWacInsertionPlan? changedCountPlan,
         StockCountCorrectionWritePermit? countPermit,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowSalesReturn = false)
     {
+        if (allowSalesReturn && (context.Posting.SourceModule != "INVENTORY"
+            || context.Posting.SourceDocumentType is not
+                (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)))
+            throw Invalid("Sales return repricing requires an Inventory receipt root.");
         var steps = ValidateTail(laterEvents, laterSteps,
-            changedCountPlan, countPermit);
+            changedCountPlan, countPermit, allowSalesReturn);
 
         var histories = new List<int>();
         var countLines = new List<int>();
+        var repricedSales = new Dictionary<long, IReadOnlyList<StockValuationFact>>();
         var eventIndex = 0;
         foreach (var movement in laterEvents)
         {
@@ -292,7 +304,18 @@ public static class StockReplayWacTailRepricingWriter
                     var replacements = await StockReplayWacIssueRepricingWriter.AppendAsync(
                         context, checked((int)movement.EventId), movement, step,
                         reversalLine, replacementLine, cancellationToken);
+                    repricedSales[movement.EventId] = replacements;
                     if (replacements.Count > 0)
+                        histories.Add(checked((int)movement.EventId));
+                }
+                else if (movement.ReturnOfSaleEventId is long saleId)
+                {
+                    if (!allowSalesReturn || !repricedSales.TryGetValue(saleId, out var saleFacts))
+                        throw Invalid("A WAC Sales return has no authorized earlier sale.");
+                    var changed = await StockReplayWacSalesReturnRepricingWriter.AppendAsync(
+                        context, movement, step, saleFacts,
+                        reversalLine, replacementLine, cancellationToken);
+                    if (changed)
                         histories.Add(checked((int)movement.EventId));
                 }
                 else if (movement.OldSignedQuantity == 0m)
@@ -312,7 +335,8 @@ public static class StockReplayWacTailRepricingWriter
         IReadOnlyList<StockReplayWacEvent> laterEvents,
         IReadOnlyList<StockReplayWacStep> laterSteps,
         StockReplayWacInsertionPlan? changedCountPlan,
-        StockCountCorrectionWritePermit? countPermit)
+        StockCountCorrectionWritePermit? countPermit,
+        bool allowSalesReturn = false)
     {
         var steps = laterSteps.ToDictionary(s => s.EventId);
         if (steps.Count != laterEvents.Count
@@ -343,8 +367,20 @@ public static class StockReplayWacTailRepricingWriter
                     || step.SignedValue != movement.OldSignedValue)
                 || movement.EventId > 0 && movement.EventId <= int.MaxValue
                     && movement.OldSignedQuantity > 0m
-                    && step.SignedValue != movement.OldSignedValue)
+                    && step.SignedValue != movement.OldSignedValue
+                    && !(allowSalesReturn && movement.ReturnOfSaleEventId.HasValue))
                 throw Invalid($"WAC event {movement.EventId} needs separate receipt or settlement authority.");
+            if (movement.ReturnOfSaleEventId is long saleId)
+            {
+                var sale = laterEvents.SingleOrDefault(e => e.EventId == saleId);
+                if (!allowSalesReturn || sale is null || sale.Key.CompareTo(movement.Key) >= 0
+                    || sale.OldSignedQuantity >= 0m || movement.OldSignedQuantity <= 0m
+                    || !steps.TryGetValue(saleId, out var saleStep)
+                    || saleStep.SignedQuantity >= 0m
+                    || step.SignedValue != StockLedgerPrecision.Money(
+                        -saleStep.SignedValue * step.SignedQuantity / -saleStep.SignedQuantity))
+                    throw Invalid($"WAC event {movement.EventId} has invalid Sales return cost authority.");
+            }
         }
         if (countPermit is not null
             && (changedCountPlan is null

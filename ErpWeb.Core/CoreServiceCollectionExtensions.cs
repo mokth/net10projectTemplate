@@ -152,6 +152,10 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IRoleAdminService, RoleAdminService>();
 
+        // Generic configurable lookup master (plan: Generic Configurable Lookup Master).
+        // Company-scoped descriptive classifications only — never workflow/system states.
+        services.AddScoped<IAdLookupService, AdLookupService>();
+
         services.AddScoped<ISecurityAuditWriter, SecurityAuditWriter>();
 
         // Self-service password reset by email. Email delivery is best-effort: with Email:Enabled

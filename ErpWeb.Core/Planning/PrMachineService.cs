@@ -1,3 +1,4 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
@@ -37,6 +38,7 @@ public sealed class PrMachineService : IPrMachineService
     private readonly IInventoryTenantContext _tenant;
     private readonly IPlanningMasterAccess _access;
     private readonly IPlanningDependencyChecker _deps;
+    private readonly IAdLookupService _lookups;
     private readonly ILogger<PrMachineService> _logger;
 
     public PrMachineService(
@@ -44,12 +46,14 @@ public sealed class PrMachineService : IPrMachineService
         IInventoryTenantContext tenant,
         IPlanningMasterAccess access,
         IPlanningDependencyChecker deps,
+        IAdLookupService lookups,
         ILogger<PrMachineService> logger)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _deps = deps;
+        _lookups = lookups;
         _logger = logger;
     }
 
@@ -128,6 +132,15 @@ public sealed class PrMachineService : IPrMachineService
                     if (row.HourlyCost < 0)
                         return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, "Hourly Cost cannot be negative.");
 
+                    // Machine Type is a descriptive classification only: no scheduling/capacity logic may
+                    // branch on it. It must still resolve to an ACTIVE lookup value for this company.
+                    if (!await _lookups.ValidateAssignmentAsync(
+                            AdLookupTypes.MachineType, row.MachineType, existingCode: null, allowBlank: true, ct))
+                        return PlanningServiceResult.Fail(
+                            PlanningErrorCode.ValidationFailed,
+                            $"Machine type '{row.MachineType}' is not valid.",
+                            [new ValidationIssue { ClientNodeId = row.ClientNodeId, FieldName = nameof(row.MachineType), BusinessKey = mc, Message = "Machine type is not valid." }]);
+
                     if (await db.PrMachines.AnyAsync(x => x.MachineCd == mc && x.CompCode == write.CompanyCode, ct))
                         return PlanningServiceResult.Fail(PlanningErrorCode.DuplicateCode,
                             "Each machine can only be assigned one process code.",
@@ -167,6 +180,15 @@ public sealed class PrMachineService : IPrMachineService
                         return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Machine {mc} not found.");
                     if (row.OriginalUpdated is not null && entity.Updated != row.OriginalUpdated)
                         return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, $"Machine {mc} changed since load.");
+
+                    // An unchanged legacy/inactive type survives an unrelated edit; a newly chosen value
+                    // must be active. Blank stays valid (the field is optional).
+                    if (!await _lookups.ValidateAssignmentAsync(
+                            AdLookupTypes.MachineType, row.MachineType, entity.MachineType, allowBlank: true, ct))
+                        return PlanningServiceResult.Fail(
+                            PlanningErrorCode.ValidationFailed,
+                            $"Machine type '{row.MachineType}' is not valid.",
+                            [new ValidationIssue { ClientNodeId = row.ClientNodeId, FieldName = nameof(row.MachineType), BusinessKey = mc, Message = "Machine type is not valid." }]);
 
                     entity.MachineDes = PlanningCodeNormalizer.NormalizeDescription(row.MachineDes);
                     if (row.ConversionTime is not null) entity.ConversionTime = row.ConversionTime;

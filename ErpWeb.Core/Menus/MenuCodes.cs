@@ -297,6 +297,13 @@ public static class MenuCodes
     public const string AdminProject = "ADMIN_PROJECT";
 
     /// <summary>
+    /// Generic configurable lookup master (<c>/admin/lookups</c>). This grant covers MAINTENANCE only:
+    /// business screens that merely populate a dropdown from a lookup family are NOT gated by it
+    /// (plan §7 and §23).
+    /// </summary>
+    public const string AdminLookups = "ADMIN_LOOKUPS";
+
+    /// <summary>
     /// The dynamic application settings screen (<c>/admin/settings</c>). Reads of a setting are NOT gated
     /// by this code — they are a server capability — but listing, saving and clearing are, because those
     /// are the admin screen's operations.

@@ -747,9 +747,58 @@ public sealed partial class IvInventoryPostingService
             return "Backdated FIFO Inventory replay has an unsealed or foreign issue descendant.";
         var salesIds = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut)
             .Select(h => h.Id).ToArray();
+        var tailReceiptFactIds = laterReceipts.Select(l => l.OriginFactId).ToArray();
+        var returnOrigins = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => tailReceiptFactIds.Contains(f.Id)
+                && f.InventoryHistory != null
+                && f.InventoryHistory.TrxType == IvTrxTypes.CustomerReturn)
+            .Select(f => new { f.Id, f.InventoryHistoryId }).ToArrayAsync(cancellationToken);
+        SalesReturnPermit? permittedReturn = null;
+        if (returnOrigins.Length > 0)
+        {
+            if (!allowBoundedSales || salesIds.Length != 1 || returnOrigins.Length != 1
+                || returnOrigins[0].InventoryHistoryId is not int returnId)
+                return "Backdated FIFO receipt needs one exact sale and stock-return credit note.";
+            var returnLayer = laterReceipts.Single(l => l.OriginFactId == returnOrigins[0].Id);
+            var finalLayer = projection.FinalLayers.SingleOrDefault(l => l.LayerId == returnLayer.LayerId);
+            var saleIssue = issueByHistory[salesIds[0]];
+            if (returnLayer.ReceiptKey is not { } returnKey
+                || returnLayer.AccumulatedAdjustment != 0m
+                || returnLayer.RemainingQuantity != returnLayer.OriginalQuantity
+                || returnLayer.RemainingValue != returnLayer.OriginalValue
+                || snapshot.ActiveConsumptions.Any(c => c.LayerId == returnLayer.LayerId)
+                || finalLayer is null
+                || finalLayer.RemainingQuantity != returnLayer.OriginalQuantity
+                || finalLayer.RemainingValue != returnLayer.OriginalValue
+                || StockReplayFifoMiRootWriter.ChangedIssues(projection)
+                    .Any(i => i.Key == saleIssue.Key))
+                return "Backdated FIFO receipt would change the Sales return cost or layer.";
+            var salesAndReturn = await db.IvTrxHistories.AsNoTracking()
+                .Where(h => h.Id == salesIds[0] || h.Id == returnId)
+                .ToArrayAsync(cancellationToken);
+            var sale = salesAndReturn.SingleOrDefault(h => h.Id == salesIds[0]);
+            if (sale?.ICode is null || salesAndReturn.Length != 2)
+                return "Backdated FIFO receipt has inconsistent Sales return history.";
+            var checkedReturn = await CheckPostedSalesReturnAsync(db,
+                snapshot.CompanyCode, snapshot.BranchCode, itemCode, salesAndReturn,
+                new Dictionary<long, StockReplayEventKey>
+                {
+                    [sale.Id] = saleIssue.Key, [returnId] = returnKey
+                }, StockCostMethods.Fifo, cancellationToken);
+            if (checkedReturn.Error is not null || checkedReturn.Permit is null)
+                return checkedReturn.Error ?? "Backdated FIFO receipt has inconsistent Sales return evidence.";
+            permittedReturn = checkedReturn.Permit;
+        }
+        else if (allowBoundedSales && salesIds.Length == 1)
+        {
+            var sale = await db.IvTrxHistories.AsNoTracking()
+                .SingleAsync(h => h.Id == salesIds[0], cancellationToken);
+            permittedReturn = await CheckRolledBackSalesReturnAsync(db, sale,
+                StockCostMethods.Fifo, cancellationToken);
+        }
         if (salesIds.Length > 0
             && await CheckSalesReceiptTailAsync(db, salesIds,
-                StockCostMethods.Fifo, cancellationToken) is string salesError)
+                StockCostMethods.Fifo, cancellationToken, permittedReturn) is string salesError)
             return salesError;
         var byOwner = owners.ToDictionary(p => p.Id);
         var batchNumbers = histories.Select(h => h.BatchNo).Distinct().ToArray();
@@ -793,6 +842,8 @@ public sealed partial class IvInventoryPostingService
                 || p.SourceDocumentType != "OPENING"
                     && p.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
                     && p.SourceDocumentType != IvTrxTypes.GoodsReceive
+                    && !(permittedReturn is not null
+                        && p.SourceDocumentType == IvTrxTypes.CustomerReturn)
                 || p.SealedAtUtc is null))
             return "Backdated FIFO Inventory replay has a later receipt outside opening stock or Inventory MR/GR.";
         var laterGrOwnerIds = receiptOwners.Where(p =>

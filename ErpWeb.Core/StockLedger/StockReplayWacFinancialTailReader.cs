@@ -1,3 +1,4 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -279,8 +280,54 @@ public static class StockReplayWacFinancialTailReader
         if (ordered.Select(e => e.EventId).Distinct().Count() != ordered.Length
             || ordered.Zip(ordered.Skip(1), (a, b) => a.Key == b.Key).Any(equal => equal))
             throw Corrupt($"Item {itemCode} has duplicate WAC event identity or key.");
+        await BindSingleSalesReturnAsync(db, companyCode, branchCode,
+            histories, activeFacts, ordered, cancellationToken);
         return new(state.OnHandBaseQty, state.InventoryValue, ordered, byPile,
             balances.ToDictionary(b => b.Id, b => b.StdQty));
+    }
+
+    // A bounded customer return derives its replayed value from the earlier
+    // outbound sale, not from the now-obsolete original receipt amount.
+    // Document and posting authorization remain the caller's responsibility.
+    private static async Task BindSingleSalesReturnAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        IReadOnlyCollection<IvTrxHistory> histories,
+        IReadOnlyDictionary<int, IReadOnlyList<StockValuationFact>> activeFacts,
+        StockReplayWacEvent[] events, CancellationToken cancellationToken)
+    {
+        var sales = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut).ToArray();
+        var returns = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn).ToArray();
+        if (sales.Length != 1 || returns.Length != 1
+            || activeFacts[sales[0].Id].Count != 1
+            || activeFacts[returns[0].Id].Count != 1)
+            return;
+        var sale = activeFacts[sales[0].Id][0];
+        var returned = activeFacts[returns[0].Id][0];
+        if (sale.Direction != -1 || sale.MovementCode != "SALE_OUT" || sale.BaseQty <= 0m
+            || returned.Direction != 1 || returned.MovementCode != "SALE_RETURN_IN"
+            || returned.BaseQty <= 0m || returned.BaseQty > sale.BaseQty)
+            return;
+        var allocations = await db.SalesReturnCostAllocations.AsNoTracking()
+            .Where(a => a.CompanyCode == companyCode && a.BranchCode == branchCode
+                && a.ReturnValuationFactId == returned.Id
+                && a.ReversesAllocationId == null
+                && !db.SalesReturnCostAllocations.Any(r => r.ReversesAllocationId == a.Id))
+            .ToArrayAsync(cancellationToken);
+        if (allocations.Length != 1 || allocations[0].OriginalValuationFactId != sale.Id
+            || allocations[0].ReturnedBaseQty != returned.BaseQty
+            || allocations[0].ReturnedCostAmount != returned.CostAmount
+            || allocations[0].ReturnedCostAmount != StockLedgerPrecision.Money(
+                sale.CostAmount * returned.BaseQty / sale.BaseQty))
+            return;
+        var saleIndex = Array.FindIndex(events, e => e.EventId == sales[0].Id);
+        var returnIndex = Array.FindIndex(events, e => e.EventId == returns[0].Id);
+        if (saleIndex < 0 || returnIndex <= saleIndex)
+            return;
+        events[returnIndex] = events[returnIndex] with
+        {
+            ReturnOfSaleEventId = sales[0].Id,
+            SalesReturnAllocationId = allocations[0].Id
+        };
     }
 
     private static bool PhysicalLegsMatch(

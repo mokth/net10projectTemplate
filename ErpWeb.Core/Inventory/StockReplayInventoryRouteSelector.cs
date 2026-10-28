@@ -135,7 +135,6 @@ internal static class StockReplayInventoryRouteSelector
         foreach (var group in originals.Where(h => !string.IsNullOrWhiteSpace(h.ICode))
                      .GroupBy(h => h.ICode!))
         {
-            var ownHistoryIds = group.Select(h => h.Id).ToArray();
             var firstOwner = group.Select(h => owners[h.StockPostingId!.Value])
                 .OrderBy(p => p.EffectiveAt).ThenBy(p => p.PostingSequence)
                 .First();
@@ -149,11 +148,34 @@ internal static class StockReplayInventoryRouteSelector
                 && f.ReversesValuationFactId == null
                 && !db.StockValuationFacts.Any(r =>
                     r.ReversesValuationFactId == f.Id)
-                // Cost restatements are written by a later root, but inherit
-                // the original history's business key.
-                && !(f.InventoryHistoryId.HasValue
-                    && ownHistoryIds.Contains(f.InventoryHistoryId.Value)
-                    && f.EffectiveAt == firstOwner.EffectiveAt),
+                // A sealed correction inherits its original history's business
+                // key, even if a later replay root wrote the correction. Only
+                // ignore it when the original owner and identity match exactly.
+                && !(f.EffectiveAt == firstOwner.EffectiveAt
+                    && f.InventoryHistoryId.HasValue
+                    && f.OriginalValuationFactId.HasValue
+                    && f.OriginalValuationFact != null
+                    && f.OriginalValuationFact.CompanyCode == f.CompanyCode
+                    && f.OriginalValuationFact.BranchCode == f.BranchCode
+                    && f.OriginalValuationFact.ItemCode == f.ItemCode
+                    && f.OriginalValuationFact.LedgerEpochId == f.LedgerEpochId
+                    && f.OriginalValuationFact.CostMethod == f.CostMethod
+                    && f.OriginalValuationFact.InventoryHistoryId == f.InventoryHistoryId
+                    && f.OriginalValuationFact.InventoryHistory != null
+                    && f.OriginalValuationFact.InventoryHistory.StockPostingId
+                        == f.OriginalValuationFact.StockPostingId
+                    && f.OriginalValuationFact.OriginalValuationFactId == null
+                    && f.OriginalValuationFact.ReversesValuationFactId == null
+                    && f.OriginalValuationFact.EffectiveAt == f.EffectiveAt
+                    && f.OriginalValuationFact.MovementCode == f.MovementCode
+                    && f.OriginalValuationFact.Direction == f.Direction
+                    && f.OriginalValuationFact.SourceDocumentType == f.SourceDocumentType
+                    && f.OriginalValuationFact.SourceDocumentId == f.SourceDocumentId
+                    && f.OriginalValuationFact.SourceDocumentNo == f.SourceDocumentNo
+                    && f.OriginalValuationFact.SourceDocumentLine == f.SourceDocumentLine
+                    && f.OriginalValuationFact.StockPosting!.SealedAtUtc != null
+                    && f.OriginalValuationFact.StockPosting.PostingSequence
+                        <= firstOwner.PostingSequence),
                 cancellationToken))
                 return new(false, true, false);
         }

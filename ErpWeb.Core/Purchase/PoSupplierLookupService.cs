@@ -1,3 +1,4 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Lookups;
 using ErpWeb.Model.Data;
@@ -133,6 +134,138 @@ public sealed class PoSupplierLookupService : IPoSupplierLookupService
 
     public Task<bool> ValidateBuyingTermAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
         ValidateLegacyOrFailClosed(code, existingCode, ListBuyingTermsForAssignmentAsync, allowLegacyEmptyBypass: false, cancellationToken);
+
+    public async Task<IReadOnlyList<IvCodeLookupRow>> ListSupplierTypesForAssignmentAsync(
+        string? existingCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await AdLookupAssignments.ListAsync(
+            db, scope.CompanyCode, AdLookupTypes.SupplierType, existingCode, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<IvCodeLookupRow>> ListSupplierSubGroupsForAssignmentAsync(
+        string? existingCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await AdLookupAssignments.ListAsync(
+            db, scope.CompanyCode, AdLookupTypes.SupplierSubGroup, existingCode, cancellationToken);
+    }
+
+    /// <summary>
+    /// Active <c>PoCategory</c> rows for the company, plus the supplier's current code when it no longer
+    /// resolves to an active category so an edit screen can still display its stored (legacy) value.
+    /// </summary>
+    public async Task<IReadOnlyList<IvCodeLookupRow>> ListCategoriesForAssignmentAsync(
+        string? existingCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return [];
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var values = await db.PoCategories
+            .AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode)
+            .OrderBy(x => x.Category)
+            .Select(x => new CategoryRow(x.Category, x.Description, x.IsActive))
+            .ToListAsync(cancellationToken);
+
+        var rows = values
+            .Where(x => x.IsActive)
+            .Select(x => new IvCodeLookupRow { Code = x.Code, Desc = x.Desc ?? x.Code })
+            .ToList();
+
+        var legacy = (existingCode ?? string.Empty).Trim();
+        if (legacy.Length > 0 && !rows.Any(x => string.Equals(x.Code, legacy, StringComparison.OrdinalIgnoreCase)))
+        {
+            var stored = values.FirstOrDefault(x => string.Equals(x.Code, legacy, StringComparison.OrdinalIgnoreCase));
+            if (stored is not null)
+            {
+                rows.Add(new IvCodeLookupRow { Code = stored.Code, Desc = stored.Desc ?? stored.Code });
+            }
+        }
+
+        return rows;
+    }
+
+    public Task<bool> ValidateSupplierTypeAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
+        ValidateGenericLookupAsync(AdLookupTypes.SupplierType, code, existingCode, cancellationToken);
+
+    public Task<bool> ValidateSupplierSubGroupAssignmentAsync(string? code, string? existingCode, CancellationToken cancellationToken = default) =>
+        ValidateGenericLookupAsync(AdLookupTypes.SupplierSubGroup, code, existingCode, cancellationToken);
+
+    /// <summary>
+    /// Blank stays allowed. A value already stored on the supplier survives an unrelated edit; a newly
+    /// chosen value must be an ACTIVE <c>PoCategory</c> row for this company.
+    /// </summary>
+    public async Task<bool> ValidateCategoryAssignmentAsync(
+        string? code,
+        string? existingCode,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return true;
+        }
+
+        var trimmed = code.Trim();
+        if (!string.IsNullOrWhiteSpace(existingCode)
+            && string.Equals(trimmed, existingCode.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return false;
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.PoCategories
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.CompanyCode == scope.CompanyCode
+                     && x.IsActive
+                     && x.Category == trimmed,
+                cancellationToken);
+    }
+
+    private async Task<bool> ValidateGenericLookupAsync(
+        string lookupType,
+        string? code,
+        string? existingCode,
+        CancellationToken cancellationToken)
+    {
+        var scope = _tenant.TryCompanyScope();
+        if (scope is null)
+        {
+            return string.IsNullOrWhiteSpace(code);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        return await AdLookupAssignments.ValidateAsync(
+            db, scope.CompanyCode, lookupType, code, existingCode, allowBlank: true, cancellationToken);
+    }
+
+    private sealed record CategoryRow(string Code, string? Desc, bool IsActive);
 
     public async Task<IReadOnlyList<IvCodeLookupRow>> SearchSuppliersAsync(
         string? searchText = null,

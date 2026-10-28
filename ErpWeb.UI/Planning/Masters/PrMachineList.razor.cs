@@ -1,3 +1,5 @@
+using ErpWeb.Core.Admin;
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Security;
@@ -37,9 +39,16 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
 
     [Inject] private IPrMachineService MachineService { get; set; } = default!;
     [Inject] private IPrProcessService ProcessService { get; set; } = default!;
+    [Inject] private IAdLookupService Lookups { get; set; } = default!;
 
     protected PrMachineEditVm EditModel { get; set; } = new();
     protected List<PrProcessOption> Processes { get; set; } = [];
+
+    /// <summary>
+    /// Machine Type choices, loaded through the assignment-read surface so machine maintenance does
+    /// not require the ADMIN_LOOKUPS maintenance grant.
+    /// </summary>
+    protected IReadOnlyList<IvCodeLookupRow> MachineTypes { get; private set; } = [];
 
     public List<GridColumnData> Columns() =>
     [
@@ -61,6 +70,7 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
         if (p.Succeeded)
             Processes = p.Value!.Select(x => x.ProcessCd).Distinct(StringComparer.OrdinalIgnoreCase)
                 .Select(c => new PrProcessOption { Code = c }).ToList();
+        MachineTypes = await Lookups.ListForAssignmentAsync(AdLookupTypes.MachineType);
         await base.OnPageInitializedAsync();
     }
 
@@ -111,23 +121,24 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
             QueueTime = 0,
             HourlyCost = 0
         };
+        MachineTypes = await Lookups.ListForAssignmentAsync(AdLookupTypes.MachineType);
         ErrorMessage = null; IsEditMode = false; EditEnabled = true; CanEditFromView = false; PopupVisible = true;
     }
 
     protected override async Task OnViewClickAsync(PrMachineListRow row)
     {
         if (!await EnsurePermissionAsync(PermissionCodes.Access)) return;
-        LoadEdit(row); IsEditMode = true; EditEnabled = false;
+        await LoadEditAsync(row); IsEditMode = true; EditEnabled = false;
         CanEditFromView = await AccessRights.CanAsync(MenuCode, PermissionCodes.Edit); PopupVisible = true;
     }
 
     protected override async Task OnEditClickAsync(PrMachineListRow row)
     {
         if (!await EnsurePermissionAsync(PermissionCodes.Edit)) return;
-        LoadEdit(row); IsEditMode = true; EditEnabled = true; CanEditFromView = false; PopupVisible = true;
+        await LoadEditAsync(row); IsEditMode = true; EditEnabled = true; CanEditFromView = false; PopupVisible = true;
     }
 
-    private void LoadEdit(PrMachineListRow row)
+    private async Task LoadEditAsync(PrMachineListRow row)
     {
         EditModel = new PrMachineEditVm
         {
@@ -145,9 +156,11 @@ public partial class PrMachineList : PrRefListPageBase<PrMachineListRow>
             OriginalUpdated = row.Updated,
             IsNew = false
         };
+        // Include the currently bound value even when inactive/legacy so View/Edit can display it
+        // without re-offering it as a new choice.
+        MachineTypes = await Lookups.ListForAssignmentAsync(AdLookupTypes.MachineType, EditModel.MachineType);
         ErrorMessage = null;
     }
-
     protected async Task HandleValidSubmitAsync()
     {
         if (IsSubmitting || !EditEnabled) return;

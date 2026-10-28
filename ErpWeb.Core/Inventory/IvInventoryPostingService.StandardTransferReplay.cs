@@ -266,15 +266,21 @@ public sealed partial class IvInventoryPostingService
         var salesIds = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut)
             .Select(h => h.Id).ToArray();
         var returns = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn).ToArray();
-        StandardSalesReturnPermit? permittedReturn = null;
+        SalesReturnPermit? permittedReturn = null;
         if (returns.Length > 0)
         {
-            var checkedReturn = await CheckStandardSalesReturnAsync(db,
-                companyCode, branchCode, itemCode, histories, events, cancellationToken);
+            var checkedReturn = await CheckPostedSalesReturnAsync(db,
+                companyCode, branchCode, itemCode, histories,
+                events.ToDictionary(e => e.EventId, e => e.Key),
+                StockCostMethods.Standard, cancellationToken);
             if (checkedReturn.Error is not null)
                 return checkedReturn.Error;
             permittedReturn = checkedReturn.Permit;
         }
+        else if (salesIds.Length == 1)
+            permittedReturn = await CheckRolledBackSalesReturnAsync(db,
+                histories.Single(h => h.Id == salesIds[0]),
+                StockCostMethods.Standard, cancellationToken);
         if (salesIds.Length > 0
             && await CheckSalesReceiptTailAsync(db, salesIds,
                 StockCostMethods.Standard, cancellationToken, permittedReturn) is string salesError)

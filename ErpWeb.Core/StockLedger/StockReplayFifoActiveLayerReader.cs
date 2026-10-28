@@ -31,8 +31,8 @@ public sealed record StockReplayFifoActiveLayerSnapshot(
 
 /// <summary>
 /// Reads an exact current FIFO layer base for historical simulation. Exact MR/GR
-/// receipt reversals and direct initial-count removals are supported; other
-/// receipt reversals and layer value adjustments fail closed.
+/// receipt and customer-return reversals and direct initial-count removals are
+/// supported when their sealed lineage is exact; layer value adjustments fail closed.
 /// </summary>
 public static class StockReplayFifoActiveLayerReader
 {
@@ -242,10 +242,14 @@ public static class StockReplayFifoActiveLayerReader
                         || originalHistory.EntryRole != "ORIGINAL"
                         || originalHistory.TrxType is not (
                             IvTrxTypes.MiscellaneousReceipt
-                            or IvTrxTypes.GoodsReceive)
+                            or IvTrxTypes.GoodsReceive
+                            or IvTrxTypes.CustomerReturn)
                             && (!removedCount
                                 || originalHistory.TrxType
                                     != IvTrxTypes.StockAdjustment)
+                        || originalHistory.TrxType == IvTrxTypes.CustomerReturn
+                            && (origin.MovementCode != "SALE_RETURN_IN"
+                                || origin.ValuationSource != StockValuationSources.OriginalSaleReturn)
                         || removedCount
                             && (reversalHistory.TrxType
                                 != IvTrxTypes.StockAdjustment
@@ -262,7 +266,9 @@ public static class StockReplayFifoActiveLayerReader
                         || reversalOwner.PostingRole != "REVERSAL"
                         || reversalOwner.ReversesPostingId
                             != l.OriginStockPostingId
-                        || reversal.MovementCode != origin.MovementCode
+                        || reversal.MovementCode != (originalHistory.TrxType
+                                == IvTrxTypes.CustomerReturn
+                            ? origin.MovementCode + "_REVERSAL" : origin.MovementCode)
                         || reversal.ValuationSource
                             != StockValuationSources.OriginalReversal;
                 }))

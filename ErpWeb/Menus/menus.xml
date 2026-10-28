@@ -361,6 +361,8 @@
               Icon="fa-solid fa-building-user" />
         <Menu Code="ADMIN_PROJECT" Name="Projects" Route="/admin/projects" SortOrder="4"
               Icon="fa-solid fa-folder-open" />
+        <Menu Code="ADMIN_LOOKUPS" Name="Lookup Values" Route="/admin/lookups" SortOrder="5"
+              Icon="fa-solid fa-list-check" />
       </Menu>
     </Menu>
   </Menu>

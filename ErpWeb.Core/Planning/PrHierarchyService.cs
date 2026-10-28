@@ -1,3 +1,4 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
@@ -19,6 +20,7 @@ public sealed class PrHierarchyService : IPrHierarchyService
     private readonly IInventoryTenantContext _tenant;
     private readonly IPlanningMasterAccess _access;
     private readonly IPlanningDependencyChecker _deps;
+    private readonly IAdLookupService _lookups;
     private readonly ILogger<PrHierarchyService> _logger;
 
     public PrHierarchyService(
@@ -26,12 +28,14 @@ public sealed class PrHierarchyService : IPrHierarchyService
         IInventoryTenantContext tenant,
         IPlanningMasterAccess access,
         IPlanningDependencyChecker deps,
+        IAdLookupService lookups,
         ILogger<PrHierarchyService> logger)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _deps = deps;
+        _lookups = lookups;
         _logger = logger;
     }
 
@@ -168,6 +172,8 @@ public sealed class PrHierarchyService : IPrHierarchyService
                 var code = PlanningCodeNormalizer.NormalizeCode(c.Code);
                 if (await db.PrWorkCentres.AnyAsync(x => x.WrkCtrCd == code && x.CompCode == write.CompanyCode, ct))
                     return PlanningServiceResult.Fail(PlanningErrorCode.DuplicateCode, $"Duplicate work centre {code}.");
+                if (!await _lookups.ValidateAssignmentAsync(AdLookupTypes.WorkCentreClass, c.ClassCode, existingCode: null, allowBlank: true, ct))
+                    return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Work centre class '{c.ClassCode}' is not valid.");
                 db.PrWorkCentres.Add(new PrWorkCentre
                 {
                     WrkCtrCd = code,
@@ -255,6 +261,8 @@ public sealed class PrHierarchyService : IPrHierarchyService
                         var e = await db.PrWorkCentres.FirstAsync(x => x.WrkCtrCd == code && x.CompCode == write.CompanyCode, ct);
                         if (c.OriginalUpdated is not null && e.Updated != c.OriginalUpdated)
                             return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, $"Work centre {code} changed.");
+                        if (!await _lookups.ValidateAssignmentAsync(AdLookupTypes.WorkCentreClass, c.ClassCode, e.Class, allowBlank: true, ct))
+                            return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Work centre class '{c.ClassCode}' is not valid.");
                         e.WrkCtrDes = PlanningCodeNormalizer.NormalizeDescription(c.Description);
                         e.Class = c.ClassCode;
                         e.Updated = DateTime.Now;

@@ -72,7 +72,13 @@
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine Type" ColSpanMd="6" BeginRow="true">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.MachineType" maxlength="50" ReadOnly="@(!EditEnabled)" />
+                            <DxComboBox Data="@MachineTypes"
+                                        TextFieldName="DisplayText"
+                                        ValueFieldName="Code"
+                                        @bind-Value="@EditModel.MachineType"
+                                        NullText="(none)"
+                                        ReadOnly="@(!EditEnabled)"
+                                        InputCssClass="code-style" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Serial No" ColSpanMd="6">

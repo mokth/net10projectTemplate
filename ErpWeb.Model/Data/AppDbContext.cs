@@ -128,6 +128,7 @@ public class AppDbContext : DbContext
     public DbSet<MenuPermission> MenuPermissions => Set<MenuPermission>();
     public DbSet<RoleMenuPermission> RoleMenuPermissions => Set<RoleMenuPermission>();
     public DbSet<Company> Companies => Set<Company>();
+    public DbSet<AdLookupValue> AdLookupValues => Set<AdLookupValue>();
     public DbSet<MsRunningNo> MsRunningNos => Set<MsRunningNo>();
     public DbSet<AdSmNum> AdSmNums => Set<AdSmNum>();
     public DbSet<AdSmNumDate> AdSmNumDates => Set<AdSmNumDate>();

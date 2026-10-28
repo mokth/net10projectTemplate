@@ -1,4 +1,5 @@
 using System.Data.Common;
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
@@ -16,19 +17,22 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
     private readonly IAccessRightService _accessRights;
     private readonly ICurrentDateService _dates;
     private readonly IIvStockCommonRepository _common;
+    private readonly IAdLookupService _lookups;
 
     public IvInventoryRefService(
         IDbContextFactory<AppDbContext> dbFactory,
         IInventoryTenantContext tenant,
         IAccessRightService accessRights,
         ICurrentDateService dates,
-        IIvStockCommonRepository common)
+        IIvStockCommonRepository common,
+        IAdLookupService lookups)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _accessRights = accessRights;
         _dates = dates;
         _common = common;
+        _lookups = lookups;
     }
 
     // ===================== Warehouse =====================
@@ -120,6 +124,33 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
             errors["Desc"] = "Description is required.";
         }
 
+        // Warehouse Type is a descriptive classification only — it must never gate posting, valuation,
+        // transfers or reservations. The lookup gate below guarantees the stored code is a real, ACTIVE
+        // value of this company (or the value the row already carried, so a legacy/inactive code survives
+        // an unrelated edit). Blank stays valid: the field is optional today.
+        string? existingWarehouseType = null;
+        if (!isNew)
+        {
+            await using var readDb = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            existingWarehouseType = await readDb.IvWarehouses
+                .AsNoTracking()
+                .Where(x => x.CompanyCode == ctx.CompanyCode
+                            && x.BranchCode == ctx.BranchCode
+                            && x.WarehouseCode == code)
+                .Select(x => x.WarehouseType)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (!await _lookups.ValidateAssignmentAsync(
+                AdLookupTypes.WarehouseType,
+                model.WarehouseType,
+                existingWarehouseType,
+                allowBlank: true,
+                cancellationToken))
+        {
+            errors["WarehouseType"] = $"Warehouse type '{model.WarehouseType}' is not valid.";
+        }
+
         if (errors.Count > 0)
         {
             return IvMasterOperationResult<IvWarehouseEditVm>.Fail(
@@ -156,7 +187,7 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                     BranchCode = ctx.BranchCode!,
                     WarehouseCode = code,
                     WarehouseDesc = desc,
-                    WarehouseType = TruncateOptional(model.WarehouseType, 20),
+                    WarehouseType = NormalizeOptional(model.WarehouseType),
                     WarehouseRemark = TruncateOptional(model.WarehouseRemark, 250),
                     IsActive = model.IsActive,
                     CreatedDate = now,
@@ -201,7 +232,7 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
 
             db.Entry(tracked).Property(x => x.RowVersion).OriginalValue = model.RowVersion;
             tracked.WarehouseDesc = desc;
-            tracked.WarehouseType = TruncateOptional(model.WarehouseType, 20);
+            tracked.WarehouseType = NormalizeOptional(model.WarehouseType);
             tracked.WarehouseRemark = TruncateOptional(model.WarehouseRemark, 250);
             tracked.IsActive = model.IsActive;
             tracked.ModifiedDate = now;
@@ -2497,6 +2528,13 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
         var trimmed = value.Trim();
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
+
+    /// <summary>
+    /// Trim without truncating. Used for lookup codes: an over-width code is rejected by validation, never
+    /// silently shortened on assignment (plan §8 — a lookup value that cannot fit must fail, not change meaning).
+    /// </summary>
+    private static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private readonly record struct UserContext(
         string? CompanyCode,

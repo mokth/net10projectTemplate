@@ -184,7 +184,7 @@ public static class StockReplayWacMrRootWriter
 
         var tail = await StockReplayWacTailRepricingWriter
             .AppendPreparedInsertionTailAsync(context, permit, plan, 2,
-                cancellationToken);
+                cancellationToken, allowSalesReturn: true);
         await StockReplayWacCostStateWriter.ApplyAsync(
             context, permit, cancellationToken);
         return new[] { history.Id }.Concat(tail.RepricedHistoryIds).ToArray();

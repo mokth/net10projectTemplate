@@ -1,3 +1,4 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
@@ -238,6 +239,16 @@ public sealed class CompanyService : ICompanyService
                 RoleId = adminRole.RoleId
             });
             await db.SaveChangesAsync(cancellationToken);
+
+            // Default lookup values are seeded inside the SAME context and transaction as the rest of
+            // company provisioning: a failure here must roll back the whole bootstrap
+            // (plan §17 — never open a second DbContext from here).
+            await AdLookupDefaultsSeeder.EnsureDefaultsAsync(
+                db,
+                companyCode,
+                context.UserId!,
+                cancellationToken);
+
             await tx.CommitAsync(cancellationToken);
             _logger.LogInformation(
                 "Company provisioned. UserId={UserId} CompanyCode={CompanyCode} AdminLoginId={AdminLoginId} Template={Template}",

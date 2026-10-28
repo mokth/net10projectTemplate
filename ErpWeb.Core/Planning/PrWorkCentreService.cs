@@ -1,3 +1,4 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
@@ -30,6 +31,7 @@ public sealed class PrWorkCentreService : IPrWorkCentreService
     private readonly IInventoryTenantContext _tenant;
     private readonly IPlanningMasterAccess _access;
     private readonly IPlanningDependencyChecker _deps;
+    private readonly IAdLookupService _lookups;
     private readonly ILogger<PrWorkCentreService> _logger;
 
     public PrWorkCentreService(
@@ -37,12 +39,14 @@ public sealed class PrWorkCentreService : IPrWorkCentreService
         IInventoryTenantContext tenant,
         IPlanningMasterAccess access,
         IPlanningDependencyChecker deps,
+        IAdLookupService lookups,
         ILogger<PrWorkCentreService> logger)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
         _deps = deps;
+        _lookups = lookups;
         _logger = logger;
     }
 
@@ -155,6 +159,16 @@ public sealed class PrWorkCentreService : IPrWorkCentreService
                         return PlanningServiceResult.Fail(PlanningErrorCode.DuplicateCode, $"Duplicate work centre {code}.",
                             [new ValidationIssue { ClientNodeId = row.ClientNodeId, FieldName = "WrkCtrCd", BusinessKey = code, Message = "Duplicate code.", Code = PlanningErrorCode.DuplicateCode }]);
                     }
+
+                    // Class is descriptive in the reviewed planning/scheduling paths. It must still be a
+                    // real ACTIVE lookup value when supplied; blank stays valid.
+                    if (!await _lookups.ValidateAssignmentAsync(
+                            AdLookupTypes.WorkCentreClass, row.Class, existingCode: null, allowBlank: true, ct))
+                        return PlanningServiceResult.Fail(
+                            PlanningErrorCode.ValidationFailed,
+                            $"Work centre class '{row.Class}' is not valid.",
+                            [new ValidationIssue { ClientNodeId = row.ClientNodeId, FieldName = nameof(row.Class), BusinessKey = code, Message = "Class is not valid." }]);
+
                     db.PrWorkCentres.Add(new PrWorkCentre
                     {
                         WrkCtrCd = code,
@@ -175,6 +189,17 @@ public sealed class PrWorkCentreService : IPrWorkCentreService
                         return PlanningServiceResult.Fail(PlanningErrorCode.ValidationFailed, $"Work centre {code} not found.");
                     if (row.OriginalUpdated is not null && entity.Updated != row.OriginalUpdated)
                         return PlanningServiceResult.Fail(PlanningErrorCode.ConcurrencyConflict, $"Work centre {code} changed since load.");
+
+                    // Preserve the existing update semantics: a blank Class leaves the stored Class
+                    // unchanged, so validation only applies when a nonblank value is supplied.
+                    if (!string.IsNullOrWhiteSpace(row.Class)
+                        && !await _lookups.ValidateAssignmentAsync(
+                            AdLookupTypes.WorkCentreClass, row.Class, entity.Class, allowBlank: true, ct))
+                        return PlanningServiceResult.Fail(
+                            PlanningErrorCode.ValidationFailed,
+                            $"Work centre class '{row.Class}' is not valid.",
+                            [new ValidationIssue { ClientNodeId = row.ClientNodeId, FieldName = nameof(row.Class), BusinessKey = code, Message = "Class is not valid." }]);
+
                     entity.WrkCtrDes = des;
                     entity.Class = string.IsNullOrWhiteSpace(row.Class) ? entity.Class : PlanningCodeNormalizer.NormalizeCode(row.Class);
                     entity.Updated = DateTime.Now;

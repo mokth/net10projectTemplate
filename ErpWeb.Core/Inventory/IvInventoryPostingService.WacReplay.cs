@@ -752,7 +752,7 @@ public sealed partial class IvInventoryPostingService
         reversals[0].ValuationStatus = StockValuationStatuses.Reversed;
         var tail = await StockReplayWacTailRepricingWriter
             .AppendPreparedRemovalTailAsync(context, permit, financial, 2,
-                cancellationToken);
+                cancellationToken, allowSalesReturn: isReceipt);
         await StockReplayWacCostStateWriter.ApplyAsync(
             context, permit, cancellationToken);
         if (replayInvoice is not null)
@@ -917,6 +917,7 @@ public sealed partial class IvInventoryPostingService
                         || h.PoRelNo is not null
                         || h.PoLineNo is not null
                         || (h.TrxType == IvTrxTypes.MiscellaneousReceipt
+                            || allowBoundedSales && h.TrxType == IvTrxTypes.CustomerReturn
                             ? eventById[h.Id].OldSignedQuantity <= 0m
                             : StockReplayFifoInventoryIssueKinds.IsSupported(h.TrxType)
                                 || allowBoundedSales && h.TrxType == IvTrxTypes.SalesOut
@@ -1014,9 +1015,41 @@ public sealed partial class IvInventoryPostingService
             return "Backdated WAC replay has a movement without its exact posted Inventory owner.";
         var salesIds = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut)
             .Select(h => h.Id).ToArray();
+        var returnIds = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn)
+            .Select(h => h.Id).ToArray();
+        SalesReturnPermit? permittedReturn = null;
+        if (returnIds.Length > 0)
+        {
+            if (!allowBoundedSales || salesIds.Length != 1 || returnIds.Length != 1)
+                return "Backdated WAC receipt needs one exact sale and stock-return credit note.";
+            var salesAndReturn = await db.IvTrxHistories.AsNoTracking()
+                .Where(h => salesIds.Contains(h.Id) || returnIds.Contains(h.Id))
+                .ToArrayAsync(cancellationToken);
+            var sale = salesAndReturn.SingleOrDefault(h => h.Id == salesIds[0]);
+            if (sale?.ICode is null || salesAndReturn.Length != 2)
+                return "Backdated WAC receipt has inconsistent Sales return history.";
+            var checkedReturn = await CheckPostedSalesReturnAsync(db,
+                sale.CompanyCode, sale.BranchCode, sale.ICode, salesAndReturn,
+                events.ToDictionary(e => e.EventId, e => e.Key),
+                StockCostMethods.MovingAverage, cancellationToken);
+            if (checkedReturn.Error is not null || checkedReturn.Permit is null)
+                return checkedReturn.Error ?? "Backdated WAC receipt has inconsistent Sales return evidence.";
+            permittedReturn = checkedReturn.Permit;
+            var returnEvent = eventById[returnIds[0]];
+            if (returnEvent.ReturnOfSaleEventId != salesIds[0]
+                || returnEvent.SalesReturnAllocationId != permittedReturn.AllocationId)
+                return "Backdated WAC receipt has inconsistent Sales return cost authority.";
+        }
+        else if (allowBoundedSales && salesIds.Length == 1)
+        {
+            var sale = await db.IvTrxHistories.AsNoTracking()
+                .SingleAsync(h => h.Id == salesIds[0], cancellationToken);
+            permittedReturn = await CheckRolledBackSalesReturnAsync(db, sale,
+                StockCostMethods.MovingAverage, cancellationToken);
+        }
         if (salesIds.Length > 0
             && await CheckSalesReceiptTailAsync(db, salesIds,
-                StockCostMethods.MovingAverage, cancellationToken) is string salesError)
+                StockCostMethods.MovingAverage, cancellationToken, permittedReturn) is string salesError)
             return salesError;
         return null;
     }
@@ -1025,7 +1058,7 @@ public sealed partial class IvInventoryPostingService
         ErpWeb.Model.Data.AppDbContext db, int[] historyIds,
         string costMethod,
         CancellationToken cancellationToken,
-        StandardSalesReturnPermit? permittedReturn = null)
+        SalesReturnPermit? permittedReturn = null)
     {
         const string unsupported = "Backdated receipt replay requires a single posted delivery order with supported billing and no customer return.";
         var histories = await db.IvTrxHistories.AsNoTracking()
@@ -1033,7 +1066,7 @@ public sealed partial class IvInventoryPostingService
         if (histories.Length != historyIds.Length)
             return unsupported;
         if (permittedReturn is not null
-            && (costMethod != StockCostMethods.Standard || histories.Length != 1
+            && (costMethod != permittedReturn.CostMethod || histories.Length != 1
                 || histories[0].Id != permittedReturn.SaleHistoryId))
             return unsupported + " Customer-return ownership is inconsistent.";
 
@@ -1148,7 +1181,8 @@ public sealed partial class IvInventoryPostingService
 
             if (!await HasUnreturnedSaleFactsAsync(db, history,
                     "SA_DO", doNo, costMethod, cancellationToken,
-                    permittedReturn?.AllocationId))
+                    permittedReturn?.AllocationId,
+                    permittedReturn?.ReversedWacAllocation == true))
                 return unsupported + " Shipment valuation or return allocation is inconsistent.";
         }
         return null;
@@ -1158,7 +1192,7 @@ public sealed partial class IvInventoryPostingService
         ErpWeb.Model.Data.AppDbContext db, IvTrxHistory history,
         string costMethod,
         CancellationToken cancellationToken,
-        StandardSalesReturnPermit? permittedReturn = null)
+        SalesReturnPermit? permittedReturn = null)
     {
         const string unsupported = "Backdated receipt replay requires a single posted direct invoice with no credit/debit note or customer return.";
         var invoiceNo = history.InvNo?.Trim();
@@ -1211,7 +1245,8 @@ public sealed partial class IvInventoryPostingService
             return unsupported + " Invoice line or credit/debit note is inconsistent.";
         if (!await HasUnreturnedSaleFactsAsync(db, history,
                 "SA_INVOICE", invoiceNo, costMethod, cancellationToken,
-                permittedReturn?.AllocationId))
+                permittedReturn?.AllocationId,
+                permittedReturn?.ReversedWacAllocation == true))
             return unsupported + " Shipment valuation or return allocation is inconsistent.";
         return null;
     }
@@ -1219,7 +1254,8 @@ public sealed partial class IvInventoryPostingService
     private static async Task<bool> HasUnreturnedSaleFactsAsync(
         ErpWeb.Model.Data.AppDbContext db, IvTrxHistory history,
         string ownerType, string ownerNo, string costMethod,
-        CancellationToken cancellationToken, long? permittedAllocationId = null)
+        CancellationToken cancellationToken, long? permittedAllocationId = null,
+        bool verifiedReversedWacAllocation = false)
     {
         var facts = await db.StockValuationFacts.AsNoTracking()
             .Where(f => f.CompanyCode == history.CompanyCode
@@ -1260,19 +1296,34 @@ public sealed partial class IvInventoryPostingService
                 || a.OriginalOwnerType == ownerType
                     && a.OriginalOwnerDocumentNo == ownerNo)).ToArrayAsync(cancellationToken);
         if (allocations.Length == 0)
-            return permittedAllocationId is null;
+            return permittedAllocationId is null && !verifiedReversedWacAllocation;
+        if (verifiedReversedWacAllocation)
+        {
+            var reversedRoots = allocations.Where(a => a.ReversesAllocationId is null).ToArray();
+            return costMethod == StockCostMethods.MovingAverage && permittedAllocationId is null
+                && reversedRoots.Length > 0 && reversedRoots.All(root =>
+                    allocations.Count(a => a.ReversesAllocationId == root.Id) == 1);
+        }
         if (permittedAllocationId is not null)
-            return costMethod == StockCostMethods.Standard
-                && allocations.Length == 1
-                && allocations[0].Id == permittedAllocationId;
-        if (costMethod != StockCostMethods.MovingAverage || allocations.Length > 200)
+        {
+            var permittedRoots = allocations.Where(a => a.ReversesAllocationId is null).ToArray();
+            var activeRoots = permittedRoots.Where(root => !allocations.Any(a =>
+                a.ReversesAllocationId == root.Id)).ToArray();
+            return costMethod is StockCostMethods.Standard or StockCostMethods.MovingAverage
+                    or StockCostMethods.Fifo
+                && activeRoots.Length == 1 && activeRoots[0].Id == permittedAllocationId;
+        }
+        if (costMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Standard
+                or StockCostMethods.Fifo)
+            || allocations.Length > 200)
             return false;
 
         // A completed customer-return rollback leaves immutable allocation and valuation
         // rows behind. Admit only exact, sealed reversal pairs; ambiguous or active
         // return evidence must continue to block repricing of the sale.
         var roots = allocations.Where(a => a.ReversesAllocationId is null).ToArray();
-        if (roots.Length == 0)
+        if (roots.Length == 0 || costMethod is StockCostMethods.Standard or StockCostMethods.Fifo
+                && roots.Length != 1)
             return false;
         var rootIds = roots.Select(a => a.Id).ToArray();
         var reversals = await db.SalesReturnCostAllocations.AsNoTracking()
@@ -1349,7 +1400,7 @@ public sealed partial class IvInventoryPostingService
                 || originalFact.CompanyCode != history.CompanyCode
                 || originalFact.BranchCode != history.BranchCode
                 || originalFact.ItemCode != history.ICode
-                || originalFact.CostMethod != StockCostMethods.MovingAverage
+                || originalFact.CostMethod != costMethod
                 || originalFact.Direction != 1 || originalFact.MovementCode != "SALE_RETURN_IN"
                 || originalFact.ValuationStatus != StockValuationStatuses.Valued
                 || originalFact.ReversesValuationFactId is not null
@@ -1386,12 +1437,34 @@ public sealed partial class IvInventoryPostingService
                 || reversalPosting.SourceDocumentNo != originalPosting.SourceDocumentNo
                 || reversalPosting.DocumentRevision != reversal.ReturnCostingRevision)
                 return false;
+            if (costMethod is StockCostMethods.Standard or StockCostMethods.Fifo)
+            {
+                var saleFact = facts.SingleOrDefault(f => f.Id == root.OriginalValuationFactId);
+                if (saleFact is null || saleFact.BaseQty <= 0m
+                    || saleFact.Direction != -1 || saleFact.MovementCode != "SALE_OUT"
+                    || saleFact.ValuationStatus != StockValuationStatuses.Valued
+                    || saleFact.CostMethod != costMethod
+                    || saleFact.SourceDocumentType != ownerType
+                    || saleFact.SourceDocumentNo != ownerNo
+                    || saleFact.SourceDocumentLine != lineText
+                    || root.ReturnedBaseQty > saleFact.BaseQty
+                    || root.ReturnedCostAmount != StockLedgerPrecision.Money(
+                        saleFact.CostAmount * root.ReturnedBaseQty / saleFact.BaseQty)
+                    || costMethod == StockCostMethods.Fifo
+                        && originalFact.ValuationSource != StockValuationSources.OriginalSaleReturn
+                    || costMethod == StockCostMethods.Standard
+                        && (originalFact.ValuationSource != StockValuationSources.Standard
+                            || !await HasExactStandardReturnVarianceReversalAsync(db, root, reversal,
+                                originalFact, reversalFact, cancellationToken)))
+                    return false;
+            }
         }
         foreach (var group in roots.GroupBy(a => a.ReturnValuationFactId!.Value))
         {
             var fact = returnFacts[group.Key];
             if (group.Sum(a => a.ReturnedBaseQty) != fact.BaseQty
-                || group.Sum(a => a.ReturnedCostAmount) != fact.CostAmount)
+                || costMethod is StockCostMethods.MovingAverage or StockCostMethods.Fifo
+                    && group.Sum(a => a.ReturnedCostAmount) != fact.CostAmount)
                 return false;
         }
         var originalReturnFactIds = roots.Select(a => a.ReturnValuationFactId!.Value)

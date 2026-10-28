@@ -1,3 +1,5 @@
+using ErpWeb.Core.Admin;
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Security;
@@ -22,8 +24,14 @@ public partial class PrWorkCentreList : PrRefListPageBase<PrWorkCentreListRow>
     protected override string HeroTitle => "Work Centres";
 
     [Inject] private IPrWorkCentreService WorkCentreService { get; set; } = default!;
+    [Inject] private IAdLookupService Lookups { get; set; } = default!;
 
     protected PrWorkCentreEditVm EditModel { get; set; } = new();
+
+    /// <summary>
+    /// Work Centre Class choices (assignment reads are ungated; maintenance itself stays under ADMIN_LOOKUPS).
+    /// </summary>
+    protected IReadOnlyList<IvCodeLookupRow> Classes { get; private set; } = [];
 
     public List<GridColumnData> Columns() =>
     [
@@ -67,6 +75,7 @@ public partial class PrWorkCentreList : PrRefListPageBase<PrWorkCentreListRow>
     {
         if (!await EnsurePermissionAsync(PermissionCodes.Add)) return;
         EditModel = new PrWorkCentreEditVm { ClientNodeId = Guid.NewGuid().ToString("N"), IsNew = true };
+        Classes = await Lookups.ListForAssignmentAsync(AdLookupTypes.WorkCentreClass);
         ErrorMessage = null;
         IsEditMode = false;
         EditEnabled = true;
@@ -77,7 +86,7 @@ public partial class PrWorkCentreList : PrRefListPageBase<PrWorkCentreListRow>
     protected override async Task OnViewClickAsync(PrWorkCentreListRow row)
     {
         if (!await EnsurePermissionAsync(PermissionCodes.Access)) return;
-        LoadEditFromRow(row);
+        await LoadEditFromRowAsync(row);
         IsEditMode = true;
         EditEnabled = false;
         CanEditFromView = await AccessRights.CanAsync(MenuCode, PermissionCodes.Edit);
@@ -87,14 +96,14 @@ public partial class PrWorkCentreList : PrRefListPageBase<PrWorkCentreListRow>
     protected override async Task OnEditClickAsync(PrWorkCentreListRow row)
     {
         if (!await EnsurePermissionAsync(PermissionCodes.Edit)) return;
-        LoadEditFromRow(row);
+        await LoadEditFromRowAsync(row);
         IsEditMode = true;
         EditEnabled = true;
         CanEditFromView = false;
         PopupVisible = true;
     }
 
-    private void LoadEditFromRow(PrWorkCentreListRow row)
+    private async Task LoadEditFromRowAsync(PrWorkCentreListRow row)
     {
         EditModel = new PrWorkCentreEditVm
         {
@@ -105,6 +114,8 @@ public partial class PrWorkCentreList : PrRefListPageBase<PrWorkCentreListRow>
             OriginalUpdated = row.Updated,
             IsNew = false
         };
+        // Include the currently bound value even when inactive/legacy so View/Edit can display it.
+        Classes = await Lookups.ListForAssignmentAsync(AdLookupTypes.WorkCentreClass, EditModel.Class);
         ErrorMessage = null;
     }
 
