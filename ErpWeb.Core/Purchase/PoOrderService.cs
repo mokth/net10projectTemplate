@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -152,7 +153,7 @@ public sealed class PoOrderService : IPoOrderService
 		public string? Requester { get; init; }
 	}
 
-	private sealed record ResolvedItem(bool IsIndirect, string ICode, string? IDesc, string? IType, string? PurchaseUom, string? StdUom, decimal PackSz, decimal UnitPrice, string? TaxGroup, string? Category, string? VendorPartNo, string? Currency, string? DefWarehouse)
+	private sealed record ResolvedItem(bool IsIndirect, string ICode, string? IDesc, string? IType, string? PurchaseUom, string? StdUom, decimal PackSz, decimal UnitPrice, string? TaxGroup, string? Category, string? VendorPartNo, string? Currency, string? DefWarehouse, IvStockMaster? Stock = null)
 	{
 		public string? PoDesc => IDesc;
 	}
@@ -1369,6 +1370,11 @@ public sealed class PoOrderService : IPoOrderService
 		Dictionary<string, decimal> taxGroups = await (from x in db.SaTaxGroups.AsNoTracking()
 			where x.CompanyCode == companyCode
 			select x).ToDictionaryAsync<SaTaxGroup, string, decimal>((SaTaxGroup x) => x.TaxGrCode, (SaTaxGroup x) => x.Percentage, StringComparer.OrdinalIgnoreCase, cancellationToken);
+
+		// Lifecycle lock protocol: lock every stock code the document may demand before evaluating
+		// the gate, in the shared deterministic order used by DISCONTINUE/INACTIVE commands.
+		_ = await ItemLifecyclePolicy.Default.LockDemandMastersAsync(
+			db, companyCode, sourceLines.Select(x => x.ICode), cancellationToken);
 		List<PreparedLine> prepared = new List<PreparedLine>(sourceLines.Count);
 		Dictionary<string, string> errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		bool? documentInclusive = null;
@@ -1400,6 +1406,23 @@ public sealed class PoOrderService : IPoOrderService
 				continue;
 			}
 			decimal purchaseQty = PoOrderCalc.RoundQty((src.PoPurQty != 0m) ? src.PoPurQty : src.PoQty);
+
+			// Lifecycle gate (stock items only): a new line, a changed item or a quantity increase is
+			// NEW demand and is refused for discontinued/inactive items. Repeating or reducing a
+			// persisted PO line stays existing fulfilment so receipts against it remain possible.
+			if (resolved.Stock is not null)
+			{
+				var demandIntent = ItemLifecyclePolicy.ClassifyLineIntent(
+					existing != null,
+					existing != null && string.Equals(existing.ICode?.Trim(), iCode, StringComparison.OrdinalIgnoreCase),
+					existing?.PoPurQty ?? 0m,
+					purchaseQty);
+				var demand = ItemLifecyclePolicy.Default.AuthorizeDemand(resolved.Stock, iCode, demandIntent);
+				if (!demand.Allowed)
+				{
+					errors[prefix + ".ICode"] = demand.ErrorMessage!;
+				}
+			}
 			decimal retainedRecv = existing?.RecvQty ?? 0m;
 			decimal retainedReturn = existing?.ReturnQty ?? 0m;
 			decimal retainedInvoiced = existing?.InvoicedQty ?? 0m;
@@ -2235,10 +2258,13 @@ public sealed class PoOrderService : IPoOrderService
 
 	private async Task<ResolvedItem?> ResolveItemAsync(AppDbContext db, string companyCode, string iCode, CancellationToken cancellationToken)
 	{
-		IvStockMaster stock = await db.IvStockMasters.AsNoTracking().FirstOrDefaultAsync((IvStockMaster x) => x.CompanyCode == companyCode && x.ICode == iCode && x.IsActive, cancellationToken);
+		// Exact-code stock master FIRST, regardless of lifecycle. An inactive/discontinued stock item
+		// must never fall through to PoPurItem and be re-classified as an indirect purchase item.
+		IvStockMaster stock = await db.IvStockMasters.AsNoTracking()
+			.FirstOrDefaultAsync((IvStockMaster x) => x.CompanyCode == companyCode && x.ICode == iCode, cancellationToken);
 		if (stock != null)
 		{
-			return new ResolvedItem(IsIndirect: false, stock.ICode, stock.IDesc, stock.IType, stock.PurUom, stock.StdUom, ResolveStockPackSize(stock), stock.PurchasePrice.GetValueOrDefault(), stock.PurchaseTaxGroup ?? stock.TaxGroup, null, null, null, stock.DefWarehouse);
+			return new ResolvedItem(IsIndirect: false, stock.ICode, stock.IDesc, stock.IType, stock.PurUom, stock.StdUom, ResolveStockPackSize(stock), stock.PurchasePrice.GetValueOrDefault(), stock.PurchaseTaxGroup ?? stock.TaxGroup, null, null, null, stock.DefWarehouse, stock);
 		}
 		PoPurItem pur = await (from x in db.PoPurItems.AsNoTracking()
 			where x.CompanyCode == companyCode && x.ICode == iCode

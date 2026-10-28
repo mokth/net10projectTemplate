@@ -14,6 +14,7 @@ public sealed record StockMasterSearchArgs(
     string? SortField,
     bool SortDescending,
     int Skip,
-    int Take);
+    int Take,
+    string? LifecycleStatus = null);
 
 public sealed record StockMasterReferenceCount(string ReferenceType, int Count);

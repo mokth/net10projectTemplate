@@ -1,3 +1,4 @@
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Pricing;
 using ErpWeb.Core.Purchase;
@@ -9,6 +10,7 @@ using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -511,6 +513,28 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 errors);
         }
 
+        if (!TryResolveRequestedLifecycleStatus(
+                model,
+                out var requestedStatus,
+                out var lifecycleResolutionError))
+        {
+            errors["LifecycleStatus"] = lifecycleResolutionError!;
+            return IvMasterOperationResult<IvStockMasterEditVm>.Fail(
+                IvMasterErrorCode.Validation,
+                "Validation failed.",
+                errors);
+        }
+
+        if (isNew && requestedStatus != IvStockItemLifecycleStatus.Active)
+        {
+            // New items start ACTIVE. Creating them already retired would bypass master checks.
+            errors["LifecycleStatus"] = "A new item must be created as Active.";
+            return IvMasterOperationResult<IvStockMasterEditVm>.Fail(
+                IvMasterErrorCode.Validation,
+                "Validation failed.",
+                errors);
+        }
+
         var writeScope = _tenant.TryWriteScope();
         if (writeScope is null)
         {
@@ -523,6 +547,7 @@ public sealed class IvStockMasterService : IIvStockMasterService
         var userId = Truncate(writeScope.UserId, 10);
         var newImagePaths = new List<string>();
         var databaseSaved = false;
+        IDbContextTransaction? lifecycleTransaction = null;
 
         try
         {
@@ -664,6 +689,92 @@ public sealed class IvStockMasterService : IIvStockMasterService
                     "This item was modified by another user. Your changes were not saved.");
             }
 
+            // ---------------------------------------------------------------------------------
+            // Lifecycle transition. ONE authoritative policy for Save, bulk and the legacy
+            // SetActiveAsync path. The policy is re-evaluated under the item key lock so a
+            // concurrent demand/balance insert cannot slip between the check and the commit.
+            // ---------------------------------------------------------------------------------
+            if (!IvStockItemLifecycle.TryResolve(existing.IsActive, existing.IsDiscontinued, out var currentStatus))
+            {
+                return Fail<IvStockMasterEditVm>(
+                    IvMasterErrorCode.Validation,
+                    $"Item '{existing.ICode}' has an invalid stored lifecycle state (Active=false, IsDiscontinued=true). No data was changed.");
+            }
+
+            var lifecycleTransition = ItemLifecyclePolicy.Default.ValidateTransition(
+                currentStatus,
+                requestedStatus,
+                model.LifecycleChangeReason,
+                out var normalizedReason);
+            if (!lifecycleTransition.Succeeded)
+            {
+                return Fail<IvStockMasterEditVm>(
+                    IvMasterErrorCode.Validation,
+                    lifecycleTransition.ErrorMessage!,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["LifecycleStatus"] = lifecycleTransition.ErrorMessage!
+                    });
+            }
+
+            var lifecycleChanged = requestedStatus != currentStatus;
+            if (lifecycleChanged)
+            {
+                lifecycleTransaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+                var locked = await ItemLifecyclePolicy.Default.LockItemAsync(
+                    db, context.CompanyCode!, code, cancellationToken);
+                if (locked is null)
+                {
+                    await lifecycleTransaction.RollbackAsync(cancellationToken);
+                    return Fail<IvStockMasterEditVm>(IvMasterErrorCode.NotFound, "Item was not found.");
+                }
+
+                if (!IvStockItemLifecycle.TryResolve(locked.IsActive, locked.IsDiscontinued, out currentStatus))
+                {
+                    await lifecycleTransaction.RollbackAsync(cancellationToken);
+                    return Fail<IvStockMasterEditVm>(
+                        IvMasterErrorCode.Validation,
+                        $"Item '{locked.ICode}' has an invalid stored lifecycle state. No data was changed.");
+                }
+
+                // Re-run the transition graph against the locked current state.
+                lifecycleTransition = ItemLifecyclePolicy.Default.ValidateTransition(
+                    currentStatus,
+                    requestedStatus,
+                    model.LifecycleChangeReason,
+                    out normalizedReason);
+                if (!lifecycleTransition.Succeeded)
+                {
+                    await lifecycleTransaction.RollbackAsync(cancellationToken);
+                    return Fail<IvStockMasterEditVm>(
+                        IvMasterErrorCode.Validation,
+                        lifecycleTransition.ErrorMessage!);
+                }
+
+                lifecycleChanged = requestedStatus != currentStatus;
+                if (lifecycleChanged && requestedStatus == IvStockItemLifecycleStatus.Inactive)
+                {
+                    var retirement = await ItemLifecyclePolicy.Default
+                        .EvaluateRetirementInTransactionAsync(
+                            db, context.CompanyCode!, code, cancellationToken);
+                    if (retirement.HasBlockingDependencies)
+                    {
+                        await lifecycleTransaction.RollbackAsync(cancellationToken);
+                        var retirementMessage = retirement.IsIndeterminate
+                            ? retirement.Message ?? "Retirement checks could not be completed."
+                            : $"Item '{code}' cannot be retired while outstanding obligations remain. Use Discontinued to stop new demand without blocking existing work. {retirement.Message}";
+                        return Fail<IvStockMasterEditVm>(
+                            IvMasterErrorCode.InUse,
+                            retirementMessage,
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                ["LifecycleStatus"] = retirementMessage
+                            });
+                    }
+                }
+            }
+
             var structuralError = await EnsureStructuralFieldsUnlockedAsync(
                 db,
                 context.CompanyCode!,
@@ -761,6 +872,21 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 expiryControl,
                 stdPackSize,
                 purStdPackSize);
+            if (lifecycleChanged)
+            {
+                var occurredAtUtc = DateTime.UtcNow;
+                ItemLifecyclePolicy.ApplyStatus(existing, requestedStatus, occurredAtUtc);
+                ItemLifecyclePolicy.AppendAudit(
+                    db,
+                    context.CompanyCode!,
+                    existing.ICode,
+                    currentStatus,
+                    requestedStatus,
+                    occurredAtUtc,
+                    userId,
+                    normalizedReason,
+                    IvStockLifecycleSourceActions.ItemForm);
+            }
             if (galleryChanges?.HasChange == true)
             {
                 existing.ImagePath = ResolvePrimaryImagePath(
@@ -790,6 +916,11 @@ public sealed class IvStockMasterService : IIvStockMasterService
 
             await db.SaveChangesAsync(cancellationToken);
             databaseSaved = true;
+            if (lifecycleTransaction is not null)
+            {
+                await lifecycleTransaction.CommitAsync(cancellationToken);
+            }
+
             await db.Entry(existing).ReloadAsync(cancellationToken);
             foreach (var oldImagePath in removedImages
                          .Select(x => x.ImagePath)
@@ -840,6 +971,13 @@ public sealed class IvStockMasterService : IIvStockMasterService
 
             throw;
         }
+        finally
+        {
+            if (lifecycleTransaction is not null)
+            {
+                await lifecycleTransaction.DisposeAsync();
+            }
+        }
     }
 
     public async Task<IvMasterOperationResult<object>> SetActiveAsync(
@@ -863,61 +1001,291 @@ public sealed class IvStockMasterService : IIvStockMasterService
             return Fail<object>(IvMasterErrorCode.Validation, "No records selected.");
         }
 
+        // Compatibility shim only. The boolean can no longer express the lifecycle:
+        //   true  -> ACTIVE  (INACTIVE or DISCONTINUED -> ACTIVE)
+        //   false -> INACTIVE, which the policy allows ONLY from DISCONTINUED.
+        // An ACTIVE item passed with false is rejected by the policy ("discontinue it first");
+        // it is never silently retired or silently discontinued without a user-visible reason.
+        var target = isActive
+            ? IvStockItemLifecycleStatusCodes.Active
+            : IvStockItemLifecycleStatusCodes.Inactive;
+        var legacyReason = isActive
+            ? "Reactivated from the legacy item-master toggle command."
+            : "Set inactive from the legacy item-master toggle command.";
+
+        var result = await ChangeLifecycleAsync(
+            items,
+            target,
+            legacyReason,
+            IvStockLifecycleSourceActions.Bulk,
+            cancellationToken);
+
+        if (result.Succeeded)
+        {
+            return IvMasterOperationResult<object>.Ok();
+        }
+
+        return Fail<object>(
+            result.ErrorCode,
+            result.Message ?? "Unable to change the item lifecycle.");
+    }
+
+    public async Task<IvMasterOperationResult<ItemRetirementCheckResult>> PreviewRetirementAsync(
+        string iCode,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.ErrorCode is not null)
+        {
+            return IvMasterOperationResult<ItemRetirementCheckResult>.Fail(
+                context.ErrorCode.Value, context.Error!);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryItemMaster, PermissionCodes.Access, cancellationToken))
+        {
+            return IvMasterOperationResult<ItemRetirementCheckResult>.Fail(
+                IvMasterErrorCode.AccessDenied, "Not authorized.");
+        }
+
+        var code = (iCode ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return IvMasterOperationResult<ItemRetirementCheckResult>.Fail(
+                IvMasterErrorCode.Validation, "Item code is required.");
+        }
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var exists = await _stockMasters.GetByCodeAsync(db, context.CompanyCode!, code, cancellationToken);
+        if (exists is null)
+        {
+            return IvMasterOperationResult<ItemRetirementCheckResult>.Fail(
+                IvMasterErrorCode.NotFound, "Item was not found.");
+        }
+
+        var preview = await ItemLifecyclePolicy.Default
+            .PreviewRetirementAsync(db, context.CompanyCode!, code, cancellationToken);
+        return IvMasterOperationResult<ItemRetirementCheckResult>.Ok(preview);
+    }
+
+    /// <summary>
+    /// Explicit lifecycle command used by the entry page and the bulk toolbar. All-or-none: every
+    /// selected item is validated and committed in one transaction, or nothing changes.
+    /// </summary>
+    public async Task<IvMasterOperationResult<IvStockLifecycleBulkResult>> ChangeLifecycleAsync(
+        IReadOnlyList<IvMasterKeyToken> items,
+        string targetStatus,
+        string reason,
+        string sourceAction,
+        CancellationToken cancellationToken = default)
+    {
+        var context = ValidateUserContext();
+        if (context.ErrorCode is not null)
+        {
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                context.ErrorCode.Value, context.Error!);
+        }
+
+        if (!await _accessRights.CanAsync(MenuCodes.InventoryItemMaster, PermissionCodes.Edit, cancellationToken))
+        {
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                IvMasterErrorCode.AccessDenied, "Not authorized.");
+        }
+
+        if (items is null || items.Count == 0)
+        {
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                IvMasterErrorCode.Validation, "No records selected.");
+        }
+
+        if (!IvStockItemLifecycle.TryParseCode(targetStatus, out var target))
+        {
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                IvMasterErrorCode.Validation, "The requested lifecycle status is not valid.");
+        }
+
+        if (!IvStockItemLifecycle.TryNormalizeReason(reason, out var normalizedReason, out var reasonError))
+        {
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                IvMasterErrorCode.Validation, reasonError!);
+        }
+
+        var action = string.IsNullOrWhiteSpace(sourceAction)
+            ? IvStockLifecycleSourceActions.Bulk
+            : sourceAction.Trim().ToUpperInvariant();
+        if (!IvStockLifecycleSourceActions.All.Contains(action))
+        {
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                IvMasterErrorCode.Validation, "The lifecycle source action is not valid.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        // Deterministic order avoids deadlocks with posting and concurrent bulk commands.
+        var requested = items
+            .Select(x => (Code: (x.Code ?? string.Empty).Trim(), x.RowVersion))
+            .Where(x => x.Code.Length > 0)
+            .GroupBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (requested.Count == 0)
+        {
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                IvMasterErrorCode.Validation, "Item code is required.");
+        }
+
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var outcomes = new List<IvStockLifecycleItemResult>();
 
         try
         {
-            var tracked = new List<(IvStockMaster Entity, byte[] Token)>();
-            var stale = 0;
-
-            foreach (var item in items)
+            // Phase 1 — lock and verify EVERY token before any transition is evaluated or applied.
+            // A stale token anywhere in the batch must dominate a per-item validation error, otherwise
+            // the caller would be told to "discontinue first" when the real problem was a lost update.
+            var locked = new List<(string Code, IvStockMaster Entity, IvStockItemLifecycleStatus Current)>();
+            foreach (var (code, rowVersion) in requested)
             {
-                var code = (item.Code ?? string.Empty).Trim();
-                if (string.IsNullOrWhiteSpace(code))
+                var entity = await ItemLifecyclePolicy.Default.LockItemAsync(
+                    db, context.CompanyCode!, code, cancellationToken);
+                if (entity is null)
                 {
                     await tx.RollbackAsync(cancellationToken);
-                    return Fail<object>(IvMasterErrorCode.Validation, "Item code is required.");
+                    outcomes.Add(new IvStockLifecycleItemResult { ICode = code, Error = "Item was not found." });
+                    return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                        IvMasterErrorCode.NotFound,
+                        $"Item '{code}' was not found. No items were changed.",
+                        data: new IvStockLifecycleBulkResult { Items = outcomes });
                 }
 
-                var entity = await _stockMasters.GetTrackedAsync(db, context.CompanyCode!, code, cancellationToken);
-                if (entity is null || !RowVersionsEqual(entity.RowVersion, item.RowVersion))
+                if (!RowVersionsEqual(entity.RowVersion, rowVersion))
                 {
-                    stale++;
+                    await tx.RollbackAsync(cancellationToken);
+                    outcomes.Add(new IvStockLifecycleItemResult
+                    {
+                        ICode = code,
+                        Error = "Modified by another user. Reload and try again."
+                    });
+                    return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                        IvMasterErrorCode.Concurrency,
+                        $"{code} was modified by another user. No items were changed.",
+                        data: new IvStockLifecycleBulkResult { Items = outcomes });
+                }
+
+                if (!IvStockItemLifecycle.TryResolve(entity.IsActive, entity.IsDiscontinued, out var current))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    outcomes.Add(new IvStockLifecycleItemResult
+                    {
+                        ICode = code,
+                        Error = "Invalid stored lifecycle state."
+                    });
+                    return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                        IvMasterErrorCode.Validation,
+                        $"Item '{code}' has an invalid stored lifecycle state. No items were changed.",
+                        data: new IvStockLifecycleBulkResult { Items = outcomes });
+                }
+
+                locked.Add((code, entity, current));
+            }
+
+            // Phase 2 — evaluate the whole batch, then apply. No item changes until every check passes.
+            foreach (var (code, entity, current) in locked)
+            {
+                var validation = ItemLifecyclePolicy.Default.ValidateTransition(
+                    current, target, normalizedReason, out _);
+                if (!validation.Succeeded)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    outcomes.Add(new IvStockLifecycleItemResult
+                    {
+                        ICode = code,
+                        OldStatus = IvStockItemLifecycle.CodeOf(current),
+                        NewStatus = IvStockItemLifecycle.CodeOf(target),
+                        Error = validation.ErrorMessage
+                    });
+                    return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                        IvMasterErrorCode.Validation,
+                        $"{validation.ErrorMessage} No items were changed.",
+                        data: new IvStockLifecycleBulkResult { Items = outcomes });
+                }
+            }
+
+            foreach (var (code, entity, current) in locked)
+            {
+                if (current == target)
+                {
+                    // Idempotent: no lifecycle event, no unrelated master property touched.
+                    outcomes.Add(new IvStockLifecycleItemResult
+                    {
+                        ICode = code,
+                        OldStatus = IvStockItemLifecycle.CodeOf(current),
+                        NewStatus = IvStockItemLifecycle.CodeOf(target)
+                    });
                     continue;
                 }
 
-                tracked.Add((entity, item.RowVersion));
-            }
+                if (target == IvStockItemLifecycleStatus.Inactive)
+                {
+                    var retirement = await ItemLifecyclePolicy.Default
+                        .EvaluateRetirementInTransactionAsync(
+                            db, context.CompanyCode!, code, cancellationToken);
+                    if (retirement.HasBlockingDependencies)
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        outcomes.Add(new IvStockLifecycleItemResult
+                        {
+                            ICode = code,
+                            OldStatus = IvStockItemLifecycle.CodeOf(current),
+                            NewStatus = IvStockItemLifecycle.CodeOf(target),
+                            Error = retirement.IsIndeterminate
+                                ? retirement.Message ?? "Retirement checks could not be completed."
+                                : retirement.Message ?? "Outstanding obligations remain."
+                        });
+                        var blockingCount = retirement.Blockers.Count(x => x.IsBlocking);
+                        return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
+                            IvMasterErrorCode.InUse,
+                            retirement.IsIndeterminate
+                                ? $"{code}: retirement checks could not be completed. No items were changed."
+                                : $"{blockingCount} of {requested.Count} selected item(s) cannot be retired. No items were changed.",
+                            data: new IvStockLifecycleBulkResult { Items = outcomes });
+                    }
+                }
 
-            if (stale > 0)
-            {
-                await tx.RollbackAsync(cancellationToken);
-                return Fail<object>(
-                    IvMasterErrorCode.Concurrency,
-                    $"{stale} selected item(s) were modified by another user. No records were changed. Please reload and try again.");
-            }
+                var occurredAtUtc = DateTime.UtcNow;
+                ItemLifecyclePolicy.ApplyStatus(entity, target, occurredAtUtc);
+                entity.ModifiedDate = _dates.Now;
+                entity.ModifiedBy = Truncate(context.UserId!, 10);
+                ItemLifecyclePolicy.AppendAudit(
+                    db,
+                    context.CompanyCode!,
+                    code,
+                    current,
+                    target,
+                    occurredAtUtc,
+                    Truncate(context.UserId!, 10),
+                    normalizedReason,
+                    action);
 
-            var now = _dates.Now;
-            var userId = Truncate(context.UserId!, 10);
-            foreach (var (entity, token) in tracked)
-            {
-                db.Entry(entity).Property(x => x.RowVersion).OriginalValue = token;
-                entity.IsActive = isActive;
-                entity.ModifiedDate = now;
-                entity.ModifiedBy = userId;
+                outcomes.Add(new IvStockLifecycleItemResult
+                {
+                    ICode = code,
+                    OldStatus = IvStockItemLifecycle.CodeOf(current),
+                    NewStatus = IvStockItemLifecycle.CodeOf(target)
+                });
             }
 
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
-            return IvMasterOperationResult<object>.Ok();
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Ok(
+                new IvStockLifecycleBulkResult { Items = outcomes });
         }
         catch (DbUpdateConcurrencyException)
         {
             await tx.RollbackAsync(cancellationToken);
-            return Fail<object>(
+            return IvMasterOperationResult<IvStockLifecycleBulkResult>.Fail(
                 IvMasterErrorCode.Concurrency,
-                "One or more items were modified by another user. No records were changed. Please reload and try again.");
+                "One or more items were modified by another user. No items were changed. Please reload and try again.");
         }
     }
 
@@ -1606,7 +1974,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
             query.SortField,
             query.SortDescending,
             query.Skip,
-            query.Take);
+            query.Take,
+            query.LifecycleStatus);
 
     private static void ApplyEditableFields(
         IvStockMaster entity,
@@ -1628,7 +1997,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
         entity.IDesc = TruncateOptional(desc, 200);
         entity.Barcode = TruncateOptional(model.Barcode, 50);
         entity.Brand = TruncateOptional(model.Brand, 50);
-        entity.IsActive = model.IsActive;
+        // IsActive / IsDiscontinued are owned by ItemLifecyclePolicy (SaveAsync / ChangeLifecycleAsync)
+        // and are never assigned from an editable form field here.
         entity.IType = TruncateOptional(iType, 20);
         entity.IClassCode = TruncateOptional(iClass, 30);
         entity.ISubClassCode = TruncateOptional(iSubClass, 30);
@@ -1719,6 +2089,10 @@ public sealed class IvStockMasterService : IIvStockMasterService
             PurchaseGlCode = x.PurchaseGlCode,
             Classification = x.Classification,
             IsActive = x.IsActive,
+            IsDiscontinued = x.IsDiscontinued,
+            LifecycleStatus = IvStockItemLifecycle.CodeOf(IvStockItemLifecycle.ResolveOrInactive(x.IsActive, x.IsDiscontinued)),
+            LifecycleLabel = IvStockItemLifecycle.LabelOf(IvStockItemLifecycle.ResolveOrInactive(x.IsActive, x.IsDiscontinued)),
+            DiscontinuedAtUtc = x.DiscontinuedAtUtc,
             SellingPrice = x.SellingPrice,
             PurchasePrice = x.PurchasePrice,
             MinStock = x.MinStock,
@@ -1740,6 +2114,9 @@ public sealed class IvStockMasterService : IIvStockMasterService
             Barcode = x.Barcode,
             Brand = x.Brand,
             IsActive = x.IsActive,
+            IsDiscontinued = x.IsDiscontinued,
+            LifecycleStatus = IvStockItemLifecycle.CodeOf(IvStockItemLifecycle.ResolveOrInactive(x.IsActive, x.IsDiscontinued)),
+            DiscontinuedAtUtc = x.DiscontinuedAtUtc,
             IType = x.IType,
             IClassCode = x.IClassCode,
             ISubClassCode = x.ISubClassCode,
@@ -1775,6 +2152,56 @@ public sealed class IvStockMasterService : IIvStockMasterService
         IvExpiryControlModes.TryNormalize(value, out var normalized)
             ? normalized
             : IvExpiryControlModes.None;
+
+    /// <summary>
+    /// Resolves the ONE requested lifecycle status from the form. The explicit status is authoritative
+    /// unless the legacy flags were also set to a different non-default state, which is rejected as a
+    /// contradictory/forged request rather than guessed.
+    /// </summary>
+    private static bool TryResolveRequestedLifecycleStatus(
+        IvStockMasterEditVm model,
+        out IvStockItemLifecycleStatus status,
+        out string? error)
+    {
+        status = IvStockItemLifecycleStatus.Active;
+        error = null;
+
+        if (!IvStockItemLifecycle.TryResolve(model.IsActive, model.IsDiscontinued, out var flagStatus))
+        {
+            error = "An item cannot be Inactive and Discontinued at the same time.";
+            return false;
+        }
+
+        var raw = (model.LifecycleStatus ?? string.Empty).Trim();
+        if (raw.Length == 0)
+        {
+            status = flagStatus;
+            return true;
+        }
+
+        if (!IvStockItemLifecycle.TryParseCode(raw, out var parsed))
+        {
+            error = $"Status must be one of {string.Join(", ", IvStockItemLifecycleStatusCodes.All)}.";
+            return false;
+        }
+
+        if (parsed == flagStatus)
+        {
+            status = parsed;
+            return true;
+        }
+
+        // (true, false) is the default flag pair, so an explicit different status means the caller
+        // only used the new field. Any other mismatch is a contradictory request.
+        if (flagStatus == IvStockItemLifecycleStatus.Active)
+        {
+            status = parsed;
+            return true;
+        }
+
+        error = "The lifecycle status conflicts with the Active and Discontinued fields.";
+        return false;
+    }
 
     private static IvMasterOperationResult<IvStockMasterEditVm> ImageFailure(
         IvMasterOperationResult<IvStoredStockImage> result) =>

@@ -40,6 +40,20 @@ public class IvStockMaster
     public string? LocationCode { get; set; }
 
     public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// Business lifecycle flag. <c>true</c> with <see cref="IsActive"/> means DISCONTINUED: no new
+    /// demand, existing obligations continue. <c>false</c> with <see cref="IsActive"/> false is an
+    /// invalid state rejected by the application and the SQL CHECK constraint.
+    /// </summary>
+    public bool IsDiscontinued { get; set; }
+
+    /// <summary>
+    /// Server UTC cutover boundary written on ACTIVE→DISCONTINUED and cleared on reactivation.
+    /// Informational provenance only; the append-only lifecycle audit keeps the history.
+    /// </summary>
+    public DateTime? DiscontinuedAtUtc { get; set; }
+
     public DateTime? CreatedDate { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? ModifiedDate { get; set; }

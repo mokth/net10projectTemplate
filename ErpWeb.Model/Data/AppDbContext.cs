@@ -146,6 +146,7 @@ public class AppDbContext : DbContext
     public DbSet<MsUom> MsUoms => Set<MsUom>();
     public DbSet<MsLhdnUom> MsLhdnUoms => Set<MsLhdnUom>();
     public DbSet<IvStockMaster> IvStockMasters => Set<IvStockMaster>();
+    public DbSet<IvStockMasterLifecycleEvent> IvStockMasterLifecycleEvents => Set<IvStockMasterLifecycleEvent>();
     public DbSet<IvStockMasterImage> IvStockMasterImages => Set<IvStockMasterImage>();
     public DbSet<IvItemUomConversion> IvItemUomConversions => Set<IvItemUomConversion>();
     public DbSet<IvLot> IvLots => Set<IvLot>();

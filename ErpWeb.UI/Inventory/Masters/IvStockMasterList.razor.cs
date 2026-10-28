@@ -2,8 +2,10 @@ using System.Collections;
 using System.Timers;
 using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Common.DataGrid;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
@@ -45,14 +47,14 @@ public partial class IvStockMasterList : PageBase, IDisposable
     protected string? AppliedSubClass;
     protected string? AppliedWarehouse;
     protected string? AppliedBrand;
-    protected bool? AppliedIsActive = true;
+    protected string AppliedLifecycle = IvStockLifecycleFilterKeys.ActiveAndDiscontinued;
 
     protected string? DraftType;
     protected string? DraftClass;
     protected string? DraftSubClass;
     protected string? DraftWarehouse;
     protected string DraftBrand = string.Empty;
-    protected string DraftActiveKey = "active";
+    protected string DraftLifecycleKey = IvStockLifecycleFilterKeys.ActiveAndDiscontinued;
 
     protected IReadOnlyList<IvCodeLookupRow> Types { get; set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Classes { get; set; } = [];
@@ -70,17 +72,29 @@ public partial class IvStockMasterList : PageBase, IDisposable
         || !string.IsNullOrWhiteSpace(AppliedSubClass)
         || !string.IsNullOrWhiteSpace(AppliedWarehouse)
         || !string.IsNullOrWhiteSpace(AppliedBrand)
-        || AppliedIsActive is not null;
+        || !string.Equals(AppliedLifecycle, IvStockLifecycleFilterKeys.ActiveAndDiscontinued, StringComparison.OrdinalIgnoreCase);
 
     protected string ConfirmMessage { get; set; } = string.Empty;
     protected string ConfirmButtonText { get; set; } = "Confirm";
     protected ButtonRenderStyle ConfirmButtonStyle { get; set; } = ButtonRenderStyle.Primary;
 
-    protected IReadOnlyList<ActiveFilterOption> ActiveFilterOptions { get; } =
+    /// <summary>Audited reason for a lifecycle change; required (never inferred from the old status).</summary>
+    protected string BulkReason { get; set; } = string.Empty;
+
+    /// <summary>True for lifecycle commands, false for plain delete confirmation.</summary>
+    protected bool BulkReasonVisible { get; set; }
+
+    /// <summary>
+    /// One dropdown for the whole lifecycle. The default view deliberately includes DISCONTINUED:
+    /// hiding it would hide items that still carry open commitments.
+    /// </summary>
+    protected IReadOnlyList<LifecycleFilterOption> LifecycleFilterOptions { get; } =
     [
-        new("all", "All"),
-        new("active", "Active"),
-        new("inactive", "Inactive")
+        new(IvStockLifecycleFilterKeys.ActiveAndDiscontinued, "Active + Discontinued"),
+        new(IvStockLifecycleFilterKeys.Active, "Active only"),
+        new(IvStockLifecycleFilterKeys.Discontinued, "Discontinued"),
+        new(IvStockLifecycleFilterKeys.Inactive, "Inactive (retired)"),
+        new(IvStockLifecycleFilterKeys.All, "All")
     ];
 
     protected List<GridColumnData> Columns { get; } =
@@ -95,7 +109,8 @@ public partial class IvStockMasterList : PageBase, IDisposable
         new() { Caption = "Warehouse", FieldName = nameof(IvStockMasterListRow.DefWarehouse), Width = "110px", VisibleIndex = 8 },
         new() { Caption = "Sell price", FieldName = nameof(IvStockMasterListRow.SellingPrice), DataType = "decimal", DisplayFormat = "n4", Width = "110px", VisibleIndex = 9 },
         new() { Caption = "Buy price", FieldName = nameof(IvStockMasterListRow.PurchasePrice), DataType = "decimal", DisplayFormat = "n4", Width = "110px", VisibleIndex = 10 },
-        new() { Caption = "Active", FieldName = nameof(IvStockMasterListRow.IsActive), DataType = "bool", Width = "80px", VisibleIndex = 11 },
+        new() { Caption = "Status", FieldName = nameof(IvStockMasterListRow.LifecycleLabel), Width = "130px", VisibleIndex = 11 },
+        new() { Caption = "Discontinued", FieldName = nameof(IvStockMasterListRow.IsDiscontinued), DataType = "bool", Visible = false, VisibleIndex = 30 },
         // Reorder thresholds belong on the list: without them a low-stock alert cannot be explained
         // from the item it flags. Both are item-level columns and never alert when NULL or 0.
         new() { Caption = "Min stock", FieldName = nameof(IvStockMasterListRow.MinStock), DataType = "decimal", DisplayFormat = "n4", Width = "100px", VisibleIndex = 12 },
@@ -106,6 +121,7 @@ public partial class IvStockMasterList : PageBase, IDisposable
         new() { Caption = "Sell GL", FieldName = nameof(IvStockMasterListRow.SellingGlCode), Visible = false, VisibleIndex = 17 },
         new() { Caption = "Buy GL", FieldName = nameof(IvStockMasterListRow.PurchaseGlCode), Visible = false, VisibleIndex = 18 },
         new() { Caption = "Classification", FieldName = nameof(IvStockMasterListRow.Classification), Visible = false, VisibleIndex = 19 },
+        new() { Caption = "Active", FieldName = nameof(IvStockMasterListRow.IsActive), DataType = "bool", Visible = false, VisibleIndex = 31 },
         ..AuditColumns.For(startVisibleIndex: 20)
     ];
 
@@ -125,8 +141,9 @@ public partial class IvStockMasterList : PageBase, IDisposable
         [
             new() { Text = "NEW", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd },
             new() { Text = "COPY", IConClass = "fa-regular fa-copy", Style = "primary", Enabled = CanAdd },
-            new() { Text = "ACTIVATE", IConClass = "fa-solid fa-toggle-on", Style = "success", Enabled = CanEdit },
-            new() { Text = "DEACTIVATE", IConClass = "fa-solid fa-toggle-off", Style = "warning", Enabled = CanEdit },
+            new() { Text = "DISCONTINUE", IConClass = "fa-solid fa-ban", Style = "warning", Enabled = CanEdit, ToolTip = "Stop new demand; existing obligations continue" },
+            new() { Text = "SET INACTIVE", IConClass = "fa-solid fa-circle-stop", Style = "danger", Enabled = CanEdit, ToolTip = "Retire the item once every blocker is cleared" },
+            new() { Text = "REACTIVATE", IConClass = "fa-solid fa-toggle-on", Style = "success", Enabled = CanEdit, ToolTip = "Return the item to ACTIVE" },
             new() { Text = "DELETE", IConClass = "far fa-trash-alt", Style = "danger", Enabled = CanDelete },
             new() { Text = "EXPORT", IConClass = "fa-solid fa-file-excel", Style = "primary", Enabled = CanExport }
         ];
@@ -163,11 +180,14 @@ public partial class IvStockMasterList : PageBase, IDisposable
             case "COPY":
                 await OnCopyAsync();
                 break;
-            case "ACTIVATE":
-                await BeginBulkAsync(PendingBulkAction.Activate);
+            case "DISCONTINUE":
+                await BeginBulkAsync(PendingBulkAction.Discontinue);
                 break;
-            case "DEACTIVATE":
-                await BeginBulkAsync(PendingBulkAction.Deactivate);
+            case "SET INACTIVE":
+                await BeginBulkAsync(PendingBulkAction.Inactivate);
+                break;
+            case "REACTIVATE":
+                await BeginBulkAsync(PendingBulkAction.Reactivate);
                 break;
             case "DELETE":
                 await BeginBulkAsync(PendingBulkAction.Delete);
@@ -243,12 +263,9 @@ public partial class IvStockMasterList : PageBase, IDisposable
         DraftSubClass = AppliedSubClass;
         DraftWarehouse = AppliedWarehouse;
         DraftBrand = AppliedBrand ?? string.Empty;
-        DraftActiveKey = AppliedIsActive switch
-        {
-            true => "active",
-            false => "inactive",
-            _ => "all"
-        };
+        DraftLifecycleKey = string.IsNullOrWhiteSpace(AppliedLifecycle)
+            ? IvStockLifecycleFilterKeys.ActiveAndDiscontinued
+            : AppliedLifecycle;
         FilterPopupVisible = true;
         _ = LoadDraftSubClassesAsync(DraftClass);
     }
@@ -267,12 +284,9 @@ public partial class IvStockMasterList : PageBase, IDisposable
         AppliedSubClass = DraftSubClass;
         AppliedWarehouse = DraftWarehouse;
         AppliedBrand = string.IsNullOrWhiteSpace(DraftBrand) ? null : DraftBrand.Trim();
-        AppliedIsActive = DraftActiveKey switch
-        {
-            "active" => true,
-            "inactive" => false,
-            _ => null
-        };
+        AppliedLifecycle = string.IsNullOrWhiteSpace(DraftLifecycleKey)
+            ? IvStockLifecycleFilterKeys.ActiveAndDiscontinued
+            : DraftLifecycleKey;
         FilterPopupVisible = false;
         SyncDataSourceFilters();
         await ReloadGridAsync();
@@ -285,14 +299,14 @@ public partial class IvStockMasterList : PageBase, IDisposable
         DraftSubClass = null;
         DraftWarehouse = null;
         DraftBrand = string.Empty;
-        DraftActiveKey = "active";
+        DraftLifecycleKey = IvStockLifecycleFilterKeys.ActiveAndDiscontinued;
         SubClasses = [];
         AppliedType = null;
         AppliedClass = null;
         AppliedSubClass = null;
         AppliedWarehouse = null;
         AppliedBrand = null;
-        AppliedIsActive = true;
+        AppliedLifecycle = IvStockLifecycleFilterKeys.ActiveAndDiscontinued;
         FilterPopupVisible = false;
         SyncDataSourceFilters();
         await ReloadGridAsync();
@@ -306,6 +320,13 @@ public partial class IvStockMasterList : PageBase, IDisposable
             return;
         }
 
+        var reason = (BulkReason ?? string.Empty).Trim();
+        if (BulkReasonVisible && reason.Length < 3)
+        {
+            ErrorMessage = "Enter a reason for this lifecycle change (at least 3 characters).";
+            return;
+        }
+
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
@@ -316,32 +337,59 @@ public partial class IvStockMasterList : PageBase, IDisposable
                 .Select(x => new IvMasterKeyToken { Code = x.ICode, RowVersion = x.RowVersion })
                 .ToList();
 
-            IvMasterOperationResult<object> result = _pendingAction switch
+            if (_pendingAction == PendingBulkAction.Delete)
             {
-                PendingBulkAction.Activate => await StockMasters.SetActiveAsync(tokens, true),
-                PendingBulkAction.Deactivate => await StockMasters.SetActiveAsync(tokens, false),
-                PendingBulkAction.Delete => await StockMasters.DeleteAsync(tokens),
-                _ => IvMasterOperationResult<object>.Fail(IvMasterErrorCode.Validation, "Unknown action.")
+                var deleteResult = await StockMasters.DeleteAsync(tokens);
+                if (deleteResult.Succeeded)
+                {
+                    StatusMessage = "Item(s) deleted.";
+                    ConfirmVisible = false;
+                    _selectedRows.Clear();
+                    await ReloadGridAsync();
+                }
+                else
+                {
+                    ErrorMessage = deleteResult.Message
+                        ?? deleteResult.DeleteCheck?.Message
+                        ?? "Unable to delete the selected item(s).";
+                    ConfirmVisible = false;
+                }
+
+                return;
+            }
+
+            var targetStatus = _pendingAction switch
+            {
+                PendingBulkAction.Discontinue => IvStockItemLifecycleStatusCodes.Discontinued,
+                PendingBulkAction.Inactivate => IvStockItemLifecycleStatusCodes.Inactive,
+                PendingBulkAction.Reactivate => IvStockItemLifecycleStatusCodes.Active,
+                _ => null
             };
+
+            if (targetStatus is null)
+            {
+                ErrorMessage = "Unknown action.";
+                ConfirmVisible = false;
+                return;
+            }
+
+            var result = await StockMasters.ChangeLifecycleAsync(
+                tokens,
+                targetStatus,
+                reason,
+                IvStockLifecycleSourceActions.Bulk);
 
             if (result.Succeeded)
             {
-                StatusMessage = _pendingAction switch
-                {
-                    PendingBulkAction.Activate => "Item(s) activated.",
-                    PendingBulkAction.Deactivate => "Item(s) deactivated.",
-                    PendingBulkAction.Delete => "Item(s) deleted.",
-                    _ => "Done."
-                };
+                var changed = result.Data?.ChangedCount ?? tokens.Count;
+                StatusMessage = $"{changed} item(s) changed to {LifecycleLabel(targetStatus)}.";
                 ConfirmVisible = false;
                 _selectedRows.Clear();
                 await ReloadGridAsync();
             }
             else
             {
-                ErrorMessage = result.Message
-                    ?? result.DeleteCheck?.Message
-                    ?? "Unable to complete the operation.";
+                ErrorMessage = BuildBulkLifecycleError(result);
                 ConfirmVisible = false;
             }
         }
@@ -349,8 +397,16 @@ public partial class IvStockMasterList : PageBase, IDisposable
         {
             IsSubmitting = false;
             _pendingAction = PendingBulkAction.None;
+            BulkReason = string.Empty;
         }
     }
+
+    protected static string LifecycleCssClass(string? status) => status switch
+    {
+        IvStockItemLifecycleStatusCodes.Discontinued => "is-hold",
+        IvStockItemLifecycleStatusCodes.Inactive => "is-off",
+        _ => "is-on"
+    };
 
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
@@ -395,7 +451,7 @@ public partial class IvStockMasterList : PageBase, IDisposable
 
     private async Task BeginBulkAsync(PendingBulkAction action)
     {
-        if (action is PendingBulkAction.Activate or PendingBulkAction.Deactivate)
+        if (action is PendingBulkAction.Discontinue or PendingBulkAction.Inactivate or PendingBulkAction.Reactivate)
         {
             if (!CanEdit)
             {
@@ -425,21 +481,60 @@ public partial class IvStockMasterList : PageBase, IDisposable
             }
         }
 
+        // A retirement preview blocks the WHOLE batch. The server re-evaluates inside the
+        // transition transaction; this check exists only to explain the outcome up front.
+        if (action == PendingBulkAction.Inactivate)
+        {
+            var blocked = new List<string>();
+            foreach (var row in _selectedRows)
+            {
+                var preview = await StockMasters.PreviewRetirementAsync(row.ICode);
+                if (!preview.Succeeded || preview.Data is null)
+                {
+                    blocked.Add($"{row.ICode}: {preview.Message ?? "retirement could not be verified"}");
+                }
+                else if (!preview.Data.CanRetire)
+                {
+                    blocked.Add($"{row.ICode}: {preview.Data.Message ?? "outstanding obligations remain"}");
+                }
+            }
+
+            if (blocked.Count > 0)
+            {
+                const int shown = 10;
+                var detail = string.Join(" | ", blocked.Take(shown));
+                var suffix = blocked.Count > shown ? $" (+{blocked.Count - shown} more)" : string.Empty;
+                ErrorMessage =
+                    $"{blocked.Count} of {_selectedRows.Count} selected items cannot be retired. No items changed. {detail}{suffix}";
+                return;
+            }
+        }
+
         _pendingAction = action;
-        ConfirmButtonStyle = action == PendingBulkAction.Delete
-            ? ButtonRenderStyle.Danger
-            : ButtonRenderStyle.Primary;
+        BulkReason = string.Empty;
+        BulkReasonVisible = action != PendingBulkAction.Delete;
+        ConfirmButtonStyle = action switch
+        {
+            PendingBulkAction.Delete or PendingBulkAction.Inactivate => ButtonRenderStyle.Danger,
+            PendingBulkAction.Discontinue => ButtonRenderStyle.Warning,
+            _ => ButtonRenderStyle.Primary
+        };
         ConfirmButtonText = action switch
         {
-            PendingBulkAction.Activate => "Activate",
-            PendingBulkAction.Deactivate => "Deactivate",
+            PendingBulkAction.Discontinue => "Discontinue",
+            PendingBulkAction.Inactivate => "Set inactive",
+            PendingBulkAction.Reactivate => "Reactivate",
             PendingBulkAction.Delete => "Delete",
             _ => "Confirm"
         };
         ConfirmMessage = action switch
         {
-            PendingBulkAction.Activate => $"Activate {_selectedRows.Count} selected item(s)?",
-            PendingBulkAction.Deactivate => $"Deactivate {_selectedRows.Count} selected item(s)?",
+            PendingBulkAction.Discontinue =>
+                $"Discontinue {_selectedRows.Count} selected item(s)? New demand will be rejected immediately; existing obligations and corrections continue to be allowed.",
+            PendingBulkAction.Inactivate =>
+                $"Set {_selectedRows.Count} selected item(s) to INACTIVE? This retires the item for new business across the company. Existing history is preserved and nothing is deleted.",
+            PendingBulkAction.Reactivate =>
+                $"Reactivate {_selectedRows.Count} selected item(s)? They return to ACTIVE and accept new demand again. No existing document is reopened or altered.",
             PendingBulkAction.Delete => $"Permanently delete {_selectedRows.Count} selected item(s)?",
             _ => "Confirm?"
         };
@@ -459,7 +554,7 @@ public partial class IvStockMasterList : PageBase, IDisposable
         DataSource.UpdateFilters(new IvStockMasterListQuery
         {
             SearchText = string.IsNullOrWhiteSpace(SearchText) ? null : SearchText.Trim(),
-            IsActive = AppliedIsActive,
+            LifecycleStatus = AppliedLifecycle,
             IType = AppliedType,
             IClassCode = AppliedClass,
             ISubClassCode = AppliedSubClass,
@@ -551,32 +646,32 @@ public partial class IvStockMasterList : PageBase, IDisposable
         var dict = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
-            dict["q"] = SearchText.Trim();
+            dict["searchText"] = SearchText.Trim();
         }
 
-        if (AppliedIsActive is bool active)
+        if (!string.IsNullOrWhiteSpace(AppliedLifecycle))
         {
-            dict["active"] = active ? "1" : "0";
+            dict["lifecycle"] = AppliedLifecycle;
         }
 
         if (!string.IsNullOrWhiteSpace(AppliedType))
         {
-            dict["type"] = AppliedType;
+            dict["iType"] = AppliedType;
         }
 
         if (!string.IsNullOrWhiteSpace(AppliedClass))
         {
-            dict["class"] = AppliedClass;
+            dict["iClassCode"] = AppliedClass;
         }
 
         if (!string.IsNullOrWhiteSpace(AppliedSubClass))
         {
-            dict["subclass"] = AppliedSubClass;
+            dict["iSubClassCode"] = AppliedSubClass;
         }
 
         if (!string.IsNullOrWhiteSpace(AppliedWarehouse))
         {
-            dict["warehouse"] = AppliedWarehouse;
+            dict["defWarehouse"] = AppliedWarehouse;
         }
 
         if (!string.IsNullOrWhiteSpace(AppliedBrand))
@@ -587,13 +682,36 @@ public partial class IvStockMasterList : PageBase, IDisposable
         return dict;
     }
 
-    protected sealed record ActiveFilterOption(string Key, string Name);
+    private static string LifecycleLabel(string status) => status switch
+    {
+        IvStockItemLifecycleStatusCodes.Active => "ACTIVE",
+        IvStockItemLifecycleStatusCodes.Discontinued => "DISCONTINUED",
+        IvStockItemLifecycleStatusCodes.Inactive => "INACTIVE",
+        _ => status
+    };
+
+    private static string BuildBulkLifecycleError(IvMasterOperationResult<IvStockLifecycleBulkResult> result)
+    {
+        var baseMessage = result.Message ?? "Unable to change the item lifecycle.";
+        var failures = result.Data?.Items
+            .Where(x => !x.Succeeded)
+            .Select(x => $"{x.ICode}: {x.Error}")
+            .Take(10)
+            .ToList() ?? [];
+
+        return failures.Count == 0
+            ? baseMessage
+            : $"{baseMessage} {string.Join(" | ", failures)}";
+    }
+
+    protected sealed record LifecycleFilterOption(string Key, string Name);
 
     private enum PendingBulkAction
     {
         None,
-        Activate,
-        Deactivate,
+        Discontinue,
+        Inactivate,
+        Reactivate,
         Delete
     }
 }
@@ -652,6 +770,7 @@ public sealed class IvStockMasterGridDataSource : GridCustomDataSource
         new()
         {
             SearchText = source.SearchText,
+            LifecycleStatus = source.LifecycleStatus,
             IsActive = source.IsActive,
             IClassCode = source.IClassCode,
             ISubClassCode = source.ISubClassCode,

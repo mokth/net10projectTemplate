@@ -264,7 +264,8 @@ public sealed partial class ProductionWorkOrderService : IProductionWorkOrderSer
         }
 
         var built = await BuildCurrentSnapshotAsync(
-            auth.Scope!, request, existing?.SnapshotRevision ?? 1, explicitScheduleAnchor: null, cancellationToken);
+            auth.Scope!, request, existing?.SnapshotRevision ?? 1, explicitScheduleAnchor: null, cancellationToken,
+            existingCommitment: existing);
         if (built.WorkOrder is null)
         {
             return IvMasterOperationResult<ProductionWorkOrderPreview>.Fail(

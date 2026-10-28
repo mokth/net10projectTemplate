@@ -24,6 +24,7 @@ public static class IvStockMasterExportEndpoints
         [FromServices] IAccessRightService accessRights,
         [FromQuery] string? searchText,
         [FromQuery] bool? isActive,
+        [FromQuery] string? lifecycle,
         [FromQuery] string? iClassCode,
         [FromQuery] string? iSubClassCode,
         [FromQuery] string? iType,
@@ -42,6 +43,7 @@ public static class IvStockMasterExportEndpoints
         {
             SearchText = searchText,
             IsActive = isActive,
+            LifecycleStatus = lifecycle,
             IClassCode = iClassCode,
             ISubClassCode = iSubClassCode,
             IType = iType,
@@ -96,7 +98,7 @@ public static class IvStockMasterExportEndpoints
             string[] headers =
             [
                 "Code", "Description", "Type", "Class", "Subclass", "Brand", "Std UOM",
-                "Default Warehouse", "Sell Price", "Purchase Price", "Active",
+                "Default Warehouse", "Sell Price", "Purchase Price", "Status",
                 "Barcode", "Sell UOM", "Purchase UOM", "Sell GL", "Purchase GL", "Classification"
             ];
 
@@ -117,7 +119,7 @@ public static class IvStockMasterExportEndpoints
                     CellText(r.DefWarehouse),
                     CellNumber(r.SellingPrice),
                     CellNumber(r.PurchasePrice),
-                    CellText(r.IsActive ? "Y" : "N"),
+                    CellText(r.LifecycleLabel),
                     CellText(r.Barcode),
                     CellText(r.SellingUom),
                     CellText(r.PurUom),

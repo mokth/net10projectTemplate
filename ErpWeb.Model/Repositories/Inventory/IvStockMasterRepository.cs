@@ -88,7 +88,8 @@ public sealed class IvStockMasterRepository : IIvStockMasterRepository
         nameof(IvStockMaster.DefWarehouse),
         nameof(IvStockMaster.SellingPrice),
         nameof(IvStockMaster.PurchasePrice),
-        nameof(IvStockMaster.IsActive)
+        nameof(IvStockMaster.IsActive),
+        nameof(IvStockMaster.IsDiscontinued)
     };
 
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
@@ -367,11 +368,23 @@ public sealed class IvStockMasterRepository : IIvStockMasterRepository
             .AsNoTracking()
             .Where(x => x.CompanyCode == company);
 
-        if (args.IsActive is not null)
+        if (args.IsActive is not null && string.IsNullOrWhiteSpace(args.LifecycleStatus))
         {
             var active = args.IsActive.Value;
             query = query.Where(x => x.IsActive == active);
         }
+
+        var lifecycle = (args.LifecycleStatus ?? string.Empty).Trim().ToUpperInvariant();
+        query = lifecycle switch
+        {
+            "ACTIVE" => query.Where(x => x.IsActive && !x.IsDiscontinued),
+            "DISCONTINUED" => query.Where(x => x.IsActive && x.IsDiscontinued),
+            "INACTIVE" => query.Where(x => !x.IsActive),
+            // Default list view: every item that may still carry an open obligation.
+            "ACTIVE_DISCONTINUED" => query.Where(x => x.IsActive),
+            // "ALL" (or anything unrecognised) adds no lifecycle predicate.
+            _ => query
+        };
 
         if (!string.IsNullOrWhiteSpace(args.SearchText))
         {
@@ -450,6 +463,9 @@ public sealed class IvStockMasterRepository : IIvStockMasterRepository
             "isactive" => sortDescending
                 ? query.OrderByDescending(x => x.IsActive)
                 : query.OrderBy(x => x.IsActive),
+            "isdiscontinued" => sortDescending
+                ? query.OrderByDescending(x => x.IsDiscontinued)
+                : query.OrderBy(x => x.IsDiscontinued),
             _ => query.OrderBy(x => x.ICode)
         };
     }

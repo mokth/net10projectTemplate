@@ -34,8 +34,8 @@
                     {
                         <span class="iv-chip">@Model.ICode</span>
                     }
-                    <span class="iv-status @(Model.IsActive ? "is-on" : "is-off")">
-                        @(Model.IsActive ? "Active" : "Inactive")
+                    <span class="iv-status @LifecycleCssClass">
+                        @LifecycleLabel
                     </span>
                 </div>
             </div>
@@ -121,8 +121,8 @@
                                 <span class="iv-detail-row__value">@DisplayText(Model.Brand)</span>
                             </div>
                             <div class="iv-detail-row">
-                                <span class="iv-detail-row__label">Active</span>
-                                <span class="iv-detail-row__value">@(Model.IsActive ? "Yes" : "No")</span>
+                                <span class="iv-detail-row__label">Status</span>
+                                <span class="iv-detail-row__value">@LifecycleLabel</span>
                             </div>
                         </div>
                     </div>
@@ -210,6 +210,11 @@
             <footer class="iv-footer">
                 <p class="iv-footer__hint">Read-only view</p>
                 <div class="iv-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="RETIREMENT CHECK"
+                              IconCssClass="fa-solid fa-list-check"
+                              Click="@RunRetirementPreviewAsync"
+                              Enabled="@(!RetirementPreviewBusy)" />
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                               Text="CLOSE"
                               IconCssClass="fa-solid fa-xmark"
@@ -349,10 +354,48 @@
                                     <DxTextBox @bind-Text="@Model.Brand" maxlength="50" />
                                     @FieldError(nameof(IvStockMasterEditVm.Brand))
                                 </div>
-                                <div class="iv-field">
-                                    <label class="iv-field__label">Active</label>
-                                    <DxCheckBox @bind-Checked="@Model.IsActive" AllowIndeterminateState="false" />
+                                <div class="iv-field iv-stock-field--wide">
+                                    <label class="iv-field__label">Status</label>
+                                    <DxComboBox Data="@LifecycleOptions"
+                                                TData="IvLifecycleOption"
+                                                TValue="string"
+                                                TextFieldName="@nameof(IvLifecycleOption.Label)"
+                                                ValueFieldName="@nameof(IvLifecycleOption.Code)"
+                                                Value="@Model.LifecycleStatus"
+                                                ValueChanged="@OnLifecycleStatusChanged"
+                                                Enabled="@(!IsSubmitting && !IsNewMode)"
+                                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never" />
+                                    <p class="iv-field__hint">@LifecycleHint</p>
+                                    @FieldError(nameof(IvStockMasterEditVm.LifecycleStatus))
                                 </div>
+                                @if (LifecycleChangePending)
+                                {
+                                    <div class="iv-field iv-stock-field--wide iv-lifecycle-change">
+                                        <p class="iv-lifecycle-change__warning" role="note">
+                                            @LifecycleChangeWarning
+                                        </p>
+                                        <label class="iv-field__label">
+                                            Reason for status change
+                                            <span class="iv-field__required" aria-hidden="true">*</span>
+                                        </label>
+                                        <DxTextBox @bind-Text="@Model.LifecycleChangeReason"
+                                                   maxlength="250"
+                                                   NullText="Required: explain why this item is changing status"
+                                                   InputCssClass="required-field" />
+                                        @FieldError(nameof(IvStockMasterEditVm.LifecycleChangeReason))
+                                        @if (Model.LifecycleStatus == IvStockItemLifecycleStatusCodes.Inactive)
+                                        {
+                                            <div class="iv-lifecycle-change__actions">
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                          Text="@(RetirementPreviewBusy ? "CHECKING…" : "PREVIEW RETIREMENT")"
+                                                          IconCssClass="fa-solid fa-list-check"
+                                                          Click="@RunRetirementPreviewAsync"
+                                                          Enabled="@(!RetirementPreviewBusy && !IsSubmitting)" />
+                                                <span class="iv-field__hint">The final check runs again inside the save transaction.</span>
+                                            </div>
+                                        }
+                                    </div>
+                                }
                                 <div class="iv-field">
                                     <label class="iv-field__label">Supply method</label>
                                     <div class="iv-detail-row__value">@SupplyMethodDisplay</div>
@@ -691,6 +734,82 @@
                               Text="Reload latest"
                               Click="@ReloadLatestAsync"
                               Enabled="@(!IsSubmitting)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Retirement check"
+             CloseOnOutsideClick="false"
+             Width="640px"
+             CssClass="common-popup"
+             @bind-Visible="@RetirementPreviewVisible">
+        <Content>
+            <div class="iv-popup-body">
+                @if (RetirementPreviewBusy)
+                {
+                    <p class="iv-field__hint" aria-busy="true">Checking stock, procurement, sales and production obligations…</p>
+                }
+                else if (!string.IsNullOrWhiteSpace(RetirementPreviewError))
+                {
+                    <p class="iv-field__error" role="alert">@RetirementPreviewError</p>
+                }
+                else if (RetirementPreview is { } preview)
+                {
+                    <p class="iv-confirm__copy">
+                        @(preview.CanRetire
+                            ? "No outstanding obligation blocks retirement. Inventory and valuation history is preserved."
+                            : preview.Message ?? "Outstanding obligations block retirement.")
+                    </p>
+                    <div class="iv-stock-fields">
+                        <div class="iv-detail-row">
+                            <span class="iv-detail-row__label">On hand</span>
+                            <span class="iv-detail-row__value">@FormatDec(preview.OnHandQuantity)</span>
+                        </div>
+                        <div class="iv-detail-row">
+                            <span class="iv-detail-row__label">Stock value</span>
+                            <span class="iv-detail-row__value">@FormatDec(preview.InventoryValue)</span>
+                        </div>
+                        <div class="iv-detail-row">
+                            <span class="iv-detail-row__label">Evaluated</span>
+                            <span class="iv-detail-row__value">@FormatUtc(preview.EvaluatedAtUtc)</span>
+                        </div>
+                    </div>
+                    @if (preview.Blockers.Count > 0)
+                    {
+                        <table class="iv-lifecycle-blockers">
+                            <thead>
+                                <tr>
+                                    <th>Module</th>
+                                    <th>Reference</th>
+                                    <th>Quantity</th>
+                                    <th>Reason</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var blocker in preview.Blockers)
+                                {
+                                    <tr>
+                                        <td>@blocker.SourceModule</td>
+                                        <td>@DisplayText(blocker.ReferenceNo ?? blocker.ReferenceType)</td>
+                                        <td>@(blocker.Quantity.HasValue ? FormatDec(blocker.Quantity.Value) : "—")</td>
+                                        <td>@blocker.Reason</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                }
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Retry"
+                              Click="@RunRetirementPreviewAsync"
+                              Enabled="@(!RetirementPreviewBusy)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Close"
+                              Click="@(() => RetirementPreviewVisible = false)" />
                 </div>
             </div>
         </Content>

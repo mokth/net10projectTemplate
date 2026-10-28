@@ -8,7 +8,14 @@ public class IvStockMasterConfiguration : IEntityTypeConfiguration<IvStockMaster
 {
     public void Configure(EntityTypeBuilder<IvStockMaster> builder)
     {
-        builder.ToTable("IvStockMaster");
+        builder.ToTable("IvStockMaster", table =>
+        {
+            // DISCONTINUED is (Active = 1, IsDiscontinued = 1); INACTIVE is (0, 0).
+            // (Active = 0, IsDiscontinued = 1) is a contradiction with no business meaning.
+            table.HasCheckConstraint(
+                "CK_IvStockMaster_LifecycleState",
+                "NOT ([Active] = 0 AND [IsDiscontinued] = 1)");
+        });
         builder.HasKey(e => new { e.CompanyCode, e.ICode });
 
         builder.Property(e => e.CompanyCode).HasMaxLength(5).IsRequired();
@@ -50,6 +57,13 @@ public class IvStockMasterConfiguration : IEntityTypeConfiguration<IvStockMaster
         builder.Property(e => e.BranchCode).HasMaxLength(5);
         builder.Property(e => e.LocationCode).HasMaxLength(10);
         builder.Property(e => e.IsActive).HasColumnName("Active").HasDefaultValue(true).ValueGeneratedNever();
+        builder.Property(e => e.IsDiscontinued)
+            .HasColumnName("IsDiscontinued")
+            .HasDefaultValue(false)
+            .ValueGeneratedNever();
+        builder.Property(e => e.DiscontinuedAtUtc)
+            .HasColumnName("DiscontinuedAtUtc")
+            .HasColumnType("datetime2");
         builder.Property(e => e.CreatedDate).HasColumnName("Created");
         builder.Property(e => e.CreatedBy).HasColumnName("UserID").HasMaxLength(10);
         builder.Property(e => e.ModifiedDate).HasColumnName("Updated");
@@ -64,5 +78,8 @@ public class IvStockMasterConfiguration : IEntityTypeConfiguration<IvStockMaster
 
         builder.HasIndex(e => e.IsActive)
             .HasDatabaseName("IX_IvStockMaster_IsActive");
+
+        builder.HasIndex(e => new { e.CompanyCode, e.IsDiscontinued })
+            .HasDatabaseName("IX_IvStockMaster_Company_Discontinued");
     }
 }

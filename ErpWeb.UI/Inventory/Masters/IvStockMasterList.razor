@@ -104,8 +104,8 @@
                                 <span class="iv-list-compact__code">@row.ICode</span>
                                 <span class="iv-list-compact__desc">@(string.IsNullOrWhiteSpace(row.IDesc) ? "—" : row.IDesc)</span>
                                 <div class="iv-list-compact__meta">
-                                    <span class="iv-status @(row.IsActive ? "is-on" : "is-off")">
-                                        @(row.IsActive ? "Active" : "Inactive")
+                                    <span class="iv-status @LifecycleCssClass(row.LifecycleStatus)">
+                                        @row.LifecycleLabel
                                     </span>
                                     @if (!string.IsNullOrWhiteSpace(row.IType))
                                     {
@@ -134,11 +134,11 @@
                 <DxFormLayout SizeMode="SizeMode.Small">
                     <DxFormLayoutItem Caption="Status" ColSpanMd="12">
                         <Template>
-                            <DxComboBox Data="@ActiveFilterOptions"
-                                        TextFieldName="@nameof(ActiveFilterOption.Name)"
-                                        ValueFieldName="@nameof(ActiveFilterOption.Key)"
-                                        @bind-Value="@DraftActiveKey"
-                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            <DxComboBox Data="@LifecycleFilterOptions"
+                                        TextFieldName="@nameof(LifecycleFilterOption.Name)"
+                                        ValueFieldName="@nameof(LifecycleFilterOption.Key)"
+                                        @bind-Value="@DraftLifecycleKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Type" ColSpanMd="6">
@@ -196,11 +196,26 @@
 
     <DxPopup HeaderText="Confirm"
              CloseOnOutsideClick="false"
-             Width="420px"
+             Width="460px"
              CssClass="common-popup"
              @bind-Visible="@ConfirmVisible">
         <Content>
             <p class="iv-confirm__copy">@ConfirmMessage</p>
+            @if (BulkReasonVisible)
+            {
+                <div class="iv-popup-body">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Reason (required, audited)" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@BulkReason"
+                                           NullText="Why is this lifecycle changing?"
+                                           MaxLength="250"
+                                           CssClass="w-100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                </div>
+            }
             <div class="iv-popup-footer">
                 <div class="iv-popup-footer__actions">
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"

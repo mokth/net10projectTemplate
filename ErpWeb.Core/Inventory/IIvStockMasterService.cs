@@ -1,5 +1,7 @@
 namespace ErpWeb.Core.Inventory;
 
+using ErpWeb.Core.Inventory.Lifecycle;
+
 public interface IIvStockMasterService
 {
     Task<IvMasterOperationResult<IvStockMasterListPage>> SearchAsync(
@@ -30,6 +32,24 @@ public interface IIvStockMasterService
     Task<IvMasterOperationResult<object>> SetActiveAsync(
         IReadOnlyList<IvMasterKeyToken> items,
         bool isActive,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Read-only retirement preview. UI explanation only; the transition re-evaluates in its own
+    /// transaction and this result is never used as final approval.
+    /// </summary>
+    Task<IvMasterOperationResult<ItemRetirementCheckResult>> PreviewRetirementAsync(
+        string iCode,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Explicit, audited lifecycle command. All-or-none across the selected items.
+    /// </summary>
+    Task<IvMasterOperationResult<IvStockLifecycleBulkResult>> ChangeLifecycleAsync(
+        IReadOnlyList<IvMasterKeyToken> items,
+        string targetStatus,
+        string reason,
+        string sourceAction,
         CancellationToken cancellationToken = default);
 
     Task<DeleteCheckResult> CanDeleteBulkAsync(

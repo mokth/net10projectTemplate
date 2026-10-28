@@ -1,5 +1,6 @@
 using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -2378,6 +2379,11 @@ public sealed class SaDoService : ISaDoService
         }
         var salesOrdersByNo = soLock.Headers;
 
+        // Lifecycle lock protocol: serialise with DISCONTINUE/INACTIVE commands before evaluating
+        // demand. Item codes are locked in deterministic order by the shared policy helper.
+        _ = await ItemLifecyclePolicy.Default.LockDemandMastersAsync(
+            db, companyCode, request.Lines!.Select(x => x?.ICode), cancellationToken);
+
         var prepared = new List<PreparedLine>();
         var calcStates = new List<SaInvoiceLineCalcState>();
         var lineNo = 1;
@@ -2505,6 +2511,18 @@ public sealed class SaDoService : ISaDoService
                         }
                     }
                 }
+            }
+
+            // Lifecycle gate: a DO line backed by a persisted Sales Order line is existing fulfilment
+            // (the SO reservation rules still cap the quantity); a standalone DO line is new demand
+            // and is refused for discontinued/inactive items.
+            var demandIntent = salesOrderDetail is not null
+                ? ItemDemandIntent.ExistingFulfilment
+                : ItemDemandIntent.NewDemand;
+            var demand = ItemLifecyclePolicy.Default.AuthorizeDemand(item, iCode, demandIntent);
+            if (!demand.Allowed)
+            {
+                errors[$"Lines[{lineNo - 1}].ICode"] = demand.ErrorMessage!;
             }
 
             // §7.5 — a DO line linked to a Sales Order must use the SO line's frozen snapshot, not

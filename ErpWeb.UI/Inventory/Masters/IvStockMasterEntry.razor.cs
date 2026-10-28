@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Inventory;
@@ -70,6 +71,124 @@ public partial class IvStockMasterEntry : PageBase
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
     protected bool IsViewMode => !IsNewMode && !IsEditMode;
+
+    protected IReadOnlyList<IvLifecycleOption> LifecycleOptions { get; } =
+    [
+        new(IvStockItemLifecycleStatusCodes.Active, "Active",
+            "Available for new business: sales orders, purchase requests and work orders."),
+        new(IvStockItemLifecycleStatusCodes.Discontinued, "Discontinued",
+            "Stops new orders and requirements. Existing stock, orders and work continue until completed."),
+        new(IvStockItemLifecycleStatusCodes.Inactive, "Inactive",
+            "Fully retired. Requires no stock balance or live commitment anywhere in the company.")
+    ];
+
+    /// <summary>Status loaded from the server; a different form value means a pending transition.</summary>
+    protected string PersistedLifecycleStatus { get; private set; } = IvStockItemLifecycleStatusCodes.Active;
+
+    protected bool LifecycleChangePending =>
+        !IsNewMode
+        && !string.Equals(Model.LifecycleStatus, PersistedLifecycleStatus, StringComparison.OrdinalIgnoreCase);
+
+    protected string LifecycleLabel => IvStockItemLifecycle.LabelOf(ResolveLifecycleStatus());
+
+    protected string LifecycleCssClass => ResolveLifecycleStatus() switch
+    {
+        IvStockItemLifecycleStatus.Active => "is-on",
+        IvStockItemLifecycleStatus.Discontinued => "is-hold",
+        _ => "is-off"
+    };
+
+    protected string LifecycleHint => ResolveLifecycleStatus() switch
+    {
+        IvStockItemLifecycleStatus.Active => LifecycleOptions[0].Hint,
+        IvStockItemLifecycleStatus.Discontinued => LifecycleOptions[1].Hint,
+        _ => LifecycleOptions[2].Hint
+    };
+
+    protected string LifecycleChangeWarning => ResolveLifecycleStatus() switch
+    {
+        IvStockItemLifecycleStatus.Discontinued =>
+            "New sales orders, purchase requests/orders and work orders for this item stop immediately. Deliveries, invoices, receipts and production of existing commitments continue.",
+        IvStockItemLifecycleStatus.Inactive =>
+            "Retirement requires a zero stock balance and no live procurement, sales, production or valuation obligation anywhere in the company. Preview the check first; the final check runs again inside the save transaction.",
+        _ => "Reactivating makes this item available for new business again. Existing documents are not reopened or altered."
+    };
+
+    protected bool RetirementPreviewVisible { get; set; }
+    protected bool RetirementPreviewBusy { get; private set; }
+    protected string? RetirementPreviewError { get; private set; }
+    protected ItemRetirementCheckResult? RetirementPreview { get; private set; }
+
+    private IvStockItemLifecycleStatus ResolveLifecycleStatus() =>
+        IvStockItemLifecycle.TryParseCode(Model.LifecycleStatus, out var parsed)
+            ? parsed
+            : IvStockItemLifecycleStatus.Active;
+
+    /// <summary>Keeps the legacy two flags in sync with the single status the user picks.</summary>
+    private void ApplyLifecycleMirror()
+    {
+        var status = ResolveLifecycleStatus();
+        Model.LifecycleStatus = IvStockItemLifecycle.CodeOf(status);
+        var (isActive, isDiscontinued) = IvStockItemLifecycle.ToFlags(status);
+        Model.IsActive = isActive;
+        Model.IsDiscontinued = isDiscontinued;
+    }
+
+    protected async Task OnLifecycleStatusChanged(string? value)
+    {
+        var raw = (value ?? string.Empty).Trim();
+        Model.LifecycleStatus = IvStockItemLifecycle.TryParseCode(raw, out var parsed)
+            ? IvStockItemLifecycle.CodeOf(parsed)
+            : IvStockItemLifecycleStatusCodes.Active;
+        ApplyLifecycleMirror();
+
+        if (!LifecycleChangePending)
+        {
+            Model.LifecycleChangeReason = null;
+        }
+
+        RetirementPreview = null;
+        RetirementPreviewError = null;
+
+        if (!IsNewMode
+            && string.Equals(Model.LifecycleStatus, IvStockItemLifecycleStatusCodes.Inactive, StringComparison.OrdinalIgnoreCase))
+        {
+            // Inactivate is the only transition that needs the company-wide blocker report up front.
+            await RunRetirementPreviewAsync();
+        }
+    }
+
+    protected async Task RunRetirementPreviewAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Model.ICode))
+        {
+            RetirementPreviewError = "Save the item before checking retirement.";
+            RetirementPreviewVisible = true;
+            return;
+        }
+
+        RetirementPreviewBusy = true;
+        RetirementPreviewError = null;
+        RetirementPreview = null;
+        try
+        {
+            var result = await StockMasters.PreviewRetirementAsync(Model.ICode);
+            if (!result.Succeeded || result.Data is null)
+            {
+                RetirementPreviewError = result.Message ?? "The retirement check could not be completed.";
+            }
+            else
+            {
+                RetirementPreview = result.Data;
+            }
+
+            RetirementPreviewVisible = true;
+        }
+        finally
+        {
+            RetirementPreviewBusy = false;
+        }
+    }
 
     /// <summary>Structural lock from the service (plan §5.6/§11.4). UI-only; Save re-checks.</summary>
     protected bool StructuralLocked => !IsNewMode && Model.StructuralFieldsLocked;
@@ -341,6 +460,16 @@ public partial class IvStockMasterEntry : PageBase
 
         try
         {
+            ApplyLifecycleMirror();
+
+            if (LifecycleChangePending && string.IsNullOrWhiteSpace(Model.LifecycleChangeReason))
+            {
+                const string reasonRequired = "A reason is required to change the item status.";
+                ValidationErrors[nameof(IvStockMasterEditVm.LifecycleChangeReason)] = reasonRequired;
+                ErrorMessage = reasonRequired;
+                return;
+            }
+
             var result = await StockMasters.SaveAsync(
                 Model,
                 IsNewMode,
@@ -436,6 +565,7 @@ public partial class IvStockMasterEntry : PageBase
         ErrorMessage = null;
         StatusMessage = "Loaded latest version.";
         await AfterModelLoadedAsync(preservePending: false);
+        PersistedLifecycleStatus = Model.LifecycleStatus;
         CaptureCleanSnapshot();
     }
 
@@ -668,6 +798,12 @@ public partial class IvStockMasterEntry : PageBase
                         Model.ModifiedBy = null;
                         Model.ModifiedDate = null;
                         Model.HasImage = false;
+                        // A copy is a NEW item: it always starts Active, with no carried-over cutover.
+                        Model.LifecycleStatus = IvStockItemLifecycleStatusCodes.Active;
+                        Model.IsActive = true;
+                        Model.IsDiscontinued = false;
+                        Model.DiscontinuedAtUtc = null;
+                        Model.LifecycleChangeReason = null;
                         StatusMessage = $"Copied from {CopyFrom}.";
                     }
                 }
@@ -677,6 +813,7 @@ public partial class IvStockMasterEntry : PageBase
                 }
 
                 await AfterModelLoadedAsync(preservePending: true);
+                PersistedLifecycleStatus = Model.LifecycleStatus;
                 CaptureCleanSnapshot();
                 return;
             }
@@ -700,6 +837,7 @@ public partial class IvStockMasterEntry : PageBase
             Model = Clone(result.Data);
             await LoadGalleryAsync(code, clearPending: true);
             await AfterModelLoadedAsync(preservePending: true);
+            PersistedLifecycleStatus = Model.LifecycleStatus;
             CaptureCleanSnapshot();
         }
         finally
@@ -985,6 +1123,8 @@ public partial class IvStockMasterEntry : PageBase
             HasImage = false,
             MfgType = "BUY",
             IsActive = true,
+            IsDiscontinued = false,
+            LifecycleStatus = IvStockItemLifecycleStatusCodes.Active,
             StockControl = true,
             ExpiryControl = IvExpiryControlModes.None
         };
@@ -999,6 +1139,10 @@ public partial class IvStockMasterEntry : PageBase
             Barcode = source.Barcode,
             Brand = source.Brand,
             IsActive = source.IsActive,
+            LifecycleStatus = source.LifecycleStatus,
+            IsDiscontinued = source.IsDiscontinued,
+            DiscontinuedAtUtc = source.DiscontinuedAtUtc,
+            LifecycleChangeReason = source.LifecycleChangeReason,
             IType = source.IType,
             IClassCode = source.IClassCode,
             ISubClassCode = source.ISubClassCode,
@@ -1034,3 +1178,6 @@ public partial class IvStockMasterEntry : PageBase
 }
 
 public sealed record IvExpiryControlOption(string Code, string Label);
+
+/// <summary>One selectable item lifecycle status with the explanation shown under the selector.</summary>
+public sealed record IvLifecycleOption(string Code, string Label, string Hint);

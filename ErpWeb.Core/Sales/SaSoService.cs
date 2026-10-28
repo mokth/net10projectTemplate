@@ -1,5 +1,6 @@
 using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -1844,11 +1845,10 @@ public sealed class SaSoService : ISaSoService
             .Select(x => x.ICode.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var itemsByCode = itemCodes.Count == 0
+        IReadOnlyDictionary<string, IvStockMaster> itemsByCode = itemCodes.Count == 0
             ? new Dictionary<string, IvStockMaster>(StringComparer.OrdinalIgnoreCase)
-            : await db.IvStockMasters.AsNoTracking()
-                .Where(x => x.CompanyCode == companyCode && itemCodes.Contains(x.ICode))
-                .ToDictionaryAsync(x => x.ICode, x => x, StringComparer.OrdinalIgnoreCase, cancellationToken);
+            : await ItemLifecyclePolicy.Default.LockDemandMastersAsync(
+                db, companyCode, itemCodes, cancellationToken);
 
         var usedExistingLines = new HashSet<short>();
         var prepared = new List<PreparedLine>();
@@ -1915,6 +1915,25 @@ public sealed class SaSoService : ISaSoService
                     errors[$"Lines[{index}].OrderQty"] =
                         $"Order quantity cannot be lower than allocated quantity {floor:n4}.";
                 }
+            }
+
+            // Lifecycle gate: a new line, a changed item or a quantity increase is NEW demand and is
+            // refused for discontinued/inactive items. Repeating or reducing a persisted line stays
+            // existing fulfilment so pre-cutover commitments can still be edited.
+            var previousDetail = existingLineNo is short priorLineNo
+                                 && existingByLine is not null
+                                 && existingByLine.TryGetValue(priorLineNo, out var prior)
+                ? prior
+                : null;
+            var demandIntent = ItemLifecyclePolicy.ClassifyLineIntent(
+                previousDetail is not null,
+                previousDetail is not null && CodesEqual(previousDetail.ICode, iCode),
+                previousDetail is null ? 0m : SaSoQty.RoundQty(previousDetail.OrderQty),
+                orderQty);
+            var demand = ItemLifecyclePolicy.Default.AuthorizeDemand(item, iCode, demandIntent);
+            if (!demand.Allowed)
+            {
+                errors[$"Lines[{index}].ICode"] = demand.ErrorMessage!;
             }
 
             var stdPsize = IvItemPackPolicy.ResolveDocumentFactor(
@@ -2125,6 +2144,28 @@ public sealed class SaSoService : ISaSoService
         if (customer is null || !customer.IsActive)
         {
             return SaSoSnapshotImportResult.Fail("Customer was not found or is inactive.");
+        }
+
+        // Lifecycle: converting a quotation into a Sales Order is NEW demand. A discontinued or
+        // inactive item must not be committed to a fresh SO through this snapshot path (the same rule
+        // the hand-keyed SO path enforces in PrepareLinesAsync).
+        var quotationItemCodes = lines
+            .Select(x => (x.ICode ?? string.Empty).Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var quotationItems = await ItemLifecyclePolicy.LoadMastersAsync(
+            db, quotation.CompanyCode, quotationItemCodes, cancellationToken);
+        foreach (var line in lines)
+        {
+            var itemCode = (line.ICode ?? string.Empty).Trim();
+            var demand = ItemLifecyclePolicy.Default.AuthorizeDemand(
+                quotationItems.GetValueOrDefault(itemCode), itemCode, ItemDemandIntent.NewDemand);
+            if (!demand.Allowed)
+            {
+                return SaSoSnapshotImportResult.Fail(
+                    $"Quotation {quotation.QtNo} line {line.Line}: {demand.ErrorMessage}");
+            }
         }
 
         if (string.IsNullOrWhiteSpace(quotation.Currency))

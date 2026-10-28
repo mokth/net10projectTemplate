@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
@@ -412,7 +413,8 @@ public sealed partial class ProductionWorkOrderService
         }
 
         var built = await BuildCurrentSnapshotAsync(
-            auth.Scope!, header, entity.SnapshotRevision, entity.ScheduleAnchorDateTime, cancellationToken);
+            auth.Scope!, header, entity.SnapshotRevision, entity.ScheduleAnchorDateTime, cancellationToken,
+            existingCommitment: entity);
         if (built.WorkOrder is null)
         {
             return IvMasterOperationResult<ProductionWorkOrderRefreshPreview>.Fail(
@@ -470,7 +472,7 @@ public sealed partial class ProductionWorkOrderService
 
             var built = await BuildCurrentSnapshotAsync(
                 auth.Scope!, header, entity.SnapshotRevision + 1,
-                entity.ScheduleAnchorDateTime, cancellationToken);
+                entity.ScheduleAnchorDateTime, cancellationToken, existingCommitment: entity);
             if (built.WorkOrder is null)
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -567,7 +569,8 @@ public sealed partial class ProductionWorkOrderService
         var request = HeaderRequest(entity);
         request.DefinitionCode = targetCode;
         var built = await BuildCurrentSnapshotAsync(
-            auth.Scope!, request, entity.SnapshotRevision, entity.ScheduleAnchorDateTime, cancellationToken);
+            auth.Scope!, request, entity.SnapshotRevision, entity.ScheduleAnchorDateTime, cancellationToken,
+            existingCommitment: entity);
         if (built.WorkOrder is null)
         {
             return IvMasterOperationResult<ProductionWorkOrderChangeDefinitionPreview>.Fail(
@@ -644,7 +647,7 @@ public sealed partial class ProductionWorkOrderService
             header.DefinitionCode = targetCode;
             var built = await BuildCurrentSnapshotAsync(
                 auth.Scope!, header, entity.SnapshotRevision + 1,
-                entity.ScheduleAnchorDateTime, cancellationToken);
+                entity.ScheduleAnchorDateTime, cancellationToken, existingCommitment: entity);
             if (built.WorkOrder is null)
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1058,6 +1061,19 @@ public sealed partial class ProductionWorkOrderService
                 throw new WorkOrderCommandException(
                     IvMasterErrorCode.Validation,
                     string.Join(" ", errors.Select(e => e.Code + ": " + e.Message)));
+            }
+
+            // Lifecycle gate: substituting a material introduces NEW component demand. A stock item
+            // that is discontinued/inactive must not enter the snapshot this way.
+            if (masters.TryGetValue(componentCode, out var replacementMaster))
+            {
+                var replacementDemand = ItemLifecyclePolicy.Default.AuthorizeDemand(
+                    replacementMaster, componentCode, ItemDemandIntent.NewDemand);
+                if (!replacementDemand.Allowed)
+                {
+                    throw new WorkOrderCommandException(
+                        IvMasterErrorCode.Validation, replacementDemand.ErrorMessage!);
+                }
             }
 
             var quantities = await _quantities.CalculateAsync(entity, cancellationToken);
@@ -1611,7 +1627,8 @@ public sealed partial class ProductionWorkOrderService
         ProductionWorkOrderDraftRequest request,
         int snapshotRevision,
         DateTime? explicitScheduleAnchor,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ProductionWorkOrder? existingCommitment = null)
     {
         var normalizedRequest = new ProductionWorkOrderDraftRequest
         {
@@ -1685,7 +1702,82 @@ public sealed partial class ProductionWorkOrderService
 
         built.WorkOrder.SnapshotHash = WorkOrderSnapshotHasher.ComputeSnapshotHash(built.WorkOrder);
         built.WorkOrder.SnapshotHashVersion = ProductionSnapshotHashVersions.Current;
+
+        // Lifecycle gate: a Work Order always creates NEW demand for its finished product and route
+        // outputs. A component is new demand when it is newly introduced to the snapshot or its
+        // required quantity increases; repeating/reducing a persisted component stays existing
+        // fulfilment so a released Work Order can still be completed while the item is discontinued.
+        var lifecycleError = await ValidateWorkOrderDemandAsync(
+            scope, built.WorkOrder, existingCommitment, cancellationToken);
+        if (lifecycleError is not null)
+        {
+            return new BuiltSnapshot { Error = lifecycleError, Warnings = built.Warnings };
+        }
+
         return new BuiltSnapshot { WorkOrder = built.WorkOrder, Warnings = built.Warnings };
+    }
+
+    /// <summary>
+    /// Authoritative item lifecycle gate for a Work Order snapshot. Returns a user-facing error when
+    /// any newly demanded item is discontinued/inactive; <c>null</c> when the snapshot may proceed.
+    /// </summary>
+    private async Task<string?> ValidateWorkOrderDemandAsync(
+        InventoryTenantScope scope,
+        ProductionWorkOrder built,
+        ProductionWorkOrder? existingCommitment,
+        CancellationToken cancellationToken)
+    {
+        var productCodes = new List<string> { built.ProductCode };
+        productCodes.AddRange(built.RouteSteps.Select(x => x.OutputItemCode ?? string.Empty));
+        var componentCodes = built.Materials.Select(x => x.ComponentCode ?? string.Empty).ToList();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var masters = await ItemLifecyclePolicy.LoadMastersAsync(
+            db,
+            scope.CompanyCode,
+            productCodes.Concat(componentCodes),
+            cancellationToken);
+        var policy = ItemLifecyclePolicy.Default;
+
+        foreach (var code in productCodes
+                     .Select(x => (x ?? string.Empty).Trim())
+                     .Where(x => x.Length > 0)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var demand = policy.AuthorizeDemand(
+                masters.GetValueOrDefault(code), code, ItemDemandIntent.NewDemand);
+            if (!demand.Allowed)
+            {
+                return demand.ErrorMessage;
+            }
+        }
+
+        var baseline = (existingCommitment?.Materials ?? [])
+            .GroupBy(x => (x.ComponentCode ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.RequiredQty), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in built.Materials
+                     .GroupBy(x => (x.ComponentCode ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!masters.TryGetValue(group.Key, out var master))
+            {
+                // Not an item-master component (legitimate indirect purchasing item): module rules apply.
+                continue;
+            }
+
+            var required = group.Sum(x => x.RequiredQty);
+            var hasBaseline = baseline.TryGetValue(group.Key, out var previous);
+            var intent = ItemLifecyclePolicy.ClassifyLineIntent(
+                hasBaseline, hasBaseline, hasBaseline ? previous : 0m, required);
+            var demand = policy.AuthorizeDemand(master, group.Key, intent);
+            if (!demand.Allowed)
+            {
+                return demand.ErrorMessage;
+            }
+        }
+
+        return null;
     }
 
     private async Task<ProductionWorkOrder> RequireDraftAsync(

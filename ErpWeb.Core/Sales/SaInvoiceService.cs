@@ -1,6 +1,7 @@
 using ErpWeb.Core.Admin;
 using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -2072,6 +2073,10 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 errors);
         }
 
+        // Lifecycle lock protocol: serialise with DISCONTINUE/INACTIVE commands before demand checks.
+        _ = await ItemLifecyclePolicy.Default.LockDemandMastersAsync(
+            db, companyCode, request.Lines!.Select(x => x?.ICode), cancellationToken);
+
         var prepared = new List<PreparedLine>();
         var calcStates = new List<SaInvoiceLineCalcState>();
         var lineNo = 1;
@@ -2307,6 +2312,20 @@ public sealed class SaInvoiceService : ISaInvoiceService
 
             if (errors.Count > 0)
             {
+                lineNo++;
+                continue;
+            }
+
+            // Lifecycle gate: an invoice line backed by a persisted DO or SO line is existing
+            // fulfilment (the SO/DO reservation rules still cap the quantity). A manual/direct
+            // invoice line is NEW demand and is refused for discontinued/inactive items.
+            var demandIntent = linkedDoDetail is not null || linkedSoDetail is not null
+                ? ItemDemandIntent.ExistingFulfilment
+                : ItemDemandIntent.NewDemand;
+            var demand = ItemLifecyclePolicy.Default.AuthorizeDemand(item, iCode, demandIntent);
+            if (!demand.Allowed)
+            {
+                errors[$"Lines[{lineNo - 1}].ICode"] = demand.ErrorMessage!;
                 lineNo++;
                 continue;
             }

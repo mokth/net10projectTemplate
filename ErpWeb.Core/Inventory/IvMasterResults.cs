@@ -1,5 +1,6 @@
 namespace ErpWeb.Core.Inventory;
 
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Model.Entities.Inventory;
 
 public enum IvMasterErrorCode
@@ -66,21 +67,42 @@ public sealed class IvMasterOperationResult<T>
         IvMasterErrorCode code,
         string message,
         IReadOnlyDictionary<string, string>? validationErrors = null,
-        DeleteCheckResult? deleteCheck = null) =>
+        DeleteCheckResult? deleteCheck = null,
+        T? data = default) =>
         new()
         {
             Succeeded = false,
             ErrorCode = code,
             Message = message,
             ValidationErrors = validationErrors ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            DeleteCheck = deleteCheck
+            DeleteCheck = deleteCheck,
+            Data = data
         };
 }
 
-public sealed class IvStockMasterListQuery
+/// <summary>
+/// List filter keys for the item lifecycle. <see cref="ActiveAndDiscontinued"/> is the default view:
+/// an item master list must not hide the company's open obligations by default.
+/// </summary>
+public static class IvStockLifecycleFilterKeys
 {
-    public string? SearchText { get; set; }
+    public const string Active = "ACTIVE";
+    public const string Discontinued = "DISCONTINUED";
+    public const string Inactive = "INACTIVE";
+    public const string ActiveAndDiscontinued = "ACTIVE_DISCONTINUED";
+    public const string All = "ALL";
+}
+
+public sealed class IvStockMasterListQuery
+{    public string? SearchText { get; set; }
     public bool? IsActive { get; set; }
+
+    /// <summary>
+    /// Optional lifecycle filter: ACTIVE, DISCONTINUED, INACTIVE or ALL. When set it takes precedence
+    /// over <see cref="IsActive"/>; null keeps the legacy boolean filter working.
+    /// </summary>
+    public string? LifecycleStatus { get; set; }
+
     public string? IClassCode { get; set; }
     public string? ISubClassCode { get; set; }
     public string? IType { get; set; }
@@ -110,6 +132,18 @@ public sealed class IvStockMasterListRow
     public string? PurchaseGlCode { get; init; }
     public string? Classification { get; init; }
     public bool IsActive { get; init; }
+
+    /// <summary>True only in the DISCONTINUED state (still active for existing fulfilment).</summary>
+    public bool IsDiscontinued { get; init; }
+
+    /// <summary>ACTIVE | DISCONTINUED | INACTIVE, derived from the two persisted flags.</summary>
+    public string LifecycleStatus { get; init; } = IvStockItemLifecycleStatusCodes.Active;
+
+    public string LifecycleLabel { get; init; } = "Active";
+
+    /// <summary>Server UTC cutover boundary, when the item was last discontinued.</summary>
+    public DateTime? DiscontinuedAtUtc { get; init; }
+
     public decimal? SellingPrice { get; init; }
     public decimal? PurchasePrice { get; init; }
 
@@ -135,6 +169,22 @@ public sealed class IvStockMasterListPage
     public int TotalCount { get; init; }
 }
 
+/// <summary>Per-item outcome of a bulk lifecycle command. All-or-none at transaction level.</summary>
+public sealed class IvStockLifecycleItemResult
+{
+    public string ICode { get; init; } = string.Empty;
+    public string? OldStatus { get; init; }
+    public string? NewStatus { get; init; }
+    public string? Error { get; init; }
+    public bool Succeeded => string.IsNullOrEmpty(Error);
+}
+
+public sealed class IvStockLifecycleBulkResult
+{
+    public IReadOnlyList<IvStockLifecycleItemResult> Items { get; init; } = [];
+    public int ChangedCount => Items.Count(x => x.Succeeded && !string.Equals(x.OldStatus, x.NewStatus, StringComparison.Ordinal));
+}
+
 public sealed class IvStockMasterEditVm
 {
     public string ICode { get; set; } = string.Empty;
@@ -144,6 +194,21 @@ public sealed class IvStockMasterEditVm
     public string? Barcode { get; set; }
     public string? Brand { get; set; }
     public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// The user-visible lifecycle status. The entry page edits this single value and the service maps
+    /// it to <see cref="IsActive"/> + <see cref="IsDiscontinued"/> through one authoritative mapper.
+    /// </summary>
+    public string LifecycleStatus { get; set; } = IvStockItemLifecycleStatusCodes.Active;
+
+    /// <summary>Derived mirror of <see cref="LifecycleStatus"/>; kept for existing consumers.</summary>
+    public bool IsDiscontinued { get; set; }
+
+    public DateTime? DiscontinuedAtUtc { get; set; }
+
+    /// <summary>Mandatory reason supplied with a status change. Never persisted on the item itself.</summary>
+    public string? LifecycleChangeReason { get; set; }
+
     public string? IType { get; set; }
     public string? IClassCode { get; set; }
     public string? ISubClassCode { get; set; }
@@ -219,6 +284,8 @@ public static class IvStockMasterSortFields
         nameof(IvStockMasterListRow.DefWarehouse),
         nameof(IvStockMasterListRow.SellingPrice),
         nameof(IvStockMasterListRow.PurchasePrice),
-        nameof(IvStockMasterListRow.IsActive)
+        nameof(IvStockMasterListRow.IsActive),
+        nameof(IvStockMasterListRow.IsDiscontinued),
+        nameof(IvStockMasterListRow.LifecycleStatus)
     };
 }

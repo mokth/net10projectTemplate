@@ -1,5 +1,6 @@
 using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -2224,11 +2225,10 @@ public sealed class SaQtService : ISaQtService
             .Select(x => x.ICode.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var itemsByCode = itemCodes.Count == 0
+        IReadOnlyDictionary<string, IvStockMaster> itemsByCode = itemCodes.Count == 0
             ? new Dictionary<string, IvStockMaster>(StringComparer.OrdinalIgnoreCase)
-            : await db.IvStockMasters.AsNoTracking()
-                .Where(x => x.CompanyCode == companyCode && itemCodes.Contains(x.ICode))
-                .ToDictionaryAsync(x => x.ICode, x => x, StringComparer.OrdinalIgnoreCase, cancellationToken);
+            : await ItemLifecyclePolicy.Default.LockDemandMastersAsync(
+                db, companyCode, itemCodes, cancellationToken);
 
         var usedExistingLines = new HashSet<short>();
         var prepared = new List<PreparedLine>();
@@ -2278,6 +2278,25 @@ public sealed class SaQtService : ISaQtService
             if (orderQty <= 0m)
             {
                 errors[$"Lines[{index}].OrderQty"] = "Order quantity must be greater than zero.";
+            }
+
+            // Lifecycle gate: a new/changed/increased quotation line is NEW demand. Repeating or
+            // reducing an existing quotation line stays existing fulfilment.
+            var previousDetail = existingLineNo is short priorLineNo
+                                 && existingByLine is not null
+                                 && existingByLine.TryGetValue(priorLineNo, out var prior)
+                ? prior
+                : null;
+            var demandIntent = ItemLifecyclePolicy.ClassifyLineIntent(
+                previousDetail is not null,
+                previousDetail is not null
+                    && string.Equals(previousDetail.ICode?.Trim(), iCode, StringComparison.OrdinalIgnoreCase),
+                previousDetail is null ? 0m : SaQtQty.RoundQty(previousDetail.OrderQty),
+                orderQty);
+            var demand = ItemLifecyclePolicy.Default.AuthorizeDemand(item, iCode, demandIntent);
+            if (!demand.Allowed)
+            {
+                errors[$"Lines[{index}].ICode"] = demand.ErrorMessage!;
             }
 
             if (line.UnitPrice < 0m)

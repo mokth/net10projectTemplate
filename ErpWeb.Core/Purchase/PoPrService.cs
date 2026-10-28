@@ -1,5 +1,6 @@
 using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
@@ -1678,6 +1679,10 @@ WHERE d.CompanyCode={companyCode}
             .Where(x => x.CompanyCode == companyCode)
             .ToDictionaryAsync(x => x.TaxGrCode, x => x.Percentage, StringComparer.OrdinalIgnoreCase, cancellationToken);
 
+        // Lifecycle lock protocol: serialise with DISCONTINUE/INACTIVE before the demand gate.
+        _ = await ItemLifecyclePolicy.Default.LockDemandMastersAsync(
+            db, companyCode, lines.Select(x => x.ICode), cancellationToken);
+
         var prepared = new List<PreparedLine>(lines.Count);
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string? documentCurrency = null;
@@ -1768,6 +1773,24 @@ WHERE d.CompanyCode={companyCode}
             {
                 errors[$"{prefix}.ICode"] = "Item was not found in stock or purchase item master.";
                 continue;
+            }
+
+            // Lifecycle gate (stock items only): a new PR line, a changed item or a quantity increase
+            // is NEW demand and is refused for discontinued/inactive items. Existing PR lines may be
+            // repeated or reduced; converting them to a PO is gated separately in the PO service.
+            if (resolved.Stock is not null)
+            {
+                var demandIntent = ItemLifecyclePolicy.ClassifyLineIntent(
+                    existing is not null,
+                    existing is not null
+                        && string.Equals(existing.ICode?.Trim(), iCode, StringComparison.OrdinalIgnoreCase),
+                    existing?.PurchaseQty ?? 0m,
+                    purchaseQty);
+                var demand = ItemLifecyclePolicy.Default.AuthorizeDemand(resolved.Stock, iCode, demandIntent);
+                if (!demand.Allowed)
+                {
+                    errors[$"{prefix}.ICode"] = demand.ErrorMessage!;
+                }
             }
 
             var linkedMaterialId = src.WorkOrderMaterialId ?? existing?.WorkOrderMaterialId;
@@ -2140,8 +2163,10 @@ WHERE d.CompanyCode={companyCode}
         string iCode,
         CancellationToken cancellationToken)
     {
+        // Exact-code stock master FIRST, regardless of lifecycle. An inactive/discontinued stock item
+        // must never fall through to PoPurItem and be re-classified as an indirect purchase item.
         var stock = await db.IvStockMasters.AsNoTracking().FirstOrDefaultAsync(
-            x => x.CompanyCode == companyCode && x.ICode == iCode && x.IsActive,
+            x => x.CompanyCode == companyCode && x.ICode == iCode,
             cancellationToken);
         if (stock is not null)
         {
@@ -2158,7 +2183,8 @@ WHERE d.CompanyCode={companyCode}
                 null,
                 0m,
                 stock.DefWarehouse,
-                null);
+                null,
+                stock);
         }
 
         var pur = await db.PoPurItems.AsNoTracking()
@@ -2725,7 +2751,8 @@ WHERE d.CompanyCode={companyCode}
         string? VendorCd,
         decimal Moq,
         string? DefWarehouse,
-        string? Currency);
+        string? Currency,
+        IvStockMaster? Stock = null);
 
     private readonly record struct UserContext(
         string? Error,
