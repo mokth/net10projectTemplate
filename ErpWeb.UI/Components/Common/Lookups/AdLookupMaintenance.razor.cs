@@ -4,27 +4,51 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
 using ErpWeb.UI.Components.Common.DataGrid;
-using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 
-namespace ErpWeb.UI.Admin;
+namespace ErpWeb.UI.Components.Common.Lookups;
 
 /// <summary>
-/// Generic configurable lookup maintenance (<c>/admin/lookups</c>).
+/// Shared maintenance surface for the approved <c>AdLookupValue</c> families.
 ///
 /// <para>
-/// One screen for every approved lookup family. The family is chosen from
-/// <see cref="AdLookupTypeRegistry"/> — never typed — so the generic table cannot become an arbitrary
-/// classification store. Activation/deactivation replaces hard delete: a value may be referenced by
-/// many modules and there is no reliable dependency scan.
+/// One instance serves the all-family admin screen (<c>/admin/lookups</c>) and every per-family module
+/// screen. The routable wrapper is responsible for authorization via <c>MenuAuthorize</c> on the
+/// family's own menu code; this component only decides what to query and how to render it, and it
+/// refuses to query when <see cref="MenuCode"/> and <see cref="LookupType"/> do not form a registered,
+/// maintainable pair.
+/// </para>
+///
+/// <para>
+/// It inherits <see cref="ComponentBase"/>, not <c>PageBase</c>, on purpose: it is not routable, so it
+/// must never become a route that escapes the ErpAccess policy.
 /// </para>
 /// </summary>
-public partial class AdLookupList : PageBase
+public partial class AdLookupMaintenance : ComponentBase
 {
-    private const string MenuCode = MenuCodes.AdminLookups;
-
     [Inject] private IAdLookupService Lookups { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
+
+    /// <summary>The family's own menu code (or <c>ADMIN_LOOKUPS</c> for the all-family screen).</summary>
+    [Parameter, EditorRequired] public string MenuCode { get; set; } = string.Empty;
+
+    /// <summary>Fixed family for a module screen; null on the all-family admin screen.</summary>
+    [Parameter] public string? LookupType { get; set; }
+
+    [Parameter] public string Eyebrow { get; set; } = "Admin";
+
+    [Parameter] public string Heading { get; set; } = "Lookup Values";
+
+    /// <summary>True only on the admin screen, where the operator picks the family.</summary>
+    [Parameter] public bool ShowFamilySelector { get; set; }
+
+    /// <summary>
+    /// Persisted grid-layout key. The admin screen keeps <c>ad-lookup-list</c> so existing saved
+    /// layouts survive; module screens default to <c>ad-lookup-{family}</c>.
+    /// </summary>
+    [Parameter] public string? GridKey { get; set; }
+
+    [Parameter] public string PopupWidth { get; set; } = "50vw";
 
     private DxGrid? Grid;
     private bool PopupVisible;
@@ -34,18 +58,33 @@ public partial class AdLookupList : PageBase
     private bool IsLoading = true;
     private bool IsSubmitting;
     private string? StatusMessage;
+    private string? ErrorMessage;
     private IEnumerable<AdLookupRow>? Data;
     private readonly List<AdLookupRow> SelectedRows = [];
 
-    protected string? SelectedLookupType { get; set; } =
-        AdLookupTypeRegistry.Maintainable.FirstOrDefault()?.Code;
+    /// <summary>Monotonic load token: a response whose family is no longer current is discarded.</summary>
+    private int _loadSequence;
+
+    private string? _initializedKey;
+    private string? _guardError;
+
+    protected string? SelectedLookupType { get; set; }
 
     protected AdLookupEditVm EditModel { get; set; } = new();
+
+    protected IReadOnlyList<AdLookupTypeDefinition> LookupTypes => AdLookupTypeRegistry.Maintainable;
+
+    private AdLookupTypeDefinition? FixedDefinition => AdLookupTypeRegistry.Find(LookupType);
 
     private AdLookupTypeDefinition? EditDefinition =>
         AdLookupTypeRegistry.Find(EditModel.LookupType) ?? AdLookupTypeRegistry.Find(SelectedLookupType);
 
-    protected IReadOnlyList<AdLookupTypeDefinition> LookupTypes => AdLookupTypeRegistry.Maintainable;
+    protected string GridKeyValue =>
+        !string.IsNullOrWhiteSpace(GridKey)
+            ? GridKey
+            : FixedDefinition is { } definition
+                ? $"ad-lookup-{definition.Code}"
+                : "ad-lookup-list";
 
     protected List<ButtonInfo> ToolbarButtons { get; } =
     [
@@ -99,11 +138,97 @@ public partial class AdLookupList : PageBase
         ..AuditColumns.For(startVisibleIndex: 5)
     ];
 
-    protected override async Task OnPageInitializedAsync() => await ReloadListAsync();
+    /// <summary>
+    /// Initialises once per (menu, family) pair. Re-running for the same pair would wipe an in-progress
+    /// edit on every parent render, so the pair is remembered rather than the render count.
+    /// </summary>
+    protected override async Task OnParametersSetAsync()
+    {
+        await base.OnParametersSetAsync();
+
+        var key = $"{MenuCode}|{LookupType}";
+        if (string.Equals(_initializedKey, key, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _initializedKey = key;
+        ResetForFamilyChange();
+
+        _guardError = ValidatePlacement();
+        if (_guardError is not null)
+        {
+            Data = [];
+            IsLoading = false;
+            return;
+        }
+
+        SelectedLookupType = !ShowFamilySelector && FixedDefinition is { } definition
+            ? definition.Code
+            : AdLookupTypeRegistry.Maintainable.FirstOrDefault()?.Code;
+
+        await ReloadListAsync();
+    }
+
+    /// <summary>
+    /// A supplied family is only honoured when it is registered, maintainable, and actually owned by
+    /// the menu code that guards this instance. Anything else renders a refusal, never another
+    /// family's values.
+    /// </summary>
+    private string? ValidatePlacement()
+    {
+        if (string.IsNullOrWhiteSpace(MenuCode))
+        {
+            return "This screen is not configured for a lookup family.";
+        }
+
+        if (string.IsNullOrWhiteSpace(LookupType))
+        {
+            return ShowFamilySelector
+                ? null
+                : "This screen is not configured for a lookup family.";
+        }
+
+        var definition = AdLookupTypeRegistry.Find(LookupType);
+        if (definition is not { UserMaintainable: true })
+        {
+            return "This lookup family is not available for maintenance.";
+        }
+
+        return string.Equals(definition.MaintenanceMenuCode, MenuCode, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : "This lookup family is not available for maintenance.";
+    }
+
+    /// <summary>
+    /// Clears every piece of per-family state, so a pending popup, selection, error or in-flight load
+    /// from the previous family can never appear against the newly selected one.
+    /// </summary>
+    private void ResetForFamilyChange()
+    {
+        _loadSequence++;
+        PopupVisible = false;
+        IsEditMode = false;
+        EditEnabled = false;
+        CanEditFromView = false;
+        IsSubmitting = false;
+        EditModel = new AdLookupEditVm();
+        SelectedRows.Clear();
+        Data = null;
+        StatusMessage = null;
+        ErrorMessage = null;
+        IsLoading = true;
+    }
 
     protected async Task OnLookupTypeChanged(string? lookupType)
     {
+        if (string.Equals(SelectedLookupType, lookupType, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         SelectedLookupType = lookupType;
+        ResetForFamilyChange();
         await ReloadListAsync();
     }
 
@@ -171,23 +296,39 @@ public partial class AdLookupList : PageBase
 
     protected async Task ReloadListAsync()
     {
-        if (string.IsNullOrWhiteSpace(SelectedLookupType))
+        var familyCode = SelectedLookupType;
+
+        if (string.IsNullOrWhiteSpace(familyCode))
         {
             Data = [];
+            IsLoading = false;
             return;
         }
 
+        var sequence = ++_loadSequence;
         IsLoading = true;
         ErrorMessage = null;
+
         try
         {
-            Data = await Lookups.ListForMaintenanceAsync(SelectedLookupType);
+            var rows = await Lookups.ListForMaintenanceAsync(familyCode);
+
+            // A newer family owns the grid now: drop this response instead of overwriting it.
+            if (sequence != _loadSequence)
+            {
+                return;
+            }
+
+            Data = rows;
             SelectedRows.Clear();
             Grid?.Reload();
         }
         finally
         {
-            IsLoading = false;
+            if (sequence == _loadSequence)
+            {
+                IsLoading = false;
+            }
         }
     }
 
@@ -199,7 +340,7 @@ public partial class AdLookupList : PageBase
         }
 
         var definition = AdLookupTypeRegistry.Find(SelectedLookupType);
-        if (definition is null)
+        if (definition is not { UserMaintainable: true })
         {
             StatusMessage = "Select a lookup type first.";
             return;
@@ -353,6 +494,11 @@ public partial class AdLookupList : PageBase
         }
     }
 
+    /// <summary>
+    /// UI-side check only, and always against the menu code the wrapper supplied — never the
+    /// all-family admin code, so a module screen cannot enable controls the operator has no grant for.
+    /// The server re-checks against the persisted family regardless.
+    /// </summary>
     private async Task<bool> EnsurePermissionAsync(string permissionCode)
     {
         if (await AccessRights.CanAsync(MenuCode, permissionCode))

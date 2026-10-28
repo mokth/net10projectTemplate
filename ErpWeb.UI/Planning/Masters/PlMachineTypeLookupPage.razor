@@ -1,0 +1,11 @@
+@page "/planning/lookups/MACHINE_TYPE"
+@inherits PageBase
+
+<PageTitle>Machine Types</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningMachineType">
+    <AdLookupMaintenance MenuCode="@MenuCodes.PlanningMachineType"
+                         LookupType="MACHINE_TYPE"
+                         Heading="Machine Types"
+                         Eyebrow="Planning - Master" />
+</MenuAuthorize>

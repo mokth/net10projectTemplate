@@ -21,6 +21,8 @@
             Icon="fa-solid fa-tags" />
       <Menu Code="INV_CLASS" Name="Item Class" Route="/inventory/classes" SortOrder="7"
             Icon="fa-solid fa-layer-group" />
+      <Menu Code="INV_WAREHOUSE_TYPE" Name="Warehouse Types" Route="/inventory/lookups/WAREHOUSE_TYPE" SortOrder="8"
+            Icon="fa-solid fa-list-check" />
     </Menu>
     <Menu Code="INV_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-arrows-rotate">
       <Menu Code="INV_MISC_RECEIPT" Name="Miscellaneous Receipt" Route="/inventory/misc-receipt" SortOrder="1"
@@ -214,6 +216,10 @@
             Icon="fa-solid fa-user-shield" />
       <Menu Code="PO_PUR_ITEM" Name="Purchase Items" Route="/purchase/items" SortOrder="6"
             Icon="fa-solid fa-cubes" />
+      <Menu Code="PO_SUPPLIER_TYPE" Name="Supplier Types" Route="/purchase/lookups/SUPPLIER_TYPE" SortOrder="7"
+            Icon="fa-solid fa-list-check" />
+      <Menu Code="PO_SUPPLIER_SUBGROUP" Name="Supplier Subgroups" Route="/purchase/lookups/SUPPLIER_SUBGROUP" SortOrder="8"
+            Icon="fa-solid fa-list-check" />
     </Menu>
     <Menu Code="PO_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-arrows-rotate">
       <Menu Code="PO_PR" Name="Purchase Requisition" Route="/purchase/requisitions" SortOrder="1"
@@ -298,6 +304,10 @@
             Icon="fa-solid fa-list-check" />
       <Menu Code="PLN_IMPORT_PRDDEF" Name="Import Product Definition" Route="/planning/import-product-def" SortOrder="15"
             Icon="fa-solid fa-file-excel" />
+      <Menu Code="PLN_MACHINE_TYPE" Name="Machine Types" Route="/planning/lookups/MACHINE_TYPE" SortOrder="16"
+            Icon="fa-solid fa-list-check" />
+      <Menu Code="PLN_WORK_CENTRE_CLASS" Name="Work Centre Classes" Route="/planning/lookups/WORK_CENTRE_CLASS" SortOrder="17"
+            Icon="fa-solid fa-list-check" />
     </Menu>
     <Menu Code="PLN_TRANSACTIONS" Name="Transactions" SortOrder="2" Icon="fa-solid fa-industry">
       <Menu Code="PLN_WORK_ORDER" Name="Work Orders" Route="/planning/work-orders" SortOrder="1"

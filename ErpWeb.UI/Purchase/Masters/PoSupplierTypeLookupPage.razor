@@ -1,0 +1,11 @@
+@page "/purchase/lookups/SUPPLIER_TYPE"
+@inherits PageBase
+
+<PageTitle>Supplier Types</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseSupplierType">
+    <AdLookupMaintenance MenuCode="@MenuCodes.PurchaseSupplierType"
+                         LookupType="SUPPLIER_TYPE"
+                         Heading="Supplier Types"
+                         Eyebrow="Purchase - Master" />
+</MenuAuthorize>

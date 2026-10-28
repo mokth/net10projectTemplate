@@ -1,0 +1,11 @@
+@page "/purchase/lookups/SUPPLIER_SUBGROUP"
+@inherits PageBase
+
+<PageTitle>Supplier Subgroups</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseSupplierSubGroup">
+    <AdLookupMaintenance MenuCode="@MenuCodes.PurchaseSupplierSubGroup"
+                         LookupType="SUPPLIER_SUBGROUP"
+                         Heading="Supplier Subgroups"
+                         Eyebrow="Purchase - Master" />
+</MenuAuthorize>

@@ -1,0 +1,16 @@
+@page "/inventory/lookups/WAREHOUSE_TYPE"
+@inherits PageBase
+
+<PageTitle>Warehouse Types</PageTitle>
+
+@*
+    Literal route: one page, one family, one grant. The family is a compile-time constant here, so a
+    URL can never select a different family and no route parameter is trusted.
+*@
+
+<MenuAuthorize MenuCode="@MenuCodes.InventoryWarehouseType">
+    <AdLookupMaintenance MenuCode="@MenuCodes.InventoryWarehouseType"
+                         LookupType="WAREHOUSE_TYPE"
+                         Heading="Warehouse Types"
+                         Eyebrow="Inventory - Master" />
+</MenuAuthorize>

@@ -1,0 +1,11 @@
+@page "/planning/lookups/WORK_CENTRE_CLASS"
+@inherits PageBase
+
+<PageTitle>Work Centre Classes</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PlanningWorkCentreClass">
+    <AdLookupMaintenance MenuCode="@MenuCodes.PlanningWorkCentreClass"
+                         LookupType="WORK_CENTRE_CLASS"
+                         Heading="Work Centre Classes"
+                         Eyebrow="Planning - Master" />
+</MenuAuthorize>

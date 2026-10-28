@@ -303,6 +303,27 @@ public static class MenuCodes
     /// </summary>
     public const string AdminLookups = "ADMIN_LOOKUPS";
 
+    // ── Per-family lookup maintenance ───────────────────────────────────────────────────────────
+    // One grant per approved lookup family, so a user allowed to maintain Warehouse Types cannot
+    // reach Machine Types or Supplier Types. These are WRITE grants for that family's values; they
+    // are not needed to merely assign a value on a business screen (assignment reads stay ungated).
+    // ADMIN_LOOKUPS remains the all-family superuser grant.
+
+    /// <summary>Warehouse Type values (<c>/inventory/lookups/WAREHOUSE_TYPE</c>).</summary>
+    public const string InventoryWarehouseType = "INV_WAREHOUSE_TYPE";
+
+    /// <summary>Machine Type values (<c>/planning/lookups/MACHINE_TYPE</c>).</summary>
+    public const string PlanningMachineType = "PLN_MACHINE_TYPE";
+
+    /// <summary>Work Centre Class values (<c>/planning/lookups/WORK_CENTRE_CLASS</c>).</summary>
+    public const string PlanningWorkCentreClass = "PLN_WORK_CENTRE_CLASS";
+
+    /// <summary>Supplier Type values (<c>/purchase/lookups/SUPPLIER_TYPE</c>).</summary>
+    public const string PurchaseSupplierType = "PO_SUPPLIER_TYPE";
+
+    /// <summary>Supplier Subgroup values (<c>/purchase/lookups/SUPPLIER_SUBGROUP</c>).</summary>
+    public const string PurchaseSupplierSubGroup = "PO_SUPPLIER_SUBGROUP";
+
     /// <summary>
     /// The dynamic application settings screen (<c>/admin/settings</c>). Reads of a setting are NOT gated
     /// by this code — they are a server capability — but listing, saving and clearing are, because those

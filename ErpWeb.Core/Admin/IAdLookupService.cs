@@ -9,15 +9,21 @@ namespace ErpWeb.Core.Admin;
 /// Two deliberately separate surfaces:
 /// </para>
 /// <list type="bullet">
-///   <item><description><b>Maintenance</b> — the <c>ADMIN_LOOKUPS</c> screen. Gated by that menu.</description></item>
+///   <item><description><b>Maintenance</b> — the <c>/admin/lookups</c> screen and the per-family module
+///   screens. Each approved family carries its own menu grant in
+///   <see cref="AdLookupTypeDefinition.MaintenanceMenuCode"/>; <c>ADMIN_LOOKUPS</c> remains the
+///   all-family superuser grant. A family with no registered menu code fails closed — it never falls
+///   back to the admin grant.</description></item>
 ///   <item><description><b>Assignment reads</b> — populating a dropdown on an already-authorized
-///   business screen. NOT gated by <c>ADMIN_LOOKUPS</c>, because a user may be allowed to maintain a
-///   warehouse and still not be an administrator. This mirrors the existing
+///   business screen. NOT gated by any lookup-maintenance grant, because a user may be allowed to
+///   maintain a warehouse and still not be an administrator. This mirrors the existing
 ///   <c>SaCustLookupService</c> / <c>PoSupplierLookupService</c> pattern.</description></item>
 /// </list>
 ///
 /// <para>
-/// Company scope always comes from the authenticated tenant context — never from the browser.
+/// Maintenance authorization is always evaluated against the PERSISTED family of the row being read or
+/// changed, never a family supplied by the caller. Company scope always comes from the authenticated
+/// tenant context — never from the browser.
 /// </para>
 /// </summary>
 public interface IAdLookupService

@@ -1,3 +1,5 @@
+using ErpWeb.Core.Menus;
+
 namespace ErpWeb.Core.Admin;
 
 /// <summary>One seeded default value for a lookup family.</summary>
@@ -6,6 +8,13 @@ public sealed record AdLookupSeedValue(string Code, string Description);
 /// <summary>
 /// Metadata for one supported lookup family. This controls display, grouping, the real consumer-column
 /// width and the initial defaults — it must never carry business workflow behaviour.
+///
+/// <para>
+/// <see cref="MaintenanceMenuCode"/> and <see cref="Route"/> are the server-owned placement of the
+/// family's maintenance screen. They are mandatory for a maintainable family: authorization fails
+/// closed when the menu code is missing, so a half-registered family can never fall back to the
+/// all-family <c>ADMIN_LOOKUPS</c> grant.
+/// </para>
 /// </summary>
 public sealed record AdLookupTypeDefinition(
     string Code,
@@ -13,7 +22,9 @@ public sealed record AdLookupTypeDefinition(
     string Module,
     int MaxCodeLength,
     bool UserMaintainable,
-    IReadOnlyList<AdLookupSeedValue>? DefaultValues = null);
+    IReadOnlyList<AdLookupSeedValue>? DefaultValues = null,
+    string? MaintenanceMenuCode = null,
+    string? Route = null);
 
 /// <summary>
 /// The approved lookup families with their real consumer-column limits (plan §3.2).
@@ -43,7 +54,9 @@ public static class AdLookupTypeRegistry
                 new AdLookupSeedValue("RETURN", "Return"),
                 new AdLookupSeedValue("TRANSIT", "Transit"),
                 new AdLookupSeedValue("CONSIGNMENT", "Consignment")
-            ]),
+            ],
+            MaintenanceMenuCode: MenuCodes.InventoryWarehouseType,
+            Route: "/inventory/lookups/WAREHOUSE_TYPE"),
 
         // No hard-coded business list: existing distinct MachineType values are backfilled by the DBA
         // script, and the company maintains its own values afterwards.
@@ -52,28 +65,36 @@ public static class AdLookupTypeRegistry
             "Machine Type",
             "Planning",
             MaxCodeLength: 30,
-            UserMaintainable: true),
+            UserMaintainable: true,
+            MaintenanceMenuCode: MenuCodes.PlanningMachineType,
+            Route: "/planning/lookups/MACHINE_TYPE"),
 
         new AdLookupTypeDefinition(
             AdLookupTypes.WorkCentreClass,
             "Work Centre Class",
             "Planning",
             MaxCodeLength: 10,
-            UserMaintainable: true),
+            UserMaintainable: true,
+            MaintenanceMenuCode: MenuCodes.PlanningWorkCentreClass,
+            Route: "/planning/lookups/WORK_CENTRE_CLASS"),
 
         new AdLookupTypeDefinition(
             AdLookupTypes.SupplierType,
             "Supplier Type",
             "Purchase",
             MaxCodeLength: 20,
-            UserMaintainable: true),
+            UserMaintainable: true,
+            MaintenanceMenuCode: MenuCodes.PurchaseSupplierType,
+            Route: "/purchase/lookups/SUPPLIER_TYPE"),
 
         new AdLookupTypeDefinition(
             AdLookupTypes.SupplierSubGroup,
             "Supplier Subgroup",
             "Purchase",
             MaxCodeLength: 20,
-            UserMaintainable: true),
+            UserMaintainable: true,
+            MaintenanceMenuCode: MenuCodes.PurchaseSupplierSubGroup,
+            Route: "/purchase/lookups/SUPPLIER_SUBGROUP"),
 
         // Metadata only in this deployment — the customer switch is a separate, separately approved
         // migration (plan §15). Not seeded, not listed by /admin/lookups.
