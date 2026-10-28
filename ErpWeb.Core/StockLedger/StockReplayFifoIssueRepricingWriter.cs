@@ -22,14 +22,15 @@ public static class StockReplayFifoIssueRepricingWriter
         int reversalPostingLineNo,
         int replacementPostingLineNo,
         long? receiptLayerId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowSales = false)
     {
         StockReplayFifoReceiptLayerBinding.Validate(plan, receiptLayerId);
         await ValidateFifoPolicyAsync(context, plan, cancellationToken);
         return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
             plan.Projection.Issues, plan.PlanHash, "INSERT", permit, issueKey,
             reversalPostingLineNo, replacementPostingLineNo,
-            receiptLayerId, cancellationToken);
+            receiptLayerId, cancellationToken, allowSales: allowSales);
     }
 
     public static async Task<IReadOnlyList<StockValuationFact>> AppendAsync(
@@ -60,7 +61,8 @@ public static class StockReplayFifoIssueRepricingWriter
         StockReplayEventKey issueKey,
         int reversalPostingLineNo,
         int replacementPostingLineNo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowSales = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -77,7 +79,8 @@ public static class StockReplayFifoIssueRepricingWriter
             cancellationToken);
         return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
             plan.Projection.Issues, plan.PlanHash, "REMOVE", permit, issueKey,
-            reversalPostingLineNo, replacementPostingLineNo, null, cancellationToken);
+            reversalPostingLineNo, replacementPostingLineNo, null, cancellationToken,
+            allowSales: allowSales);
     }
 
     internal static async Task<IReadOnlyList<StockValuationFact>> AppendCountAsync(
@@ -169,7 +172,8 @@ public static class StockReplayFifoIssueRepricingWriter
         StockReplayEventKey issueKey, int reversalPostingLineNo,
         int replacementPostingLineNo, long? receiptLayerId,
         CancellationToken cancellationToken,
-        IReadOnlyDictionary<long, long>? countLayerIds = null)
+        IReadOnlyDictionary<long, long>? countLayerIds = null,
+        bool allowSales = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
@@ -227,7 +231,8 @@ public static class StockReplayFifoIssueRepricingWriter
                 && h.BranchCode == context.BranchCode,
                 cancellationToken);
         if (history is null || history.ICode != itemCode
-            || !StockReplayFifoInventoryIssueKinds.IsSupported(history.TrxType)
+            || !(StockReplayFifoInventoryIssueKinds.IsSupported(history.TrxType)
+                || allowSales && history.TrxType == IvTrxTypes.SalesOut)
             || history.LedgerVersion != 2
             || history.LedgerEpochId != context.Epoch.Id
             || history.EntryRole != "ORIGINAL"

@@ -2422,14 +2422,6 @@ public sealed class SaDoService : ISaDoService
                 errors[$"Lines[{lineNo - 1}].Qty"] = "Quantity must be greater than zero.";
             }
 
-            // StdPsize = StdPackSize from item master (1 if not set)
-            var stdPsize = item.StdPackSize is > 0m ? item.StdPackSize.Value : 1m;
-            var stdQty = IvQty.Round(qty * stdPsize);
-            if (stdQty == 0m && qty > 0m)
-            {
-                errors[$"Lines[{lineNo - 1}].Qty"] = "Standard quantity must not be zero.";
-            }
-
             var warehouse = (line.FrWarehouse ?? item.DefWarehouse ?? fallbackWh ?? string.Empty).Trim();
             if (item.StockControl)
             {
@@ -2513,6 +2505,56 @@ public sealed class SaDoService : ISaDoService
                         }
                     }
                 }
+            }
+
+            // §7.5 — a DO line linked to a Sales Order must use the SO line's frozen snapshot, not
+            // the current Item Master pack factor/StockControl. Manual DO lines resolve the item
+            // master primary factor and fail (never assume 1) when a different UOM has no factor.
+            decimal stdPsize;
+            decimal stdQty;
+            var doStdUom = item.StdUom;
+            var doStockControl = item.StockControl;
+            if (salesOrderDetail is not null)
+            {
+                var frozen = SaProductionDemandRules.ResolveFrozenStdFactor(
+                    salesOrderDetail.StdPsize,
+                    salesOrderDetail.OrderQty,
+                    salesOrderDetail.StdQty);
+                if (frozen is null)
+                {
+                    stdPsize = 0m;
+                    stdQty = 0m;
+                    errors[$"Lines[{lineNo - 1}].SoLine"] =
+                        "The Sales Order line has no usable UOM conversion snapshot. Correct the Sales Order before delivering this line.";
+                }
+                else
+                {
+                    stdPsize = frozen.Value;
+                    stdQty = IvQty.Round(qty * stdPsize);
+                }
+
+                doStdUom = salesOrderDetail.StdUom ?? item.StdUom;
+                doStockControl = salesOrderDetail.StockControl;
+            }
+            else
+            {
+                stdPsize = IvItemPackPolicy.ResolveDocumentFactor(
+                    item.StockControl,
+                    item.SellingUom,
+                    item.StdUom,
+                    item.StdPackSize,
+                    out var packError);
+                if (packError is not null)
+                {
+                    errors[$"Lines[{lineNo - 1}].Qty"] = packError;
+                }
+
+                stdQty = IvQty.Round(qty * stdPsize);
+            }
+
+            if (stdQty == 0m && qty > 0m)
+            {
+                errors[$"Lines[{lineNo - 1}].Qty"] = "Standard quantity must not be zero.";
             }
 
             long? deliveryRequestSourceId = line.DeliveryRequestSourceId;
@@ -2649,7 +2691,7 @@ public sealed class SaDoService : ISaDoService
                 Qty = qty,
                 StdQty = stdQty,
                 StdPsize = stdPsize,
-                StdUom = item.StdUom,
+                StdUom = doStdUom,
                 SellingUom = sellingUom,
                 FrWarehouse = string.IsNullOrWhiteSpace(warehouse) ? null : warehouse,
                 UnitPrice = line.UnitPrice,
@@ -2669,7 +2711,7 @@ public sealed class SaDoService : ISaDoService
                 IsInclusive = line.IsInclusive,
                 TaxGrCode = taxGr.Length == 0 ? null : taxGr,
                 OrderType = TruncateOptional(line.OrderType, 20),
-                StockControl = item.StockControl,
+                StockControl = doStockControl,
                 Remarks = TruncateOptional(line.Remarks, 250),
                 Calc = state
             });

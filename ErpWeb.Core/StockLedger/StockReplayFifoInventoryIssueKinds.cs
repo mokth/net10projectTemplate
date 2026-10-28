@@ -23,6 +23,7 @@ internal static class StockReplayFifoInventoryIssueKinds
         IvTrxTypes.MiscellaneousIssue => "ISSUE_OUT",
         IvTrxTypes.Scrap => "SCRAP_OUT",
         IvTrxTypes.VendorReturn => "VENDOR_RETURN_OUT",
+        IvTrxTypes.SalesOut => "SALE_OUT",
         _ => throw new StockLedgerException(new(
             StockLedgerErrorCodes.LedgerMismatch,
             "Unsupported FIFO Inventory issue type."))

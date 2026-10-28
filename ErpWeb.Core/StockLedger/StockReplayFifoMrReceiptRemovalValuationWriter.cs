@@ -80,9 +80,6 @@ public static class StockReplayFifoMrReceiptRemovalValuationWriter
             || active[0].CostMethod != StockCostMethods.Fifo
             || active[0].ValuationSource != StockValuationSources.Fifo
             || active[0].BaseCostAmount != active[0].CostAmount
-            || active[0].TransactionCurrency is not null
-            || active[0].TransactionCostAmount is not null
-            || active[0].ExchangeRate is not null
             || active[0].ValuationVersion != 1
             || active[0].OriginalValuationFactId is not null
             || active[0].EffectiveAt != removed.Key.EffectiveAt

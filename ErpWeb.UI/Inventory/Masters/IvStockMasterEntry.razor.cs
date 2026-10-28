@@ -71,6 +71,29 @@ public partial class IvStockMasterEntry : PageBase
     protected bool IsEditMode => string.Equals(Mode, "edit", StringComparison.OrdinalIgnoreCase);
     protected bool IsViewMode => !IsNewMode && !IsEditMode;
 
+    /// <summary>Structural lock from the service (plan §5.6/§11.4). UI-only; Save re-checks.</summary>
+    protected bool StructuralLocked => !IsNewMode && Model.StructuralFieldsLocked;
+
+    protected string? StructuralLockReason =>
+        string.IsNullOrWhiteSpace(Model.StructuralLockReason)
+            ? "Stock control, standard UOM, and lot control are locked because this item has open Purchase/Sales/Production activity or inventory history."
+            : Model.StructuralLockReason;
+
+    /// <summary>Class/Std UOM become mandatory once the item is stock-controlled (plan §3.2).</summary>
+    protected string ClassInputCssClass => Model.StockControl ? "required-field" : string.Empty;
+    protected string StdUomInputCssClass => Model.StockControl ? "required-field" : string.Empty;
+
+    /// <summary>True when the primary UOM is the standard UOM, i.e. the factor is exactly 1.</summary>
+    protected bool IsSellingIdentity => IvItemPackPolicy.SameUom(Model.SellingUom, Model.StdUom);
+    protected bool IsPurchaseIdentity => IvItemPackPolicy.SameUom(Model.PurUom, Model.StdUom);
+
+    protected string SellingUomLabel => DisplayUom(Model.SellingUom);
+    protected string PurchaseUomLabel => DisplayUom(Model.PurUom);
+    protected string StandardUomLabel => DisplayUom(Model.StdUom);
+
+    private static string DisplayUom(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "UOM" : value.Trim().ToUpperInvariant();
+
     protected string PageHeading => IsNewMode
         ? (string.IsNullOrWhiteSpace(CopyFrom) ? "New item" : "Copy item")
         : IsEditMode
@@ -214,10 +237,83 @@ public partial class IvStockMasterEntry : PageBase
 
     protected void OnLotControlChanged(bool value)
     {
+        if (StructuralLocked)
+        {
+            // Structural fields are disabled in the UI; guard the event anyway.
+            return;
+        }
+
         Model.LotControl = value;
         if (!value)
         {
             Model.ExpiryControl = IvExpiryControlModes.None;
+        }
+    }
+
+    protected void OnStockControlChanged(bool value)
+    {
+        if (StructuralLocked)
+        {
+            return;
+        }
+
+        Model.StockControl = value;
+        if (!value)
+        {
+            // A non-stock item cannot be lot/expiry controlled; keep no hidden invalid state.
+            Model.LotControl = false;
+            Model.ExpiryControl = IvExpiryControlModes.None;
+        }
+
+        NormalizePackFactors();
+    }
+
+    protected void OnStdUomChanged(string? value)
+    {
+        var previous = Model.StdUom;
+        Model.StdUom = value;
+
+        // Blank selling/purchase UOM follows the standard UOM by default, and a UOM that used to
+        // be the standard UOM keeps following it (plan §3.2 items 3 and 4).
+        if (string.IsNullOrWhiteSpace(Model.SellingUom) || IvItemPackPolicy.SameUom(Model.SellingUom, previous))
+        {
+            Model.SellingUom = value;
+        }
+
+        if (string.IsNullOrWhiteSpace(Model.PurUom) || IvItemPackPolicy.SameUom(Model.PurUom, previous))
+        {
+            Model.PurUom = value;
+        }
+
+        NormalizePackFactors();
+    }
+
+    protected void OnSellingUomChanged(string? value)
+    {
+        Model.SellingUom = value;
+        NormalizePackFactors();
+    }
+
+    protected void OnPurchaseUomChanged(string? value)
+    {
+        Model.PurUom = value;
+        NormalizePackFactors();
+    }
+
+    /// <summary>
+    /// Identity pairs are always exactly 1; a different UOM keeps whatever explicit factor the
+    /// operator entered and is never silently defaulted to 1 (plan §3.2 items 5 and 6).
+    /// </summary>
+    private void NormalizePackFactors()
+    {
+        if (IvItemPackPolicy.SameUom(Model.SellingUom, Model.StdUom))
+        {
+            Model.StdPackSize = 1m;
+        }
+
+        if (IvItemPackPolicy.SameUom(Model.PurUom, Model.StdUom))
+        {
+            Model.PurStdPackSize = 1m;
         }
     }
 
@@ -931,7 +1027,9 @@ public partial class IvStockMasterEntry : PageBase
             CreatedDate = source.CreatedDate,
             CreatedBy = source.CreatedBy,
             ModifiedDate = source.ModifiedDate,
-            ModifiedBy = source.ModifiedBy
+            ModifiedBy = source.ModifiedBy,
+            StructuralFieldsLocked = source.StructuralFieldsLocked,
+            StructuralLockReason = source.StructuralLockReason
         };
 }
 

@@ -1443,6 +1443,13 @@ public sealed class PoOrderService : IPoOrderService
 				errors[prefix + ".PoUnitPrice"] = "Unit price cannot be negative.";
 			}
 			decimal packSz = ((src.PackSz != 0m) ? src.PackSz : resolved.PackSz);
+			// §8.3 — a stock item whose purchase UOM differs from its standard UOM needs a real
+			// positive factor; never silently repair a missing/zero factor to 1.
+			string poStdUom = TruncateOptional(src.StdUom, 10) ?? TruncateOptional(resolved.StdUom, 10);
+			if (!resolved.IsIndirect && !IvItemPackPolicy.SameUom(purchaseUom, poStdUom) && packSz <= 0m)
+			{
+				errors[prefix + ".PackSz"] = $"1 {purchaseUom} = n {poStdUom}: the item has no valid purchase pack factor. Correct the Item Master purchase pack size before ordering this item.";
+			}
 			decimal stdQty = PoOrderCalc.ComputeStdQty(purchaseQty, packSz);
 			decimal amount = PoOrderCalc.ComputeAmount(purchaseQty, unitPrice);
 			decimal discounted = PoOrderCalc.ApplyTwoLevelDiscount(amount, src.ItemDiscount, src.DiscountType, src.ItemDiscount1, src.DiscountType1);
@@ -2231,13 +2238,32 @@ public sealed class PoOrderService : IPoOrderService
 		IvStockMaster stock = await db.IvStockMasters.AsNoTracking().FirstOrDefaultAsync((IvStockMaster x) => x.CompanyCode == companyCode && x.ICode == iCode && x.IsActive, cancellationToken);
 		if (stock != null)
 		{
-			return new ResolvedItem(IsIndirect: false, stock.ICode, stock.IDesc, stock.IType, stock.PurUom, stock.StdUom, stock.PurStdPackSize ?? stock.StdPackSize ?? 1m, stock.PurchasePrice.GetValueOrDefault(), stock.PurchaseTaxGroup ?? stock.TaxGroup, null, null, null, stock.DefWarehouse);
+			return new ResolvedItem(IsIndirect: false, stock.ICode, stock.IDesc, stock.IType, stock.PurUom, stock.StdUom, ResolveStockPackSize(stock), stock.PurchasePrice.GetValueOrDefault(), stock.PurchaseTaxGroup ?? stock.TaxGroup, null, null, null, stock.DefWarehouse);
 		}
 		PoPurItem pur = await (from x in db.PoPurItems.AsNoTracking()
 			where x.CompanyCode == companyCode && x.ICode == iCode
 			orderby x.ModifiedDate descending, x.Id descending
 			select x).FirstOrDefaultAsync(cancellationToken);
 		return (pur == null) ? null : new ResolvedItem(IsIndirect: true, pur.ICode, pur.IDesc, null, pur.PurUom, null, 1m, pur.UnitPrice.GetValueOrDefault(), null, pur.Category, pur.VendorPartNo, pur.Currency, null);
+	}
+
+	/// <summary>
+	/// Item Master primary purchase factor (plan §8.3). Identity purchase/standard UOM is exactly 1;
+	/// a different UOM with no positive factor returns 0 so the line fails validation instead of being
+	/// silently repaired to 1.
+	/// </summary>
+	private static decimal ResolveStockPackSize(IvStockMaster stock)
+	{
+		string stdUom = IvItemPackPolicy.NormalizeUomOrNull(stock.StdUom);
+		string purUom = IvItemPackPolicy.NormalizeUomOrNull(stock.PurUom);
+		if (stdUom == null || purUom == null || string.Equals(stdUom, purUom, StringComparison.Ordinal))
+		{
+			return 1m;
+		}
+		decimal factor = (stock.PurStdPackSize.HasValue && stock.PurStdPackSize.Value > 0m)
+			? stock.PurStdPackSize.Value
+			: (stock.StdPackSize.HasValue && stock.StdPackSize.Value > 0m) ? stock.StdPackSize.Value : 0m;
+		return (factor > 0m) ? IvItemPackPolicy.RoundFactor(factor) : 0m;
 	}
 
 	private async Task<decimal> ResolveUnitPriceAsync(AppDbContext db, string companyCode, string branchCode, string iCode, string? vendorCd, string? purchaseUom, ResolvedItem item, CancellationToken cancellationToken)

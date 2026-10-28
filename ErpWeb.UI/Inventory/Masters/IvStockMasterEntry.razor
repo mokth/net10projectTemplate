@@ -150,23 +150,23 @@
                     </div>
                     <div class="iv-stock-subsection">
                         <h3>Units</h3>
-                        <div class="iv-stock-fields">
-                            @Detail("Std UOM", Model.StdUom)
+                        <div class="iv-field-grid">
+                            @Detail("Std UOM", Model.StdUom, "iv-field--lead")
                             @Detail("Selling UOM", Model.SellingUom)
-                            @Detail("Purchase UOM", Model.PurUom)
-                            @Detail("Std pack size", FormatDec(Model.StdPackSize))
-                            @Detail("Purchase pack size", FormatDec(Model.PurStdPackSize))
+                            @Detail("Selling factor", $"1 {SellingUomLabel} = {FormatDec(Model.StdPackSize)} {StandardUomLabel}")
+                            @Detail("Purchase UOM", Model.PurUom, "iv-field--rail-2")
+                            @Detail("Purchase factor", $"1 {PurchaseUomLabel} = {FormatDec(Model.PurStdPackSize)} {StandardUomLabel}")
                         </div>
                     </div>
                     <div class="iv-stock-subsection">
                         <h3>Inventory controls</h3>
-                        <div class="iv-stock-fields">
+                        <div class="iv-field-grid">
                             @Detail("Stock control", Model.StockControl ? "Yes" : "No")
                             @Detail("Lot control", Model.LotControl ? "Yes" : "No")
-                            @Detail("Expiry control", ExpiryControlLabel(Model.ExpiryControl))
+                            @Detail("Expiry control", ExpiryControlLabel(Model.ExpiryControl), "iv-field--lead")
                             @Detail("Default warehouse", Model.DefWarehouse)
                             @Detail("Default location", Model.DefLocation)
-                            @Detail("Min stock", FormatDec(Model.MinStock))
+                            @Detail("Min stock", FormatDec(Model.MinStock), "iv-field--rail-1")
                             @Detail("Max stock", FormatDec(Model.MaxStock))
                         </div>
                     </div>
@@ -376,11 +376,18 @@
                                 @FieldError(nameof(IvStockMasterEditVm.IType))
                             </div>
                             <div class="iv-field">
-                                <label class="iv-field__label">Class</label>
+                                <label class="iv-field__label">
+                                    Class
+                                    @if (Model.StockControl)
+                                    {
+                                        <span class="iv-field__required" aria-hidden="true">*</span>
+                                    }
+                                </label>
                                 <IvCodeComboBox Data="@Classes"
                                                 Value="@Model.IClassCode"
                                                 ValueExpression="() => Model.IClassCode"
                                                 ValueChanged="OnClassChangedAsync"
+                                                InputCssClass="@ClassInputCssClass"
                                                 NullText="Select class" />
                                 @FieldError(nameof(IvStockMasterEditVm.IClassCode))
                             </div>
@@ -419,46 +426,104 @@
                         </div>
                         <div class="iv-stock-subsection">
                             <h3>Units</h3>
-                            <div class="iv-stock-fields">
-                                <div class="iv-field">
-                                    <label class="iv-field__label">Std UOM</label>
-                                    <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.StdUom" NullText="Select UOM" />
+                            @if (StructuralLocked)
+                            {
+                                <p class="iv-field__hint iv-field__hint--lock" role="note">
+                                    <i class="fa-solid fa-lock" aria-hidden="true"></i>
+                                    @StructuralLockReason
+                                </p>
+                            }
+                            <div class="iv-field-grid">
+                                <div class="iv-field iv-field--lead">
+                                    <label class="iv-field__label">
+                                        Std UOM
+                                        @if (Model.StockControl)
+                                        {
+                                            <span class="iv-field__required" aria-hidden="true">*</span>
+                                        }
+                                    </label>
+                                    <IvCodeComboBox Data="@Uoms"
+                                                    Value="@Model.StdUom"
+                                                    ValueExpression="() => Model.StdUom"
+                                                    ValueChanged="OnStdUomChanged"
+                                                    Enabled="@(!StructuralLocked)"
+                                                    InputCssClass="@StdUomInputCssClass"
+                                                    NullText="Select UOM" />
                                     @FieldError(nameof(IvStockMasterEditVm.StdUom))
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Selling UOM</label>
-                                    <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.SellingUom" NullText="Select UOM" />
+                                    <IvCodeComboBox Data="@Uoms"
+                                                    Value="@Model.SellingUom"
+                                                    ValueExpression="() => Model.SellingUom"
+                                                    ValueChanged="OnSellingUomChanged"
+                                                    NullText="Select UOM" />
                                 </div>
                                 <div class="iv-field">
+                                    <label class="iv-field__label">Selling pack size</label>
+                                    <div class="iv-pack-equation">
+                                        <span class="iv-pack-equation__lhs">1 @SellingUomLabel</span>
+                                        <span class="iv-pack-equation__eq">=</span>
+                                        <DxSpinEdit @bind-Value="@Model.StdPackSize"
+                                                    MinValue="0m"
+                                                    DisplayFormat="n4"
+                                                    Enabled="@(!IsSellingIdentity)" />
+                                        <span class="iv-pack-equation__rhs">@StandardUomLabel</span>
+                                    </div>
+                                    @if (IsSellingIdentity)
+                                    {
+                                        <p class="iv-field__hint">Same as the standard UOM, so the factor is 1.</p>
+                                    }
+                                    @FieldError(nameof(IvStockMasterEditVm.StdPackSize))
+                                </div>
+                                <div class="iv-field iv-field--rail-2">
                                     <label class="iv-field__label">Purchase UOM</label>
-                                    <IvCodeComboBox Data="@Uoms" @bind-Value="@Model.PurUom" NullText="Select UOM" />
-                                </div>
-                                <div class="iv-field">
-                                    <label class="iv-field__label">Std pack size</label>
-                                    <DxSpinEdit @bind-Value="@Model.StdPackSize" MinValue="0m" DisplayFormat="n4" />
+                                    <IvCodeComboBox Data="@Uoms"
+                                                    Value="@Model.PurUom"
+                                                    ValueExpression="() => Model.PurUom"
+                                                    ValueChanged="OnPurchaseUomChanged"
+                                                    NullText="Select UOM" />
                                 </div>
                                 <div class="iv-field">
                                     <label class="iv-field__label">Purchase pack size</label>
-                                    <DxSpinEdit @bind-Value="@Model.PurStdPackSize" MinValue="0m" DisplayFormat="n4" />
+                                    <div class="iv-pack-equation">
+                                        <span class="iv-pack-equation__lhs">1 @PurchaseUomLabel</span>
+                                        <span class="iv-pack-equation__eq">=</span>
+                                        <DxSpinEdit @bind-Value="@Model.PurStdPackSize"
+                                                    MinValue="0m"
+                                                    DisplayFormat="n4"
+                                                    Enabled="@(!IsPurchaseIdentity)" />
+                                        <span class="iv-pack-equation__rhs">@StandardUomLabel</span>
+                                    </div>
+                                    @if (IsPurchaseIdentity)
+                                    {
+                                        <p class="iv-field__hint">Same as the standard UOM, so the factor is 1.</p>
+                                    }
+                                    @FieldError(nameof(IvStockMasterEditVm.PurStdPackSize))
                                 </div>
                             </div>
                         </div>
                         <div class="iv-stock-subsection">
                             <h3>Inventory controls</h3>
-                            <div class="iv-stock-fields">
-                                <div class="iv-field">
+                            <div class="iv-field-grid">
+                                <div class="iv-field iv-field--toggle">
                                     <label class="iv-field__label">Stock control</label>
-                                    <DxCheckBox @bind-Checked="@Model.StockControl" AllowIndeterminateState="false" />
+                                    <DxCheckBox Checked="@Model.StockControl"
+                                                CheckedExpression="() => Model.StockControl"
+                                                CheckedChanged="@((bool value) => OnStockControlChanged(value))"
+                                                Enabled="@(!StructuralLocked)"
+                                                AllowIndeterminateState="false" />
                                 </div>
-                                <div class="iv-field">
+                                <div class="iv-field iv-field--toggle">
                                     <label class="iv-field__label">Lot control</label>
                                     <DxCheckBox Checked="@Model.LotControl"
                                                 CheckedExpression="() => Model.LotControl"
                                                 CheckedChanged="@((bool value) => OnLotControlChanged(value))"
+                                                Enabled="@(!StructuralLocked)"
                                                 AllowIndeterminateState="false" />
                                     @FieldError(nameof(IvStockMasterEditVm.LotControl))
                                 </div>
-                                <div class="iv-field">
+                                <div class="iv-field iv-field--lead">
                                     <label class="iv-field__label">Expiry control</label>
                                     <DxComboBox Data="@ExpiryControlOptions"
                                                 TData="IvExpiryControlOption"
@@ -470,6 +535,10 @@
                                                 ValueChanged="@OnExpiryControlChanged"
                                                 Enabled="@Model.LotControl"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never" />
+                                    @if (!Model.LotControl)
+                                    {
+                                        <p class="iv-field__hint">Available when lot control is on.</p>
+                                    }
                                     @FieldError(nameof(IvStockMasterEditVm.ExpiryControl))
                                 </div>
                                 <div class="iv-field">
@@ -490,7 +559,7 @@
                                                     NullText="Select location" />
                                     @FieldError(nameof(IvStockMasterEditVm.DefLocation))
                                 </div>
-                                <div class="iv-field">
+                                <div class="iv-field iv-field--rail-1">
                                     <label class="iv-field__label">Min stock</label>
                                     <DxSpinEdit @bind-Value="@Model.MinStock" MinValue="0m" DisplayFormat="n4" />
                                     @FieldError(nameof(IvStockMasterEditVm.MinStock))
@@ -629,9 +698,9 @@
 </MenuAuthorize>
 
 @code {
-    private RenderFragment Detail(string label, string? value) => __builder =>
+    private RenderFragment Detail(string label, string? value, string? css = null) => __builder =>
     {
-        <div class="iv-detail-row">
+        <div class="@($"iv-detail-row {css}")">
             <span class="iv-detail-row__label">@label</span>
             <span class="iv-detail-row__value">@DisplayText(value)</span>
         </div>

@@ -2092,6 +2092,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 continue;
             }
 
+            SaDoDetail? linkedDoDetail = null;
+
             if (line.LinkDo)
             {
                 var doNo = (line.DoNo ?? string.Empty).Trim();
@@ -2144,6 +2146,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
                     continue;
                 }
 
+                linkedDoDetail = doDetail;
+
                 // Continue into item validation; SO identity copied from DO line when present.
             }
 
@@ -2161,12 +2165,6 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 errors[$"Lines[{lineNo - 1}].Qty"] = "Quantity must be greater than zero.";
             }
 
-            var pack = item.StdPackSize is > 0m ? item.StdPackSize.Value : 1m;
-            var stdQty = IvQty.Round(qty * pack);
-            if (stdQty == 0m && qty > 0m)
-            {
-                errors[$"Lines[{lineNo - 1}].Qty"] = "Standard quantity must not be zero.";
-            }
 
             var warehouse = (line.FrWarehouse ?? item.DefWarehouse ?? fallbackWh ?? string.Empty).Trim();
             if (item.StockControl)
@@ -2211,6 +2209,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
             var lineDoNo = (line.DoNo ?? string.Empty).Trim();
             short? lineDoLine = line.DoLine is > 0 ? line.DoLine : null;
             string? sellingUom = item.SellingUom;
+            SaSoDetail? linkedSoDetail = null;
 
             if (linkDo)
             {
@@ -2222,6 +2221,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
                         x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.DoNo == doNo,
                         cancellationToken);
                 var doDetail = deliveryOrder.Details.First(x => x.Line == lineDoLine!.Value);
+                linkedDoDetail = doDetail;
                 soNo = (doDetail.SoNo ?? string.Empty).Trim();
                 soLine = doDetail.SoLine is > 0 ? doDetail.SoLine : null;
                 custRel = null;
@@ -2298,6 +2298,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
                         }
                         else
                         {
+                            linkedSoDetail = soDetail;
                             sellingUom = soDetail.SellingUom ?? sellingUom;
                         }
                     }
@@ -2308,6 +2309,64 @@ public sealed class SaInvoiceService : ISaInvoiceService
             {
                 lineNo++;
                 continue;
+            }
+
+            // §7.6/§7.7 — a line linked to a DO or SO must use that document's frozen stock snapshot
+            // (StdPsize/StdQty/UOM/StockControl), never the current Item Master pack factor. Manual
+            // lines resolve the item master primary factor and fail — never assume 1 — on a bad pair.
+            decimal pack;
+            var invoiceStdUom = item.StdUom;
+            var invoiceStockControl = item.StockControl;
+            if (linkedDoDetail is not null)
+            {
+                var frozen = SaProductionDemandRules.ResolveFrozenStdFactor(
+                    linkedDoDetail.StdPsize,
+                    linkedDoDetail.Qty,
+                    linkedDoDetail.StdQty);
+                pack = frozen ?? 0m;
+                if (frozen is null)
+                {
+                    errors[$"Lines[{lineNo - 1}].DoNo"] =
+                        "The Delivery Order line has no usable UOM conversion snapshot. Correct the Delivery Order before invoicing this line.";
+                }
+
+                invoiceStdUom = linkedDoDetail.StdUom ?? item.StdUom;
+                invoiceStockControl = linkedDoDetail.StockControl;
+            }
+            else if (linkedSoDetail is not null)
+            {
+                var frozen = SaProductionDemandRules.ResolveFrozenStdFactor(
+                    linkedSoDetail.StdPsize,
+                    linkedSoDetail.OrderQty,
+                    linkedSoDetail.StdQty);
+                pack = frozen ?? 0m;
+                if (frozen is null)
+                {
+                    errors[$"Lines[{lineNo - 1}].SoNo"] =
+                        "The Sales Order line has no usable UOM conversion snapshot. Correct the Sales Order before invoicing this line.";
+                }
+
+                invoiceStdUom = linkedSoDetail.StdUom ?? item.StdUom;
+                invoiceStockControl = linkedSoDetail.StockControl;
+            }
+            else
+            {
+                pack = IvItemPackPolicy.ResolveDocumentFactor(
+                    item.StockControl,
+                    item.SellingUom,
+                    item.StdUom,
+                    item.StdPackSize,
+                    out var packError);
+                if (packError is not null)
+                {
+                    errors[$"Lines[{lineNo - 1}].Qty"] = packError;
+                }
+            }
+
+            var stdQty = IvQty.Round(qty * pack);
+            if (stdQty == 0m && qty > 0m)
+            {
+                errors[$"Lines[{lineNo - 1}].Qty"] = "Standard quantity must not be zero.";
             }
 
             var state = new SaInvoiceLineCalcState
@@ -2343,8 +2402,8 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 IDesc = string.IsNullOrWhiteSpace(line.IDesc) ? item.IDesc : line.IDesc.Trim(),
                 Qty = qty,
                 StdQty = stdQty,
-                StdUom = item.StdUom,
-                StdPackSize = item.StdPackSize,
+                StdUom = invoiceStdUom,
+                StdPackSize = pack,
                 SellingUom = sellingUom,
                 FrWarehouse = string.IsNullOrWhiteSpace(warehouse) ? null : warehouse,
                 UnitPrice = line.UnitPrice,
@@ -2364,7 +2423,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
                 IsInclusive = line.IsInclusive,
                 TaxGrCode = taxGr.Length == 0 ? null : taxGr,
                 OrderType = TruncateOptional(line.OrderType, 20),
-                StockControl = item.StockControl,
+                StockControl = invoiceStockControl,
                 SellingGlCode = item.SellingGlCode,
                 Classification = string.IsNullOrWhiteSpace(line.Classification)
                     ? TruncateOptional(item.Classification, 50)

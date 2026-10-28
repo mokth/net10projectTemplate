@@ -179,7 +179,11 @@ public sealed class PoPurchasingItemLookupService : IPoPurchasingItemLookupServi
             IType = x.IType,
             PurchaseUom = x.PurUom,
             StdUom = x.StdUom,
-            PackSz = x.PurStdPackSize ?? x.StdPackSize ?? 1m,
+            PackSz = x.PurStdPackSize > 0m
+                ? x.PurStdPackSize!.Value
+                : x.StdPackSize > 0m
+                    ? x.StdPackSize!.Value
+                    : (x.StdUom == x.PurUom ? 1m : 0m),
             StdPackSize = x.StdPackSize,
             PurStdPackSize = x.PurStdPackSize,
             UnitPrice = x.PurchasePrice,

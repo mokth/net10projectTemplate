@@ -2464,6 +2464,10 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 PoNo = expectedTrxType == IvTrxTypes.VendorReturn ? detail.PoNo : null,
                 PoRelNo = expectedTrxType == IvTrxTypes.VendorReturn ? detail.PoRelNo : null,
                 PoLineNo = expectedTrxType == IvTrxTypes.VendorReturn ? detail.PoLineNo : null,
+                DoNo = detail.DoNo,
+                InvNo = detail.InvNo,
+                SoNo = detail.SoNo,
+                SoLineNo = detail.SoLineNo,
                 IStatus = detail.IStatus,
                 Remarks = detail.Remarks,
                 PriceEvidence = detail.PriceEvidence,
@@ -2680,6 +2684,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         var rollbackChronology = postingContext is null
+            || expectedTrxType == IvTrxTypes.SalesOut
+                && !_openPeriodBackdatedReplayEnabled
             ? await ValidateRollbackChronologyAsync(
                 db, companyCode, branchCode, batchNo, history, cancellationToken)
             : null;
@@ -2687,6 +2693,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, rollbackChronology);
         }
+
+        if (postingContext is not null
+            && expectedTrxType == IvTrxTypes.SalesOut
+            && _openPeriodBackdatedReplayEnabled
+            && (await StockReplayInventoryRouteSelector.ReadRollbackAsync(db,
+                companyCode, branchCode, batchNo, expectedTrxType,
+                cancellationToken)).RequiresReplay)
+            return UnsupportedHistoricalInventoryRollback(batchNo, expectedTrxType);
 
         var repairedDates = new Dictionary<int, DateTime?>();
         foreach (var balLocId in orderedIds)

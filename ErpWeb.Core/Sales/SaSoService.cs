@@ -1917,7 +1917,17 @@ public sealed class SaSoService : ISaSoService
                 }
             }
 
-            var stdPsize = item.StdPackSize is > 0m ? item.StdPackSize.Value : 1m;
+            var stdPsize = IvItemPackPolicy.ResolveDocumentFactor(
+                item.StockControl,
+                item.SellingUom,
+                item.StdUom,
+                item.StdPackSize,
+                out var packError);
+            if (packError is not null)
+            {
+                errors[$"Lines[{index}].OrderQty"] = packError;
+            }
+
             var stdQty = SaSoQty.RoundQty(orderQty * stdPsize);
             if (stdQty == 0m && orderQty > 0m)
             {
@@ -2090,6 +2100,24 @@ public sealed class SaSoService : ISaSoService
         if (lines.Count == 0)
         {
             return SaSoSnapshotImportResult.Fail("The quotation has no lines to convert.");
+        }
+
+        // §7.3 — the frozen quotation snapshot itself must be structurally valid. A legacy line that
+        // claims a different selling/standard UOM without a positive factor cannot be converted
+        // without inventing 1.
+        foreach (var line in lines)
+        {
+            if (!line.StockControl || IvItemPackPolicy.SameUom(line.SellingUom, line.StdUom))
+            {
+                continue;
+            }
+
+            var frozen = SaProductionDemandRules.ResolveFrozenStdFactor(line.StdPsize, line.OrderQty, line.StdQty);
+            if (frozen is null)
+            {
+                return SaSoSnapshotImportResult.Fail(
+                    $"Quotation {quotation.QtNo} line {line.Line} has no valid selling/UOM pack factor. Correct the quotation before converting it.");
+            }
         }
 
         var customer = await _customers.GetByCodeAsync(

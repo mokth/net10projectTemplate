@@ -173,6 +173,29 @@ public sealed class IvStockMasterEditVm
     public string? CreatedBy { get; set; }
     public DateTime? ModifiedDate { get; set; }
     public string? ModifiedBy { get; set; }
+
+    /// <summary>
+    /// True when <c>StdUom</c>, <c>StockControl</c>, or <c>LotControl</c> may no longer change because
+    /// a live workflow or an existing inventory footprint still depends on the old structural meaning.
+    /// UI-only advisory: the service re-runs the same guard on every save (plan §5.5, §5.6).
+    /// </summary>
+    public bool StructuralFieldsLocked { get; set; }
+
+    /// <summary>Short, user-facing explanation of <see cref="StructuralFieldsLocked"/>.</summary>
+    public string? StructuralLockReason { get; set; }
+}
+
+/// <summary>Read-only structural lock state returned by the Stock Master service.</summary>
+public sealed class IvStockStructureState
+{
+    public static readonly IvStockStructureState Unlocked = new();
+
+    public bool IsLocked { get; init; }
+    public string? Reason { get; init; }
+    public string? ReferenceCategory { get; init; }
+
+    public static IvStockStructureState Locked(string reason, string category) =>
+        new() { IsLocked = true, Reason = reason, ReferenceCategory = category };
 }
 
 public sealed class IvMasterKeyToken

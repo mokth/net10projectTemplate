@@ -1042,6 +1042,17 @@ public sealed class InventoryValuationService : IInventoryValuationService
                         && x.EffectiveAt > context.Posting.EffectiveAt
                         && x.StockPosting!.SealedAtUtc != null
                         && x.StockPosting.PostingRole == "PRIMARY"
+                        && x.ReversesValuationFactId == null
+                        && !context.Db.StockValuationFacts.Any(reversal =>
+                            reversal.ReversesValuationFactId == x.Id
+                            && reversal.CompanyCode == x.CompanyCode
+                            && reversal.BranchCode == x.BranchCode
+                            && reversal.ItemCode == x.ItemCode
+                            && reversal.Direction == -x.Direction
+                            && reversal.BaseQty == x.BaseQty
+                            && reversal.CostAmount == x.CostAmount
+                            && reversal.ValuationStatus == StockValuationStatuses.Reversed
+                            && reversal.StockPosting!.SealedAtUtc != null)
                         && !context.Db.StockPostings.Any(reversal =>
                             reversal.CompanyCode == context.CompanyCode
                             && reversal.BranchCode == context.BranchCode

@@ -2285,7 +2285,17 @@ public sealed class SaQtService : ISaQtService
                 errors[$"Lines[{index}].UnitPrice"] = "Unit price cannot be negative.";
             }
 
-            var stdPsize = item.StdPackSize is > 0m ? item.StdPackSize.Value : 1m;
+            var stdPsize = IvItemPackPolicy.ResolveDocumentFactor(
+                item.StockControl,
+                item.SellingUom,
+                item.StdUom,
+                item.StdPackSize,
+                out var packError);
+            if (packError is not null)
+            {
+                errors[$"Lines[{index}].OrderQty"] = packError;
+            }
+
             var stdQty = SaQtQty.RoundQty(orderQty * stdPsize);
             if (stdQty == 0m && orderQty > 0m)
             {

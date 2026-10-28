@@ -226,7 +226,8 @@ public sealed partial class IvInventoryPostingService
         string itemCode, StockReplayEventKey key,
         IReadOnlyList<StockReplayStandardEvent> events,
         CancellationToken cancellationToken,
-        PoInvoice? replayInvoice = null)
+        PoInvoice? replayInvoice = null,
+        bool allowBoundedSales = false)
     {
         if (events.Count is 0 or > 100 || events.Any(e =>
                 e.Kind is not (StockReplayStandardEventKinds.Movement
@@ -254,12 +255,30 @@ public sealed partial class IvInventoryPostingService
                 || h.ValuationStatus != StockValuationStatuses.Valued
                 || h.BatchStatus != IvBatchStatuses.Posted
                 || h.StockPostingId is not > 0
-                || h.TrxType is not (IvTrxTypes.StockTransfer
+                || (h.TrxType is not (IvTrxTypes.StockTransfer
                     or IvTrxTypes.MiscellaneousReceipt
                     or IvTrxTypes.GoodsReceive
                     or IvTrxTypes.MiscellaneousIssue
-                    or IvTrxTypes.Scrap)))
+                    or IvTrxTypes.Scrap)
+                    && !(allowBoundedSales && h.TrxType is
+                        (IvTrxTypes.SalesOut or IvTrxTypes.CustomerReturn)))))
             return "A later Standard movement has no original Inventory history.";
+        var salesIds = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut)
+            .Select(h => h.Id).ToArray();
+        var returns = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn).ToArray();
+        StandardSalesReturnPermit? permittedReturn = null;
+        if (returns.Length > 0)
+        {
+            var checkedReturn = await CheckStandardSalesReturnAsync(db,
+                companyCode, branchCode, itemCode, histories, events, cancellationToken);
+            if (checkedReturn.Error is not null)
+                return checkedReturn.Error;
+            permittedReturn = checkedReturn.Permit;
+        }
+        if (salesIds.Length > 0
+            && await CheckSalesReceiptTailAsync(db, salesIds,
+                StockCostMethods.Standard, cancellationToken, permittedReturn) is string salesError)
+            return salesError;
         var laterGr = histories.Where(h =>
             h.TrxType == IvTrxTypes.GoodsReceive).ToArray();
         if (laterGr.Any(h => h.ToStdQty is not > 0m

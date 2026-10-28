@@ -15,7 +15,7 @@ public static class StockReplayFifoMrRemovalRootWriter
         StockPostingContext context, StockReplayFifoRemovalPlan plan,
         StockReplayFifoWritePermit permit, int batchNo,
         CancellationToken cancellationToken = default,
-        bool goodsReceipt = false)
+        bool goodsReceipt = false, bool allowSales = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -43,7 +43,7 @@ public static class StockReplayFifoMrRemovalRootWriter
             var replacements = issue.DepletesPool
                 ? await StockReplayFifoIssueRepricingWriter.AppendAsync(
                     context, plan, permit, issue.Key,
-                    line, line + 1, cancellationToken)
+                    line, line + 1, cancellationToken, allowSales)
                 : await StockReplayFifoTransferRepricingWriter.AppendAsync(
                     context, plan, permit, issue.Key,
                     line, line + 1, cancellationToken);

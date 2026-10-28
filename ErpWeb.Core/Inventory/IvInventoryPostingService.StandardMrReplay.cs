@@ -258,10 +258,12 @@ public sealed partial class IvInventoryPostingService
             || tail.LaterEvents.Zip(projection.LaterSteps).Any(p =>
                 p.First.OldSignedQuantity != p.Second.SignedQuantity
                 || p.First.OldSignedValue != p.Second.SignedValue)
-            || await CheckStandardTransferDescendantsAsync(db,
-                physical.CompanyCode, physical.BranchCode,
-                authority.ItemCode, key, tail.LaterEvents,
-                cancellationToken, replayInvoice) is not null)
+            || tail.LaterEvents.Count == 0 && physical.LaterEvents.Count != 0
+            || tail.LaterEvents.Count > 0
+                && await CheckStandardTransferDescendantsAsync(db,
+                    physical.CompanyCode, physical.BranchCode,
+                    authority.ItemCode, key, tail.LaterEvents,
+                    cancellationToken, replayInvoice, allowBoundedSales: true) is not null)
             return (null, null, null,
                 "The Standard MR changes a later cost or has an unsupported descendant.");
         return (tail, projection, revision, null);
@@ -720,10 +722,12 @@ public sealed partial class IvInventoryPostingService
                 p.First.OldSignedQuantity != p.Second.SignedQuantity
                 || p.First.OldSignedValue != p.Second.SignedValue)
             || StockReplayFifoTransferTailGuard.ChangesPhysicalTail(physical)
-            || await CheckStandardTransferDescendantsAsync(write,
-                companyCode, branchCode, history.ICode, key,
-                tail.LaterEvents, cancellationToken,
-                replayInvoice) is not null)
+            || tail.LaterEvents.Count == 0 && physical.LaterEvents.Count != 0
+            || tail.LaterEvents.Count > 0
+                && await CheckStandardTransferDescendantsAsync(write,
+                    companyCode, branchCode, history.ICode, key,
+                    tail.LaterEvents, cancellationToken,
+                    replayInvoice, allowBoundedSales: true) is not null)
             throw InvalidStandardTransfer("The Standard MR rollback changes a later movement.");
         Dictionary<string, ErpWeb.Model.Entities.Purchase.PoOrder>? grOrders = null;
         IReadOnlyList<IvTrxBatchDetail>? grDetails = null;

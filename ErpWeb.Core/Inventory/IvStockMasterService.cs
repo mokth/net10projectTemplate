@@ -1,8 +1,12 @@
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Pricing;
+using ErpWeb.Core.Purchase;
+using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -92,13 +96,20 @@ public sealed class IvStockMasterService : IIvStockMasterService
             return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, "Item code is required.");
         }
 
-        var entity = await _stockMasters.GetByCodeAsync(context.CompanyCode!, code, cancellationToken);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var entity = await _stockMasters.GetByCodeAsync(db, context.CompanyCode!, code, cancellationToken);
         if (entity is null)
         {
             return Fail<IvStockMasterEditVm>(IvMasterErrorCode.NotFound, "Item was not found.");
         }
 
-        return IvMasterOperationResult<IvStockMasterEditVm>.Ok(MapEditVm(entity));
+        var model = MapEditVm(entity);
+        var structure = await EvaluateStructuralLockAsync(
+            db, context.CompanyCode!, entity.ICode, cancellationToken);
+        model.StructuralFieldsLocked = structure.IsLocked;
+        model.StructuralLockReason = structure.Reason;
+
+        return IvMasterOperationResult<IvStockMasterEditVm>.Ok(model);
     }
 
     public async Task<IvMasterOperationResult<IvStockMasterEditVm>> SaveAsync(
@@ -256,7 +267,27 @@ public sealed class IvStockMasterService : IIvStockMasterService
         var defLoc = NullIfWhiteSpace(model.DefLocation);
         var classification = NullIfWhiteSpace(model.Classification);
 
+        // Pack factors start as supplied; stock-controlled items are normalized below
+        // (same UOM => exactly 1, different UOM => explicit positive factor).
+        decimal? stdPackSize = model.StdPackSize;
+        decimal? purStdPackSize = model.PurStdPackSize;
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        // §3.2 — structural requirements for a stock-controlled item. Checked before the UOM
+        // defaults so a missing StdUom can never masquerade as a defaulted selling/purchase UOM.
+        if (model.StockControl)
+        {
+            if (iClass is null)
+            {
+                errors["IClassCode"] = "Item class is required for a stock-controlled item.";
+            }
+
+            if (stdUom is null)
+            {
+                errors["StdUom"] = "Standard UOM is required for a stock-controlled item.";
+            }
+        }
 
         if (classification is null)
         {
@@ -335,6 +366,22 @@ public sealed class IvStockMasterService : IIvStockMasterService
             }
         }
 
+        // §3.2 items 3 and 4 — a blank selling/purchase UOM defaults to the standard UOM so the
+        // common PCS/PCS case needs no extra typing. A different UOM is never invented.
+        if (sellingUom is null
+            && stdUom is not null
+            && !errors.ContainsKey("StdUom"))
+        {
+            sellingUom = stdUom;
+        }
+
+        if (purUom is null
+            && stdUom is not null
+            && !errors.ContainsKey("StdUom"))
+        {
+            purUom = stdUom;
+        }
+
         if (sellingUom is not null)
         {
             var uom = await _common.GetActiveUomAsync(db, context.CompanyCode!, sellingUom, cancellationToken);
@@ -358,6 +405,50 @@ public sealed class IvStockMasterService : IIvStockMasterService
             else
             {
                 purUom = uom.UomCode;
+            }
+        }
+
+        // §3.2 items 5 and 6 / §4 — same UOM is exactly 1; a different UOM needs an explicit
+        // positive factor. Never silently assume 1 for a different UOM.
+        if (model.StockControl && stdUom is not null && !errors.ContainsKey("StdUom"))
+        {
+            if (sellingUom is not null && !errors.ContainsKey("SellingUom"))
+            {
+                var sellingFactor = IvItemPackPolicy.Resolve(sellingUom, stdUom, model.StdPackSize);
+                if (!sellingFactor.Succeeded)
+                {
+                    errors["StdPackSize"] = sellingFactor.FailureMessage!;
+                }
+                else
+                {
+                    stdPackSize = sellingFactor.Factor;
+                }
+            }
+
+            if (purUom is not null && !errors.ContainsKey("PurUom"))
+            {
+                var purchaseFactor = IvItemPackPolicy.Resolve(purUom, stdUom, model.PurStdPackSize);
+                if (!purchaseFactor.Succeeded)
+                {
+                    errors["PurStdPackSize"] = purchaseFactor.FailureMessage!;
+                }
+                else
+                {
+                    purStdPackSize = purchaseFactor.Factor;
+                }
+            }
+
+            // §4.4 — identical selling/purchase UOM cannot mean two different quantities.
+            if (!errors.ContainsKey("StdPackSize")
+                && !errors.ContainsKey("PurStdPackSize")
+                && !IvItemPackPolicy.TryValidatePairConsistency(
+                    sellingUom,
+                    stdPackSize ?? 0m,
+                    purUom,
+                    purStdPackSize ?? 0m,
+                    out var pairError))
+            {
+                errors["PurStdPackSize"] = pairError!;
             }
         }
 
@@ -437,6 +528,26 @@ public sealed class IvStockMasterService : IIvStockMasterService
         {
             if (isNew)
             {
+                // §6.8 — reconcile the primary conversions before any external image file is
+                // written, so a known conversion conflict cannot leave orphaned files behind.
+                var conversionError = await ReconcilePrimaryConversionsAsync(
+                    db,
+                    context.CompanyCode!,
+                    code,
+                    existing: null,
+                    stdUom,
+                    sellingUom,
+                    stdPackSize,
+                    purUom,
+                    purStdPackSize,
+                    userId,
+                    now,
+                    cancellationToken);
+                if (conversionError is not null)
+                {
+                    return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, conversionError);
+                }
+
                 var galleryError = TryValidateGalleryChanges(
                     galleryChanges,
                     true,
@@ -506,7 +617,9 @@ public sealed class IvStockMasterService : IIvStockMasterService
                     defWh,
                     defLoc,
                     classification,
-                    expiryControl);
+                    expiryControl,
+                    stdPackSize,
+                    purStdPackSize);
                 // Do not set RowVersion — database generates it.
                 db.IvStockMasters.Add(entity);
                 db.IvStockMasterImages.AddRange(newImages);
@@ -562,6 +675,25 @@ public sealed class IvStockMasterService : IIvStockMasterService
             if (structuralError is not null)
             {
                 return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, structuralError);
+            }
+
+            // §6.8 — reconcile the primary conversions before any external image file is written.
+            var editConversionError = await ReconcilePrimaryConversionsAsync(
+                db,
+                context.CompanyCode!,
+                code,
+                existing,
+                stdUom,
+                sellingUom,
+                stdPackSize,
+                purUom,
+                purStdPackSize,
+                userId,
+                now,
+                cancellationToken);
+            if (editConversionError is not null)
+            {
+                return Fail<IvStockMasterEditVm>(IvMasterErrorCode.Validation, editConversionError);
             }
 
             List<IvStockMasterImage> currentImages = galleryChanges?.HasChange == true
@@ -626,7 +758,9 @@ public sealed class IvStockMasterService : IIvStockMasterService
                 defWh,
                 defLoc,
                 classification,
-                expiryControl);
+                expiryControl,
+                stdPackSize,
+                purStdPackSize);
             if (galleryChanges?.HasChange == true)
             {
                 existing.ImagePath = ResolvePrimaryImagePath(
@@ -1018,9 +1152,13 @@ public sealed class IvStockMasterService : IIvStockMasterService
         });
     }
 
+    /// <summary>Structural-lock field names covered by <see cref="EvaluateStructuralLockAsync"/>.</summary>
+    private const string StructuralLockMessage =
+        "Stock control, standard UOM, and lot control cannot be changed because {0}. Use a controlled inventory conversion/migration process.";
+
     /// <summary>
-    /// Blocks StdUom / StockControl / LotControl changes when any BalLoc (incl. zero),
-    /// posted history, or NEW batch detail exists for the item.
+    /// Save-time structural guard (plan §5.5). Returns a blocking message only when a covered field
+    /// actually changes, so an unrelated edit on a locked item is never rejected.
     /// </summary>
     private static async Task<string?> EnsureStructuralFieldsUnlockedAsync(
         AppDbContext db,
@@ -1040,19 +1178,44 @@ public sealed class IvStockMasterService : IIvStockMasterService
         if (!stdChanged && !stockChanged && !lotChanged)
             return null;
 
-        var iCode = existing.ICode;
+        var structure = await EvaluateStructuralLockAsync(
+            db, companyCode, existing.ICode, cancellationToken);
+        return structure.IsLocked ? structure.Reason : null;
+    }
+
+    /// <summary>
+    /// Read-only structural dependency evaluator (plan §5.1-§5.4). One authoritative place decides
+    /// whether <c>StdUom</c>, <c>StockControl</c>, and <c>LotControl</c> may still change; both the
+    /// edit page and <see cref="SaveAsync"/> consume it so the UI can never invent a different rule.
+    /// </summary>
+    private static async Task<IvStockStructureState> EvaluateStructuralLockAsync(
+        AppDbContext db,
+        string companyCode,
+        string iCode,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(iCode))
+        {
+            return IvStockStructureState.Unlocked;
+        }
+
+        // §5.1 — existing inventory footprint. Zero-quantity balances still count.
         var hasBalLoc = await db.IvBalLocs.AsNoTracking()
             .AnyAsync(x => x.CompanyCode == companyCode && x.ICode == iCode, cancellationToken);
         if (hasBalLoc)
         {
-            return "Standard UOM, stock control, and lot control cannot be changed because this item already has inventory balance rows. Use a controlled inventory conversion/migration process.";
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item already has inventory balance rows"),
+                "InventoryBalances");
         }
 
         var hasHistory = await db.IvTrxHistories.AsNoTracking()
             .AnyAsync(x => x.CompanyCode == companyCode && x.ICode == iCode, cancellationToken);
         if (hasHistory)
         {
-            return "Standard UOM, stock control, and lot control cannot be changed because this item already has inventory history. Use a controlled inventory conversion/migration process.";
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item already has inventory history"),
+                "InventoryHistory");
         }
 
         var hasDraft = await (
@@ -1065,11 +1228,371 @@ public sealed class IvStockMasterService : IIvStockMasterService
             select d.Id).AnyAsync(cancellationToken);
         if (hasDraft)
         {
-            return "Standard UOM, stock control, and lot control cannot be changed while this item has NEW inventory draft transactions.";
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item has NEW inventory draft transactions"),
+                "InventoryDraft");
         }
 
-        return null;
+        // §5.2 — purchase request lines that can still be ordered (cancelled / fully ordered do not
+        // lock). Consumption is derived from live PO coverage, so FULLY_ORDERED is the terminal line.
+        var hasOpenPr = await (
+            from d in db.PoPrDetails.AsNoTracking()
+            join h in db.PoPrs.AsNoTracking()
+                on new { d.CompanyCode, d.PrNo } equals new { h.CompanyCode, h.PrNo }
+            where d.CompanyCode == companyCode
+                  && d.ICode == iCode
+                  && h.Status != PoPrStatuses.Cancelled
+                  && d.Status != PoPrStatuses.Cancelled
+                  && d.Status != PoPrStatuses.FullyOrdered
+            select d.PrNo).AnyAsync(cancellationToken);
+        if (hasOpenPr)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item has an open purchase request"),
+                "OpenPurchaseRequest");
+        }
+
+        // §5.2 — only the LATEST operational PO revision with remaining quantity locks, so a
+        // superseded historical revision never freezes the item forever.
+        var openPoLines = await (
+            from d in db.PoOrderDetails.AsNoTracking()
+            join h in db.PoOrders.AsNoTracking()
+                on new { d.CompanyCode, d.PoNo, d.PoRelNo } equals new { h.CompanyCode, h.PoNo, h.PoRelNo }
+            where d.CompanyCode == companyCode
+                  && d.ICode == iCode
+                  && h.Status != PoOrderStatuses.Cancelled
+                  && h.Status != PoOrderStatuses.Closed
+                  && !h.FinClosed
+                  && (d.BalanceQty > 0m
+                      || d.PoQty - d.RecvQty - d.ReturnQty - d.ReturnQtyCn > 0m)
+            select new { d.PoNo, d.PoRelNo }).Distinct().ToListAsync(cancellationToken);
+        if (openPoLines.Count > 0)
+        {
+            var poNos = openPoLines.Select(x => x.PoNo).Distinct().ToArray();
+            var latestRevisions = await db.PoOrders.AsNoTracking()
+                .Where(h => h.CompanyCode == companyCode && poNos.Contains(h.PoNo))
+                .GroupBy(h => h.PoNo)
+                .Select(g => new { PoNo = g.Key, PoRelNo = g.Max(x => x.PoRelNo) })
+                .ToListAsync(cancellationToken);
+            var latestByPo = latestRevisions
+                .GroupBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Max(x => x.PoRelNo), StringComparer.OrdinalIgnoreCase);
+
+            if (openPoLines.Any(x =>
+                    latestByPo.TryGetValue(x.PoNo, out var latest) && latest == x.PoRelNo))
+            {
+                return IvStockStructureState.Locked(
+                    string.Format(StructuralLockMessage, "this item has an operational purchase order with remaining quantity"),
+                    "OpenPurchaseOrder");
+            }
+        }
+
+        // §5.3 — current quotation with remaining convertible quantity.
+        var hasOpenQt = await (
+            from d in db.SaQtDetails.AsNoTracking()
+            join h in db.SaQts.AsNoTracking()
+                on new { d.CompanyCode, d.QtNo } equals new { h.CompanyCode, h.QtNo }
+            where d.CompanyCode == companyCode
+                  && d.ICode == iCode
+                  && h.IsCurrent
+                  && (h.Status == SaQtStatuses.New
+                      || h.Status == SaQtStatuses.Sent
+                      || h.Status == SaQtStatuses.Accepted)
+                  && d.OrderQty - d.ConvertedQty > 0m
+            select d.QtNo).AnyAsync(cancellationToken);
+        if (hasOpenQt)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item has a current quotation with remaining convertible quantity"),
+                "OpenQuotation");
+        }
+
+        // §5.3 — current, non-shipped Sales Order with remaining fulfilment.
+        var hasOpenSo = await (
+            from d in db.SaSoDetails.AsNoTracking()
+            join h in db.SaSos.AsNoTracking()
+                on new { d.CompanyCode, d.SoNo } equals new { h.CompanyCode, h.SoNo }
+            where d.CompanyCode == companyCode
+                  && d.ICode == iCode
+                  && h.IsCurrent
+                  && h.Status == SaSoStatuses.New
+                  && d.BalanceQty > 0m
+            select d.SoNo).AnyAsync(cancellationToken);
+        if (hasOpenSo)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item has an open sales order with remaining quantity"),
+                "OpenSalesOrder");
+        }
+
+        // §5.3 — operational Delivery Order (CLOSED is terminal).
+        var hasOpenDo = await (
+            from d in db.SaDoDetails.AsNoTracking()
+            join h in db.SaDos.AsNoTracking()
+                on new { d.CompanyCode, d.DoNo } equals new { h.CompanyCode, h.DoNo }
+            where d.CompanyCode == companyCode
+                  && d.ICode == iCode
+                  && h.Status != SaDoStatuses.Closed
+            select d.DoNo).AnyAsync(cancellationToken);
+        if (hasOpenDo)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item has an operational delivery order"),
+                "OpenDeliveryOrder");
+        }
+
+        // §5.3 — operational Invoice line (invoices are permanent records in this system).
+        var hasInvoice = await (
+            from d in db.SaInvoiceDetails.AsNoTracking()
+            join h in db.SaInvoices.AsNoTracking()
+                on new { d.CompanyCode, d.InvNo } equals new { h.CompanyCode, h.InvNo }
+            where d.CompanyCode == companyCode && d.ICode == iCode
+            select d.InvNo).AnyAsync(cancellationToken);
+        if (hasInvoice)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item has an operational sales invoice"),
+                "OpenInvoice");
+        }
+
+        // §5.3 — active Delivery Request source feeding production demand.
+        var hasActiveDeliveryRequest = await (
+            from s in db.SaDeliveryRequestSources.AsNoTracking()
+            join h in db.SaDeliveryRequests.AsNoTracking() on s.DeliveryRequestId equals h.Uid
+            where s.CompanyCode == companyCode
+                  && s.ProductCode == iCode
+                  && s.IsActive
+                  && h.Status != SaDeliveryRequestStatuses.Cancelled
+                  && h.Status != SaDeliveryRequestStatuses.Completed
+            select s.Uid).AnyAsync(cancellationToken);
+        if (hasActiveDeliveryRequest)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item has an active delivery request source"),
+                "ActiveDeliveryRequest");
+        }
+
+        // §5.4 — non-terminal Work Order as the produced item.
+        var hasWorkOrderProduct = await db.ProductionWorkOrders.AsNoTracking()
+            .AnyAsync(
+                x => x.CompanyCode == companyCode
+                     && x.ProductCode == iCode
+                     && x.Status != ProductionWorkOrderStatuses.Closed
+                     && x.Status != ProductionWorkOrderStatuses.Cancelled,
+                cancellationToken);
+        if (hasWorkOrderProduct)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item is the product of a non-terminal production work order"),
+                "OpenWorkOrderProduct");
+        }
+
+        // §5.4 — non-terminal Work Order material usage.
+        var hasWorkOrderMaterial = await (
+            from m in db.ProductionWorkOrderMaterials.AsNoTracking()
+            join w in db.ProductionWorkOrders.AsNoTracking() on m.WorkOrderId equals w.Uid
+            where w.CompanyCode == companyCode
+                  && m.ComponentCode == iCode
+                  && w.Status != ProductionWorkOrderStatuses.Closed
+                  && w.Status != ProductionWorkOrderStatuses.Cancelled
+            select m.Uid).AnyAsync(cancellationToken);
+        if (hasWorkOrderMaterial)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item is a material of a non-terminal production work order"),
+                "OpenWorkOrderMaterial");
+        }
+
+        // §5.4 — live production balance for the item.
+        var hasProductionBalance = await db.ProductionBalLots.AsNoTracking()
+            .AnyAsync(
+                x => x.CompanyCode == companyCode && x.ItemCode == iCode && x.Qty > 0m,
+                cancellationToken);
+        if (hasProductionBalance)
+        {
+            return IvStockStructureState.Locked(
+                string.Format(StructuralLockMessage, "this item has a positive production balance"),
+                "ProductionBalance");
+        }
+
+        return IvStockStructureState.Unlocked;
     }
+
+    /// <summary>
+    /// Reconciles the two primary direct conversions (selling→standard, purchase→standard) with the
+    /// existing <c>IvItemUomConversion</c> rows (plan §6). Returns a blocking message, or
+    /// <c>null</c> when the pair is consistent, absent, or safely updated in place.
+    /// </summary>
+    private static async Task<string?> ReconcilePrimaryConversionsAsync(
+        AppDbContext db,
+        string companyCode,
+        string itemCode,
+        IvStockMaster? existing,
+        string? stdUom,
+        string? sellingUom,
+        decimal? sellingFactor,
+        string? purUom,
+        decimal? purchaseFactor,
+        string userId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var standard = IvItemPackPolicy.NormalizeUomOrNull(stdUom);
+        if (standard is null)
+        {
+            return null;
+        }
+
+        var sellingError = await ReconcilePairAsync(
+            db,
+            companyCode,
+            itemCode,
+            existing,
+            existing is null ? null : (existing.SellingUom, existing.StdUom, existing.StdPackSize),
+            sellingUom,
+            standard,
+            sellingFactor,
+            "Selling",
+            userId,
+            now,
+            cancellationToken);
+        if (sellingError is not null)
+        {
+            return sellingError;
+        }
+
+        return await ReconcilePairAsync(
+            db,
+            companyCode,
+            itemCode,
+            existing,
+            existing is null ? null : (existing.PurUom, existing.StdUom, existing.PurStdPackSize),
+            purUom,
+            standard,
+            purchaseFactor,
+            "Purchase",
+            userId,
+            now,
+            cancellationToken);
+    }
+
+    private static async Task<string?> ReconcilePairAsync(
+        AppDbContext db,
+        string companyCode,
+        string itemCode,
+        IvStockMaster? existing,
+        (string? SourceUom, string? StdUom, decimal? Factor)? oldPrimary,
+        string? sourceUom,
+        string stdUom,
+        decimal? requestedFactor,
+        string pairLabel,
+        string userId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var from = IvItemPackPolicy.NormalizeUomOrNull(sourceUom);
+        if (from is null || IvItemPackPolicy.SameUom(from, stdUom))
+        {
+            // §6.7 — identity pair: factor is exactly 1 and no conversion row is required.
+            return null;
+        }
+
+        var to = IvItemPackPolicy.NormalizeUom(stdUom);
+        var factor = requestedFactor is > 0m ? IvItemPackPolicy.RoundFactor(requestedFactor.Value) : 0m;
+        if (factor <= 0m)
+        {
+            // Validation already rejected this; never create or rewrite a conversion from a bad factor.
+            return null;
+        }
+
+        // §6.1 — load active rows in BOTH directions; either direction is the same logical pair.
+        var rows = await db.IvItemUomConversions
+            .Where(x => x.CompanyCode == companyCode
+                        && x.ItemCode == itemCode
+                        && x.IsActive
+                        && ((x.FromUom == from && x.ToUom == to)
+                            || (x.FromUom == to && x.ToUom == from)))
+            .ToListAsync(cancellationToken);
+
+        // §6.2 — logical duplicates: fail, never guess and never auto-delete a row.
+        if (rows.Count > 1)
+        {
+            return $"Item {itemCode} has multiple active {from}/{to} conversion rows. Resolve the conversion conflict before saving.";
+        }
+
+        // §6.3 — no pair yet: create the canonical row in the same unit of work.
+        if (rows.Count == 0)
+        {
+            db.IvItemUomConversions.Add(new IvItemUomConversion
+            {
+                CompanyCode = companyCode,
+                ItemCode = itemCode,
+                FromUom = from,
+                ToUom = to,
+                FromQty = 1m,
+                ToQty = factor,
+                RoundingScale = IvQty.Scale,
+                RoundingMode = IvUomRoundingModes.AwayFromZero,
+                IsActive = true,
+                CreatedDate = now,
+                CreatedBy = TruncateOptional(userId, 10),
+                ModifiedDate = now,
+                ModifiedBy = TruncateOptional(userId, 10)
+            });
+            return null;
+        }
+
+        var row = rows[0];
+        var rowIsForward = string.Equals(
+            (row.FromUom ?? string.Empty).Trim(), from, StringComparison.OrdinalIgnoreCase);
+        var effectiveFactor = rowIsForward
+            ? SafeDivide(row.ToQty, row.FromQty)
+            : SafeDivide(row.FromQty, row.ToQty);
+
+        if (effectiveFactor is null)
+        {
+            return $"The existing approved {from}/{to} conversion for item {itemCode} has a non-positive quantity pair. Correct the conversion before saving.";
+        }
+
+        // §6.4 — already consistent: accept without rewriting.
+        if (IvItemPackPolicy.FactorsEqual(effectiveFactor.Value, factor))
+        {
+            return null;
+        }
+
+        // §6.5 Case A — the row represented the item's OLD saved primary factor for the SAME pair,
+        // and the user is deliberately changing that primary factor. Update that one row atomically
+        // while preserving identity, rounding policy, and audit fields.
+        var oldMatchesPair = oldPrimary is { } old
+            && IvItemPackPolicy.SameUom(old.SourceUom, from)
+            && IvItemPackPolicy.SameUom(old.StdUom, to)
+            && old.Factor is > 0m
+            && IvItemPackPolicy.FactorsEqual(effectiveFactor.Value, old.Factor.Value);
+
+        if (oldMatchesPair)
+        {
+            if (rowIsForward)
+            {
+                row.FromQty = 1m;
+                row.ToQty = factor;
+            }
+            else
+            {
+                row.FromQty = factor;
+                row.ToQty = 1m;
+            }
+
+            row.ModifiedDate = now;
+            row.ModifiedBy = TruncateOptional(userId, 10);
+            return null;
+        }
+
+        // §6.5 Case B — anything else is a real conflict that Stock Master must not "repair".
+        return $"{pairLabel} pack size conflicts with the existing approved {from}/{to} conversion. No data was changed.";
+    }
+
+    private static decimal? SafeDivide(decimal numerator, decimal denominator) =>
+        denominator == 0m ? null : numerator / denominator;
 
     private static StockMasterSearchArgs ToSearchArgs(IvStockMasterListQuery query) =>
         new(
@@ -1098,7 +1621,9 @@ public sealed class IvStockMasterService : IIvStockMasterService
         string? defWh,
         string? defLoc,
         string? classification,
-        string expiryControl)
+        string expiryControl,
+        decimal? stdPackSize,
+        decimal? purStdPackSize)
     {
         entity.IDesc = TruncateOptional(desc, 200);
         entity.Barcode = TruncateOptional(model.Barcode, 50);
@@ -1117,8 +1642,8 @@ public sealed class IvStockMasterService : IIvStockMasterService
         entity.DefLocation = TruncateOptional(defLoc, 10);
         entity.MinStock = model.MinStock;
         entity.MaxStock = model.MaxStock;
-        entity.StdPackSize = model.StdPackSize;
-        entity.PurStdPackSize = model.PurStdPackSize;
+        entity.StdPackSize = stdPackSize;
+        entity.PurStdPackSize = purStdPackSize;
         entity.SellingPrice = model.SellingPrice;
         entity.PurchasePrice = model.PurchasePrice;
         entity.SellingGlCode = TruncateOptional(model.SellingGlCode, 20);

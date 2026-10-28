@@ -5,6 +5,12 @@
     font-size: 0.9rem;
 }
 
+.iv-field__hint {
+    margin: 0;
+    color: var(--iv-muted);
+    font-size: 0.72rem;
+}
+
 .iv-page ::deep .dxbl-text-edit,
 .iv-page ::deep .dxbl-combobox,
 .iv-page ::deep .dxbl-spin-edit {
@@ -65,6 +71,30 @@
 
 .iv-stock-fields > .iv-stock-field--full {
     grid-column: 1 / -1;
+}
+
+/* Three semantic rails: Std | Selling | Purchase, and Warehouse group | Location | Stock range */
+.iv-field-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px 18px;
+    min-width: 0;
+}
+
+/* Purchase pair sits directly under the Selling pair */
+.iv-field-grid > .iv-field--rail-2 {
+    grid-column: 2;
+}
+
+/* Start a fresh row on the first rail (Min/Max stock) */
+.iv-field-grid > .iv-field--rail-1 {
+    grid-column: 1;
+}
+
+.iv-field-grid > .iv-field--toggle ::deep .dxbl-checkbox {
+    display: flex;
+    align-items: center;
+    min-height: 34px;
 }
 
 .iv-stock-subsection {
@@ -261,6 +291,20 @@
     .iv-stock-fields > .iv-stock-field--full {
         grid-column: 1 / -1;
     }
+
+    .iv-field-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .iv-field-grid > .iv-field--rail-1,
+    .iv-field-grid > .iv-field--rail-2 {
+        grid-column: auto;
+    }
+
+    /* Lead field starts its own row so UOM/pack-size pairs stay side by side */
+    .iv-field-grid > .iv-field--lead {
+        grid-column: 1 / -1;
+    }
 }
 
 @media (max-width: 767px) {
@@ -304,5 +348,9 @@
     .iv-stock-fields > .iv-stock-field--wide,
     .iv-stock-fields > .iv-stock-field--full {
         grid-column: 1 / -1;
+    }
+
+    .iv-field-grid {
+        grid-template-columns: 1fr;
     }
 }

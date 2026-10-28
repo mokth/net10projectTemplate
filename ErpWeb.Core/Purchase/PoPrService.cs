@@ -1849,6 +1849,17 @@ WHERE d.CompanyCode={companyCode}
                 packSz = resolved.PackSz;
             }
 
+            // §8.1 — a stock item whose purchase UOM differs from its standard UOM must carry a
+            // real positive factor. Never let PackSz = 0 collapse to 1 through EffectivePackSize.
+            var prStdUom = TruncateOptional(src.StdUom, 10) ?? TruncateOptional(resolved.StdUom, 10);
+            if (!resolved.IsIndirect
+                && !IvItemPackPolicy.SameUom(purchaseUom, prStdUom)
+                && packSz <= 0m)
+            {
+                errors[$"{prefix}.PackSz"] =
+                    $"1 {purchaseUom} = n {prStdUom}: the item has no valid purchase pack factor. Correct the Item Master purchase pack size before requesting this item.";
+            }
+
             var stdQty = PoPrCalc.ComputeStdQty(purchaseQty, packSz);
             var amount = PoPrCalc.ComputeAmount(purchaseQty, unitPrice);
             var isInclusive = existing is not null && sameICode
@@ -2140,7 +2151,7 @@ WHERE d.CompanyCode={companyCode}
                 stock.IDesc,
                 stock.PurUom,
                 stock.StdUom,
-                stock.PurStdPackSize ?? stock.StdPackSize ?? 1m,
+                ResolveStockPackSize(stock),
                 stock.PurchasePrice ?? 0m,
                 stock.PurchaseTaxGroup ?? stock.TaxGroup,
                 null,
@@ -2174,6 +2185,29 @@ WHERE d.CompanyCode={companyCode}
             pur.Moq,
             null,
             pur.Currency);
+    }
+
+    /// <summary>
+    /// Item Master primary purchase factor (plan §8.1). Identity purchase/standard UOM is exactly 1;
+    /// a different UOM with no positive factor returns 0 so the PR line fails validation instead of
+    /// being silently repaired to 1 by <c>EffectivePackSize(0)</c>.
+    /// </summary>
+    private static decimal ResolveStockPackSize(IvStockMaster stock)
+    {
+        var stdUom = IvItemPackPolicy.NormalizeUomOrNull(stock.StdUom);
+        var purUom = IvItemPackPolicy.NormalizeUomOrNull(stock.PurUom);
+        if (stdUom is null || purUom is null || string.Equals(stdUom, purUom, StringComparison.Ordinal))
+        {
+            return 1m;
+        }
+
+        var factor = stock.PurStdPackSize is > 0m
+            ? stock.PurStdPackSize.Value
+            : stock.StdPackSize is > 0m
+                ? stock.StdPackSize.Value
+                : 0m;
+
+        return factor > 0m ? IvItemPackPolicy.RoundFactor(factor) : 0m;
     }
 
     private async Task<decimal> ResolveUnitPriceAsync(
