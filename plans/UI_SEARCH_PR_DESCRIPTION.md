@@ -1,0 +1,60 @@
+# Global inline search UI standardization (productionv2)
+
+Draft PR body. Target `productionv2`. Supersedes PR #2 (`ui/standard-inline-search-20261029`). **Do not merge until the browser/visual matrix is completed.**
+
+## What this changes
+
+Every applicable ERP search surface now renders one non-wrapping row:
+
+`Caption  [ search text input ][🔍]`
+
+- Caption is a real `<label for>` bound to the editor `InputId`, truncated with an ellipsis instead of wrapping.
+- The editor keeps a usable width floor (`8rem` desktop, `6rem` under 576 px) and never scrolls the magnifier out of view.
+- The action is an icon-only `fa-solid fa-magnifying-glass` button with an accessible name, immediately adjacent to the input.
+- Enter and the magnifier apply the same text immediately (`BindValueMode.OnInput` plus the existing Enter handler), and pending debounce work is cancelled on every search-affecting change and on disposal.
+- Live filter rows keep no inert button; genuine multi-criteria forms keep their single shared action.
+
+## Scope
+
+UI-only. 107 files:
+
+- 62 `ErpWeb.UI` Razor screens, popups and transaction pickers
+- 2 scoped `.razor.css` files and 1 shared stylesheet (`inventory-chrome.css`)
+- 41 `.razor.cs` files, limited to search wiring, debounce cancellation and disposal bookkeeping
+- 1 source-contract test file
+
+Nothing under `ErpWeb.Core/`, `ErpWeb.Model/`, `ErpWeb.Data/`, no SQL/migration, no entity, API, permission, costing, valuation, posting, rollback or inventory-quantity code. Business-logic diff: **NONE**.
+
+## Audit
+
+- 254 Razor files audited (250 `ErpWeb.UI` locally vs 249 on `productionv2`; the extra file is the local-only `ErpOperatorFailureBanner.razor` from `8d09a22`, not part of this branch, plus 4 host files)
+- 64 search controls: **56 converted, 8 documented exceptions, 0 blocked**
+- Per control: `plans/UI_SEARCH_CONTROL_AUDIT.md`
+- Evidence matrix: `plans/UI_SEARCH_EVIDENCE_MATRIX.md`
+- Method-level change audit: `plans/evidence/change-audit.md`
+- Full report: `plans/UI_SEARCH_STANDARDIZATION_COMPLETION_REPORT.md`
+
+## Verification
+
+| Check | Result |
+| --- | --- |
+| `dotnet build ErpWeb.slnx` | PASS, 0 errors |
+| `dotnet build ErpWeb.UI/ErpWeb.UI.csproj` | PASS, 0 errors |
+| `dotnet build ErpWeb/ErpWeb.csproj` | PASS, 0 errors |
+| `dotnet test --filter ErpInlineSearchContractTests` | PASS 6/6 |
+| `dotnet test ErpWeb.Tests` (delivery) | 4592 total, 4557 passed, 27 failed, 8 skipped |
+| Baseline A (`8d09a22`) | 4782 total, 4747 passed, 27 failed |
+| Baseline B (`origin/productionv2` `371725c`) | 4586 total, 4551 passed, 27 failed |
+| Failure attribution | Delivery failure set identical to both baselines; 27/27 reproduced on pristine Baseline B; **0 new failures** |
+| `git diff --check` | PASS |
+| Denylist audit | PASS, zero forbidden paths |
+
+## Known blocked item
+
+Browser, responsive (320/375/768/1280/1920 px), zoom (125%/200%), light/dark and keyboard evidence is **NOT VERIFIED**: no CDP browser session was available and the running app requires operator credentials that were not supplied. Every browser cell in the evidence matrix is marked `NOT VERIFIED`. Per the plan's status policy the PR stays draft until a reviewer with credentials completes that matrix.
+
+## Residual risks
+
+1. Rendered-DOM checks (`label[for]` to `input#id`, focus ring, icon centering, measured heights) are proven statically and by compilation only.
+2. The local-only operator-failure banner (`8d09a22`) is not on this branch, so those screens differ from the local development worktree.
+3. The 27 pre-existing test failures remain red and are unrelated to this change.

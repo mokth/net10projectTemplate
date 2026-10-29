@@ -169,10 +169,10 @@ Consequences, per plan policy:
 
 | Item | Value |
 | --- | --- |
-| Branch | `ui/global-inline-search-standard-v1` |
+| Branch | `ui/global-inline-search-standard-v1` (pushed to `origin`) |
 | Base target | `productionv2` at `371725c0bda74e386a66bfa3c7559c6f227a14dd` |
-| Commits over base | 1 UI commit (`cb1b65d`) plus this evidence commit |
-| PR state | Draft, unmerged, targets `productionv2` (not PR #2) |
+| Commits over base | UI commit `cb1b65d` + evidence commit `5c796b0` |
+| PR state | Must be opened as **draft** against `productionv2` (not PR #2); this environment has no GitHub CLI or usable API token, so the branch was pushed and the PR body prepared in `plans/UI_SEARCH_PR_DESCRIPTION.md` |
 | Supersedes | PR #2 (`ui/standard-inline-search-20261029`) |
 
 ## 9. Residual risks
