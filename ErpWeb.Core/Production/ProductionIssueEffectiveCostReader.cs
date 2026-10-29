@@ -155,6 +155,9 @@ internal static class ProductionIssueEffectiveCostReader
             || material.CompanyCode != movement.CompanyCode
             || material.BranchCode != movement.BranchCode
             || material.ItemCode != movement.ItemCode
+            || material.WorkOrderId != movement.WorkOrderId
+            || material.WorkOrderOperationId != movement.WorkOrderOperationId
+            || material.PostingLinkId != movement.PostingLinkId
             || material.InventoryHistoryId != history.Id
             || material.StockPostingId != movement.StockPostingId
             || material.MovementDate != movement.MovementDate
@@ -184,7 +187,10 @@ internal static class ProductionIssueEffectiveCostReader
                 || f.MovementCode != "PRODUCTION_MATERIAL_OUT"
                 || f.ValuationStatus != StockValuationStatuses.Valued
                 || f.BaseQty <= 0m || f.CostAmount < 0m
-                || f.ProductionMovementId != material.Uid)
+                || f.ProductionMovementId != material.Uid
+                || f.WorkOrderId != material.WorkOrderId
+                || f.WorkOrderOperationId != material.WorkOrderOperationId
+                || f.ProductionPostingLinkId != material.PostingLinkId)
             || StockLedgerPrecision.Quantity(activeFacts.Sum(f => f.BaseQty))
                 != StockLedgerPrecision.Quantity(movement.BaseQty))
             throw Invalid($"Production ISSUE movement {movement.Uid} does not match its active Inventory valuation generation.");

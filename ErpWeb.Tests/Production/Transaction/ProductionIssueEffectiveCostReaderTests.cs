@@ -54,6 +54,24 @@ public sealed class ProductionIssueEffectiveCostReaderTests
         Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, error.Error.Code);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Rejects_a_fact_with_inconsistent_production_ownership(int changedField)
+    {
+        var (movement, material, history) = Issue();
+        var fact = Fact(1, 5m, 20m);
+        if (changedField == 0) fact.WorkOrderId = 999;
+        if (changedField == 1) fact.WorkOrderOperationId = 999;
+        if (changedField == 2) fact.ProductionPostingLinkId = 999;
+
+        var error = Assert.Throws<StockLedgerException>(() =>
+            ProductionIssueEffectiveCostReader.FromActiveGeneration(
+                movement, material, history, [fact]));
+        Assert.Equal(StockLedgerErrorCodes.LedgerMismatch, error.Error.Code);
+    }
+
     [Fact]
     public void Rejects_an_incomplete_FIFO_replacement()
     {
@@ -657,6 +675,7 @@ public sealed class ProductionIssueEffectiveCostReaderTests
         var movement = new ProductionBalLotMovement
         {
             Uid = 100, CompanyCode = "DEMO", BranchCode = "HQ",
+            WorkOrderId = 301, WorkOrderOperationId = 302, PostingLinkId = 303,
             LedgerVersion = 2, LedgerEpochId = 1, StockPostingId = 10,
             MovementType = ProductionBalLotMovementTypes.Issue,
             ValuationStatus = ProductionPoolValuationService.Verified,
@@ -667,6 +686,7 @@ public sealed class ProductionIssueEffectiveCostReaderTests
         {
             Uid = 200, ProductionBalLotMovementId = movement.Uid,
             CompanyCode = "DEMO", BranchCode = "HQ",
+            WorkOrderId = 301, WorkOrderOperationId = 302, PostingLinkId = 303,
             MovementType = ProductionMaterialMovementTypes.Issue,
             ItemCode = "A100", BaseQty = 5m,
             InventoryHistoryId = 7, StockPostingId = 10,
@@ -689,6 +709,7 @@ public sealed class ProductionIssueEffectiveCostReaderTests
         LedgerEpochId = 1, StockPostingId = id <= 2 ? 10 : 11,
         PostingLineNo = 1, SplitOrdinal = (int)id,
         InventoryHistoryId = 7, ProductionMovementId = 200,
+        WorkOrderId = 301, WorkOrderOperationId = 302, ProductionPostingLinkId = 303,
         ItemCode = "A100", BaseUom = "EA", EffectiveAt = EffectiveAt,
         Direction = -1,
         MovementCode = "PRODUCTION_MATERIAL_OUT",
@@ -703,6 +724,9 @@ public sealed class ProductionIssueEffectiveCostReaderTests
         LedgerEpochId = prior.LedgerEpochId, StockPostingId = 11,
         PostingLineNo = 2, SplitOrdinal = (int)id,
         InventoryHistoryId = 8, ProductionMovementId = prior.ProductionMovementId,
+        WorkOrderId = prior.WorkOrderId,
+        WorkOrderOperationId = prior.WorkOrderOperationId,
+        ProductionPostingLinkId = prior.ProductionPostingLinkId,
         ItemCode = prior.ItemCode, Direction = 1,
         MovementCode = prior.MovementCode,
         BaseQty = prior.BaseQty, CostAmount = prior.CostAmount,

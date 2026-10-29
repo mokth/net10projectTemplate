@@ -204,6 +204,38 @@ public sealed partial class ProductionOutputService
                 .OrderBy(x => x.Uid)
                 .ToListAsync(cancellationToken);
 
+            var outputMovements = consumeBal.Concat(produceMovements).ToArray();
+            var effectiveCosts = await ProductionReplayEffectiveCostReader.ReadAsync(db,
+                scope.CompanyCode, scope.BranchCode!,
+                outputMovements.Select(m => m.Uid).ToArray(), cancellationToken);
+            if (effectiveCosts.Values.Any(c => c.RestatementFactId is not null))
+            {
+                if (produceMovements.Count != 1
+                    || outputMovements.Any(m => m.StockPostingId != originalPostingId
+                        || m.BaseQty <= 0m || effectiveCosts[m.Uid].TotalCost < 0m
+                        || effectiveCosts[m.Uid].UnitCost != StockLedgerPrecision.Money(
+                            effectiveCosts[m.Uid].TotalCost / m.BaseQty))
+                    || originalConversionFacts.Any(f => f.ProductionMovementId != produceMovements[0].Uid)
+                    || effectiveCosts[produceMovements[0].Uid].TotalCost != StockLedgerPrecision.Money(
+                        consumeBal.Sum(m => effectiveCosts[m.Uid].TotalCost)
+                        + originalConversionFacts.Sum(f => f.CostAmount)))
+                    return Fail("Corrected Production output cost does not reconcile to its inputs and conversion cost.");
+                foreach (var source in consumeMaterial)
+                {
+                    var movement = consumeBal.SingleOrDefault(m => m.Uid == source.ProductionBalLotMovementId);
+                    if (movement is null || source.ProductionBalLotId != movement.ProductionBalLotId
+                        || source.BaseQty != movement.BaseQty || source.TotalCost != movement.TotalCost
+                        || source.UnitCost != movement.UnitCost)
+                        return Fail("Corrected Production output has inconsistent original material evidence.");
+                }
+                foreach (var lotId in outputMovements.Select(m => m.ProductionBalLotId).Distinct())
+                {
+                    var lot = await db.ProductionBalLots.AsNoTracking().SingleAsync(l => l.Uid == lotId, cancellationToken);
+                    if (await ProductionCostReadiness.PoolValuationError(db, lot, cancellationToken) is { } poolError)
+                        return Fail(poolError);
+                }
+            }
+
             var balById = consumeBal.ToDictionary(x => x.Uid);
             var materialBalIds = consumeMaterial
                 .Where(x => x.ProductionBalLotMovementId.HasValue)
@@ -220,10 +252,11 @@ public sealed partial class ProductionOutputService
 
                 var originalBal = balById.GetValueOrDefault(consume.ProductionBalLotMovementId.Value);
                 if (originalBal is null) return Fail("Bal-lot consume movement was not found.");
+                var effective = effectiveCosts[originalBal.Uid];
 
                 lot.Qty = IvQty.Round(lot.Qty + originalBal.Qty);
                 lot.BaseQty = IvQty.Round(lot.BaseQty + originalBal.BaseQty);
-                lot.TotalCost = StockLedgerPrecision.Money(lot.TotalCost + originalBal.TotalCost);
+                lot.TotalCost = StockLedgerPrecision.Money(lot.TotalCost + effective.TotalCost);
                 lot.AverageUnitCost = lot.BaseQty > 0m ? StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) : 0m;
 
                 var balRev = new ProductionBalLotMovement
@@ -234,8 +267,8 @@ public sealed partial class ProductionOutputService
                     Uom = originalBal.Uom,
                     BaseQty = originalBal.BaseQty,
                     BaseUom = originalBal.BaseUom,
-                    UnitCost = originalBal.UnitCost,
-                    TotalCost = originalBal.TotalCost,
+                    UnitCost = effective.UnitCost,
+                    TotalCost = effective.TotalCost,
                     WorkOrderId = order.Uid,
                     WorkOrderMaterialId = consume.WorkOrderMaterialId,
                     WorkOrderOperationId = operation.Uid,
@@ -272,8 +305,8 @@ public sealed partial class ProductionOutputService
                     LotNo = consume.LotNo,
                     FromBalLocId = consume.FromBalLocId,
                     ItemStatus = consume.ItemStatus,
-                    UnitCost = consume.UnitCost,
-                    TotalCost = consume.TotalCost,
+                    UnitCost = effective.UnitCost,
+                    TotalCost = effective.TotalCost,
                     PostingLinkId = rollbackLink.Uid,
                     OriginalMovementId = consume.Uid,
                     ProductionBalLotId = lot.Uid,
@@ -299,10 +332,11 @@ public sealed partial class ProductionOutputService
             {
                 var lot = await LockBalLotByIdAsync(db, handoffConsume.ProductionBalLotId, cancellationToken);
                 if (lot is null) return Fail("Previous-process balance lot was not found.");
+                var effective = effectiveCosts[handoffConsume.Uid];
 
                 lot.Qty = IvQty.Round(lot.Qty + handoffConsume.Qty);
                 lot.BaseQty = IvQty.Round(lot.BaseQty + handoffConsume.BaseQty);
-                lot.TotalCost = StockLedgerPrecision.Money(lot.TotalCost + handoffConsume.TotalCost);
+                lot.TotalCost = StockLedgerPrecision.Money(lot.TotalCost + effective.TotalCost);
                 lot.AverageUnitCost = lot.BaseQty > 0m ? StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) : 0m;
 
                 var balRev = new ProductionBalLotMovement
@@ -313,8 +347,8 @@ public sealed partial class ProductionOutputService
                     Uom = handoffConsume.Uom,
                     BaseQty = handoffConsume.BaseQty,
                     BaseUom = handoffConsume.BaseUom,
-                    UnitCost = handoffConsume.UnitCost,
-                    TotalCost = handoffConsume.TotalCost,
+                    UnitCost = effective.UnitCost,
+                    TotalCost = effective.TotalCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
                     RouteStepId = routeStep.Uid,
@@ -340,10 +374,11 @@ public sealed partial class ProductionOutputService
             {
                 var lot = await LockBalLotByIdAsync(db, produce.ProductionBalLotId, cancellationToken);
                 if (lot is null) return Fail("WIP production balance lot was not found.");
+                var effective = effectiveCosts[produce.Uid];
 
                 var nextQty = IvQty.Round(lot.Qty - produce.Qty);
                 var nextBaseQty = IvQty.Round(lot.BaseQty - produce.BaseQty);
-                var nextCost = StockLedgerPrecision.Money(lot.TotalCost - produce.TotalCost);
+                var nextCost = StockLedgerPrecision.Money(lot.TotalCost - effective.TotalCost);
                 if (nextQty < 0m || nextBaseQty < 0m || nextCost < 0m)
                     return Fail($"Reversing output would make production balance lot {lot.Uid} negative.");
                 lot.Qty = nextQty;
@@ -359,8 +394,8 @@ public sealed partial class ProductionOutputService
                     Uom = produce.Uom,
                     BaseQty = produce.BaseQty,
                     BaseUom = produce.BaseUom,
-                    UnitCost = produce.BaseQty > 0m ? StockLedgerPrecision.Money(produce.TotalCost / produce.BaseQty) : 0m,
-                    TotalCost = produce.TotalCost,
+                    UnitCost = effective.UnitCost,
+                    TotalCost = effective.TotalCost,
                     WorkOrderId = order.Uid,
                     WorkOrderOperationId = operation.Uid,
                     RouteStepId = routeStep.Uid,
