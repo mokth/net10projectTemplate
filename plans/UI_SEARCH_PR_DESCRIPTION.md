@@ -48,10 +48,21 @@ Nothing under `ErpWeb.Core/`, `ErpWeb.Model/`, `ErpWeb.Data/`, no SQL/migration,
 | Failure attribution | Delivery failure set identical to both baselines; 27/27 reproduced on pristine Baseline B; **0 new failures** |
 | `git diff --check` | PASS |
 | Denylist audit | PASS, zero forbidden paths |
+| Live browser, 56 converted controls | 42 PASS, 14 NOT VERIFIED |
+| Responsive 320 / 375 / 768 / 1280 / 1920 px | PASS, single-line row, no wrap, magnifier 36 px and unclipped at every width |
+| Constrained popup at 200 % zoom equivalent | PASS, 218 px input and 36 px magnifier fully inside a 350 px popup |
+| Theme | Light PASS; dark NOT VERIFIED (no discoverable toggle in the running host) |
 
-## Known blocked item
+Deep UAT covered `#admin-company-rail-search` (live filter 2 → 1 → 0 → cleared), `#iv-stock-master-list-search` (debounce 11 → 2, icon click before debounce expiry honours the latest text, Enter honoured, clear restores 11), `#po-supplier-search-popup-search` (Enter → "No data to display", clear restores, footer untouched) and `#po-invoice-po-picker-search` (opens, single-line, footer intact, icon and Enter paths error-free).
 
-Browser, responsive (320/375/768/1280/1920 px), zoom (125%/200%), light/dark and keyboard evidence is **NOT VERIFIED**: no CDP browser session was available and the running app requires operator credentials that were not supplied. Every browser cell in the evidence matrix is marked `NOT VERIFIED`. Per the plan's status policy the PR stays draft until a reviewer with credentials completes that matrix.
+## Remaining unverified items
+
+| Cause | Count | Detail |
+| --- | --- | --- |
+| Pre-existing database drift | 1 | `/sales/credit-notes` returns 500 `Invalid column name 'CostingRevision'`. `SaCdn.cs` declares the property and is byte-identical to `origin/productionv2`; the local `ERPWeb` database carries the column only on `PoCdn` and `POInvoice`. No `ErpWeb.Model`/`ErpWeb.Core`/`ErpWeb.Data` file changed on this branch, so the failure reproduces identically on the untouched baseline. |
+| Prerequisite data absent | 13 | Picker and popup triggers only render once a supplier, customer or source document is chosen; the seeded dataset has no qualifying transaction. |
+
+Per the plan's status policy the PR stays draft until a reviewer clears those 14 rows or accepts the documented environment rationale.
 
 ## Residual risks
 

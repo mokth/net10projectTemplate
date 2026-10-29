@@ -20,66 +20,112 @@ Every converted search control has its own row. A representative screen never st
 
 ## Browser smoke matrix
 
-Browser status for every row: **NOT VERIFIED**. No interactive browser session was available (Chrome remote debugging was not enabled and no credentials were supplied).
+Live browser status: **42 PASS / 14 NOT VERIFIED** out of 56 controls. The session below ran against the delivery branch itself (not the dev worktree), authenticated as a real administrator.
+
+### Live verification environment
+
+| Item | Value |
+| --- | --- |
+| Application | `ui/global-inline-search-standard-v1` @ `6676381` run from `C:\wincom\net10projects-inline-search-delivery` |
+| URL | `http://localhost:5001` (`ASPNETCORE_ENVIRONMENT=Development`) |
+| Database | `ERPWeb` on `.\SQLEXPRESS` (read-only inspection; no writes) |
+| Session | Authenticated via the interactive login page (`DEMO` tenant, administrator) |
+| Browser | Cursor internal Chromium, viewport swept 320 / 375 / 768 / 1280 / 1920 px |
+| Theme | Fluent Light (dark theme has no discoverable toggle in the running host; recorded as not verified) |
+| Assertion method | `getBoundingClientRect()` geometry + computed `flex-wrap` + `label[for]` vs `input[id]` equality + `#blazor-error-ui` state, sampled per control |
+
+### Verification tiers
+
+| Tier | What was asserted | Controls |
+| --- | --- | --- |
+| Deep UAT | Real typing, icon click before debounce expiry, Enter key, empty/clear round-trip, popup footer intact, no Blazor error | `#admin-company-rail-search`, `#iv-stock-master-list-search`, `#po-supplier-search-popup-search`, `#po-invoice-po-picker-search` |
+| Layout contract, live | Caption/input/magnifier on one line, icon-only magnifier 36 px wide and unclipped, `aria-label` present, `for` resolves to `InputId` | all other PASS rows |
+| Rendered markup sweep | Authenticated server render of every list/board route parsed for `.erp-inline-search` structure | 40 list/board controls |
+| Static contract test | `ErpInlineSearchContractTests` (6/6) parses every `.razor` search block | all 56 + 8 documented exceptions |
+
+### Rows not verified
+
+| # | Control | Reason |
+| --- | --- | --- |
+| 55 | `#sa-cdn-list-search` | `/sales/credit-notes` returns 500. Cause is pre-existing database drift: `ErpWeb.Model/Entities/Sales/SaCdn.cs` declares `CostingRevision` and is **byte-identical to `origin/productionv2`**, but the `ERPWeb` database has no such column (only `PoCdn` and `POInvoice` carry it). No branch file under `ErpWeb.Model`/`ErpWeb.Core`/`ErpWeb.Data` was changed. |
+| 5, 6, 19, 34, 52* | Lookup popups (`IvBalLocSearchPopup`, `IvStockMasterSearchPopup`, `PrDeliveryRequestSearchPopup`, `PoPurchasingItemSearchPopup`) | Open only from a line editor that requires a saved/dirty document header or a selected supplier first; the local `ERPWeb` dataset has no such qualifying transaction. |
+| 8, 26, 28, 31, 40, 56, 58, 60, 61 | Entry-page pickers (`IvGoodsReceipt` PO picker, production stock adjustment/return source pools, WO-transfer source pool, `PoOrder` PR picker, delivery-request source picker, DO source lookup, invoice source/DO pickers) | Same prerequisite gating: the picker trigger is not rendered until a supplier/customer/source document is chosen, and the seeded database has no qualifying records. |
+
+\* Row 52 (`SaCustomerSearchPopup`) did render live and passed its layout contract; it is counted in the 42 PASS rows and is listed here only to explain the popup family.
+
+### Responsive results (single-line row, no wrap)
+
+| Viewport | Input width | Magnifier | Row height | Wrap | Horizontal overflow |
+| --- | --- | --- | --- | --- | --- |
+| 320 px | 147 px | 36 px, visible | 31 px | none | none |
+| 375 px | 191 px | 36 px, visible | 31 px | none | none |
+| 768 px | 497 px | 36 px, visible | 31 px | none | none |
+| 1280 px | 668 px | 36 px, visible | 31 px | none | none |
+| 1920 px | 1308 px | 36 px, visible | 31 px | none | none |
+| 500 px viewport → 350 px popup (200 % zoom equivalent) | 218 px | 36 × 19 px, inside popup | 23 px | none | none |
+
+Measured magnifier width is `2.25rem` (36 px) everywhere; height follows the `DxButton` `SizeMode` (25 px default, 19 px `Small`). Width is the controlled dimension; height is inherited from the button component.
+
+Evidence images: `plans/evidence/shot-inventory-items.png`, `plans/evidence/shot-po-invoice-po-picker.png`.
 
 | # | Route | Control | Path:line | Handler pattern | Row on one line | Magnifier visible/clickable | Current text applied | Empty / clear | Console clean | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | /admin/company | `#admin-company-rail-search` | `ErpWeb.UI/Admin/AdminCompany.razor:34` | Live list filter (no explicit action) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2 | /inventory/balance-by-lot | `#iv-balance-lot-search` | `ErpWeb.UI/Inventory/Inquiry/IvBalanceLot.razor:58` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 3 | /inventory/lot-traceability | `#iv-lot-genealogy-search` | `ErpWeb.UI/Inventory/Inquiry/IvLotGenealogyInquiry.razor:35` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 4 | /inventory/trx-inquiry | `#iv-trx-inquiry-search` | `ErpWeb.UI/Inventory/Inquiry/IvTrxInquiry.razor:63` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 5 | (component) | `#iv-bal-loc-search-popup-search` | `ErpWeb.UI/Inventory/Lookups/IvBalLocSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 6 | (component) | `#iv-stock-master-search-popup-search` | `ErpWeb.UI/Inventory/Lookups/IvStockMasterSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 7 | /inventory/items | `#iv-stock-master-list-search` | `ErpWeb.UI/Inventory/Masters/IvStockMasterList.razor:46` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 8 | /inventory/goods-receipts/{Mode:regex(^(new\|edit\|view)$)} | `#iv-goods-receipt-po-search` | `ErpWeb.UI/Inventory/Transactions/IvGoodsReceipt.razor:275` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 9 | /inventory/goods-receipts | `#iv-goods-receipt-list-search` | `ErpWeb.UI/Inventory/Transactions/IvGoodsReceiptList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 10 | /inventory/misc-issue | `#iv-misc-issue-list-search` | `ErpWeb.UI/Inventory/Transactions/IvMiscIssueList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 11 | /inventory/misc-receipt | `#iv-misc-receipt-list-search` | `ErpWeb.UI/Inventory/Transactions/IvMiscReceiptList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 12 | /inventory/scrap | `#iv-scrap-list-search` | `ErpWeb.UI/Inventory/Transactions/IvScrapList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 13 | /inventory/stock-adjustment | `#iv-stock-adjustment-list-search` | `ErpWeb.UI/Inventory/Transactions/IvStockAdjustmentList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 14 | /inventory/stock-count | `#iv-stock-count-list-search` | `ErpWeb.UI/Inventory/Transactions/IvStockCountList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 15 | /inventory/stock-return | `#iv-stock-return-list-search` | `ErpWeb.UI/Inventory/Transactions/IvStockReturnList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 16 | /inventory/stock-transfer | `#iv-stock-transfer-list-search` | `ErpWeb.UI/Inventory/Transactions/IvStockTransferList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 17 | /inventory/vendor-return | `#iv-vendor-return-list-search` | `ErpWeb.UI/Inventory/Transactions/IvVendorReturnList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 18 | /planning/production-balance | `#pr-production-balance-search` | `ErpWeb.UI/Planning/Inquiry/PrProductionBalance.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 19 | (component) | `#pr-delivery-request-search-popup-search` | `ErpWeb.UI/Planning/Lookups/PrDeliveryRequestSearchPopup.razor:18` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 20 | (component) | `#pr-production-stock-work-order-search-popup-search` | `ErpWeb.UI/Planning/Lookups/PrProductionStockWorkOrderSearchPopup.razor:18` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 21 | /planning/product-definitions | `#pr-product-def-list-search` | `ErpWeb.UI/Planning/Masters/PrProductDefList.razor:48` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 22 | /planning/daily-production | `#pr-daily-production-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrDailyProductionList.razor:48` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 23 | /planning/finished-good-receipts | `#pr-finished-good-receipt-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrFinishedGoodReceiptList.razor:48` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 24 | /planning/work-orders/machine-schedule | `#pr-machine-schedule-search` | `ErpWeb.UI/Planning/WorkOrders/PrMachineSchedulePlanner.razor:87` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 25 | /planning/material-issues | `#pr-material-issue-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrMaterialIssueList.razor:48` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 26 | /planning/stock-adjustments/new | `#pr-stock-adjustment-source-search` | `ErpWeb.UI/Planning/WorkOrders/PrProductionStockAdjustmentEntry.razor:152` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 27 | /planning/stock-adjustments | `#pr-production-stock-adjustment-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrProductionStockAdjustmentList.razor:14` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 28 | /planning/stock-returns/new | `#pr-stock-return-source-search` | `ErpWeb.UI/Planning/WorkOrders/PrProductionStockReturnEntry.razor:538` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 29 | /planning/stock-returns | `#pr-production-stock-return-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrProductionStockReturnList.razor:21` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 30 | /planning/work-orders | `#pr-work-order-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrWorkOrderList.razor:46` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 31 | /planning/work-order-transfer/new | `#wot-source-search` | `ErpWeb.UI/Planning/WorkOrders/PrWorkOrderTransferEntry.razor:206` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 32 | /planning/work-order-transfer | `#pr-work-order-transfer-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrWorkOrderTransferList.razor:24` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 34 | (component) | `#po-purchasing-item-search-popup-search` | `ErpWeb.UI/Purchase/Lookups/PoPurchasingItemSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 35 | (component) | `#po-supplier-search-popup-search` | `ErpWeb.UI/Purchase/Lookups/PoSupplierSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 36 | /purchase/suppliers | `#po-supp-list-search` | `ErpWeb.UI/Purchase/Masters/PoSuppList.razor:46` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 37 | /purchase/credit-notes | `#po-cdn-list-search` | `ErpWeb.UI/Purchase/Transactions/PoCdnList.razor:56` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 38 | /purchase/invoices/{Mode:regex(^(new\|edit\|view)$)} | `#po-invoice-po-picker-search` | `ErpWeb.UI/Purchase/Transactions/PoInvoice.razor:389` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 39 | /purchase/invoices | `#po-invoice-list-search` | `ErpWeb.UI/Purchase/Transactions/PoInvoiceList.razor:59` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 40 | /purchase/orders/{Mode:regex(^(new\|edit\|view\|copy\|revise)$)} | `#po-order-pr-picker-search` | `ErpWeb.UI/Purchase/Transactions/PoOrder.razor:807` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 41 | /purchase/orders | `#po-order-list-search` | `ErpWeb.UI/Purchase/Transactions/PoOrderList.razor:46` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 42 | /purchase/requisitions | `#po-pr-list-search` | `ErpWeb.UI/Purchase/Transactions/PoPrList.razor:46` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 43 | /purchase/self-billed-credit-notes | `#po-sb-cdn-list-search` | `ErpWeb.UI/Purchase/Transactions/PoSbCdnList.razor:63` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 44 | /purchase/self-billed-invoices | `#po-sb-invoice-list-search` | `ErpWeb.UI/Purchase/Transactions/PoSbInvoiceList.razor:56` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 49 | /sales/delivery/board | `#delivery-board-search` | `ErpWeb.UI/Sales/Delivery/SaDeliveryBoard.razor:67` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 52 | (component) | `#sa-customer-search-popup-search` | `ErpWeb.UI/Sales/Lookups/SaCustomerSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 53 | /sales/customers | `#sa-cust-list-search` | `ErpWeb.UI/Sales/Masters/SaCustList.razor:46` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 55 | /sales/credit-notes | `#sa-cdn-list-search` | `ErpWeb.UI/Sales/Transactions/SaCdnList.razor:66` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 56 | /sales/delivery-requests/{Mode:regex(^(new)$)} | `#sa-delivery-request-source-picker-search` | `ErpWeb.UI/Sales/Transactions/SaDeliveryRequestEntry.razor:486` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 57 | /sales/delivery-requests | `#sa-delivery-request-list-search` | `ErpWeb.UI/Sales/Transactions/SaDeliveryRequestList.razor:92` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 58 | /sales/delivery-orders/{Mode:regex(^(new\|edit\|view)$)} | `#sa-do-source-lookup-search` | `ErpWeb.UI/Sales/Transactions/SaDo.razor:688` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 59 | /sales/delivery-orders | `#sa-do-list-search` | `ErpWeb.UI/Sales/Transactions/SaDoList.razor:50` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 60 | /sales/invoices/{Mode:regex(^(new\|edit\|view)$)} | `#sa-invoice-source-lookup-search` | `ErpWeb.UI/Sales/Transactions/SaInvoice.razor:821` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 61 | /sales/invoices/{Mode:regex(^(new\|edit\|view)$)} | `#sa-invoice-do-picker-search` | `ErpWeb.UI/Sales/Transactions/SaInvoice.razor:965` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 62 | /sales/invoices | `#sa-invoice-list-search` | `ErpWeb.UI/Sales/Transactions/SaInvoiceList.razor:60` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 63 | /sales/quotations | `#sa-qt-list-search` | `ErpWeb.UI/Sales/Transactions/SaQtList.razor:46` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 64 | /sales/sales-orders | `#sa-so-list-search` | `ErpWeb.UI/Sales/Transactions/SaSoList.razor:46` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
+| 1 | /admin/company | `#admin-company-rail-search` | `ErpWeb.UI/Admin/AdminCompany.razor:34` | Live list filter (no explicit action) | PASS | PASS | PASS | PASS | PASS | PASS (live, deep UAT) |
+| 2 | /inventory/balance-by-lot | `#iv-balance-lot-search` | `ErpWeb.UI/Inventory/Inquiry/IvBalanceLot.razor:58` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 3 | /inventory/lot-traceability | `#iv-lot-genealogy-search` | `ErpWeb.UI/Inventory/Inquiry/IvLotGenealogyInquiry.razor:35` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 4 | /inventory/trx-inquiry | `#iv-trx-inquiry-search` | `ErpWeb.UI/Inventory/Inquiry/IvTrxInquiry.razor:63` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 5 | (component) | `#iv-bal-loc-search-popup-search` | `ErpWeb.UI/Inventory/Lookups/IvBalLocSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 6 | (component) | `#iv-stock-master-search-popup-search` | `ErpWeb.UI/Inventory/Lookups/IvStockMasterSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 7 | /inventory/items | `#iv-stock-master-list-search` | `ErpWeb.UI/Inventory/Masters/IvStockMasterList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live, deep UAT) |
+| 8 | /inventory/goods-receipts/{Mode:regex(^(new\|edit\|view)$)} | `#iv-goods-receipt-po-search` | `ErpWeb.UI/Inventory/Transactions/IvGoodsReceipt.razor:275` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 9 | /inventory/goods-receipts | `#iv-goods-receipt-list-search` | `ErpWeb.UI/Inventory/Transactions/IvGoodsReceiptList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 10 | /inventory/misc-issue | `#iv-misc-issue-list-search` | `ErpWeb.UI/Inventory/Transactions/IvMiscIssueList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 11 | /inventory/misc-receipt | `#iv-misc-receipt-list-search` | `ErpWeb.UI/Inventory/Transactions/IvMiscReceiptList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 12 | /inventory/scrap | `#iv-scrap-list-search` | `ErpWeb.UI/Inventory/Transactions/IvScrapList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 13 | /inventory/stock-adjustment | `#iv-stock-adjustment-list-search` | `ErpWeb.UI/Inventory/Transactions/IvStockAdjustmentList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 14 | /inventory/stock-count | `#iv-stock-count-list-search` | `ErpWeb.UI/Inventory/Transactions/IvStockCountList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 15 | /inventory/stock-return | `#iv-stock-return-list-search` | `ErpWeb.UI/Inventory/Transactions/IvStockReturnList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 16 | /inventory/stock-transfer | `#iv-stock-transfer-list-search` | `ErpWeb.UI/Inventory/Transactions/IvStockTransferList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 17 | /inventory/vendor-return | `#iv-vendor-return-list-search` | `ErpWeb.UI/Inventory/Transactions/IvVendorReturnList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 18 | /planning/production-balance | `#pr-production-balance-search` | `ErpWeb.UI/Planning/Inquiry/PrProductionBalance.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 19 | (component) | `#pr-delivery-request-search-popup-search` | `ErpWeb.UI/Planning/Lookups/PrDeliveryRequestSearchPopup.razor:18` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 20 | (component) | `#pr-production-stock-work-order-search-popup-search` | `ErpWeb.UI/Planning/Lookups/PrProductionStockWorkOrderSearchPopup.razor:18` | Key-driven lookup (Enter / magnifier) | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 21 | /planning/product-definitions | `#pr-product-def-list-search` | `ErpWeb.UI/Planning/Masters/PrProductDefList.razor:48` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 22 | /planning/daily-production | `#pr-daily-production-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrDailyProductionList.razor:48` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 23 | /planning/finished-good-receipts | `#pr-finished-good-receipt-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrFinishedGoodReceiptList.razor:48` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 24 | /planning/work-orders/machine-schedule | `#pr-machine-schedule-search` | `ErpWeb.UI/Planning/WorkOrders/PrMachineSchedulePlanner.razor:87` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 25 | /planning/material-issues | `#pr-material-issue-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrMaterialIssueList.razor:48` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 26 | /planning/stock-adjustments/new | `#pr-stock-adjustment-source-search` | `ErpWeb.UI/Planning/WorkOrders/PrProductionStockAdjustmentEntry.razor:152` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 27 | /planning/stock-adjustments | `#pr-production-stock-adjustment-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrProductionStockAdjustmentList.razor:14` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 28 | /planning/stock-returns/new | `#pr-stock-return-source-search` | `ErpWeb.UI/Planning/WorkOrders/PrProductionStockReturnEntry.razor:538` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 29 | /planning/stock-returns | `#pr-production-stock-return-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrProductionStockReturnList.razor:21` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 30 | /planning/work-orders | `#pr-work-order-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrWorkOrderList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 31 | /planning/work-order-transfer/new | `#wot-source-search` | `ErpWeb.UI/Planning/WorkOrders/PrWorkOrderTransferEntry.razor:206` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 32 | /planning/work-order-transfer | `#pr-work-order-transfer-list-search` | `ErpWeb.UI/Planning/WorkOrders/PrWorkOrderTransferList.razor:24` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 34 | (component) | `#po-purchasing-item-search-popup-search` | `ErpWeb.UI/Purchase/Lookups/PoPurchasingItemSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 35 | (component) | `#po-supplier-search-popup-search` | `ErpWeb.UI/Purchase/Lookups/PoSupplierSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | PASS | PASS | PASS | PASS | PASS | PASS (live, deep UAT) |
+| 36 | /purchase/suppliers | `#po-supp-list-search` | `ErpWeb.UI/Purchase/Masters/PoSuppList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 37 | /purchase/credit-notes | `#po-cdn-list-search` | `ErpWeb.UI/Purchase/Transactions/PoCdnList.razor:56` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 38 | /purchase/invoices/{Mode:regex(^(new\|edit\|view)$)} | `#po-invoice-po-picker-search` | `ErpWeb.UI/Purchase/Transactions/PoInvoice.razor:389` | Key-driven lookup (Enter / magnifier) | PASS | PASS | PASS | PASS | PASS | PASS (live, deep UAT) |
+| 39 | /purchase/invoices | `#po-invoice-list-search` | `ErpWeb.UI/Purchase/Transactions/PoInvoiceList.razor:59` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 40 | /purchase/orders/{Mode:regex(^(new\|edit\|view\|copy\|revise)$)} | `#po-order-pr-picker-search` | `ErpWeb.UI/Purchase/Transactions/PoOrder.razor:807` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 41 | /purchase/orders | `#po-order-list-search` | `ErpWeb.UI/Purchase/Transactions/PoOrderList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 42 | /purchase/requisitions | `#po-pr-list-search` | `ErpWeb.UI/Purchase/Transactions/PoPrList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 43 | /purchase/self-billed-credit-notes | `#po-sb-cdn-list-search` | `ErpWeb.UI/Purchase/Transactions/PoSbCdnList.razor:63` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 44 | /purchase/self-billed-invoices | `#po-sb-invoice-list-search` | `ErpWeb.UI/Purchase/Transactions/PoSbInvoiceList.razor:56` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 49 | /sales/delivery/board | `#delivery-board-search` | `ErpWeb.UI/Sales/Delivery/SaDeliveryBoard.razor:67` | Key-driven lookup (Enter / magnifier) | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 52 | (component) | `#sa-customer-search-popup-search` | `ErpWeb.UI/Sales/Lookups/SaCustomerSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 53 | /sales/customers | `#sa-cust-list-search` | `ErpWeb.UI/Sales/Masters/SaCustList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 55 | /sales/credit-notes | `#sa-cdn-list-search` | `ErpWeb.UI/Sales/Transactions/SaCdnList.razor:66` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (route 500: pre-existing database drift, SaCdn.CostingRevision column absent; entity byte-identical to origin/productionv2) |
+| 56 | /sales/delivery-requests/{Mode:regex(^(new)$)} | `#sa-delivery-request-source-picker-search` | `ErpWeb.UI/Sales/Transactions/SaDeliveryRequestEntry.razor:486` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 57 | /sales/delivery-requests | `#sa-delivery-request-list-search` | `ErpWeb.UI/Sales/Transactions/SaDeliveryRequestList.razor:92` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 58 | /sales/delivery-orders/{Mode:regex(^(new\|edit\|view)$)} | `#sa-do-source-lookup-search` | `ErpWeb.UI/Sales/Transactions/SaDo.razor:688` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 59 | /sales/delivery-orders | `#sa-do-list-search` | `ErpWeb.UI/Sales/Transactions/SaDoList.razor:50` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 60 | /sales/invoices/{Mode:regex(^(new\|edit\|view)$)} | `#sa-invoice-source-lookup-search` | `ErpWeb.UI/Sales/Transactions/SaInvoice.razor:821` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 61 | /sales/invoices/{Mode:regex(^(new\|edit\|view)$)} | `#sa-invoice-do-picker-search` | `ErpWeb.UI/Sales/Transactions/SaInvoice.razor:965` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
+| 62 | /sales/invoices | `#sa-invoice-list-search` | `ErpWeb.UI/Sales/Transactions/SaInvoiceList.razor:60` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 63 | /sales/quotations | `#sa-qt-list-search` | `ErpWeb.UI/Sales/Transactions/SaQtList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
+| 64 | /sales/sales-orders | `#sa-so-list-search` | `ErpWeb.UI/Sales/Transactions/SaSoList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
 
 ## Deep behaviour UAT (one pass per handler pattern)
 

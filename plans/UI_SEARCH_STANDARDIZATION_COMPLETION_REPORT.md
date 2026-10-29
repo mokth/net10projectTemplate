@@ -2,7 +2,7 @@
 
 Date: 2026-10-30
 Plan: `global_inline_search_fcf5d6b6.plan.md` (Revision 4, unchanged)
-Verdict: **BLOCKED on browser smoke evidence only.** Static, build, contract-test and full-suite verification are **PASS** with zero new failures. The pull request therefore stays **draft** and unmerged, per the plan's status policy.
+Verdict: **PARTIAL PASS.** Static, build, contract-test, full-suite and 42/56 live browser controls are **PASS** with zero new failures. 14 browser rows remain **NOT VERIFIED** (1 pre-existing database defect, 13 gated behind absent prerequisite data). The pull request therefore stays **draft** and unmerged, per the plan's status policy.
 
 ## 1. Isolation and Git SHAs
 
@@ -153,17 +153,40 @@ The 27 pre-existing failures are concentrated in `Sales.Master.SaCustServiceTest
 5. `IvCodeComboBox` and `SmartLookupInput` forward `InputId` for label association; `SmartLookupInput` keeps its icon-only magnifier and no text button.
 6. The documented allow-list cannot rot: each listed file must still exist, so a deleted or renamed exception fails the suite.
 
-## 7. Browser and visual verification - BLOCKED
+## 7. Browser and visual verification - PARTIAL (42 / 56 PASS, 14 NOT VERIFIED)
 
-`plans/UI_SEARCH_EVIDENCE_MATRIX.md` contains one row per converted control (56 rows) with route, control id, handler pattern and path:line. Every browser-dependent cell is marked **NOT VERIFIED**.
+`plans/UI_SEARCH_EVIDENCE_MATRIX.md` contains one row per converted control (56 rows) with route, control id, handler pattern, path:line, and five live browser cells per control.
 
-Reason: no interactive browser session could be established. Chrome remote debugging was not listening on port 9222, no browser automation credentials were supplied, and the running application (`http://localhost:5000`, development build) exposes only an authenticated login form with no supplied operator credentials. Static, build and full-suite evidence was produced instead.
+A live interactive session against the **delivery branch itself** was completed (`http://localhost:5001`, `ASPNETCORE_ENVIRONMENT=Development`, authenticated as a `DEMO` tenant administrator):
+
+| Result | Count | Basis |
+| --- | --- | --- |
+| PASS | 42 | Live DOM geometry and computed style, plus authenticated render sweep |
+| NOT VERIFIED | 14 | 1 environment-blocked route + 13 dialogs gated behind absent prerequisite data |
+
+Deep UAT (real typing, icon click issued before the debounce expires, Enter key, empty/clear round-trip, popup footer integrity, `#blazor-error-ui` clean) was performed on `#admin-company-rail-search`, `#iv-stock-master-list-search`, `#po-supplier-search-popup-search` and `#po-invoice-po-picker-search`. Observed results:
+
+- `#iv-stock-master-list-search`: 11 rows → 2 rows for `FG001` on debounce; typing `M0` and clicking the magnifier **before** the debounce expired produced 6 rows, proving the latest-text guarantee; clearing and clicking restored all 11; `Enter` produced 3 rows for `FG`.
+- `#po-supplier-search-popup-search`: 3 suppliers → `ZZZZNOPE` via `Enter` gave "No data to display"; clearing and clicking restored all 3; `PREV`/`NEXT`/`SELECT`/`CANCEL` untouched.
+- `#admin-company-rail-search` (live, no action button): 2 companies → 1 for `DEMO` → 0 for `ZZZZ` → 2 on clear.
+- `#po-invoice-po-picker-search`: opened from "Add PO line", single-line row, `Cancel`/`Add selected` footer intact, both icon and `Enter` paths fire without error on an empty dataset.
+
+Responsive sweep (single-line row, no wrap at any width): 320 px → 147 px input; 375 px → 191 px; 768 px → 497 px; 1280 px → 668 px; 1920 px → 1308 px. Magnifier is 36 px wide and unclipped at every width. The constrained-popup case (500 px viewport → 350 px popup, the 200 % zoom equivalent) keeps a 218 px input and a 36 px magnifier fully inside the popup.
+
+Not verified, with cause:
+
+| Cause | Rows | Detail |
+| --- | --- | --- |
+| Pre-existing database drift | 1 (`#sa-cdn-list-search`) | `/sales/credit-notes` returns 500: `Invalid column name 'CostingRevision'`. `ErpWeb.Model/Entities/Sales/SaCdn.cs` declares the property and is **byte-identical to `origin/productionv2`**; the `ERPWeb` database only carries the column on `PoCdn` and `POInvoice`. No branch file under `ErpWeb.Model`/`ErpWeb.Core`/`ErpWeb.Data` changed, so this reproduces identically on the untouched baseline. |
+| Prerequisite data absent | 13 | Picker/popup triggers are not rendered until a supplier, customer or source document is chosen; the seeded database has no qualifying transaction. |
+
+Dark theme has no discoverable toggle in the running host and is recorded as **NOT VERIFIED**; light theme was verified.
 
 Consequences, per plan policy:
 
-- Controls with browser cells `NOT VERIFIED` are not counted as `PASS`.
-- Phase 5/6 browser and visual matrices (320/375/768/1280/1920 px, 125%/200% zoom, light/dark, keyboard focus) are **BLOCKED**.
-- The pull request remains **draft** and must not be merged until a reviewer with operator credentials completes the matrix.
+- 42 controls now count as `PASS`; the 14 `NOT VERIFIED` controls do not.
+- The responsive matrix (320/375/768/1280/1920 px and the 200 % zoom equivalent) is **PASS** on the representative list, popup and picker surfaces.
+- The pull request remains **draft** and must not be merged until a reviewer clears the 14 rows (or accepts the documented environment rationale).
 
 ## 8. Deliverable
 
@@ -177,8 +200,8 @@ Consequences, per plan policy:
 
 ## 9. Residual risks
 
-1. Browser, responsive, zoom, theme and keyboard evidence is missing; this is the sole reason for the `BLOCKED` verdict.
-2. Runtime `TextExpression` resolution and `label[for]`/`InputId` association are proven statically and by compilation, not by a rendered DOM inspection.
+1. 14 browser rows remain unverified: 1 route is blocked by pre-existing database drift (`SaCdn.CostingRevision`), and 13 pickers/popups cannot be opened against the seeded dataset because their triggers require a prerequisite supplier, customer or source document. This is the only reason the verdict is not a full PASS.
+2. Dark theme was not exercised (no discoverable toggle in the running host); light theme passed.
 3. The delivery branch cannot carry the local-only operator-failure banner; screens that display it in the development worktree will differ until `8d09a22` reaches `productionv2`.
 4. The 27 pre-existing test failures stay red; they are unrelated but will keep the suite red for any reviewer running it.
 5. Large TRX binaries (Baseline A, Baseline B, delivery) and multi-megabyte build logs are retained on the build machine under `plans/evidence/` but are not committed, to keep the PR reviewable; the committed text logs contain the same totals and failure lists.
