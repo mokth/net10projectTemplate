@@ -4,6 +4,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.Model.Entities.Production;
 using Microsoft.AspNetCore.Components;
@@ -33,6 +34,9 @@ public partial class PrWorkOrderTransferList : PageBase, IDisposable
     protected ProductionWorkOrderTransferSummary? ConfirmRow;
     protected bool ConfirmPost, ConfirmRollback;
     protected bool HasActiveFilters => !string.IsNullOrWhiteSpace(SearchText) || !string.IsNullOrWhiteSpace(StatusFilter);
+
+    /// <summary>Operator-language view of the last refused post/rollback, if any.</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected IReadOnlyList<StatusChoice> Statuses { get; } =
     [
         new("", "All statuses"),
@@ -171,10 +175,16 @@ public partial class PrWorkOrderTransferList : PageBase, IDisposable
     protected void RollbackReasonChanged(string value) => RollbackReason = value ?? "";
     protected void CancelConfirm() => ConfirmRow = null;
 
+    protected void DismissOperatorFailure()
+    {
+        OperatorFailure = null;
+        Error = "";
+    }
+
     protected async Task ConfirmAsync()
     {
         if (ConfirmRow is null || Busy) return;
-        Busy = true; Error = ""; Message = "";
+        Busy = true; Error = ""; Message = ""; OperatorFailure = null;
         var row = ConfirmRow;
         try
         {
@@ -184,7 +194,12 @@ public partial class PrWorkOrderTransferList : PageBase, IDisposable
                 if (!_pendingCommands.TryGetValue(key, out var command))
                     command = _pendingCommands[key] = new(row.Id, row.RowVersion.ToArray(), Guid.NewGuid());
                 var result = await Transfers.PostAsync(command);
-                if (!result.Succeeded) throw new InvalidOperationException(result.Message ?? "The action failed.");
+                if (!result.Succeeded)
+                {
+                    Error = result.Message ?? "The action failed.";
+                    OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
+                    return;
+                }
                 _pendingCommands.Remove(key);
                 Message = $"{row.TransferNo} posted.";
             }
@@ -197,7 +212,12 @@ public partial class PrWorkOrderTransferList : PageBase, IDisposable
                 if (!_pendingCommands.TryGetValue(key, out var command) || !string.Equals(command.Reason, reason, StringComparison.Ordinal))
                     command = _pendingCommands[key] = new(row.Id, row.RowVersion.ToArray(), Guid.NewGuid(), reason);
                 var result = await Transfers.RollbackAsync(command);
-                if (!result.Succeeded) throw new InvalidOperationException(result.Message ?? "The action failed.");
+                if (!result.Succeeded)
+                {
+                    Error = result.Message ?? "The action failed.";
+                    OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
+                    return;
+                }
                 _pendingCommands.Remove(key);
                 Message = $"{row.TransferNo} rolled back.";
             }
@@ -211,7 +231,10 @@ public partial class PrWorkOrderTransferList : PageBase, IDisposable
             _selected.Clear();
             await ReloadAsync();
         }
-        catch (Exception ex) { Error = ex.Message; }
+        catch (Exception)
+        {
+            Error = "The response could not be received. Reload the list to confirm the transfer status before retrying.";
+        }
         finally { Busy = false; }
     }
 

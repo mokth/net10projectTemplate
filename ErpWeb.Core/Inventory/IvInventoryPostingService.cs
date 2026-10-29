@@ -28,6 +28,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     private readonly IStockPostingCoordinator? _coordinator;
     private readonly IPurchaseCostAdjustmentPostingService? _purchaseCostAdjustments;
     private readonly bool _openPeriodBackdatedReplayEnabled;
+    private readonly IIvFailureEvidenceReader? _failureEvidence;
     private static readonly HashSet<string> NormalInventoryFutureDraftTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         IvTrxTypes.MiscellaneousReceipt,
@@ -53,7 +54,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         IIvInventoryHistoryWriter? historyWriter = null,
         IStockPostingCoordinator? coordinator = null,
         IConfiguration? configuration = null,
-        IPurchaseCostAdjustmentPostingService? purchaseCostAdjustments = null)
+        IPurchaseCostAdjustmentPostingService? purchaseCostAdjustments = null,
+        IIvFailureEvidenceReader? failureEvidence = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -66,6 +68,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         _historyWriter = historyWriter;
         _coordinator = coordinator;
         _purchaseCostAdjustments = purchaseCostAdjustments;
+        _failureEvidence = failureEvidence;
         _openPeriodBackdatedReplayEnabled =
             configuration?.GetValue<bool>("OpenPeriodBackdatedReplayEnabled") == true;
     }
@@ -294,6 +297,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         var results = new List<IvInventoryPostingBatchResult>();
+        // At most a few explanations per operation: a long multi-batch rollback must not turn one
+        // refusal into an unbounded number of lookups. Later failures keep the safe generic wording.
+        var explanationLookups = 0;
         foreach (var batchNo in batchNos.Distinct())
         {
             try
@@ -349,12 +355,51 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
             catch (StockLedgerException ex)
             {
-                results.Add(IvInventoryPostingBatchResult.Fail(batchNo, ex.Error.Message));
+                // Structured propagation only: the batch keeps the original technical message for
+                // logs/diagnostics and gains an operator-facing explanation for the screen. Status,
+                // counts and database effects are untouched.
+                var reference = IvInventoryOperatorErrors.NewReferenceId();
+                _logger.LogWarning(
+                    ex,
+                    "Inventory {Action} rejected for batch {BatchNo}: {Code} (phase {Phase}, event {EventId}, ref {Reference})",
+                    post ? "POST" : "ROLLBACK", batchNo, ex.Error.Code, ex.Error.Phase, ex.Error.EventId, reference);
+                // Read-only explanation lookup, outside the failed batch's transaction, after the
+                // decision to refuse. It cannot run on success, cannot fail the operation, and is
+                // capped per operation so a wide rollback cannot multiply the lookups.
+                IvFailureEvidence? evidence = null;
+                if (explanationLookups < MaxFailureEvidenceLookups
+                    && _failureEvidence is not null
+                    && ex.Error.EventId is not null)
+                {
+                    explanationLookups++;
+                    evidence = await TryReadFailureEvidenceAsync(
+                        scope.CompanyCode, scope.BranchCode!, ex.Error, cancellationToken);
+                }
+                results.Add(IvInventoryPostingBatchResult.Fail(
+                    batchNo,
+                    ex.Error.Message,
+                    IvInventoryOperatorErrors.FromLedgerError(
+                        ex.Error, type, post, batchNo, reference, evidence)));
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Inventory {Action} failed for batch {BatchNo}", post ? "POST" : "ROLLBACK", batchNo);
-                results.Add(IvInventoryPostingBatchResult.Fail(batchNo, ex.Message));
+                // Diagnostics stay exact: the same exception and message go to the log, now with a
+                // support reference. A business guard keeps its own wording on screen (no structured
+                // error is attached, so the page falls back to ex.Message); an unknown failure gains
+                // a generic operator explanation instead of leaking technical text.
+                var reference = ErpOperatorErrors.NewReferenceId();
+                _logger.LogError(ex,
+                    "Inventory {Action} failed for batch {BatchNo} (ref {Reference})",
+                    post ? "POST" : "ROLLBACK", batchNo, reference);
+                var operatorError = ex is InvalidOperationException or ArgumentException
+                    ? null
+                    : ErpOperatorErrors.Unexpected(
+                        ErpErrorOrigin.Inventory,
+                        IvInventoryOperatorErrors.ToDocumentKind(type),
+                        batchNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        post ? ErpErrorAction.Post : ErpErrorAction.Rollback,
+                        reference);
+                results.Add(IvInventoryPostingBatchResult.Fail(batchNo, ex.Message, operatorError));
             }
         }
 
@@ -387,6 +432,44 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         return aggregated;
+    }
+
+    /// <summary>Cap on the read-only explanation lookup so a slow database cannot delay the refusal.</summary>
+    private static readonly TimeSpan FailureEvidenceTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Cap on how many distinct refused batches in one operation get an explanation lookup. The
+    /// remaining failures still carry the code and next step; only the affected-document hint is omitted.
+    /// </summary>
+    private const int MaxFailureEvidenceLookups = 3;
+
+    /// <summary>
+    /// Bounded, best-effort evidence lookup for the refused batch. Returns null when no reader is
+    /// configured, the error carries no event id, the lookup exceeds its budget, or anything fails —
+    /// the operator then gets the safe generic wording. Never writes and never alters the result.
+    /// </summary>
+    private async Task<IvFailureEvidence?> TryReadFailureEvidenceAsync(
+        string companyCode,
+        string branchCode,
+        StockLedgerError error,
+        CancellationToken cancellationToken)
+    {
+        if (_failureEvidence is null || error.EventId is not long eventId)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(FailureEvidenceTimeout);
+            return await _failureEvidence.TryReadAsync(companyCode, branchCode, eventId, timeout.Token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failure evidence lookup failed for event {EventId}", eventId);
+            return null;
+        }
     }
 
     private async Task<IvInventoryPostingBatchResult> PostInventoryMRAsync(

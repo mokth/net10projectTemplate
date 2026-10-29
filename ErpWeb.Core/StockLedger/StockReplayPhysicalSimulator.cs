@@ -217,6 +217,18 @@ public static class StockReplayPhysicalSimulator
         if (quantity < 0m)
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.InsufficientBaseQty,
-                $"Physical replay would make the stock slice negative at event {eventId} while {phase}."));
+                $"Physical replay would make the stock slice negative at event {eventId} while {phase}.")
+            {
+                // Metadata only: the condition, the rounding, the code and the message above are
+                // unchanged. Callers are unchanged; the phase already existed as this argument.
+                Phase = phase switch
+                {
+                    "removing" => StockLedgerErrorPhase.Removing,
+                    "rewinding" => StockLedgerErrorPhase.Rewinding,
+                    "replaying" => StockLedgerErrorPhase.Replaying,
+                    _ => StockLedgerErrorPhase.Unspecified
+                },
+                EventId = eventId
+            });
     }
 }

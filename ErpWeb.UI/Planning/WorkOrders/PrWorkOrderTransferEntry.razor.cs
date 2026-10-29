@@ -3,6 +3,7 @@ using ErpWeb.Core.Lookups;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Routing;
@@ -12,6 +13,12 @@ namespace ErpWeb.UI.Planning.WorkOrders;
 
 public partial class PrWorkOrderTransferEntry : IAsyncDisposable
 {
+    /// <summary>Unexpected failure wording. Never the raw exception, and never a claim that nothing was written.</summary>
+    private const string UnexpectedPostMessage =
+        "The response could not be received. Reload the transfer to confirm whether it posted before retrying.";
+    private const string UnexpectedRollbackMessage =
+        "The response could not be received. Reload the transfer to confirm its status before retrying.";
+
     [Parameter] public long Id { get; set; }
     [Parameter] public string Mode { get; set; } = "";
 
@@ -35,6 +42,8 @@ public partial class PrWorkOrderTransferEntry : IAsyncDisposable
     protected string Message { get; set; } = "";
     protected string RollbackReason { get; set; } = "";
 
+    /// <summary>Structured operator failure for the last refused post/rollback, if any.</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected bool Loading { get; set; } = true;
     protected bool Busy { get; set; }
     protected bool SourceLoading { get; set; }
@@ -657,12 +666,17 @@ public partial class PrWorkOrderTransferEntry : IAsyncDisposable
         if (!ShowPost || Busy || Dirty) return;
         Busy = true;
         Error = "";
+        OperatorFailure = null;
         try
         {
             _pendingPost ??= new ProductionWorkOrderTransferCommand(Id, Document.RowVersion.ToArray(), Guid.NewGuid());
             var result = await Transfers.PostAsync(_pendingPost);
             if (!result.Succeeded || result.Data is null)
-                throw new InvalidOperationException(result.Message ?? "Unable to post the transfer.");
+            {
+                Error = result.Message ?? "Unable to post the transfer.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
+                return;
+            }
             Document = result.Data;
             Mode = "view";
             Message = "Work Order Transfer posted.";
@@ -671,7 +685,7 @@ public partial class PrWorkOrderTransferEntry : IAsyncDisposable
             SetCleanSnapshot();
             Nav.NavigateTo($"/planning/work-order-transfer/{Id}/view", replace: true);
         }
-        catch (Exception ex) { Error = ex.Message; }
+        catch (Exception) { Error = UnexpectedPostMessage; }
         finally { Busy = false; }
     }
 
@@ -700,6 +714,7 @@ public partial class PrWorkOrderTransferEntry : IAsyncDisposable
         }
         Busy = true;
         Error = "";
+        OperatorFailure = null;
         try
         {
             _pendingRollback ??= new ProductionWorkOrderTransferCommand(Id, Document.RowVersion.ToArray(), Guid.NewGuid(), reason);
@@ -707,7 +722,11 @@ public partial class PrWorkOrderTransferEntry : IAsyncDisposable
                 _pendingRollback = new ProductionWorkOrderTransferCommand(Id, Document.RowVersion.ToArray(), Guid.NewGuid(), reason);
             var result = await Transfers.RollbackAsync(_pendingRollback);
             if (!result.Succeeded || result.Data is null)
-                throw new InvalidOperationException(result.Message ?? "Unable to roll back the transfer.");
+            {
+                Error = result.Message ?? "Unable to roll back the transfer.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
+                return;
+            }
             Document = result.Data;
             Mode = CanEdit ? "edit" : "view";
             Message = "Work Order Transfer rolled back.";
@@ -717,8 +736,14 @@ public partial class PrWorkOrderTransferEntry : IAsyncDisposable
             SetCleanSnapshot();
             Nav.NavigateTo($"/planning/work-order-transfer/{Document.Id}/{Mode}", replace: true);
         }
-        catch (Exception ex) { Error = ex.Message; }
+        catch (Exception) { Error = UnexpectedRollbackMessage; }
         finally { Busy = false; }
+    }
+
+    protected void DismissOperatorFailure()
+    {
+        OperatorFailure = null;
+        Error = "";
     }
 
     private void SetCleanSnapshot()

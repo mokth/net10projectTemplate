@@ -70,4 +70,30 @@ public sealed class IvStockMovementRulesTests
         Assert.Equal(business, IvStockMovementRules.ResolveDraftMovementDate(business, business));
         Assert.Equal(new DateTime(2026, 10, 14), IvStockMovementRules.ResolveDraftMovementDate(new DateTime(2026, 10, 14, 23, 59, 0), business));
     }
+
+    [Fact]
+    public void Operator_text_never_quotes_an_internal_balance_id()
+    {
+        var message = IvStockMovementRules.RollbackLaterMovementMessage(12, new DateTime(2026, 10, 5));
+
+        Assert.Contains("Batch 12", message, StringComparison.Ordinal);
+        Assert.Contains("05/10/2026", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("balance Id", message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("BalLoc", message, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+[Trait(TestCategories.Name, TestCategories.Inventory)]
+public sealed class IvStockDateRulesMessageTests
+{
+    [Fact]
+    public void Null_stock_date_message_is_actionable_and_carries_no_database_id()
+    {
+        var message = IvStockDateRules.NullStockDateMessage();
+
+        Assert.Contains("stock date", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("administrator", message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Id ", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("BalLoc", message, StringComparison.OrdinalIgnoreCase);
+    }
 }

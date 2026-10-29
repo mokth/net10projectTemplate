@@ -283,7 +283,14 @@ public sealed partial class IvStockCountService : IIvStockCountService
             }
             catch (StockLedgerException ex)
             {
-                return IvStockCountOperationResult.Fail(ex.Error.Message);
+                var reference = IvInventoryOperatorErrors.NewReferenceId();
+                _logger.LogWarning(ex,
+                    "Stock count {CountNo} generation rejected: {Code} (ref {Reference})",
+                    no, ex.Error.Code, reference);
+                return IvStockCountOperationResult.Fail(ex.Error.Message,
+                    IvInventoryOperatorErrors.FromLedgerError(
+                        ex.Error, ErpDocumentKind.StockCount, no,
+                        ErpErrorAction.Save, reference));
             }
         }
 
@@ -600,7 +607,14 @@ public sealed partial class IvStockCountService : IIvStockCountService
             }
             catch (StockLedgerException ex)
             {
-                return IvStockCountOperationResult.Fail(ex.Error.Message);
+                var reference = IvInventoryOperatorErrors.NewReferenceId();
+                _logger.LogWarning(ex,
+                    "Stock count {CountNo} candidate load rejected: {Code} (ref {Reference})",
+                    header.CountNo, ex.Error.Code, reference);
+                return IvStockCountOperationResult.Fail(ex.Error.Message,
+                    IvInventoryOperatorErrors.FromLedgerError(
+                        ex.Error, ErpDocumentKind.StockCount, header.CountNo,
+                        ErpErrorAction.Save, reference));
             }
         }
         else
@@ -929,7 +943,14 @@ public sealed partial class IvStockCountService : IIvStockCountService
             }
             catch (StockLedgerException ex)
             {
-                return IvStockCountOperationResult.Fail(ex.Error.Message);
+                var reference = IvInventoryOperatorErrors.NewReferenceId();
+                _logger.LogWarning(ex,
+                    "Stock count {CountId} post preview rejected: {Code} (ref {Reference})",
+                    id, ex.Error.Code, reference);
+                return IvStockCountOperationResult.Fail(ex.Error.Message,
+                    IvInventoryOperatorErrors.FromLedgerError(
+                        ex.Error, ErpDocumentKind.StockCount, null,
+                        ErpErrorAction.Post, reference));
             }
         }
 
@@ -1101,7 +1122,14 @@ public sealed partial class IvStockCountService : IIvStockCountService
             }
             catch (StockLedgerException ex)
             {
-                return IvStockCountOperationResult.Fail(ex.Error.Message);
+                var reference = IvInventoryOperatorErrors.NewReferenceId();
+                _logger.LogWarning(ex,
+                    "Stock count {CountId} post rejected: {Code} (ref {Reference})",
+                    id, ex.Error.Code, reference);
+                return IvStockCountOperationResult.Fail(ex.Error.Message,
+                    IvInventoryOperatorErrors.FromLedgerError(
+                        ex.Error, ErpDocumentKind.StockCount, null,
+                        ErpErrorAction.Post, reference));
             }
             catch (DbUpdateConcurrencyException)
             {
@@ -1443,7 +1471,14 @@ public sealed partial class IvStockCountService : IIvStockCountService
             }
             catch (StockLedgerException ex)
             {
-                return IvStockCountOperationResult.Fail(ex.Error.Message);
+                var reference = IvInventoryOperatorErrors.NewReferenceId();
+                _logger.LogWarning(ex,
+                    "Stock count {CountId} rollback rejected: {Code} (ref {Reference})",
+                    id, ex.Error.Code, reference);
+                return IvStockCountOperationResult.Fail(ex.Error.Message,
+                    IvInventoryOperatorErrors.FromLedgerError(
+                        ex.Error, ErpDocumentKind.StockCount, null,
+                        ErpErrorAction.Rollback, reference));
             }
             catch (DbUpdateConcurrencyException)
             {

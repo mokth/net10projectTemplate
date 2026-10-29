@@ -1,3 +1,4 @@
+using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 
 namespace ErpWeb.Core.Inventory;
@@ -10,6 +11,10 @@ public sealed class IvStockCountOperationResult
 {
     public bool Succeeded { get; init; }
     public string? ErrorMessage { get; init; }
+
+    /// <summary>Operator-facing explanation added next to the technical message on a ledger refusal.
+    /// Null for every failure that is not a stock-ledger decision.</summary>
+    public ErpOperatorError? OperatorError { get; init; }
 
     public int Id { get; init; }
     public string? CountNo { get; init; }
@@ -72,8 +77,8 @@ public sealed class IvStockCountOperationResult
     public static IvStockCountOperationResult OkVarianceSummary(IvStockCountVarianceSummary summary) =>
         new() { Succeeded = true, VarianceSummary = summary };
 
-    public static IvStockCountOperationResult Fail(string message) =>
-        new() { Succeeded = false, ErrorMessage = message };
+    public static IvStockCountOperationResult Fail(string message, ErpOperatorError? operatorError = null) =>
+        new() { Succeeded = false, ErrorMessage = message, OperatorError = operatorError };
 }
 
 public sealed class IvStockCountListQuery

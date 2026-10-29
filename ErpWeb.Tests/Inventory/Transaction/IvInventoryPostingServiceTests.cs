@@ -334,6 +334,38 @@ public class IvInventoryPostingServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Partial_rollback_keeps_counts_ordering_and_plain_failures_untouched()
+    {
+        var mr = CreateMr();
+        var first = await mr.SaveNewAsync(Request(10m));
+        var second = await mr.SaveNewAsync(Request(100m));
+        Assert.True((await mr.PostAsync([first.BatchNo, second.BatchNo])).Succeeded);
+
+        // A missing batch fails with the pre-existing plain message; the two real batches still roll
+        // back when selected last-first, which is the order the chronology guard permits. Aggregate
+        // counts, ordering and the technical summary must be exactly as before.
+        var rollback = await mr.RollbackAsync([second.BatchNo, first.BatchNo, 999_999]);
+
+        Assert.False(rollback.Succeeded);
+        Assert.Equal(2, rollback.SucceededCount);
+        Assert.Equal(1, rollback.FailedCount);
+
+        Assert.NotNull(rollback.Posting);
+        var posting = rollback.Posting!;
+        Assert.Equal([second.BatchNo, first.BatchNo, 999_999], posting.Batches.Select(x => x.BatchNo));
+        Assert.True(posting.Batches[0].Succeeded);
+        Assert.True(posting.Batches[1].Succeeded);
+        Assert.False(posting.Batches[2].Succeeded);
+        Assert.False(posting.HasOperatorErrors);
+        Assert.Empty(posting.OperatorErrors);
+        Assert.Contains("Rolled back 2 of 3", rollback.ErrorMessage, StringComparison.Ordinal);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(0m, await db.IvBalLocs.Select(x => x.StdQty).SingleAsync());
+        Assert.Equal(0, await db.IvTrxHistories.CountAsync());
+    }
+
+    [Fact]
     public async Task Posted_document_cannot_be_edited_or_deleted()
     {
         var mr = CreateMr();

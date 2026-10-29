@@ -39,8 +39,8 @@ internal static class IvStockMovementRules
                $"A transaction dated {documentDate:dd/MM/yyyy} cannot modify this stock balance.";
     }
 
-    public static string RollbackLaterMovementMessage(int batchNo, int balLocId, DateTime laterDate) =>
-        $"Batch {batchNo} cannot be rolled back because stock balance {balLocId} " +
+    public static string RollbackLaterMovementMessage(int batchNo, DateTime laterDate) =>
+        $"Batch {batchNo} cannot be rolled back because this stock balance " +
         $"has a later posted movement dated {laterDate:dd/MM/yyyy}. Roll back the later transaction first.";
 
     public static string EnsureValidMovementDate(DateTime documentDate, DateTime businessDate) =>

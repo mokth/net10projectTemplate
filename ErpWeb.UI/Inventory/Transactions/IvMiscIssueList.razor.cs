@@ -5,6 +5,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Timer = System.Timers.Timer;
@@ -47,6 +48,10 @@ public partial class IvMiscIssueList : PageBase, IDisposable
 
     protected string ConfirmMessage { get; set; } = string.Empty;
     protected string ConfirmAction { get; set; } = "DELETE";
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected string ConfirmButtonText => ConfirmAction switch
     {
         "POST" => "Post",
@@ -274,6 +279,7 @@ public partial class IvMiscIssueList : PageBase, IDisposable
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
+        OperatorFailure = null;
 
         try
         {
@@ -302,6 +308,7 @@ public partial class IvMiscIssueList : PageBase, IDisposable
             else
             {
                 ErrorMessage = result.ErrorMessage ?? $"Unable to {ConfirmAction.ToLowerInvariant()} issue(s).";
+                OperatorFailure = ErpOperatorFailureView.From(result.Posting);
                 ConfirmVisible = false;
                 if (result.SucceededCount > 0)
                 {
@@ -316,7 +323,11 @@ public partial class IvMiscIssueList : PageBase, IDisposable
     }
 
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     public void Dispose()
     {

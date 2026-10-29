@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -85,7 +86,10 @@ public sealed partial class ProductionMaterialIssueService
                 db, scope.CompanyCode, scope.BranchCode!, request.InventoryBatchNo,
                 true, effectiveAt, cancellationToken);
             if (ledger.Error is not null)
-                return RollbackFail(IvMasterErrorCode.Validation, ledger.Error.Message);
+                return RollbackFail(IvMasterErrorCode.Validation, ledger.Error.Message,
+                    ProductionOperatorErrorLog.Ledger(_logger, null, ledger.Error, ErpDocumentKind.MaterialIssue,
+                        request.InventoryBatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ErpErrorAction.Rollback, "Material Issue rollback begin"));
             if (!ledger.LedgerEnabled || ledger.Context is null)
                 return RollbackFail(IvMasterErrorCode.Validation, "Issue to Production rollback requires an active V2 stock ledger for this company/branch.");
             if (ledger.WasReplay)
@@ -199,7 +203,9 @@ public sealed partial class ProductionMaterialIssueService
                 db, scope.CompanyCode, scope.BranchCode!, user, request.InventoryBatchNo,
                 IvTrxTypes.IssueToProduction, cancellationToken);
             if (!rolledBack.Succeeded)
-                return RollbackFail(IvMasterErrorCode.Validation, rolledBack.ErrorMessage ?? "Inventory rollback failed.");
+                return RollbackFail(IvMasterErrorCode.Validation,
+                    rolledBack.ErrorMessage ?? "Inventory rollback failed.",
+                    rolledBack.OperatorError);
 
             // Inventory MI rollback restores BalLoc and returns the batch to NEW for editing and reposting.
             // Keep that status (do not cancel) so users can adjust qty/lot and post again.
@@ -411,7 +417,10 @@ public sealed partial class ProductionMaterialIssueService
         }
         catch (StockLedgerException ex)
         {
-            return RollbackFail(IvMasterErrorCode.Validation, ex.Error.Message);
+            return RollbackFail(IvMasterErrorCode.Validation, ex.Error.Message,
+                ProductionOperatorErrorLog.Ledger(_logger, ex, ex.Error, ErpDocumentKind.MaterialIssue,
+                    request.InventoryBatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ErpErrorAction.Rollback, "Material Issue rollback"));
         }
         catch (DbUpdateException)
         {
@@ -514,6 +523,8 @@ public sealed partial class ProductionMaterialIssueService
     }
 
     private static IvMasterOperationResult<ProductionMaterialIssueRollbackResult> RollbackFail(
-        IvMasterErrorCode code, string message) =>
-        IvMasterOperationResult<ProductionMaterialIssueRollbackResult>.Fail(code, message);
+        IvMasterErrorCode code, string message,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) =>
+        IvMasterOperationResult<ProductionMaterialIssueRollbackResult>.Fail(
+            code, message, operatorError: operatorError);
 }

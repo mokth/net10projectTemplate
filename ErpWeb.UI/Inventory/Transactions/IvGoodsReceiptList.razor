@@ -12,7 +12,11 @@
                 <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
             </div>
         }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        @if (OperatorFailure is not null)
+        {
+            <ErpOperatorFailureBanner Failure="OperatorFailure" OnDismiss="DismissError" />
+        }
+        else if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
             <div class="iv-toast iv-toast--err" role="alert">
                 <span>@ErrorMessage</span>
@@ -44,7 +48,8 @@
         <section class="iv-card">
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
-<DxTextBox Text="@SearchText"
+                <DxTextBox Text="@SearchText"
+                    
                                TextChanged="OnSearchTextChanged"
                                NullText="Search batch no, PO no, item, ref no…"
                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"

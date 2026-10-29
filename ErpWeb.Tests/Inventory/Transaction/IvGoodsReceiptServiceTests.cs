@@ -18,6 +18,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
+using ErpWeb.Tests.Infrastructure.Helpers;
 using ErpWeb.Tests.Procurement.Transaction;
 
 namespace ErpWeb.Tests.Inventory.Transaction;
@@ -4173,6 +4174,246 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// The reported warehouse scenario: a goods receipt is rolled back while a later issue depends on
+    /// it. The current balance is positive, but replaying the later issue at the receipt's original
+    /// position would go negative, so the rollback must still fail. The technical ledger message is
+    /// preserved for logs; the posting result gains an operator explanation that names no ledger term.
+    /// </summary>
+    [Fact]
+    public async Task Replay_negative_grn_rollback_still_fails_and_gains_operator_message()
+    {
+        await EnsureActiveStockLedgerAsync();
+
+        // Opening balance: 15 EA @ 3.00 in the single pile.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                ICode = "A100",
+                WhCode = "MAIN",
+                LocCode = "BIN1",
+                LotNo = string.Empty,
+                IStatus = "ACTIVE",
+                StdQty = 15m,
+                StdUom = "EA",
+                TransDate = FixedToday.AddDays(-5)
+            });
+            await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 15m, 3m);
+        }
+
+        var po = await CreatePoAsync(qty: 10m, unitPrice: 3m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.PoOrders.SingleAsync(p => p.PoNo == po.PoNo);
+            order.PoDate = FixedToday.AddDays(-3);
+            await db.SaveChangesAsync();
+        }
+
+        var pileId = await ReadPileIdAsync();
+        var evidenceReader = new CountingFailureEvidenceReader(new IvFailureEvidenceReader(_factory));
+        var receipt = CreateGrSut(withLedger: true, enableBackdatedReplay: true,
+            failureEvidence: evidenceReader);
+
+        // Goods receipt dated earlier: balance 25.
+        var grRequest = GrRequest(po, recvQty: 10m);
+        grRequest.TrxDate = FixedToday.AddDays(-2);
+        var saved = await receipt.SaveNewAsync(grRequest);
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        var posted = await receipt.PostAsync([saved.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+
+        // Later issue of 20: balance 5, still positive today.
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines =
+            [
+                new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = pileId,
+                    ICode = "A100",
+                    FrWarehouse = "MAIN",
+                    FrLocation = "BIN1",
+                    FrLotNo = string.Empty,
+                    Quantity = 20m,
+                    Uom = "EA",
+                    IClassCode = "RAW",
+                    IStatus = "ACTIVE",
+                    UnitPrice = 3m
+                }
+            ]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        var laterPosted = await issue.PostAsync([later.BatchNo]);
+        Assert.True(laterPosted.Succeeded, laterPosted.ErrorMessage);
+
+        decimal quantityBefore;
+        decimal valueBefore;
+        decimal poReceivedBefore;
+        int historyBefore;
+        int rollbackCountBefore;
+        string statusBefore;
+        await using (var snapshot = await _factory.CreateDbContextAsync())
+        {
+            quantityBefore = (await snapshot.IvBalLocs.SingleAsync()).StdQty;
+            valueBefore = (await snapshot.StockCostStates.SingleAsync(s => s.ItemCode == "A100")).InventoryValue;
+            poReceivedBefore = (await snapshot.PoOrderDetails.SingleAsync()).RecvQty;
+            historyBefore = await snapshot.IvTrxHistories.CountAsync();
+            var batch = await snapshot.IvTrxBatches.SingleAsync(b => b.BatchNo == saved.BatchNo);
+            statusBefore = batch.BatchStatus;
+            rollbackCountBefore = batch.RollbackCount;
+        }
+        Assert.Equal(5m, quantityBefore);
+        // No explanation query ran for either successful posting.
+        Assert.Equal(0, evidenceReader.Calls);
+
+        var rollback = await receipt.RollbackAsync([saved.BatchNo]);
+
+        Assert.False(rollback.Succeeded);
+
+        // The original internal message is untouched, for logs and support.
+        Assert.NotNull(rollback.ErrorMessage);
+        Assert.Contains("negative", rollback.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("event", rollback.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        // Operator text is added next to it; the technical text stays internal.
+        Assert.NotNull(rollback.Posting);
+        Assert.Equal(0, rollback.SucceededCount);
+        Assert.Equal(1, rollback.FailedCount);
+        var operatorError = Assert.Single(rollback.Posting!.OperatorErrors);
+        Assert.Equal("INVENTORY.HISTORICAL_NEGATIVE_STOCK_REPLAYING", operatorError.PresentationCode);
+        Assert.Equal($"Cannot roll back Goods Receipt {saved.BatchNo}.", operatorError.Title);
+        Assert.Contains("historical", operatorError.Explanation, StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(operatorError.NextStep));
+        Assert.False(operatorError.MayRetryAfterRefresh);
+        Assert.False(string.IsNullOrWhiteSpace(operatorError.ReferenceId));
+
+        var operatorText = operatorError.ToOperatorText();
+        foreach (var forbidden in new[] { "slice", "pile", "event", "replaying", "epoch", "lineage", "rowversion" })
+        {
+            Assert.DoesNotContain(forbidden, operatorText, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // The explanation was proven from the history row of the earlier issue, not invented.
+        Assert.Equal(1, evidenceReader.Calls);
+        var affected = Assert.Single(operatorError.Details, d => d.Label == "Affected transaction");
+        Assert.Equal($"Miscellaneous Issue {later.BatchNo}, dated {FixedToday:dd/MM/yyyy}", affected.Value);
+        Assert.Contains($"on {FixedToday:dd/MM/yyyy}", operatorError.Explanation, StringComparison.Ordinal);
+        Assert.StartsWith("A100", Assert.Single(operatorError.Details, d => d.Label == "Item").Value);
+
+        // Business outcome and stored state are exactly as before this change.
+        await using var after = await _factory.CreateDbContextAsync();
+        Assert.Equal(quantityBefore, (await after.IvBalLocs.SingleAsync()).StdQty);
+        Assert.Equal(valueBefore,
+            (await after.StockCostStates.SingleAsync(s => s.ItemCode == "A100")).InventoryValue);
+        Assert.Equal(poReceivedBefore, (await after.PoOrderDetails.SingleAsync()).RecvQty);
+        Assert.Equal(historyBefore, await after.IvTrxHistories.CountAsync());
+        var unchangedBatch = await after.IvTrxBatches.SingleAsync(b => b.BatchNo == saved.BatchNo);
+        Assert.Equal(statusBefore, unchangedBatch.BatchStatus);
+        Assert.Equal(rollbackCountBefore, unchangedBatch.RollbackCount);
+    }
+
+    [Fact]
+    public async Task Replay_negative_rollback_caps_explanation_lookups_per_operation()
+    {
+        await EnsureActiveStockLedgerAsync();
+
+        // Opening 0 EA: the four receipts below add stock that a later issue consumes entirely.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                ICode = "A100",
+                WhCode = "MAIN",
+                LocCode = "BIN1",
+                LotNo = string.Empty,
+                IStatus = "ACTIVE",
+                StdQty = 0m,
+                StdUom = "EA",
+                TransDate = FixedToday.AddDays(-6)
+            });
+            await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 0m, 3m);
+        }
+
+        var pileId = await ReadPileIdAsync();
+        var evidenceReader = new CountingFailureEvidenceReader(new IvFailureEvidenceReader(_factory));
+        var receipt = CreateGrSut(withLedger: true, enableBackdatedReplay: true,
+            failureEvidence: evidenceReader);
+
+        var receipts = new List<int>();
+        for (var day = 4; day >= 1; day--)
+        {
+            var po = await CreatePoAsync(qty: 5m, unitPrice: 3m);
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                var order = await db.PoOrders.SingleAsync(p => p.PoNo == po.PoNo);
+                order.PoDate = FixedToday.AddDays(-day - 1);
+                await db.SaveChangesAsync();
+            }
+
+            var request = GrRequest(po, recvQty: 5m);
+            request.TrxDate = FixedToday.AddDays(-day);
+            var saved = await receipt.SaveNewAsync(request);
+            Assert.True(saved.Succeeded, saved.ErrorMessage);
+            Assert.True((await receipt.PostAsync([saved.BatchNo])).Succeeded);
+            receipts.Add(saved.BatchNo);
+        }
+
+        // Later issue of all 20: today's balance is 0, so removing any receipt leaves negative stock.
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines =
+            [
+                new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = pileId,
+                    ICode = "A100",
+                    FrWarehouse = "MAIN",
+                    FrLocation = "BIN1",
+                    FrLotNo = string.Empty,
+                    Quantity = 20m,
+                    Uom = "EA",
+                    IClassCode = "RAW",
+                    IStatus = "ACTIVE",
+                    UnitPrice = 3m
+                }
+            ]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+        Assert.Equal(0, evidenceReader.Calls);
+
+        var rollback = await receipt.RollbackAsync(receipts);
+
+        Assert.False(rollback.Succeeded);
+        Assert.Equal(0, rollback.SucceededCount);
+        Assert.Equal(4, rollback.FailedCount);
+        // One lookup per refused batch, but never more than the per-operation cap.
+        Assert.Equal(3, evidenceReader.Calls);
+
+        var coded = rollback.Posting!.Batches.Select(x => x.OperatorError).ToArray();
+        Assert.All(coded, error => Assert.NotNull(error));
+        Assert.Equal(3, coded.Count(error => error!.Details.Any(d => d.Label == "Affected transaction")));
+        Assert.DoesNotContain(coded[3]!.Details, d => d.Label == "Affected transaction");
+        Assert.Contains("historical", coded[3]!.Explanation, StringComparison.OrdinalIgnoreCase);
+
+        // Refusing all four changed nothing.
+        await using var after = await _factory.CreateDbContextAsync();
+        Assert.Equal(0m, (await after.IvBalLocs.SingleAsync()).StdQty);
+    }
+
     private async Task<(string PoNo, short PoRelNo, short PoLineNo)> CreatePoForItemAsync(string iCode, decimal qty)
         => await CreatePoAsync(qty, warehouse: "MAIN", iCode: iCode);
 
@@ -4261,7 +4502,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     }
 
     private IvGoodsReceiptService CreateGrSut(bool withLedger = false,
-        DateTime? postingToday = null, bool enableBackdatedReplay = false)
+        DateTime? postingToday = null, bool enableBackdatedReplay = false,
+        IIvFailureEvidenceReader? failureEvidence = null)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(location: "MAIN");
         var access = GrAccess();
@@ -4300,7 +4542,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             purchaseCostAdjustments: withLedger && enableBackdatedReplay
                 ? new PurchaseCostAdjustmentPostingService(coordinator!,
                     new StockValueAdjustmentWriter())
-                : null);
+                : null,
+            failureEvidence: failureEvidence);
 
         return new IvGoodsReceiptService(
             _factory,

@@ -14,7 +14,11 @@
                 <button type="button" class="sa-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
             </div>
         }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        @if (OperatorFailure is not null)
+        {
+            <ErpOperatorFailureBanner Failure="OperatorFailure" OnDismiss="DismissError" />
+        }
+        else if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
             <div class="sa-toast sa-toast--err" role="alert">
                 <span>@ErrorMessage</span>

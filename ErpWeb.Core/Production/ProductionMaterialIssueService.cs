@@ -7,6 +7,7 @@ using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Model.Repositories.Inventory;
+using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Production;
 
@@ -23,6 +24,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
     private readonly IIvStockPostingRepository? _stockPosting;
     private readonly IIvInventoryPostingService? _inventoryPosting;
     private readonly IProductionOperationEligibilityService _operationEligibility;
+    private readonly ILogger? _logger;
 
     public ProductionMaterialIssueService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -30,7 +32,8 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         IAccessRightService access,
         ICurrentDateService clock,
         IProductionMaterialAllocationService allocation,
-        IProductionOperationEligibilityService? operationEligibility = null)
+        IProductionOperationEligibilityService? operationEligibility = null,
+        ILogger<ProductionMaterialIssueService>? logger = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -38,6 +41,7 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         _clock = clock;
         _allocation = allocation;
         _operationEligibility = operationEligibility ?? new ProductionOperationEligibilityService();
+        _logger = logger;
     }
 
     public ProductionMaterialIssueService(
@@ -49,8 +53,9 @@ public sealed partial class ProductionMaterialIssueService : IProductionMaterial
         IRunningNumberService runningNumbers,
         IIvStockPostingRepository stockPosting,
         IIvInventoryPostingService inventoryPosting,
-        IProductionOperationEligibilityService? operationEligibility = null)
-        : this(dbFactory, tenant, access, clock, allocation, operationEligibility)
+        IProductionOperationEligibilityService? operationEligibility = null,
+        ILogger<ProductionMaterialIssueService>? logger = null)
+        : this(dbFactory, tenant, access, clock, allocation, operationEligibility, logger)
     {
         _runningNumbers = runningNumbers;
         _stockPosting = stockPosting;

@@ -3,6 +3,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
@@ -39,6 +40,10 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
     protected string SearchProcess = string.Empty;
     protected string SearchItem = string.Empty;
     protected string RollbackReason = string.Empty;
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected string RefNo
     {
         get => Document.RefNo ?? "";
@@ -562,6 +567,7 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
 
         IsSubmitting = true;
         ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             _pending ??= new(Id, Document.RowVersion, Guid.NewGuid(), reason);
@@ -571,6 +577,7 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
             if (!result.Succeeded || result.Data is null)
             {
                 ErrorMessage = result.Message ?? $"Unable to {action.ToLowerInvariant()} the receipt.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                 _pending = null;
                 return;
             }
@@ -591,6 +598,12 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         {
             IsSubmitting = false;
         }
+    }
+
+    protected void DismissOperatorFailure()
+    {
+        OperatorFailure = null;
+        ErrorMessage = null;
     }
 
     private async Task SearchSourcesAsync()

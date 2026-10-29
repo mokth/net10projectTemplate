@@ -27,7 +27,9 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     ILogger<ProductionFinishedGoodReceiptService>? logger = null) : IProductionFinishedGoodReceiptService
 {
     private const string Menu = MenuCodes.PlanningFinishedGoodReceipt;
-    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) => IvMasterOperationResult<T>.Fail(code, message);
+    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) =>
+        IvMasterOperationResult<T>.Fail(code, message, operatorError: operatorError);
     private async Task<InventoryTenantScope> ScopeAsync(string permission, CancellationToken ct)
     {
         if (!await access.CanAsync(Menu, PermissionCodes.Access, ct) || !await access.CanAsync(Menu, permission, ct))

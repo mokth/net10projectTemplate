@@ -5,6 +5,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Routing;
@@ -15,6 +16,13 @@ namespace ErpWeb.UI.Planning.WorkOrders;
 public partial class PrProductionStockReturnEntry : IAsyncDisposable
 {
     private const int SourcePageSize = 20;
+
+    /// <summary>Unexpected failure wording. Never the raw exception, and never a claim that nothing was written.</summary>
+    private const string UnexpectedPostMessage =
+        "The response could not be received. Reload the return to confirm whether it posted before retrying.";
+    private const string UnexpectedRollbackMessage =
+        "The response could not be received. Reload the return to confirm its status before retrying.";
+
     [Parameter] public int Id { get; set; }
     [Inject] private IProductionStockReturnService Returns { get; set; } = default!;
     [Inject] private IAccessRightService Access { get; set; } = default!;
@@ -33,6 +41,10 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
     protected List<ReturnEditor> Editors = [];
     protected string SourceSearch = string.Empty;
     protected string RollbackReason = "";
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected bool BusyLoading = true, Busy, CanAdd, CanEdit, CanDeleteAccess, CanPostAccess, CanRollbackAccess;
     protected bool RollbackVisible, SourcePickerVisible, SourceLoading, ChangeWorkOrderConfirmVisible, PostConfirmVisible, DeleteConfirmVisible;
     protected int SourcePage, SourceTotalCount;
@@ -73,6 +85,7 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
         BusyLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
+        OperatorFailure = null;
 
         CanAdd = await Access.CanAsync(MenuCodes.PlanningStockReturn, PermissionCodes.Add);
         CanEdit = await Access.CanAsync(MenuCodes.PlanningStockReturn, PermissionCodes.Edit);
@@ -308,6 +321,12 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
         finally { Busy = false; }
     }
 
+    protected void DismissOperatorFailure()
+    {
+        OperatorFailure = null;
+        ErrorMessage = null;
+    }
+
     protected void BeginPost()
     {
         if (!ShowPost) { StatusMessage = "Access denied."; return; }
@@ -322,16 +341,25 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
         if (Dirty) { ErrorMessage = "Save the draft before posting."; return; }
         Busy = true;
         ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             _pending ??= new(Document.Id, Document.RowVersion, Guid.NewGuid());
             var result = await Returns.PostAsync(_pending);
-            if (!result.Succeeded || result.Data is null) throw new InvalidOperationException(result.Message);
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "Unable to post the Production Stock Return.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
+                return;
+            }
             Document = result.Data;
             _pending = null;
             StatusMessage = "Production Stock Return posted.";
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception)
+        {
+            ErrorMessage = UnexpectedPostMessage;
+        }
         finally { Busy = false; }
     }
 
@@ -345,17 +373,27 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
             return;
         }
         Busy = true;
+        ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             _pending ??= new(Document.Id, Document.RowVersion, Guid.NewGuid(), RollbackReason.Trim());
             var result = await Returns.RollbackAsync(_pending);
-            if (!result.Succeeded || result.Data is null) throw new InvalidOperationException(result.Message);
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "Unable to roll back the Production Stock Return.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
+                return;
+            }
             Document = result.Data;
             _pending = null;
             RollbackVisible = false;
             StatusMessage = "Production Stock Return reopened as NEW after rollback.";
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception)
+        {
+            ErrorMessage = UnexpectedRollbackMessage;
+        }
         finally { Busy = false; }
     }
 

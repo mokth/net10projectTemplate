@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
@@ -701,10 +702,33 @@ public class IvStockCountServiceTests : IAsyncLifetime
 
         Assert.False(post.Succeeded);
         Assert.Contains("older than the allowed", post.ErrorMessage);
+        // A plain guard refusal is not a ledger rejection: no structured operator error is invented.
+        Assert.Null(post.OperatorError);
 
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Equal(100m, await db.IvBalLocs.Where(x => x.Id == balId).Select(x => x.StdQty).SingleAsync());
         Assert.Equal(IvStockCountStatuses.Counted, (await db.IvStockCountHdrs.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public void Structured_failure_keeps_the_original_message_and_adds_operator_text()
+    {
+        var error = new StockLedgerError(
+            StockLedgerErrorCodes.ClosedPeriod,
+            "The date 2026-09-20 falls in a closed inventory period (closed through 2026-09-19).");
+
+        var result = IvStockCountOperationResult.Fail(
+            error.Message,
+            IvInventoryOperatorErrors.FromLedgerError(
+                error, ErpDocumentKind.StockCount, "CC-0001", ErpErrorAction.Post, "REF123"));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(error.Message, result.ErrorMessage);
+        var operatorError = Assert.IsType<ErpOperatorError>(result.OperatorError);
+        Assert.Contains("closed inventory period", operatorError.Explanation,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("2026-09-20", operatorError.Explanation);
+        Assert.Equal("REF123", operatorError.ReferenceId);
     }
 
     [Fact]

@@ -6,6 +6,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Timer = System.Timers.Timer;
@@ -29,6 +30,10 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
     protected string ConfirmAction = string.Empty;
     protected string ConfirmMessage = string.Empty;
     protected string ConfirmReason = string.Empty;
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected bool ConfirmNeedsReason =>
         string.Equals(ConfirmAction, "ROLLBACK", StringComparison.Ordinal);
     protected string ConfirmButtonText => ConfirmAction switch
@@ -223,6 +228,7 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
         IsApplyingAction = true;
         ErrorMessage = null;
         StatusMessage = null;
+        OperatorFailure = null;
 
         try
         {
@@ -232,6 +238,7 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
             {
                 var succeeded = 0;
                 string? firstError = null;
+                var failures = new List<ErpOperatorFailureRecord>();
                 foreach (var batchNo in batchNos)
                 {
                     var rollback = await MaterialIssues.RollbackAsync(new ProductionMaterialIssueRollbackRequest
@@ -245,6 +252,8 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
                     else
                     {
                         firstError ??= FormatRollbackError(batchNo, rollback);
+                        failures.Add(new ErpOperatorFailureRecord(
+                            $"IP {batchNo}", rollback.Message, rollback.OperatorError));
                     }
                 }
 
@@ -265,6 +274,7 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
                 else
                 {
                     ErrorMessage = firstError ?? "Unable to roll back issue(s).";
+                    OperatorFailure = ErpOperatorFailureView.FromRecords(failures, batchNos.Count);
                     ConfirmVisible = false;
                     if (succeeded > 0)
                         await ReloadAsync();
@@ -306,6 +316,12 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
                 ErrorMessage = result.Message
                     ?? result.Data?.Batches.FirstOrDefault(x => !x.Succeeded)?.Message
                     ?? $"Unable to {action.ToLowerInvariant()} issue(s).";
+                OperatorFailure = ErpOperatorFailureView.FromRecords(
+                    (result.Data?.Batches ?? [])
+                        .Where(x => !x.Succeeded)
+                        .Select(x => new ErpOperatorFailureRecord(
+                            $"IP {x.BatchNo}", x.Message, x.OperatorError)),
+                    result.Data?.Batches.Count);
                 ConfirmVisible = false;
                 if (succeededCount > 0)
                     await ReloadAsync();
@@ -367,7 +383,11 @@ public partial class PrMaterialIssueList : PageBase, IDisposable
     }
 
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     private Task BeginDeleteAsync()
     {

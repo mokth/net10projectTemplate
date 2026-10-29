@@ -6,6 +6,7 @@ using ErpWeb.Core.Production;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Routing;
@@ -16,6 +17,13 @@ namespace ErpWeb.UI.Planning.WorkOrders;
 public partial class PrProductionStockAdjustmentEntry : IAsyncDisposable
 {
     private const int SourcePageSize = 20;
+
+    /// <summary>Unexpected failure wording. Never the raw exception, and never a claim that nothing was written.</summary>
+    private const string UnexpectedPostMessage =
+        "The response could not be received. Reload the adjustment to confirm whether it posted before retrying.";
+    private const string UnexpectedRollbackMessage =
+        "The response could not be received. Reload the adjustment to confirm its status before retrying.";
+
     [Parameter] public int Id { get; set; }
     [Inject] private IProductionStockAdjustmentService Adjustments { get; set; } = default!;
     [Inject] private IAccessRightService Access { get; set; } = default!;
@@ -39,6 +47,10 @@ public partial class PrProductionStockAdjustmentEntry : IAsyncDisposable
     protected List<AdjustmentEditor> Editors = [];
     protected string SourceSearch = "";
     protected string RollbackReason = "";
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected bool BusyLoading = true, Busy, CanAdd, CanEdit, CanDeleteAccess, CanPostAccess, CanRollbackAccess, CanPriceOverride;
     protected bool RollbackVisible, SourcePickerVisible, SourceLoading, ChangeWorkOrderConfirmVisible, PostConfirmVisible, DeleteConfirmVisible, CostOverrideVisible;
     protected int SourcePage, SourceTotalCount;
@@ -374,17 +386,33 @@ public partial class PrProductionStockAdjustmentEntry : IAsyncDisposable
         if (!ShowPost || Busy) return;
         if (Dirty) { ErrorMessage = "Save the draft before posting."; return; }
         Busy = true;
+        ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             _pending ??= new(Document.Id, Document.RowVersion, Guid.NewGuid());
             var result = await Adjustments.PostAsync(_pending);
-            if (!result.Succeeded || result.Data is null) throw new InvalidOperationException(result.Message);
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "Unable to post the Production Stock Adjustment.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
+                return;
+            }
             Document = result.Data;
             _pending = null;
             StatusMessage = "Production Stock Adjustment posted.";
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception)
+        {
+            ErrorMessage = UnexpectedPostMessage;
+        }
         finally { Busy = false; }
+    }
+
+    protected void DismissOperatorFailure()
+    {
+        OperatorFailure = null;
+        ErrorMessage = null;
     }
 
     protected void BeginRollback() => RollbackVisible = true;
@@ -394,17 +422,27 @@ public partial class PrProductionStockAdjustmentEntry : IAsyncDisposable
         if (!CanRollback || string.IsNullOrWhiteSpace(RollbackReason) || Busy)
         { ErrorMessage = "Rollback reason is required."; return; }
         Busy = true;
+        ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             _pending ??= new(Document.Id, Document.RowVersion, Guid.NewGuid(), RollbackReason.Trim());
             var result = await Adjustments.RollbackAsync(_pending);
-            if (!result.Succeeded || result.Data is null) throw new InvalidOperationException(result.Message);
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "Unable to roll back the Production Stock Adjustment.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
+                return;
+            }
             Document = result.Data;
             _pending = null;
             RollbackVisible = false;
             StatusMessage = "Production Stock Adjustment reopened as NEW after rollback.";
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception)
+        {
+            ErrorMessage = UnexpectedRollbackMessage;
+        }
         finally { Busy = false; }
     }
 

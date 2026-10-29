@@ -4,6 +4,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Timer = System.Timers.Timer;
@@ -44,6 +45,9 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
     };
 
     protected string? StatusMessage;
+
+    /// <summary>Operator-language view of the refused documents from the last batch post/rollback.</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected string SearchText = string.Empty;
     protected int TotalCount;
     protected bool CanAdd;
@@ -206,11 +210,13 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
         IsApplyingAction = true;
         ErrorMessage = null;
         StatusMessage = null;
+        OperatorFailure = null;
 
         try
         {
             var succeeded = 0;
             string? firstError = null;
+            var failures = new List<ErpOperatorFailureRecord>();
 
             foreach (var row in _selectedRows.ToArray())
             {
@@ -230,7 +236,10 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
                     _requests.Remove(key);
                 }
                 else
+                {
                     firstError ??= result.Message ?? $"Unable to {ConfirmAction.ToLowerInvariant()} FG {row.BatchNo}.";
+                    failures.Add(new ErpOperatorFailureRecord(row.BatchNo.ToString(), result.Message, result.OperatorError));
+                }
             }
 
             if (succeeded == _selectedRows.Count)
@@ -246,6 +255,7 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
             else
             {
                 ErrorMessage = firstError ?? $"Unable to {ConfirmAction.ToLowerInvariant()} document(s).";
+                OperatorFailure = ErpOperatorFailureView.FromRecords(failures, _selectedRows.Count);
                 ConfirmVisible = false;
                 if (succeeded > 0)
                     await ReloadAsync();
@@ -302,7 +312,11 @@ public partial class PrFinishedGoodReceiptList : PageBase, IDisposable
     }
 
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     private Task BeginPostAsync()
     {

@@ -3,6 +3,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 
@@ -25,6 +26,10 @@ public partial class IvStockCount : PageBase
     protected bool IsLoading = true;
     protected bool IsSubmitting;
     protected string? StatusMessage;
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
 
     protected bool CanAdd;
     protected bool CanEditPermission;
@@ -402,6 +407,7 @@ public partial class IvStockCount : PageBase
             IsSubmitting = true;
             ErrorMessage = null;
             StatusMessage = null;
+            OperatorFailure = null;
             try
             {
                 if (NormalizedMode == "edit")
@@ -421,6 +427,7 @@ public partial class IvStockCount : PageBase
                 if (!result.Succeeded)
                 {
                     ErrorMessage = result.ErrorMessage;
+                    OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                     return;
                 }
 
@@ -584,6 +591,7 @@ public partial class IvStockCount : PageBase
         {
             IsSubmitting = true;
             ErrorMessage = null;
+            OperatorFailure = null;
             try
             {
                 var result = await StockCount.PreviewPostAsync(_id,
@@ -601,6 +609,7 @@ public partial class IvStockCount : PageBase
                         return;
                     }
                     ErrorMessage = result.ErrorMessage;
+                    OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                     return;
                 }
 
@@ -648,6 +657,7 @@ public partial class IvStockCount : PageBase
             IsSubmitting = true;
             ErrorMessage = null;
             StatusMessage = null;
+            OperatorFailure = null;
             try
             {
                 var result = await StockCount.PostAsync(_id,
@@ -655,6 +665,7 @@ public partial class IvStockCount : PageBase
                 if (!result.Succeeded)
                 {
                     ErrorMessage = result.ErrorMessage;
+                    OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                     return;
                 }
 
@@ -689,12 +700,14 @@ public partial class IvStockCount : PageBase
             IsSubmitting = true;
             ErrorMessage = null;
             StatusMessage = null;
+            OperatorFailure = null;
             try
             {
                 var result = await StockCount.RollbackAsync(_id, RollbackReason);
                 if (!result.Succeeded)
                 {
                     ErrorMessage = result.ErrorMessage;
+                    OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                     return;
                 }
 
@@ -762,7 +775,11 @@ public partial class IvStockCount : PageBase
     }
 
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     private IvStockCountSaveRequest BuildRequest() => new()
     {

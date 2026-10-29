@@ -2,6 +2,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using Microsoft.Extensions.Logging;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
@@ -25,6 +26,7 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     private readonly IProductionOperationEligibilityService _operationEligibility;
     private readonly IAppSettingService? _settings;
     private readonly ProductionAbsorbedCostCalculator _absorbedCostCalculator = new();
+    private readonly ILogger? _logger;
 
     public ProductionOutputService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -34,8 +36,10 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         IRunningNumberService runningNumbers,
         IStockPostingCoordinator stockCoordinator,
         IProductionOperationEligibilityService? operationEligibility = null,
-        IAppSettingService? settings = null)
+        IAppSettingService? settings = null,
+        ILogger<ProductionOutputService>? logger = null)
     {
+        _logger = logger;
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
@@ -549,8 +553,9 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     }
 
     private static IvMasterOperationResult<ProductionOutputDetail> Fail(
-        string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) =>
-        IvMasterOperationResult<ProductionOutputDetail>.Fail(code, message);
+        string message, IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) =>
+        IvMasterOperationResult<ProductionOutputDetail>.Fail(code, message, operatorError: operatorError);
 
     private static IvMasterOperationResult<ProductionOutputDetail> Ok(ProductionOutputDetail? detail) =>
         detail is null

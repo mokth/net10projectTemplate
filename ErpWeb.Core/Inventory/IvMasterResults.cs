@@ -52,6 +52,13 @@ public sealed class IvMasterOperationResult<T>
     public bool Succeeded { get; init; }
     public IvMasterErrorCode ErrorCode { get; init; }
     public string? Message { get; init; }
+
+    /// <summary>
+    /// Operator-facing explanation when the boundary that refused the action could prove one (a stock
+    /// ledger refusal, a stale document, an unexpected exception with a support reference). Null keeps
+    /// every existing caller and screen on its current message.
+    /// </summary>
+    public ErpWeb.Core.Services.ErpOperatorError? OperatorError { get; init; }
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public T? Data { get; init; }
@@ -68,7 +75,8 @@ public sealed class IvMasterOperationResult<T>
         string message,
         IReadOnlyDictionary<string, string>? validationErrors = null,
         DeleteCheckResult? deleteCheck = null,
-        T? data = default) =>
+        T? data = default,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) =>
         new()
         {
             Succeeded = false,
@@ -76,7 +84,8 @@ public sealed class IvMasterOperationResult<T>
             Message = message,
             ValidationErrors = validationErrors ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             DeleteCheck = deleteCheck,
-            Data = data
+            Data = data,
+            OperatorError = operatorError
         };
 }
 

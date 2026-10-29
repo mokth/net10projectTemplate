@@ -1045,12 +1045,14 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return PoInvoicePostingItemResult.Failed(docNo, applyError);
             }
 
-            var costingError = await PostInvoiceCostingAsync(
+            var (costingError, costingOperatorError) = await PostInvoiceCostingAsync(
                 db, write, invoice, cancellationToken);
             if (costingError is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return PoInvoicePostingItemResult.Failed(docNo, costingError);
+                return costingOperatorError is null
+                    ? PoInvoicePostingItemResult.Failed(docNo, costingError)
+                    : PoInvoicePostingItemResult.Failed(docNo, costingError, costingOperatorError);
             }
 
             var now = DateTime.UtcNow;
@@ -1084,7 +1086,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
     }
 
-    private async Task<string?> PostInvoiceCostingAsync(
+    private async Task<(string? Error, ErpOperatorError? OperatorError)> PostInvoiceCostingAsync(
         AppDbContext db,
         InventoryTenantScope write,
         PoInvoice invoice,
@@ -1102,7 +1104,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
             || _costAdjustments is null
             || _receiptSettlements is null)
         {
-            return null;
+            return (null, null);
         }
 
         PoInvoice? referencedInvoice = null;
@@ -1118,7 +1120,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 || !string.Equals(referencedInvoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(referencedInvoice.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
-                return $"Posted purchase invoice {invoice.InvNo} was not found for credit-note costing.";
+                return ($"Posted purchase invoice {invoice.InvNo} was not found for credit-note costing.", null);
             }
         }
 
@@ -1154,9 +1156,9 @@ public sealed class PoInvoiceService : IPoInvoiceService
         var begin = await _stockCoordinator.BeginInTransactionAsync(
             db, command, cancellationToken);
         if (begin.Error is not null)
-            return begin.Error.Message;
+            return (begin.Error.Message, null);
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
-            return null;
+            return (null, null);
 
         var completed = false;
         try
@@ -1181,19 +1183,25 @@ public sealed class PoInvoiceService : IPoInvoiceService
                     write.UserId,
                     cancellationToken);
             if (!settlement.Succeeded)
-                return settlement.Error ?? (isCreditNote
+                return (settlement.Error ?? (isCreditNote
                     ? "Purchase credit-note settlement reversal failed."
-                    : "Purchase receipt settlement failed.");
+                    : "Purchase receipt settlement failed."), null);
 
             await _costAdjustments.AppendInTransactionAsync(
                 begin.Context, settlement.Adjustments, cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
             completed = true;
-            return null;
+            return (null, null);
         }
         catch (StockLedgerException ex)
         {
-            return ex.Error.Message;
+            var reference = ErpOperatorErrors.NewReferenceId();
+            _logger.LogWarning(ex,
+                "Purchase invoice {DocNo} costing rejected: {Code} (ref {Reference})",
+                invoice.DocNo, ex.Error.Code, reference);
+            return (ex.Error.Message,
+                ErpOperatorErrors.FromLedgerError(ex.Error, ErpErrorOrigin.Purchase,
+                    ErpDocumentKind.PurchaseInvoice, invoice.DocNo, ErpErrorAction.Post, reference));
         }
         finally
         {
@@ -1284,12 +1292,14 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return PoInvoicePostingItemResult.Failed(docNo, applyError);
             }
 
-            var costingError = await RollbackInvoiceCostingAsync(
+            var (costingError, costingOperatorError) = await RollbackInvoiceCostingAsync(
                 db, write, invoice, cancellationToken);
             if (costingError is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return PoInvoicePostingItemResult.Failed(docNo, costingError);
+                return costingOperatorError is null
+                    ? PoInvoicePostingItemResult.Failed(docNo, costingError)
+                    : PoInvoicePostingItemResult.Failed(docNo, costingError, costingOperatorError);
             }
 
             var now = DateTime.UtcNow;
@@ -1324,7 +1334,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
         }
     }
 
-    private async Task<string?> RollbackInvoiceCostingAsync(
+    private async Task<(string? Error, ErpOperatorError? OperatorError)> RollbackInvoiceCostingAsync(
         AppDbContext db,
         InventoryTenantScope write,
         PoInvoice invoice,
@@ -1338,7 +1348,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
             || _costAdjustments is null
             || _receiptSettlements is null)
         {
-            return null;
+            return (null, null);
         }
 
         // The coordinator is registered on all branches, but the V2 ledger is only
@@ -1350,7 +1360,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
                            && x.Status == StockLedgerEpochStatuses.Active,
                 cancellationToken);
         if (!ledgerActive)
-            return null;
+            return (null, null);
 
         var sourceDocumentType = isCreditNote ? "PO_INVOICE_CN" : "PO_INVOICE";
         var original = await db.StockPostings.AsNoTracking()
@@ -1365,7 +1375,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
             .OrderByDescending(x => x.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (original is null)
-            return $"No sealed costing posting was found for {invoice.Type} {invoice.DocNo} revision {invoice.CostingRevision}.";
+            return ($"No sealed costing posting was found for {invoice.Type} {invoice.DocNo} revision {invoice.CostingRevision}.", null);
 
         PoInvoice? referencedInvoice = null;
         if (isCreditNote)
@@ -1380,7 +1390,7 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 || !string.Equals(referencedInvoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(referencedInvoice.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
             {
-                return $"Posted purchase invoice {invoice.InvNo} was not found for credit-note rollback.";
+                return ($"Posted purchase invoice {invoice.InvNo} was not found for credit-note rollback.", null);
             }
         }
 
@@ -1421,9 +1431,9 @@ public sealed class PoInvoiceService : IPoInvoiceService
         var begin = await _stockCoordinator.BeginInTransactionAsync(
             db, command, cancellationToken);
         if (begin.Error is not null)
-            return begin.Error.Message;
+            return (begin.Error.Message, null);
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
-            return null;
+            return (null, null);
 
         var completed = false;
         try
@@ -1446,19 +1456,25 @@ public sealed class PoInvoiceService : IPoInvoiceService
                     write.UserId,
                     cancellationToken);
             if (!reversal.Succeeded)
-                return reversal.Error ?? (isCreditNote
+                return (reversal.Error ?? (isCreditNote
                     ? "Purchase credit-note costing rollback failed."
-                    : "Purchase invoice costing reversal failed.");
+                    : "Purchase invoice costing reversal failed."), null);
 
             await _costAdjustments.AppendInTransactionAsync(
                 begin.Context, reversal.Adjustments, cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
             completed = true;
-            return null;
+            return (null, null);
         }
         catch (StockLedgerException ex)
         {
-            return ex.Error.Message;
+            var reference = ErpOperatorErrors.NewReferenceId();
+            _logger.LogWarning(ex,
+                "Purchase invoice {DocNo} costing rollback rejected: {Code} (ref {Reference})",
+                invoice.DocNo, ex.Error.Code, reference);
+            return (ex.Error.Message,
+                ErpOperatorErrors.FromLedgerError(ex.Error, ErpErrorOrigin.Purchase,
+                    ErpDocumentKind.PurchaseInvoice, invoice.DocNo, ErpErrorAction.Rollback, reference));
         }
         finally
         {

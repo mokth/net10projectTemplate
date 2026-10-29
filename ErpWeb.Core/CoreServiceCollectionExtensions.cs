@@ -237,6 +237,9 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IIvInventoryPostingService, IvInventoryPostingService>();
         services.AddScoped<IIvInventoryHistoryWriter, IvInventoryHistoryWriter>();
+        // Read-only explanation of a refused stock transaction (failure evidence), used only on the
+        // error path. It reads one history row and never participates in a posting decision.
+        services.AddScoped<IIvFailureEvidenceReader, IvFailureEvidenceReader>();
         services.AddScoped<IInventoryAsOfStockService, InventoryAsOfStockService>();
 
         services.AddScoped<IIvSpShipmentService, IvSpShipmentService>();

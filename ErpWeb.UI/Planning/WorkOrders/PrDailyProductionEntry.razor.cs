@@ -4,6 +4,7 @@ using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
@@ -29,6 +30,10 @@ public partial class PrDailyProductionEntry : PageBase
     protected string? StatusMessage;
     protected string? SharedWipSourceError;
     protected ProductionSharedWipSourceInquiry? SharedWipSourceInquiry;
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase)
         || (string.IsNullOrWhiteSpace(Mode) && OutputId is null);
@@ -497,12 +502,14 @@ public partial class PrDailyProductionEntry : PageBase
 
         IsSubmitting = true;
         ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             var result = await Outputs.PostAsync(CurrentOutputId!.Value);
             if (!result.Succeeded || result.Data is null)
             {
                 ErrorMessage = result.Message ?? "Unable to post Daily Production.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                 return;
             }
 
@@ -567,6 +574,7 @@ public partial class PrDailyProductionEntry : PageBase
 
         IsSubmitting = true;
         ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             var result = await Outputs.RollbackAsync(new ProductionOutputRollbackRequest
@@ -578,6 +586,7 @@ public partial class PrDailyProductionEntry : PageBase
             if (!result.Succeeded || result.Data is null)
             {
                 ErrorMessage = result.Message ?? "Unable to roll back Daily Production.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                 return;
             }
 
@@ -610,7 +619,11 @@ public partial class PrDailyProductionEntry : PageBase
     protected void OpenEdit() => Navigation.NavigateTo(
         DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/planning/daily-production/edit/{CurrentOutputId}"));
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     private void ResetFormFields()
     {

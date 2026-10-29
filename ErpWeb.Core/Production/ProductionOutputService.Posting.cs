@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Core.Menus;
@@ -28,6 +29,7 @@ public sealed partial class ProductionOutputService
             return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        string? documentNo = null;
         try
         {
             await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
@@ -35,6 +37,7 @@ public sealed partial class ProductionOutputService
                 db, scope.CompanyCode, scope.BranchCode!, executionWorkOrderId.Value, cancellationToken);
             var output = await LockOutputAsync(db, scope.CompanyCode, scope.BranchCode!, outputId, cancellationToken);
             if (output is null) return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
+            documentNo = output.DocumentNo;
             if (output.WorkOrderId != executionWorkOrderId.Value)
                 return Fail("The Daily Production Work Order changed while posting; reload and retry.", IvMasterErrorCode.Concurrency);
             if (output.DeletedAtUtc is not null)
@@ -631,17 +634,23 @@ public sealed partial class ProductionOutputService
         catch (ProductionPostingInvariantException ex)
         {
             await tx.RollbackAsync(CancellationToken.None);
-            return Fail(ex.Message);
+            return Fail(ex.Message, IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Reconciliation(_logger, ex, ErpDocumentKind.DailyProduction,
+                    documentNo, ErpErrorAction.Post, "Daily Production post"));
         }
         catch (StockLedgerException ex)
         {
             await tx.RollbackAsync(CancellationToken.None);
-            return Fail(ex.Error.Message);
+            return Fail(ex.Error.Message, IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Ledger(_logger, ex, ex.Error, ErpDocumentKind.DailyProduction,
+                    documentNo, ErpErrorAction.Post, "Daily Production post"));
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex)
         {
             await tx.RollbackAsync(CancellationToken.None);
-            return Fail("Posting conflicted with another change; reload and retry.", IvMasterErrorCode.Concurrency);
+            return Fail("Posting conflicted with another change; reload and retry.", IvMasterErrorCode.Concurrency,
+                ProductionOperatorErrorLog.Unexpected(_logger, ex, ErpDocumentKind.DailyProduction,
+                    documentNo, ErpErrorAction.Post, "Daily Production post"));
         }
         catch (ProductionWorkOrderExecutionLockException ex)
         {

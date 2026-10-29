@@ -92,6 +92,9 @@ public sealed class ProductionMaterialIssueBatchActionItem
     public int BatchNo { get; init; }
     public bool Succeeded { get; init; }
     public string? Message { get; init; }
+
+    /// <summary>Operator-facing explanation when the boundary could prove one. Null keeps the old text.</summary>
+    public ErpWeb.Core.Services.ErpOperatorError? OperatorError { get; init; }
 }
 
 public sealed class ProductionMaterialIssueListQuery

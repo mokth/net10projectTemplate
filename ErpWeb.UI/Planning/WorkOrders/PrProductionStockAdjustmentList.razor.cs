@@ -4,6 +4,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Timer = System.Timers.Timer;
@@ -19,6 +20,10 @@ public partial class PrProductionStockAdjustmentList : PageBase, IDisposable
     protected bool Loading=true,Busy,CanAdd,CanEdit,CanPost,CanRollback,ConfirmVisible,FilterPopupVisible; protected int TotalCount;
     protected string SearchText="",StatusFilter="",DraftStatus="",ConfirmAction="",RollbackReason=""; protected string? StatusMessage;
     protected List<ProductionStockAdjustmentSummary> CompactRows=[]; protected ProductionStockAdjustmentGridDataSource DataSource=default!;
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected string ConfirmCopy=>ConfirmAction=="ROLLBACK"?$"Roll back {_selected.Count} adjustment(s)? The Production pool correction will be reversed.":$"Post {_selected.Count} adjustment(s)? Production quantity and value will change without an Inventory movement.";
     protected bool HasActiveFilters=>!string.IsNullOrWhiteSpace(SearchText)||!string.IsNullOrWhiteSpace(StatusFilter);
     protected IReadOnlyList<StatusChoice> Statuses{get;}=[new("","All statuses"),new("NEW","New"),new("POSTED","Posted")];
@@ -52,7 +57,40 @@ public partial class PrProductionStockAdjustmentList : PageBase, IDisposable
         }
         ConfirmAction=action;RollbackReason="";ConfirmVisible=true;return Task.CompletedTask;
     }
-    protected async Task ConfirmAsync(){if(Busy)return;if(ConfirmAction=="ROLLBACK"&&string.IsNullOrWhiteSpace(RollbackReason)){ErrorMessage="Rollback reason is required.";return;}Busy=true;ErrorMessage=null;try{foreach(var row in _selected.ToArray()){var key=(row.Id,ConfirmAction);if(!_requests.TryGetValue(key,out var req))_requests[key]=req=new(row.Id,row.RowVersion,Guid.NewGuid(),ConfirmAction=="ROLLBACK"?RollbackReason.Trim():null);var result=ConfirmAction=="POST"?await Adjustments.PostAsync(req):await Adjustments.RollbackAsync(req);if(!result.Succeeded)throw new InvalidOperationException(result.Message);_requests.Remove(key);}ConfirmVisible=false;StatusMessage=ConfirmAction=="ROLLBACK"?$"Rolled back {_selected.Count} adjustment(s); each is open as NEW for editing and reposting.":$"POST completed for {_selected.Count} adjustment(s).";_selected.Clear();await ReloadAsync();}catch(Exception ex){ErrorMessage=ex.Message;}finally{Busy=false;}}
+    protected async Task ConfirmAsync()
+    {
+        if(Busy)return;
+        if(ConfirmAction=="ROLLBACK"&&string.IsNullOrWhiteSpace(RollbackReason)){ErrorMessage="Rollback reason is required.";return;}
+        Busy=true;ErrorMessage=null;OperatorFailure=null;
+        try
+        {
+            var succeeded=0;
+            foreach(var row in _selected.ToArray())
+            {
+                var key=(row.Id,ConfirmAction);
+                if(!_requests.TryGetValue(key,out var req))_requests[key]=req=new(row.Id,row.RowVersion,Guid.NewGuid(),ConfirmAction=="ROLLBACK"?RollbackReason.Trim():null);
+                var result=ConfirmAction=="POST"?await Adjustments.PostAsync(req):await Adjustments.RollbackAsync(req);
+                if(!result.Succeeded)
+                {
+                    // Stop at the first refusal, exactly as before, but show operator language instead of
+                    // re-throwing the service text into this page as an exception.
+                    ErrorMessage=result.Message??$"Unable to {ConfirmAction.ToLowerInvariant()} PADJ {row.BatchNo}.";
+                    OperatorFailure=ErpOperatorFailureView.FromError(result.OperatorError);
+                    return;
+                }
+                _requests.Remove(key);succeeded++;
+            }
+            ConfirmVisible=false;StatusMessage=ConfirmAction=="ROLLBACK"?$"Rolled back {succeeded} adjustment(s); each is open as NEW for editing and reposting.":$"POST completed for {succeeded} adjustment(s).";_selected.Clear();await ReloadAsync();
+        }
+        finally{Busy=false;}
+    }
+
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
+
     private void RebuildButtons(){Buttons=[new(){Text="NEW",IConClass="fas fa-plus",Style="primary",Enabled=CanAdd},new(){Text="POST",IConClass="fas fa-check",Style="success",Enabled=CanPost},new(){Text="ROLLBACK",IConClass="fa-solid fa-rotate-left",Style="warning",Enabled=CanRollback}];}
     private async Task ReloadAsync(){DataSource?.Update(SearchText,StatusFilter);await RefreshCompactAsync();RebuildButtons();_grid?.Reload();await InvokeAsync(StateHasChanged);}
     private async Task<(IReadOnlyList<ProductionStockAdjustmentSummary>,int)> LoadAsync(ProductionStockAdjustmentQuery q,CancellationToken ct){var r=await Adjustments.SearchAsync(q,ct);if(!r.Succeeded||r.Data is null){await InvokeAsync(()=>ErrorMessage=r.Message);return([],0);}TotalCount=r.Data.TotalCount;return(r.Data.Rows,r.Data.TotalCount);}

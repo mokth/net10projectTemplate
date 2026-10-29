@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
@@ -19,6 +20,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
 
     private async Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> ExecuteAsync(FinishedGoodReceiptCommand request, bool reversal, CancellationToken ct)
     {
+        string? documentNo = null;
+        var action = reversal ? ErpErrorAction.Rollback : ErpErrorAction.Post;
         try
         {
             var scope = await ScopeAsync(reversal ? PermissionCodes.Rollback : PermissionCodes.Post, ct);
@@ -41,6 +44,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(replayResult);
             }
             var r = await LoadAsync(db, scope, request.Id, true, ct); Version(r, request.ExpectedVersion);
+            documentNo = r.Batch.BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
                 throw new FgException(TransactionLifecycleGuard.ArchivedError(r.DeletedAtUtc ?? r.Batch.DeletedAtUtc, "This receipt")!);
             if (r.Batch.TrxType != IvTrxTypes.FinishedGoods || r.Batch.BatchStatus != (reversal ? IvBatchStatuses.Posted : IvBatchStatuses.New))
@@ -184,7 +188,13 @@ public sealed partial class ProductionFinishedGoodReceiptService
             return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(result);
         }
         catch (FgException e) { return Fail<FinishedGoodReceiptDocument>(e.Message, e.Code); }
-        catch (StockLedgerException e) { return Fail<FinishedGoodReceiptDocument>(e.Error.Message); }
+        catch (StockLedgerException e)
+        {
+            return Fail<FinishedGoodReceiptDocument>(e.Error.Message,
+                IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Ledger(logger, e, e.Error, ErpDocumentKind.FinishedGoodReceipt,
+                    documentNo, action, "Finished Good Receipt"));
+        }
         catch (DbUpdateConcurrencyException) { return Fail<FinishedGoodReceiptDocument>("Stock or document changed. Reload and retry.", IvMasterErrorCode.Concurrency); }
         catch (InvalidOperationException e) { return Fail<FinishedGoodReceiptDocument>(e.Message); }
     }

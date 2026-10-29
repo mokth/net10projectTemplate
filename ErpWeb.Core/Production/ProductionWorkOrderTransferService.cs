@@ -8,6 +8,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Production;
 
@@ -21,7 +22,8 @@ public sealed partial class ProductionWorkOrderTransferService(
     IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator,
     IProductionStockWriter productionStock,
-    IProductionOperationEligibilityService? operationEligibility = null) : IProductionWorkOrderTransferService
+    IProductionOperationEligibilityService? operationEligibility = null,
+    ILogger<ProductionWorkOrderTransferService>? logger = null) : IProductionWorkOrderTransferService
 {
     private readonly IProductionOperationEligibilityService _operationEligibility = operationEligibility ?? new ProductionOperationEligibilityService();
     private const string Menu = MenuCodes.PlanningWorkOrderTransfer;
@@ -33,9 +35,15 @@ public sealed partial class ProductionWorkOrderTransferService(
     private const string TargetCollisionError = "An existing target WIP lot has conflicting production identity. Repair the production balance before transfer.";
     private const string ChronologyError = "Transfer date is earlier than the latest stock event for this WIP lot.";
 
-    private sealed class TransferException(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) : Exception(message)
+    private sealed class TransferException(
+        string message,
+        IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) : Exception(message)
     {
         public IvMasterErrorCode Code { get; } = code;
+
+        /// <summary>Operator-language explanation carried out of the transaction boundary, if proven.</summary>
+        public ErpWeb.Core.Services.ErpOperatorError? OperatorError { get; } = operatorError;
     }
 
     private sealed record SourceFacts(ProductionBalLot Lot, ProductionWorkOrder Order,
@@ -46,8 +54,9 @@ public sealed partial class ProductionWorkOrderTransferService(
         ProductionWorkOrderRouteStep ConsumerRoute, ProductionWorkOrderOperation ConsumerOperation,
         ProductionLocation? ProducerLocation, ProductionLocation? ConsumerLocation, bool SequenceReady, string? BlockingReason);
 
-    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) =>
-        IvMasterOperationResult<T>.Fail(code, message);
+    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) =>
+        IvMasterOperationResult<T>.Fail(code, message, operatorError: operatorError);
 
     private async Task<InventoryTenantScope> ScopeAsync(string permission, bool write, CancellationToken ct)
     {
@@ -927,6 +936,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
     public async Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> PostAsync(
         ProductionWorkOrderTransferCommand request, CancellationToken ct = default)
     {
+        string? documentNo = null;
         try
         {
             var scope = await ScopeAsync(PermissionCodes.Post, true, ct);
@@ -964,6 +974,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 await ProductionWorkOrderExecutionLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, workOrderId, ct);
             var transfer = await LoadTransferAsync(db, scope, request.Id, true, ct);
             CheckVersion(transfer, request.ExpectedVersion);
+            documentNo = transfer.TransferNo;
             RequireNew(transfer);
             if (transfer.SourceWorkOrderId != observed.SourceWorkOrderId || transfer.TargetWorkOrderId != observed.TargetWorkOrderId)
                 throw new TransferException("Work Order Transfer ownership changed while locks were being acquired. Reload and retry.", IvMasterErrorCode.Concurrency);
@@ -1003,7 +1014,10 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             var executionBefore = await CaptureExecutionProjectionAsync(db, workOrderIds, ct);
             var command = BuildPostingCommand(transfer, request, commandFingerprint.RequestFingerprint);
             var begin = await coordinator.BeginInTransactionAsync(db, command, ct);
-            if (begin.Error is not null) throw new TransferException(begin.Error.Message);
+            if (begin.Error is not null)
+                throw new TransferException(begin.Error.Message, IvMasterErrorCode.Validation,
+                    ProductionOperatorErrorLog.Ledger(logger, null, begin.Error, ErpDocumentKind.WorkOrderTransfer,
+                        documentNo, ErpErrorAction.Post, "Work Order Transfer begin"));
             if (!begin.LedgerEnabled) throw new TransferException("Stock ledger V2 is not active for this branch.");
             if (begin.WasReplay || begin.Context is null)
                 throw new TransferException("A prior Work Order Transfer posting exists without matching POSTED document evidence. Reconcile before retrying.");
@@ -1153,8 +1167,13 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             await tx.CommitAsync(ct);
             return IvMasterOperationResult<ProductionWorkOrderTransferDocument>.Ok(document);
         }
-        catch (TransferException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Message, ex.Code); }
-        catch (StockLedgerException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Error.Message); }
+        catch (TransferException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Message, ex.Code, ex.OperatorError); }
+        catch (StockLedgerException ex)
+        {
+            return Fail<ProductionWorkOrderTransferDocument>(ex.Error.Message, IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Ledger(logger, ex, ex.Error, ErpDocumentKind.WorkOrderTransfer,
+                    documentNo, ErpErrorAction.Post, "Work Order Transfer post"));
+        }
         catch (ProductionWorkOrderExecutionLockException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Message, IvMasterErrorCode.Concurrency); }
         catch (DbUpdateConcurrencyException) { return Fail<ProductionWorkOrderTransferDocument>(SourceChangedError, IvMasterErrorCode.Concurrency); }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex)) { return Fail<ProductionWorkOrderTransferDocument>(TargetCollisionError, IvMasterErrorCode.Concurrency); }

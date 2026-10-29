@@ -10,7 +10,11 @@
 <NavigationLock ConfirmExternalNavigation="Dirty" OnBeforeInternalNavigation="BeforeNavigate" />
 <MenuAuthorize MenuCode="@MenuCodes.PlanningWorkOrderTransfer">
     <div class="iv-page wot-page">
-        @if (!string.IsNullOrWhiteSpace(Error))
+        @if (OperatorFailure is not null)
+        {
+            <ErpOperatorFailureBanner Failure="OperatorFailure" OnDismiss="DismissOperatorFailure" />
+        }
+        else if (!string.IsNullOrWhiteSpace(Error))
         {
             <div class="iv-toast iv-toast--err" role="alert">@Error</div>
         }

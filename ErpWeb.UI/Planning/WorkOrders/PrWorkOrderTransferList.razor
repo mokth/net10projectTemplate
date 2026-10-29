@@ -14,7 +14,11 @@
             <div class="iv-hero__kpi"><span>Documents</span><strong>@TotalCount.ToString("N0")</strong></div>
         </header>
         @if (!string.IsNullOrWhiteSpace(Message)) { <div class="iv-toast iv-toast--ok" role="status">@Message</div> }
-        @if (!string.IsNullOrWhiteSpace(Error)) { <div class="iv-toast iv-toast--err" role="alert">@Error</div> }
+        @if (OperatorFailure is not null)
+        {
+            <ErpOperatorFailureBanner Failure="OperatorFailure" OnDismiss="DismissOperatorFailure" />
+        }
+        else if (!string.IsNullOrWhiteSpace(Error)) { <div class="iv-toast iv-toast--err" role="alert">@Error</div> }
         <section class="iv-card">
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">

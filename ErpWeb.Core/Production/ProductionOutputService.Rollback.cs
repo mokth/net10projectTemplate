@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
@@ -37,6 +38,7 @@ public sealed partial class ProductionOutputService
             return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        string? documentNo = null;
         try
         {
             await new ErpWeb.Core.StockLedger.BranchStockTransactionLock().AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
@@ -58,6 +60,7 @@ public sealed partial class ProductionOutputService
 
             var output = await LockOutputAsync(db, scope.CompanyCode, scope.BranchCode!, request.OutputId, cancellationToken);
             if (output is null) return Fail("Production output was not found.", IvMasterErrorCode.NotFound);
+            documentNo = output.DocumentNo;
             if (output.WorkOrderId != executionWorkOrderId.Value)
                 return Fail("The Daily Production Work Order changed while rolling back; reload and retry.", IvMasterErrorCode.Concurrency);
             if (output.DeletedAtUtc is not null)
@@ -595,12 +598,16 @@ public sealed partial class ProductionOutputService
         catch (ProductionPostingInvariantException ex)
         {
             await tx.RollbackAsync(CancellationToken.None);
-            return Fail(ex.Message);
+            return Fail(ex.Message, IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Reconciliation(_logger, ex, ErpDocumentKind.DailyProduction,
+                    documentNo, ErpErrorAction.Rollback, "Daily Production rollback"));
         }
         catch (StockLedgerException ex)
         {
             await tx.RollbackAsync(CancellationToken.None);
-            return Fail(ex.Error.Message);
+            return Fail(ex.Error.Message, IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Ledger(_logger, ex, ex.Error, ErpDocumentKind.DailyProduction,
+                    documentNo, ErpErrorAction.Rollback, "Daily Production rollback"));
         }
         catch (ProductionWorkOrderExecutionLockException ex)
         {

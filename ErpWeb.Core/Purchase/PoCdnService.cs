@@ -2146,21 +2146,23 @@ public sealed class PoCdnService : IPoCdnService
             }
 
         FinancialCosting:
-            string? costingError;
+            (string? Error, ErpOperatorError? OperatorError) costing;
             if (vendorReturnLedgerContext is not null)
             {
-                costingError = await AppendCdnCostingAsync(
+                costing = await AppendCdnCostingAsync(
                     db, write, cdn, referencedInvoice, vendorReturnLedgerContext, cancellationToken);
             }
             else
             {
-                costingError = await PostCdnCostingAsync(
+                costing = await PostCdnCostingAsync(
                     db, write, cdn, referencedInvoice, cancellationToken);
             }
-            if (costingError is not null)
+            if (costing.Error is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return PoCdnPostingItemResult.Failed(no, costingError);
+                return costing.OperatorError is null
+                    ? PoCdnPostingItemResult.Failed(no, costing.Error)
+                    : PoCdnPostingItemResult.Failed(no, costing.Error, costing.OperatorError);
             }
 
             if (vendorReturnLedgerContext is not null)
@@ -2201,7 +2203,7 @@ public sealed class PoCdnService : IPoCdnService
         }
     }
 
-    private async Task<string?> AppendCdnCostingAsync(
+    private async Task<(string? Error, ErpOperatorError? OperatorError)> AppendCdnCostingAsync(
         AppDbContext db,
         UserContext write,
         PoCdn cdn,
@@ -2210,7 +2212,7 @@ public sealed class PoCdnService : IPoCdnService
         CancellationToken cancellationToken)
     {
         if (_cdnCostAdjustments is null || _costAdjustments is null)
-            return null;
+            return (null, null);
 
         try
         {
@@ -2223,19 +2225,25 @@ public sealed class PoCdnService : IPoCdnService
             var result = await _cdnCostAdjustments.BuildAsync(
                 db, cdn, referencedInvoice, context.CostMethod, cancellationToken);
             if (!result.Succeeded)
-                return result.Error ?? "Purchase CN/DN costing failed.";
+                return (result.Error ?? "Purchase CN/DN costing failed.", null);
 
             await _costAdjustments.AppendInTransactionAsync(
                 context, result.Adjustments, cancellationToken);
-            return null;
+            return (null, null);
         }
         catch (StockLedgerException ex)
         {
-            return ex.Error.Message;
+            var reference = ErpOperatorErrors.NewReferenceId();
+            _logger.LogWarning(ex,
+                "Purchase CN/DN {DocNo} costing rejected: {Code} (ref {Reference})",
+                cdn.DocNo, ex.Error.Code, reference);
+            return (ex.Error.Message,
+                ErpOperatorErrors.FromLedgerError(ex.Error, ErpErrorOrigin.Purchase,
+                    ErpDocumentKind.PurchaseCreditDebitNote, cdn.DocNo, ErpErrorAction.Post, reference));
         }
     }
 
-    private async Task<string?> PostCdnCostingAsync(
+    private async Task<(string? Error, ErpOperatorError? OperatorError)> PostCdnCostingAsync(
         AppDbContext db,
         UserContext write,
         PoCdn cdn,
@@ -2247,7 +2255,7 @@ public sealed class PoCdnService : IPoCdnService
             || _costAdjustments is null
             || _cdnCostAdjustments is null)
         {
-            return null;
+            return (null, null);
         }
 
         var snapshot = new
@@ -2285,24 +2293,30 @@ public sealed class PoCdnService : IPoCdnService
             SourceSnapshot: snapshot));
         var begin = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
         if (begin.Error is not null)
-            return begin.Error.Message;
+            return (begin.Error.Message, null);
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
-            return null;
+            return (null, null);
 
         var completed = false;
         try
         {
-            var error = await AppendCdnCostingAsync(
+            var append = await AppendCdnCostingAsync(
                 db, write, cdn, referencedInvoice, begin.Context, cancellationToken);
-            if (error is not null)
-                return error;
+            if (append.Error is not null)
+                return append;
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
             completed = true;
-            return null;
+            return (null, null);
         }
         catch (StockLedgerException ex)
         {
-            return ex.Error.Message;
+            var reference = ErpOperatorErrors.NewReferenceId();
+            _logger.LogWarning(ex,
+                "Purchase CN/DN {DocNo} costing rejected: {Code} (ref {Reference})",
+                cdn.DocNo, ex.Error.Code, reference);
+            return (ex.Error.Message,
+                ErpOperatorErrors.FromLedgerError(ex.Error, ErpErrorOrigin.Purchase,
+                    ErpDocumentKind.PurchaseCreditDebitNote, cdn.DocNo, ErpErrorAction.Post, reference));
         }
         finally
         {
@@ -2311,7 +2325,7 @@ public sealed class PoCdnService : IPoCdnService
         }
     }
 
-    private async Task<string?> RollbackCdnCostingAsync(
+    private async Task<(string? Error, ErpOperatorError? OperatorError)> RollbackCdnCostingAsync(
         AppDbContext db,
         UserContext write,
         PoCdn cdn,
@@ -2322,7 +2336,7 @@ public sealed class PoCdnService : IPoCdnService
             || _costAdjustments is null
             || _cdnCostAdjustments is null)
         {
-            return null;
+            return (null, null);
         }
 
         var original = await db.StockPostings.AsNoTracking()
@@ -2337,7 +2351,7 @@ public sealed class PoCdnService : IPoCdnService
             .OrderByDescending(x => x.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (original is null)
-            return $"No sealed Purchase CN/DN costing posting was found for {cdn.DocNo} revision {cdn.CostingRevision}.";
+            return ($"No sealed Purchase CN/DN costing posting was found for {cdn.DocNo} revision {cdn.CostingRevision}.", null);
 
         var snapshot = new
         {
@@ -2376,9 +2390,9 @@ public sealed class PoCdnService : IPoCdnService
             ReversesPostingId: original.Id));
         var begin = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
         if (begin.Error is not null)
-            return begin.Error.Message;
+            return (begin.Error.Message, null);
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
-            return null;
+            return (null, null);
 
         var completed = false;
         try
@@ -2388,16 +2402,22 @@ public sealed class PoCdnService : IPoCdnService
             var reversal = await _cdnCostAdjustments.ReverseAsync(
                 db, cdn, original.Id, write.UserId!, cancellationToken);
             if (!reversal.Succeeded)
-                return reversal.Error ?? "Purchase CN/DN costing rollback failed.";
+                return (reversal.Error ?? "Purchase CN/DN costing rollback failed.", null);
             await _costAdjustments.AppendInTransactionAsync(
                 begin.Context, reversal.Adjustments, cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
             completed = true;
-            return null;
+            return (null, null);
         }
         catch (StockLedgerException ex)
         {
-            return ex.Error.Message;
+            var reference = ErpOperatorErrors.NewReferenceId();
+            _logger.LogWarning(ex,
+                "Purchase CN/DN {DocNo} costing rollback rejected: {Code} (ref {Reference})",
+                cdn.DocNo, ex.Error.Code, reference);
+            return (ex.Error.Message,
+                ErpOperatorErrors.FromLedgerError(ex.Error, ErpErrorOrigin.Purchase,
+                    ErpDocumentKind.PurchaseCreditDebitNote, cdn.DocNo, ErpErrorAction.Rollback, reference));
         }
         finally
         {
@@ -2578,12 +2598,14 @@ public sealed class PoCdnService : IPoCdnService
                              && x.PostingRole == "PRIMARY"
                              && x.SealedAtUtc != null,
                         cancellationToken);
-                var costingError = await RollbackCdnCostingAsync(
+                var costing = await RollbackCdnCostingAsync(
                     db, write, cdn, cancellationToken);
-                if (costingError is not null)
+                if (costing.Error is not null)
                 {
                     await tx.RollbackAsync(cancellationToken);
-                    return PoCdnPostingItemResult.Failed(no, costingError);
+                    return costing.OperatorError is null
+                        ? PoCdnPostingItemResult.Failed(no, costing.Error)
+                        : PoCdnPostingItemResult.Failed(no, costing.Error, costing.OperatorError);
                 }
 
                 costingHandled |= hasFinancialPosting;

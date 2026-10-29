@@ -147,6 +147,9 @@ public sealed class SaCdnPostingItemResult
     public string? ErrorMessage { get; init; }
     public string? ReasonCode { get; init; }
 
+    /// <summary>Operator-facing explanation when the boundary could prove one. Null keeps the old text.</summary>
+    public ErpWeb.Core.Services.ErpOperatorError? OperatorError { get; init; }
+
     public static SaCdnPostingItemResult Posted(string docNo) =>
         new() { DocNo = docNo, Succeeded = true, Outcome = "Posted" };
 
@@ -164,6 +167,21 @@ public sealed class SaCdnPostingItemResult
             Outcome = "Failed: " + userMessage,
             ErrorMessage = userMessage,
             ReasonCode = reasonCode
+        };
+
+    /// <summary>
+    /// Same failure, plus the operator-language explanation. The technical <paramref name="reason"/>
+    /// stays in <see cref="ErrorMessage"/> for logs and for pages that have not adopted the banner.
+    /// </summary>
+    public static SaCdnPostingItemResult Failed(string docNo, string reason,
+        ErpWeb.Core.Services.ErpOperatorError operatorError) =>
+        new()
+        {
+            DocNo = docNo,
+            Succeeded = false,
+            Outcome = "Failed: " + operatorError.Title,
+            ErrorMessage = reason,
+            OperatorError = operatorError
         };
 
     public static SaCdnPostingItemResult NotAttempted(string docNo) =>

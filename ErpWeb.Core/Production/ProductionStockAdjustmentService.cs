@@ -12,6 +12,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Production;
 
@@ -20,14 +21,25 @@ public sealed class ProductionStockAdjustmentService(
     IDbContextFactory<AppDbContext> factory, IInventoryTenantContext tenant, IAccessRightService access,
     ICurrentDateService clock, IRunningNumberService numbers, IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator, IProductionStockWriter production,
-    IItemStandardCostResolver standardCosts)
+    IItemStandardCostResolver standardCosts,
+    ILogger<ProductionStockAdjustmentService>? logger = null)
     : IProductionStockAdjustmentService
 {
     private const string Menu = MenuCodes.PlanningStockAdjustment;
-    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation)
-        => IvMasterOperationResult<T>.Fail(code, message);
-    private sealed class AdjustmentException(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) : Exception(message)
-    { public IvMasterErrorCode Code { get; } = code; }
+    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null)
+        => IvMasterOperationResult<T>.Fail(code, message, operatorError: operatorError);
+
+    private sealed class AdjustmentException(
+        string message,
+        IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) : Exception(message)
+    {
+        public IvMasterErrorCode Code { get; } = code;
+
+        /// <summary>Operator-language explanation carried out of the transaction boundary, if proven.</summary>
+        public ErpWeb.Core.Services.ErpOperatorError? OperatorError { get; } = operatorError;
+    }
     private static string User(InventoryTenantScope scope) => scope.UserId.Length > 10 ? scope.UserId[..10] : scope.UserId;
 
     private async Task<InventoryTenantScope> ScopeAsync(string permission, CancellationToken ct)
@@ -467,6 +479,8 @@ public sealed class ProductionStockAdjustmentService(
 
     private async Task<IvMasterOperationResult<ProductionStockAdjustmentDocument>> ExecuteAsync(ProductionStockAdjustmentCommand request, bool reversal, CancellationToken ct)
     {
+        string? documentNo = null;
+        var action = reversal ? ErpErrorAction.Rollback : ErpErrorAction.Post;
         try
         {
             var scope = await ScopeAsync(reversal ? PermissionCodes.Rollback : PermissionCodes.Post, ct);
@@ -485,6 +499,7 @@ public sealed class ProductionStockAdjustmentService(
                 return IvMasterOperationResult<ProductionStockAdjustmentDocument>.Ok(await MapAsync(db, await LoadAsync(db, scope, request.Id, false, ct), ct));
             }
             var doc = await LoadAsync(db, scope, request.Id, true, ct); Version(doc, request.ExpectedVersion);
+            documentNo = doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture);
             if (doc.DeletedAtUtc is not null || doc.Batch.DeletedAtUtc is not null) throw new AdjustmentException(TransactionLifecycleGuard.ArchivedError(doc.DeletedAtUtc ?? doc.Batch.DeletedAtUtc, "This adjustment")!);
             if (doc.Batch.TrxType != IvTrxTypes.ProductionStockAdjustment || doc.Batch.BatchStatus != (reversal ? IvBatchStatuses.Posted : IvBatchStatuses.New))
                 throw new AdjustmentException(reversal ? "Only POSTED PADJ documents can be reversed." : "Only NEW PADJ documents can be posted.");
@@ -545,7 +560,10 @@ public sealed class ProductionStockAdjustmentService(
                 SourceDocumentId = doc.BatchId.ToString(CultureInfo.InvariantCulture), SourceDocumentNo = doc.Batch.BatchNo.ToString(CultureInfo.InvariantCulture),
                 DocumentRevision = doc.DocumentRevision, PostingRole = reversal ? "REVERSAL" : "PRIMARY", EffectiveAt = date, Evidence = evidence,
                 ReversesPostingId = reversal ? originalPostingId : null, ReasonText = reversal ? request.Reason!.Trim() : null }, ct);
-            if (begin.Error is not null) throw new AdjustmentException(begin.Error.Message);
+            if (begin.Error is not null)
+                throw new AdjustmentException(begin.Error.Message, IvMasterErrorCode.Validation,
+                    ProductionOperatorErrorLog.Ledger(logger, null, begin.Error, ErpDocumentKind.ProductionStockAdjustment,
+                        documentNo, action, "Production Stock Adjustment begin"));
             if (!begin.LedgerEnabled || begin.Context is null) throw new AdjustmentException("An active V2 stock ledger is required. No legacy PADJ posting is permitted.");
             var context = begin.Context;
             await using var postingScope = new StockPostingAbortScope(coordinator, context);
@@ -654,8 +672,13 @@ public sealed class ProductionStockAdjustmentService(
             if (context.Posting.SealedAtUtc is null) throw new ProductionPostingInvariantException("The PADJ posting was not sealed.");
             await tx.CommitAsync(ct); return IvMasterOperationResult<ProductionStockAdjustmentDocument>.Ok(await MapAsync(db, doc, ct));
         }
-        catch (AdjustmentException e) { return Fail<ProductionStockAdjustmentDocument>(e.Message, e.Code); }
-        catch (StockLedgerException e) { return Fail<ProductionStockAdjustmentDocument>(e.Error.Message); }
+        catch (AdjustmentException e) { return Fail<ProductionStockAdjustmentDocument>(e.Message, e.Code, e.OperatorError); }
+        catch (StockLedgerException e)
+        {
+            return Fail<ProductionStockAdjustmentDocument>(e.Error.Message, IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Ledger(logger, e, e.Error, ErpDocumentKind.ProductionStockAdjustment,
+                    documentNo, action, "Production Stock Adjustment"));
+        }
         catch (DbUpdateConcurrencyException) { return Fail<ProductionStockAdjustmentDocument>("Stock or adjustment changed. Reload and retry.", IvMasterErrorCode.Concurrency); }
         catch (InvalidOperationException e) { return Fail<ProductionStockAdjustmentDocument>(e.Message); }
     }

@@ -183,6 +183,9 @@ public sealed class PoCdnPostingItemResult
     public string? VendorWarningMessage { get; init; }
     public int? VrBatchNo { get; init; }
 
+    /// <summary>Operator-facing explanation when the boundary could prove one. Null keeps the old text.</summary>
+    public ErpWeb.Core.Services.ErpOperatorError? OperatorError { get; init; }
+
     public static PoCdnPostingItemResult Posted(string docNo, int? vrBatchNo = null, string? vendorWarning = null) =>
         new()
         {
@@ -208,6 +211,21 @@ public sealed class PoCdnPostingItemResult
             Outcome = "Failed: " + userMessage,
             ErrorMessage = userMessage,
             ReasonCode = reasonCode
+        };
+
+    /// <summary>
+    /// Same failure, plus the operator-language explanation. The technical <paramref name="reason"/>
+    /// stays in <see cref="ErrorMessage"/> for logs and for pages that have not adopted the banner.
+    /// </summary>
+    public static PoCdnPostingItemResult Failed(string docNo, string reason,
+        ErpWeb.Core.Services.ErpOperatorError operatorError) =>
+        new()
+        {
+            DocNo = docNo,
+            Succeeded = false,
+            Outcome = "Failed: " + operatorError.Title,
+            ErrorMessage = reason,
+            OperatorError = operatorError
         };
 
     public static PoCdnPostingItemResult NotAttempted(string docNo) =>
