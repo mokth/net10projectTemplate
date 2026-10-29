@@ -50,8 +50,9 @@
         <section class="iv-card">
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
-                    <label class="iv-field-label">Closed period</label>
-<DxComboBox Data="@Periods"
+                    <label class="iv-field-label" for="iv-period-close-period">Closed period</label>
+<DxComboBox InputId="iv-period-close-period"
+                            Data="@Periods"
                                 TextFieldName="@nameof(IvPeriodCloseHeaderRow.PeriodFrom)"
                                 ValueFieldName="@nameof(IvPeriodCloseHeaderRow.Id)"
                                 Value="@SelectedPeriodId"

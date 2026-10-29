@@ -6,6 +6,7 @@
                 ValueFieldName="@nameof(IvCodeLookupRow.Code)"
                 SearchMode="ListSearchMode.AutoSearch"
                 SearchFilterCondition="ListSearchFilterCondition.Contains"
+                InputId="@InputId"
                 Value="@Value"
                 ValueExpression="@EffectiveValueExpression"
                 ValueChanged="@(async (string? v) => await OnValueChanged(v))"

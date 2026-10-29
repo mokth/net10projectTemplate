@@ -145,9 +145,24 @@
 
         <DxPopup HeaderText="Add Production Stock Adjustment Pools" CloseOnOutsideClick="false" Width="90vw" CssClass="common-popup pr-popup-grid-dialog" @bind-Visible="SourcePickerVisible">
             <Content>
-                <div class="d-flex gap-2 mb-2 align-items-end"><div class="flex-grow-1"><label class="form-label mb-0">Search source pools</label>
-                    <DxTextBox Text="@SourceSearch" TextChanged="OnSourceSearchChanged" BindValueMode="BindValueMode.OnInput" NullText="Item / description / lot" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-                </div></div>
+                <div class="erp-inline-search erp-inline-search--popup">
+                    <label class="erp-inline-search__caption" for="pr-stock-adjustment-source-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="pr-stock-adjustment-source-search"
+                                   Text="@SourceSearch"
+                                   TextChanged="OnSourceSearchChanged"
+                                   TextExpression="@(() => SourceSearch)"
+                                   BindValueMode="BindValueMode.OnInput"
+                                   NullText="Item / description / lot"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
+                              Click="@(() => LoadSourcesAsync(debounce: false))"
+                              aria-label="Search source production stock pools"
+                              title="Search source production stock pools" />
+                </div>
                 <div class="pr-popup-grid-shell" aria-busy="@SourceLoading">
                     @if (SourceLoading) { <div class="iv-skeleton p-3"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div> }
                     else if (Sources.Count == 0) { <p class="text-muted p-3 mb-0">@(string.IsNullOrWhiteSpace(SourceSearch) ? "No candidate Production stock was found for this Work Order. Choose another Work Order." : "No Production stock matches the current search. Clear the search to show all source pools.")</p> }

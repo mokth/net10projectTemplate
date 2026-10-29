@@ -88,8 +88,9 @@
         <section class="iv-card">
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
-                    <label class="iv-field-label">Group by</label>
-<DxComboBox Data="@GroupByOptions"
+                    <label class="iv-field-label" for="iv-stock-value-group-by">Group by</label>
+<DxComboBox InputId="iv-stock-value-group-by"
+                            Data="@GroupByOptions"
                                 TextFieldName="@nameof(GroupByOption.Name)"
                                 ValueFieldName="@nameof(GroupByOption.Token)"
                                 Value="@AppliedGroupBy"

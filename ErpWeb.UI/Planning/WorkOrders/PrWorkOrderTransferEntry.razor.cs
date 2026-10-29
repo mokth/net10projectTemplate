@@ -235,6 +235,15 @@ public partial class PrWorkOrderTransferEntry : IAsyncDisposable
         await LoadSourcesAsync(debounce: true);
     }
 
+    /// <summary>
+    /// Magnifier action: cancels the pending 350 ms debounce and loads the latest filter once.
+    /// </summary>
+    protected async Task ApplySourceSearchAsync()
+    {
+        SourceSkip = 0;
+        await LoadSourcesAsync(debounce: false);
+    }
+
     private async Task LoadSourcesAsync(bool debounce)
     {
         if (SelectedSourceWorkOrder is null || SelectedSource is not null || Id != 0) return;

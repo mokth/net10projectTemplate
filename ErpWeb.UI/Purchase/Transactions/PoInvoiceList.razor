@@ -52,12 +52,24 @@
             </div>
 
             <div class="iv-toolbar-row">
-                <div class="iv-toolbar-row__search">
-                    <DxTextBox Text="@SearchText"
-                               TextChanged="OnSearchTextChanged"
-                               NullText="Search doc no, vendor, invoice…"
-                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                               CssClass="w-100" TextExpression="@(() => SearchText)" />
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption" for="po-invoice-list-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="po-invoice-list-search"
+                                   Text="@SearchText"
+                                   TextChanged="OnSearchTextChanged"
+                                   TextExpression="@(() => SearchText)"
+                                   BindValueMode="BindValueMode.OnInput"
+                                   NullText="Search doc no, vendor, invoice…"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   CssClass="w-100" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
+                              Click="@ApplySearchAsync"
+                              aria-label="Search purchase invoices"
+                              title="Search purchase invoices" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="FILTER"

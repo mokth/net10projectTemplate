@@ -304,6 +304,20 @@ public partial class IvGoodsReceipt : PageBase
         await SearchPoLinesAsync();
     }
 
+    /// <summary>
+    /// Magnifier action: cancels the pending debounce and searches the latest text exactly once.
+    /// </summary>
+    protected async Task ApplyPoPickerSearchAsync()
+    {
+        Interlocked.Increment(ref _poSearchVersion);
+        if (!PoPickerVisible)
+        {
+            return;
+        }
+
+        await SearchPoLinesAsync();
+    }
+
     protected async Task SearchPoLinesAsync()
     {
         PoPickerLoading = true;

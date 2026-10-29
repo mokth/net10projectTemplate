@@ -685,17 +685,25 @@
              @bind-Visible="@SoSourcePickerVisible">
         <Content>
             <p class="sdoc-field-hint">Search by SO no., customer code, or customer name. Results are limited to the first 20 per open status.</p>
-            <div class="sdoc-source-search">
-                <DxTextBox Text="@SoSourceSearchText"
-                           TextChanged="@OnSoSourceSearchTextChanged"
-                           TextExpression="@(() => SoSourceSearchText)"
-                           NullText="SO no., customer code, or customer name"
-                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                           Enabled="@CanEditDocument" />
+            <div class="erp-inline-search erp-inline-search--popup">
+                <label class="erp-inline-search__caption" for="sa-do-source-lookup-search">Search</label>
+                <div class="erp-inline-search__editor">
+                    <DxTextBox InputId="sa-do-source-lookup-search"
+                               Text="@SoSourceSearchText"
+                               TextChanged="@OnSoSourceSearchTextChanged"
+                               TextExpression="@(() => SoSourceSearchText)"
+                               BindValueMode="BindValueMode.OnInput"
+                               NullText="SO no., customer code, or customer name"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               Enabled="@CanEditDocument" />
+                </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                          Text="Search"
+                          IconCssClass="fa-solid fa-magnifying-glass"
+                          CssClass="erp-inline-search__button"
                           Click="@SearchSoSourceHeadersAsync"
-                          Enabled="@(!SoSourceLoading && !string.IsNullOrWhiteSpace(SoSourceSearchText))" />
+                          Enabled="@(!SoSourceLoading && !string.IsNullOrWhiteSpace(SoSourceSearchText))"
+                          aria-label="Search source sales orders"
+                          title="Search source sales orders" />
             </div>
             @if (!string.IsNullOrWhiteSpace(SoSourceError))
             {
