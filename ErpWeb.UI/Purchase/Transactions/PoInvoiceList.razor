@@ -52,12 +52,14 @@
             </div>
 
             <div class="iv-toolbar-row">
-                <div class="iv-toolbar-row__search">
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption">Search</label>
                     <DxTextBox Text="@SearchText"
                                TextChanged="OnSearchTextChanged"
                                NullText="Search doc no, vendor, invoice…"
                                ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                CssClass="w-100" TextExpression="@(() => SearchText)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" IconCssClass="fa-solid fa-magnifying-glass" CssClass="erp-inline-search__button" Click="@(() => OnSearchTextChanged(SearchText))" aria-label="Search" title="Search" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="FILTER"
