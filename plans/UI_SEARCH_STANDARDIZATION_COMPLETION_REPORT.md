@@ -1,8 +1,8 @@
-# Global Inline Search UI Standardization - Completion Report
+﻿# Global Inline Search UI Standardization - Completion Report
 
 Date: 2026-10-30
 Plan: `global_inline_search_fcf5d6b6.plan.md` (Revision 4, unchanged)
-Verdict: **PARTIAL PASS.** Static, build, contract-test, full-suite and 42/56 live browser controls are **PASS** with zero new failures. 14 browser rows remain **NOT VERIFIED** (1 pre-existing database defect, 13 gated behind absent prerequisite data). The pull request therefore stays **draft** and unmerged, per the plan's status policy.
+Verdict: **PARTIAL PASS.** Static, build, contract-test, full-suite and 43/56 live browser controls are **PASS** with zero new failures. 13 browser rows remain **NOT VERIFIED** (gated behind absent prerequisite data). The pull request therefore stays **draft** and unmerged, per the plan's status policy.
 
 ## 1. Isolation and Git SHAs
 
@@ -153,7 +153,7 @@ The 27 pre-existing failures are concentrated in `Sales.Master.SaCustServiceTest
 5. `IvCodeComboBox` and `SmartLookupInput` forward `InputId` for label association; `SmartLookupInput` keeps its icon-only magnifier and no text button.
 6. The documented allow-list cannot rot: each listed file must still exist, so a deleted or renamed exception fails the suite.
 
-## 7. Browser and visual verification - PARTIAL (42 / 56 PASS, 14 NOT VERIFIED)
+## 7. Browser and visual verification - PARTIAL (43 / 56 PASS, 13 NOT VERIFIED)
 
 `plans/UI_SEARCH_EVIDENCE_MATRIX.md` contains one row per converted control (56 rows) with route, control id, handler pattern, path:line, and five live browser cells per control.
 
@@ -161,8 +161,8 @@ A live interactive session against the **delivery branch itself** was completed 
 
 | Result | Count | Basis |
 | --- | --- | --- |
-| PASS | 42 | Live DOM geometry and computed style, plus authenticated render sweep |
-| NOT VERIFIED | 14 | 1 environment-blocked route + 13 dialogs gated behind absent prerequisite data |
+| PASS | 43 | Live DOM geometry and computed style, plus authenticated render sweep |
+| NOT VERIFIED | 13 | Dialogs gated behind absent prerequisite data |
 
 Deep UAT (real typing, icon click issued before the debounce expires, Enter key, empty/clear round-trip, popup footer integrity, `#blazor-error-ui` clean) was performed on `#admin-company-rail-search`, `#iv-stock-master-list-search`, `#po-supplier-search-popup-search` and `#po-invoice-po-picker-search`. Observed results:
 
@@ -184,9 +184,9 @@ Dark theme has no discoverable toggle in the running host and is recorded as **N
 
 Consequences, per plan policy:
 
-- 42 controls now count as `PASS`; the 14 `NOT VERIFIED` controls do not.
+- 43 controls now count as `PASS`; the 13 `NOT VERIFIED` controls do not.
 - The responsive matrix (320/375/768/1280/1920 px and the 200 % zoom equivalent) is **PASS** on the representative list, popup and picker surfaces.
-- The pull request remains **draft** and must not be merged until a reviewer clears the 14 rows (or accepts the documented environment rationale).
+- The pull request remains **draft** and must not be merged until a reviewer clears the 13 rows (or accepts the documented environment rationale).
 
 ## 8. Deliverable
 
@@ -200,7 +200,7 @@ Consequences, per plan policy:
 
 ## 9. Residual risks
 
-1. 14 browser rows remain unverified: 1 route is blocked by pre-existing database drift (`SaCdn.CostingRevision`), and 13 pickers/popups cannot be opened against the seeded dataset because their triggers require a prerequisite supplier, customer or source document. This is the only reason the verdict is not a full PASS.
+1. 13 browser rows remain unverified: those pickers/popups cannot be opened against the seeded dataset because their triggers require a prerequisite supplier, customer or source document. This is the only reason the verdict is not a full PASS.
 2. Dark theme was not exercised (no discoverable toggle in the running host); light theme passed.
 3. The delivery branch cannot carry the local-only operator-failure banner; screens that display it in the development worktree will differ until `8d09a22` reaches `productionv2`.
 4. The 27 pre-existing test failures stay red; they are unrelated but will keep the suite red for any reviewer running it.

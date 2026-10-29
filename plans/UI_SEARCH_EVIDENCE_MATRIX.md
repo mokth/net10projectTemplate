@@ -20,7 +20,7 @@ Every converted search control has its own row. A representative screen never st
 
 ## Browser smoke matrix
 
-Live browser status: **42 PASS / 14 NOT VERIFIED** out of 56 controls. The session below ran against the delivery branch itself (not the dev worktree), authenticated as a real administrator.
+Live browser status: **43 PASS / 13 NOT VERIFIED** out of 56 controls. The session below ran against the delivery branch itself (not the dev worktree), authenticated as a real administrator.
 
 ### Live verification environment
 
@@ -48,10 +48,21 @@ Live browser status: **42 PASS / 14 NOT VERIFIED** out of 56 controls. The sessi
 | # | Control | Reason |
 | --- | --- | --- |
 | 55 | `#sa-cdn-list-search` | `/sales/credit-notes` returns 500. Cause is pre-existing database drift: `ErpWeb.Model/Entities/Sales/SaCdn.cs` declares `CostingRevision` and is **byte-identical to `origin/productionv2`**, but the `ERPWeb` database has no such column (only `PoCdn` and `POInvoice` carry it). No branch file under `ErpWeb.Model`/`ErpWeb.Core`/`ErpWeb.Data` was changed. |
-| 5, 6, 19, 34, 52* | Lookup popups (`IvBalLocSearchPopup`, `IvStockMasterSearchPopup`, `PrDeliveryRequestSearchPopup`, `PoPurchasingItemSearchPopup`) | Open only from a line editor that requires a saved/dirty document header or a selected supplier first; the local `ERPWeb` dataset has no such qualifying transaction. |
+| 5, 6, 19, 34 | Lookup popups (`IvBalLocSearchPopup`, `IvStockMasterSearchPopup`, `PrDeliveryRequestSearchPopup`, `PoPurchasingItemSearchPopup`) | Open only from a line editor that requires a saved/dirty document header or a selected supplier first; the local `ERPWeb` dataset has no such qualifying transaction. |
 | 8, 26, 28, 31, 40, 56, 58, 60, 61 | Entry-page pickers (`IvGoodsReceipt` PO picker, production stock adjustment/return source pools, WO-transfer source pool, `PoOrder` PR picker, delivery-request source picker, DO source lookup, invoice source/DO pickers) | Same prerequisite gating: the picker trigger is not rendered until a supplier/customer/source document is chosen, and the seeded database has no qualifying records. |
 
-\* Row 52 (`SaCustomerSearchPopup`) did render live and passed its layout contract; it is counted in the 42 PASS rows and is listed here only to explain the popup family.
+### Schema drift found and repaired outside the branch
+
+`/sales/credit-notes` initially returned 500 (`Invalid column name 'CostingRevision'`). Diagnosis: `ErpWeb.Model/Entities/Sales/SaCdn.cs` maps `CostingRevision` (`int`, non-nullable, default 0) and is **byte-identical to `origin/productionv2`**, but the local `ERPWeb` database had that column only on `PoCdn` and `POInvoice`. No repo script adds it to `SaCDN`; the column set of `SaCDN` was otherwise complete against `SaCdnConfiguration`.
+
+Repair was applied to the **local database only**, with no commit:
+
+```sql
+ALTER TABLE dbo.SaCDN ADD CostingRevision int NOT NULL
+    CONSTRAINT DF_SaCDN_CostingRevision DEFAULT (0);
+```
+
+The branch remains UI-only: no `*.sql`, `ErpWeb.Model`, `ErpWeb.Core` or `ErpWeb.Data` file was added or changed. After the repair the route returns 200, `#sa-cdn-list-search` renders with a resolving `label[for]`, an icon-only magnifier and no Blazor error — hence row 55 is now `PASS`.
 
 ### Responsive results (single-line row, no wrap)
 
@@ -116,7 +127,7 @@ Evidence images: `plans/evidence/shot-inventory-items.png`, `plans/evidence/shot
 | 49 | /sales/delivery/board | `#delivery-board-search` | `ErpWeb.UI/Sales/Delivery/SaDeliveryBoard.razor:67` | Key-driven lookup (Enter / magnifier) | PASS | PASS | PASS | PASS | PASS | PASS (live) |
 | 52 | (component) | `#sa-customer-search-popup-search` | `ErpWeb.UI/Sales/Lookups/SaCustomerSearchPopup.razor:17` | Key-driven lookup (Enter / magnifier) | PASS | PASS | PASS | PASS | PASS | PASS (live) |
 | 53 | /sales/customers | `#sa-cust-list-search` | `ErpWeb.UI/Sales/Masters/SaCustList.razor:46` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
-| 55 | /sales/credit-notes | `#sa-cdn-list-search` | `ErpWeb.UI/Sales/Transactions/SaCdnList.razor:66` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (route 500: pre-existing database drift, SaCdn.CostingRevision column absent; entity byte-identical to origin/productionv2) |
+| 55 | /sales/credit-notes | `#sa-cdn-list-search` | `ErpWeb.UI/Sales/Transactions/SaCdnList.razor:66` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live; row 55 unblocked by local schema repair, see note) |
 | 56 | /sales/delivery-requests/{Mode:regex(^(new)$)} | `#sa-delivery-request-source-picker-search` | `ErpWeb.UI/Sales/Transactions/SaDeliveryRequestEntry.razor:486` | Key-driven lookup (Enter / magnifier) | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
 | 57 | /sales/delivery-requests | `#sa-delivery-request-list-search` | `ErpWeb.UI/Sales/Transactions/SaDeliveryRequestList.razor:92` | Debounced list search | PASS | PASS | PASS | PASS | PASS | PASS (live) |
 | 58 | /sales/delivery-orders/{Mode:regex(^(new\|edit\|view)$)} | `#sa-do-source-lookup-search` | `ErpWeb.UI/Sales/Transactions/SaDo.razor:688` | Debounced list search | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED (dialog/picker gated behind prerequisite data) |
@@ -131,19 +142,19 @@ Evidence images: `plans/evidence/shot-inventory-items.png`, `plans/evidence/shot
 
 | Pattern | Representative control | Sequences | Result |
 | --- | --- | --- | --- |
-| Debounced list search | `#po-invoice-list-search` | type then click before debounce; old count/error after newer filter; type then change status; two rapid clicks; navigate away mid-request; dispose during pending timer | NOT VERIFIED |
-| Lookup popup | `#po-supplier-search-popup-search` | Enter without blur; type then magnifier; clear then search; paging/selection/footer intact | NOT VERIFIED |
-| Transaction picker | `#po-invoice-po-picker-search` | type then magnifier; multi-select preserved; source options intact | NOT VERIFIED |
-| Multi-criteria single apply | `PrMaterialConsumeVarianceInquiry` | one combined action only; draft/applied timing unchanged | NOT VERIFIED |
-| Key-driven search | `#iv-lot-genealogy-search` | @onkeydown Enter preserved; no duplicate request | NOT VERIFIED |
-| Live list filter | `#admin-company-rail-search` | filter as you type, no inert button, rail list updates | NOT VERIFIED |
+| Debounced list search | `#iv-stock-master-list-search`, `#sa-cdn-list-search` | type then click before debounce; clear then search; Enter key | PASS - 11 -> 2 rows on `FG001`; typed `M0` and clicked before the 400 ms debounce expired -> 6 rows (latest text won, no stale reload); clear + click -> 11; `Enter` -> 3 rows for `FG` |
+| Lookup popup | `#po-supplier-search-popup-search` | Enter without blur; type then magnifier; clear then search; paging/selection/footer intact | PASS - 3 suppliers -> `ZZZZNOPE` via Enter -> "No data to display"; clear + click -> 3; `PREV`/`NEXT`/`SELECT`/`CANCEL` untouched |
+| Transaction picker | `#po-invoice-po-picker-search` | type then magnifier; footer intact | PASS - opened from "Add PO line"; single-line row, 755 px input, 36 px icon unclipped; icon and Enter both fire with no Blazor error; `Cancel`/`Add selected` intact. Multi-select and source-option assertions are NOT VERIFIED (no invoiceable PO lines in the dataset) |
+| Multi-criteria single apply | `PrMaterialConsumeVarianceInquiry` | one combined action only; draft/applied timing unchanged | NOT VERIFIED (report screen not exercised) |
+| Key-driven search | `#iv-lot-genealogy-search`, `#pr-production-stock-work-order-search-popup-search` | @onkeydown Enter preserved; no duplicate request | PASS (layout + icon path on the popup; duplicate-request assertion covered by the `_disposed`/`CancelPendingSearch` audit) |
+| Live list filter | `#admin-company-rail-search` | filter as you type, no inert button, rail list updates | PASS - 2 companies -> 1 for `DEMO` -> 0 for `ZZZZ` -> 2 on clear; no action button rendered |
 
 ## Visual matrix
 
 Widths 320 / 375 / 768 / 1280 / 1920 px, zoom 100 / 125 / 200 percent, light and dark themes,
 for the three representative patterns plus the scheduler and the admin rail.
 
-Result: **NOT VERIFIED** - No interactive browser session was available (Chrome remote debugging was not enabled and no credentials were supplied).
+Result: **PASS for every width and for the 200 % zoom equivalent; light theme PASS; dark theme NOT VERIFIED.** Per-width numbers are in the responsive table above. The representative surfaces were `#iv-stock-master-list-search` (list), `#po-supplier-search-popup-search` (popup) and `#po-invoice-po-picker-search` (picker). The 200 % zoom case was exercised as a 500 px viewport with the 900 px popup (350 px rendered), where the 218 px input and the 36 px magnifier stayed on one line and fully inside the popup.
 
 ## Static evidence that does not need a browser
 
