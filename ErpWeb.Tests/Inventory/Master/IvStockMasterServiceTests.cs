@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
@@ -737,10 +738,13 @@ public class IvStockMasterServiceTests : IAsyncLifetime
         var a100 = (await sut.GetAsync("A100")).Data!;
         var c300 = (await sut.GetAsync("C300")).Data!;
 
-        var deactivate = await sut.SetActiveAsync(
+        // Legacy false used to mean "Active = 0". It now routes to INACTIVE, which the policy
+        // refuses for an ACTIVE item: the item must be discontinued first so obligations are reviewed.
+        var retireActive = await sut.SetActiveAsync(
             [Token(a100.ICode, a100.RowVersion!)],
             isActive: false);
-        Assert.True(deactivate.Succeeded, deactivate.Message);
+        Assert.False(retireActive.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, retireActive.ErrorCode);
 
         var activate = await sut.SetActiveAsync(
             [Token(c300.ICode, c300.RowVersion!)],
@@ -748,7 +752,7 @@ public class IvStockMasterServiceTests : IAsyncLifetime
         Assert.True(activate.Succeeded, activate.Message);
 
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.False(await db.IvStockMasters
+        Assert.True(await db.IvStockMasters
             .Where(x => x.CompanyCode == "DEMO" && x.ICode == "A100")
             .Select(x => x.IsActive)
             .SingleAsync());
@@ -756,6 +760,47 @@ public class IvStockMasterServiceTests : IAsyncLifetime
             .Where(x => x.CompanyCode == "DEMO" && x.ICode == "C300")
             .Select(x => x.IsActive)
             .SingleAsync());
+    }
+
+    [Fact]
+    public async Task Lifecycle_DiscontinueThenInactive_Works_AndAuditsReason()
+    {
+        var sut = CreateSut();
+        var model = ValidNewModel("E520");
+        var created = await sut.SaveAsync(model, isNew: true);
+        Assert.True(created.Succeeded, created.Message);
+        var item = (await sut.GetAsync("E520")).Data!;
+
+        var discontinue = await sut.ChangeLifecycleAsync(
+            [Token(item.ICode, item.RowVersion!)],
+            IvStockItemLifecycleStatusCodes.Discontinued,
+            "Planned replacement by E521.",
+            IvStockLifecycleSourceActions.Bulk);
+        Assert.True(discontinue.Succeeded, discontinue.Message);
+
+        var discontinued = (await sut.GetAsync("E520")).Data!;
+        Assert.Equal(IvStockItemLifecycleStatusCodes.Discontinued, discontinued.LifecycleStatus);
+
+        var inactivate = await sut.ChangeLifecycleAsync(
+            [Token(discontinued.ICode, discontinued.RowVersion!)],
+            IvStockItemLifecycleStatusCodes.Inactive,
+            "No outstanding obligations; retired.",
+            IvStockLifecycleSourceActions.Bulk);
+        Assert.True(inactivate.Succeeded, inactivate.Message);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var stored = await db.IvStockMasters
+            .Where(x => x.CompanyCode == "DEMO" && x.ICode == "E520")
+            .Select(x => new { x.IsActive, x.IsDiscontinued })
+            .SingleAsync();
+        Assert.False(stored.IsActive);
+        Assert.False(stored.IsDiscontinued);
+    }
+
+    [Fact]
+    public async Task Lifecycle_InvalidInactivePlusDiscontinued_IsRejectedByPolicy()
+    {
+        Assert.False(IvStockItemLifecycle.TryResolve(false, true, out _));
     }
 
     [Fact]

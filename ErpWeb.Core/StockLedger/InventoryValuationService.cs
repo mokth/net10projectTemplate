@@ -874,6 +874,48 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
                     $"Item '{itemCode}' has no FIFO layers for exact reversal.");
 
+            var returnAllocations = original.MovementCode == "SALE_RETURN_IN"
+                ? await ReadActiveFifoReturnAllocationsAsync(context, original, cancellationToken)
+                : [];
+            var historicalAdjustedReturn = false;
+            if (original.MovementCode == "SALE_RETURN_IN")
+            {
+                var returnLayer = layers.SingleOrDefault(l => l.OriginValuationFactId == original.Id);
+                if (returnLayer is null)
+                    throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                        $"FIFO return fact {original.Id} has no originating layer.");
+                if (!await StockReplayFifoSalesReturnValueAdjustment.HasOnlyReversedConsumptionsAsync(
+                        context.Db, original, returnLayer.Id, cancellationToken))
+                    throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                        $"FIFO return fact {original.Id} has active or inconsistent consumption evidence.");
+                if (returnLayer.AccumulatedAdjustment != 0m)
+                {
+                    if (await IvPeriodCloseGuard.EnsureOpenAsync(context.Db, context.CompanyCode,
+                            context.BranchCode, original.EffectiveAt, cancellationToken) is string closed)
+                        throw LedgerError(StockLedgerErrorCodes.ReversalDependency, closed);
+                    if (returnLayer.RemainingQty != original.BaseQty
+                        || returnLayer.RemainingValue != RoundMoney(original.CostAmount + returnLayer.AccumulatedAdjustment))
+                        throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                            $"FIFO return fact {original.Id} has a consumed or inconsistent adjusted layer.");
+                    var adjustment = -returnLayer.AccumulatedAdjustment;
+                    if (RoundMoney(state.InventoryValue + adjustment) < 0m
+                        || reversalHistory.PostingLineNo is not int line)
+                        throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                            $"FIFO return fact {original.Id} cannot reverse its value adjustment.");
+                    var delta = StockReplayFifoSalesReturnValueAdjustment.Create(
+                        context, original, adjustment, line, checked(original.SplitOrdinal + 1));
+                    historicalAdjustedReturn = true;
+                    returnLayer.RemainingValue = original.CostAmount;
+                    returnLayer.AccumulatedAdjustment = 0m;
+                    returnLayer.CurrentUnitCost = RoundMoney(original.CostAmount / original.BaseQty);
+                    state.InventoryValue = RoundMoney(state.InventoryValue + adjustment);
+                    state.AverageUnitCost = state.OnHandBaseQty == 0m ? 0m
+                        : RoundMoney(state.InventoryValue / state.OnHandBaseQty);
+                    state.CurrentUnitCost = state.AverageUnitCost;
+                    result.Add(delta);
+                }
+            }
+
             var reversalFact = NewFact(
                 context, reversalHistory, original.SplitOrdinal, -original.Direction,
                 original.BaseQty, original.UnitCost, original.CostAmount,
@@ -881,6 +923,12 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 baseCurrency ?? original.BaseCurrency,
                 original.TransactionCurrency, original.TransactionCostAmount, original.ExchangeRate,
                 original.OriginalValuationFactId ?? original.Id, original.Id);
+            if (historicalAdjustedReturn)
+            {
+                reversalFact.EffectiveAt = original.EffectiveAt;
+                reversalFact.BusinessDate = original.BusinessDate;
+                reversalFact.PeriodKey = original.PeriodKey;
+            }
 
             if (original.Direction < 0)
             {
@@ -946,11 +994,6 @@ public sealed class InventoryValuationService : IInventoryValuationService
             }
 
             result.Add(reversalFact);
-            var returnAllocations = await context.Db.SalesReturnCostAllocations.AsNoTracking()
-                .Where(x => x.ReturnValuationFactId == original.Id
-                            && x.CompanyCode == context.CompanyCode
-                            && x.BranchCode == context.BranchCode)
-                .ToListAsync(cancellationToken);
             foreach (var allocation in returnAllocations)
             {
                 context.Db.SalesReturnCostAllocations.Add(new SalesReturnCostAllocation
@@ -975,6 +1018,117 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 });
             }
         }
+    }
+
+    private static async Task<IReadOnlyList<SalesReturnCostAllocation>> ReadActiveFifoReturnAllocationsAsync(
+        StockPostingContext context, StockValuationFact original, CancellationToken cancellationToken)
+    {
+        var db = context.Db;
+        var roots = await db.SalesReturnCostAllocations.AsNoTracking()
+            .Where(a => a.CompanyCode == context.CompanyCode && a.BranchCode == context.BranchCode
+                && a.ReturnValuationFactId == original.Id && a.ReversesAllocationId == null)
+            .ToArrayAsync(cancellationToken);
+        var rootIds = roots.Select(a => a.Id).ToArray();
+        var children = await db.SalesReturnCostAllocations.AsNoTracking()
+            .Where(a => a.ReversesAllocationId.HasValue && rootIds.Contains(a.ReversesAllocationId.Value))
+            .ToArrayAsync(cancellationToken);
+        if (roots.GroupBy(a => a.StockPostingId).Any(g => g.Count() > 1))
+        {
+            var activeGroup = roots.Where(root => !children.Any(c => c.ReversesAllocationId == root.Id)).ToArray();
+            var firstSale = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f =>
+                f.Id == roots[0].OriginalValuationFactId, cancellationToken);
+            var sale = firstSale?.InventoryHistoryId is int saleId
+                ? await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == saleId, cancellationToken)
+                : null;
+            if (activeGroup.Length == 0 || sale is null
+                || !await IvInventoryPostingService.HasExactFifoSalesReturnGroupedLineageAsync(
+                    db, roots.Concat(children).ToArray(), sale, original, activeGroup[0].Id,
+                    false, cancellationToken))
+                throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                    $"FIFO return fact {original.Id} has inconsistent grouped allocation history.");
+            return activeGroup;
+        }
+        var ownerIds = children.Select(a => a.StockPostingId).Distinct().ToArray();
+        var owners = await db.StockPostings.AsNoTracking().Where(p => ownerIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+        var saleFactIds = roots.Select(a => a.OriginalValuationFactId).Distinct().ToArray();
+        var saleFacts = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => saleFactIds.Contains(f.Id)).ToDictionaryAsync(f => f.Id, cancellationToken);
+        var saleReversals = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.ReversesValuationFactId.HasValue
+                && saleFactIds.Contains(f.ReversesValuationFactId.Value))
+            .ToArrayAsync(cancellationToken);
+        var adjustments = await StockReplayFifoSalesReturnValueAdjustment.ReadVerifiedAsync(
+            db, original, cancellationToken);
+        var usedAdjustments = new HashSet<long>();
+        bool MatchesAdjustment(long postingId, decimal signedValue)
+        {
+            var rows = adjustments.Where(f => f.StockPostingId == postingId).ToArray();
+            if (signedValue == 0m)
+                return rows.Length == 0;
+            return rows.Length == 1 && rows[0].SignedValue == signedValue
+                && usedAdjustments.Add(rows[0].Id);
+        }
+        var byId = roots.ToDictionary(a => a.Id);
+        var childrenIds = children.Select(a => a.Id).ToArray();
+        if (roots.Length == 0 || roots.Length > 100
+            || children.GroupBy(a => a.ReversesAllocationId).Any(g => g.Count() != 1)
+            || await db.SalesReturnCostAllocations.AsNoTracking().AnyAsync(a =>
+                a.ReversesAllocationId.HasValue && childrenIds.Contains(a.ReversesAllocationId.Value), cancellationToken)
+            || children.Any(child =>
+            {
+                var root = byId[child.ReversesAllocationId!.Value];
+                var next = roots.Where(a => a.StockPostingId == child.StockPostingId
+                    && a.OriginalValuationFactId != root.OriginalValuationFactId
+                    && a.ReturnDocumentType == root.ReturnDocumentType
+                    && a.ReturnDocumentNo == root.ReturnDocumentNo
+                    && a.ReturnDocumentLine == root.ReturnDocumentLine
+                    && a.ReturnCostingRevision == root.ReturnCostingRevision
+                    && a.OriginalOwnerType == root.OriginalOwnerType
+                    && a.OriginalOwnerDocumentNo == root.OriginalOwnerDocumentNo
+                    && a.OriginalOwnerDocumentLine == root.OriginalOwnerDocumentLine
+                    && a.ReturnedBaseQty == root.ReturnedBaseQty).ToArray();
+                return child.CompanyCode != root.CompanyCode || child.BranchCode != root.BranchCode
+                    || child.ReturnDocumentType != root.ReturnDocumentType
+                    || child.ReturnDocumentNo != root.ReturnDocumentNo
+                    || child.ReturnDocumentLine != root.ReturnDocumentLine
+                    || child.ReturnCostingRevision != root.ReturnCostingRevision
+                    || child.OriginalValuationFactId != root.OriginalValuationFactId
+                    || child.OriginalOwnerType != root.OriginalOwnerType
+                    || child.OriginalOwnerDocumentNo != root.OriginalOwnerDocumentNo
+                    || child.OriginalOwnerDocumentLine != root.OriginalOwnerDocumentLine
+                    || child.ReturnedBaseQty != root.ReturnedBaseQty
+                    || child.ReturnedCostAmount != root.ReturnedCostAmount
+                    || child.ReturnValuationFactId != original.Id
+                    || !owners.TryGetValue(child.StockPostingId, out var owner)
+                    || owner.SealedAtUtc is null || owner.CompanyCode != context.CompanyCode
+                    || owner.BranchCode != context.BranchCode || owner.LedgerEpochId != context.Epoch.Id
+                    || owner.SourceModule != "INVENTORY"
+                    || owner.SourceDocumentType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+                    || owner.PostingRole is not ("PRIMARY" or "REVERSAL")
+                    || !saleFacts.TryGetValue(root.OriginalValuationFactId, out var saleFact)
+                    || saleReversals.Count(r => r.ReversesValuationFactId == saleFact.Id
+                        && r.StockPostingId == child.StockPostingId && r.Direction == 1
+                        && r.BaseQty == saleFact.BaseQty && r.CostAmount == saleFact.CostAmount
+                        && r.ValuationStatus == StockValuationStatuses.Reversed) != 1
+                    || saleReversals.Count(r => r.ReversesValuationFactId == saleFact.Id) != 1
+                    || next.Length != 1
+                    || !MatchesAdjustment(child.StockPostingId, RoundMoney(
+                        next[0].ReturnedCostAmount - root.ReturnedCostAmount));
+            }) || usedAdjustments.Count != adjustments.Count)
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"FIFO return fact {original.Id} has inconsistent allocation history.");
+        var active = roots.Where(root => !children.Any(child => child.ReversesAllocationId == root.Id)).ToArray();
+        var activeSaleIds = active.Select(a => a.OriginalValuationFactId).ToArray();
+        if (active.Length == 0 || RoundQuantity(active.Sum(a => a.ReturnedBaseQty)) != original.BaseQty
+            || RoundMoney(active.Sum(a => a.ReturnedCostAmount)) != RoundMoney(
+                original.CostAmount + adjustments.Sum(f => f.SignedValue))
+            || await db.StockValuationFacts.AsNoTracking().AnyAsync(f =>
+                f.ReversesValuationFactId.HasValue && activeSaleIds.Contains(f.ReversesValuationFactId.Value),
+                cancellationToken))
+            throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
+                $"FIFO return fact {original.Id} has no exact active allocation to reverse.");
+        return active;
     }
 
     private static void AddFifoLayer(

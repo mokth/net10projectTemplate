@@ -119,8 +119,7 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
                     x.SourceDocumentNo,
                     x.SourceDocumentLine,
                     x.ItemCode,
-                    x.CostAmount,
-                    x.OriginalValuationFactId))
+                    x.CostAmount))
                 .ToListAsync(cancellationToken);
 
         var allocations = ownerNos.Length == 0
@@ -134,24 +133,6 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
         var returnedCostByFact = CollapseReturnAllocationChains(allocations)
             .GroupBy(x => x.OriginalValuationFactId)
             .ToDictionary(x => x.Key, x => Money(x.Sum(y => y.ReturnedCostAmount)));
-        var saleRootIds = facts.Select(x => x.OriginalValuationFactId ?? x.Id)
-            .Distinct().ToArray();
-        var saleLineage = saleRootIds.Length == 0
-            ? []
-            : await db.StockValuationFacts.AsNoTracking()
-                .Where(x => x.CompanyCode == scope.CompanyCode
-                    && x.BranchCode == scope.BranchCode
-                    && (saleRootIds.Contains(x.Id)
-                        || x.OriginalValuationFactId.HasValue
-                        && saleRootIds.Contains(x.OriginalValuationFactId.Value)))
-                .Select(x => new { x.Id, x.OriginalValuationFactId })
-                .ToArrayAsync(cancellationToken);
-        var returnedRootsOnOldFacts = saleLineage
-            .Where(x => returnedCostByFact.ContainsKey(x.Id))
-            .Select(x => (FactId: x.Id,
-                RootId: x.OriginalValuationFactId ?? x.Id))
-            .ToArray();
-
         var rows = new List<SalesGrossProfitInquiryRow>(lines.Count);
         foreach (var line in lines.OrderBy(x => x.InvoiceNo).ThenBy(x => x.Line))
         {
@@ -173,10 +154,13 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
 
             // A return tied to an older sale-cost fact needs a matched return
             // value restatement before the corrected outbound cost can be shown.
-            var staleReturnCost = matches.Any(x =>
-                returnedRootsOnOldFacts.Any(returned =>
-                    returned.RootId == (x.OriginalValuationFactId ?? x.Id)
-                    && returned.FactId != x.Id));
+            var activeSaleFactIds = matches.Select(x => x.Id).ToHashSet();
+            var staleReturnCost = allocations.Any(a => a.ReversesAllocationId is null
+                && returnedCostByFact.ContainsKey(a.OriginalValuationFactId)
+                && !activeSaleFactIds.Contains(a.OriginalValuationFactId)
+                && string.Equals(a.OriginalOwnerType, ownerType, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(a.OriginalOwnerDocumentNo, ownerNo, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(a.OriginalOwnerDocumentLine, ownerLine, StringComparison.OrdinalIgnoreCase));
             var resolved = !line.StockControl
                 || matches.Length > 0 && !staleReturnCost;
             var netSales = ResolveNetSales(line, invoice.CurrRate);
@@ -349,8 +333,7 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
         string SourceDocumentNo,
         string? SourceDocumentLine,
         string ItemCode,
-        decimal CostAmount,
-        long? OriginalValuationFactId);
+        decimal CostAmount);
 
     private sealed record ReturnAllocationAggregate(
         long OriginalValuationFactId,

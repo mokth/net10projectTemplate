@@ -864,6 +864,52 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Financial_snapshot_includes_earlier_period_fact_written_by_later_posting()
+    {
+        await PostReceiptAsync(10m, 3m, new DateTime(2026, 10, 1, 8, 0, 0));
+        var correctionPostingId = await ExecuteAsync(new DateTime(2026, 11, 1, 8, 0, 0),
+            "REPLAY_CORRECTION", async (context, _) =>
+            {
+                var origin = await context.Db.StockValuationFacts.SingleAsync();
+                context.Db.StockValuationFacts.Add(new StockValuationFact
+                {
+                    CompanyCode = origin.CompanyCode, BranchCode = origin.BranchCode,
+                    LedgerEpochId = origin.LedgerEpochId, StockPostingId = context.Posting.Id,
+                    PostingLineNo = 1, SplitOrdinal = 0, SourceLineId = origin.SourceLineId,
+                    SourceDocumentType = origin.SourceDocumentType,
+                    SourceDocumentId = origin.SourceDocumentId, SourceDocumentNo = origin.SourceDocumentNo,
+                    SourceDocumentLine = origin.SourceDocumentLine, EffectiveAt = origin.EffectiveAt,
+                    BusinessDate = origin.BusinessDate, PeriodKey = origin.PeriodKey,
+                    ItemCode = origin.ItemCode, BaseUom = origin.BaseUom,
+                    MovementCode = "ADJUST_IN", Direction = 1, BaseQty = 0m,
+                    CostMethod = origin.CostMethod, UnitCost = 0.7m,
+                    CostAmount = 7m, BaseCostAmount = 7m, BaseCurrency = origin.BaseCurrency,
+                    ValuationSource = "REPLAY_TEST", ValuationStatus = StockValuationStatuses.Valued,
+                    OriginalValuationFactId = origin.Id, CreatedAtUtc = DateTime.UtcNow,
+                    CreatedBy = context.UserId
+                });
+                var state = await context.Db.StockCostStates.SingleAsync();
+                state.InventoryValue = 37m;
+                state.AverageUnitCost = 3.7m;
+                state.CurrentUnitCost = 3.7m;
+            });
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var error = await StockValuationSnapshotBuilder.AppendAsync(
+            db, "DEMO", "HQ", new DateTime(2026, 10, 1), new DateTime(2026, 10, 31),
+            "tester", CancellationToken.None);
+        Assert.Null(error);
+        var header = Assert.Single(db.ChangeTracker.Entries<StockValuationPeriodSnapshotHdr>()).Entity;
+        var correctionSequence = await db.StockPostings.Where(p => p.Id == correctionPostingId)
+            .Select(p => p.PostingSequence).SingleAsync();
+        Assert.Equal(correctionSequence, header.PostingSequenceWatermark);
+        var line = Assert.Single(header.Lines);
+        Assert.Equal(30m, line.InValue);
+        Assert.Equal(7m, line.AdjustmentValue);
+        Assert.Equal(37m, line.ClosingValue);
+    }
+
+    [Fact]
     public async Task Fifo_snapshot_does_not_require_issue_consumption_for_receipt_reversal()
     {
         await SetCostMethodAsync(StockCostMethods.Fifo);

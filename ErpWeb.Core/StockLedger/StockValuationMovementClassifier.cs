@@ -20,6 +20,7 @@ public sealed class StockValuationMovementClassifier
         "LANDED_COST_IN", "LANDED_COST_OUT",
         "STANDARD_REVALUE_IN", "STANDARD_REVALUE_OUT",
         "RETURN_STANDARD_VARIANCE_IN", "RETURN_STANDARD_VARIANCE_OUT",
+        StockReplayFifoSalesReturnValueAdjustment.Movement,
         "COST_METHOD_CUTOVER_IN", "COST_METHOD_CUTOVER_OUT"
     };
 

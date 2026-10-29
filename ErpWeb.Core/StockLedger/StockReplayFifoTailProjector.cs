@@ -152,7 +152,8 @@ public static class StockReplayFifoTailProjector
             throw Invalid($"FIFO receipt layer {layerId} is not active at its key.");
         ValidateBaseline(snapshot, before, events);
         var projected = Replay(before.Layers,
-            events.Where(e => e.Receipt?.LayerId != layerId), 0m);
+            events.Where(e => e.Receipt?.LayerId != layerId), 0m,
+            repriceSalesReturns: true);
         var finalQuantity = StockLedgerPrecision.Quantity(
             projected.Layers.Sum(l => l.RemainingQuantity));
         var finalValue = StockLedgerPrecision.Money(
@@ -160,10 +161,11 @@ public static class StockReplayFifoTailProjector
         var changedLaterIssueValue = projected.Issues
             .Where(i => i.DepletesPool)
             .Sum(i => i.Value - i.PreviousConsumptions.Sum(c => c.Value));
+        var changedReturnValue = ChangedReturnValue(snapshot, projected.Layers);
         if (finalQuantity != StockLedgerPrecision.Quantity(
                 snapshot.CurrentQuantity - origin.OriginalQuantity)
             || finalValue != StockLedgerPrecision.Money(
-                snapshot.CurrentValue - origin.OriginalValue
+                snapshot.CurrentValue - origin.OriginalValue + changedReturnValue
                 - changedLaterIssueValue))
             throw Invalid("FIFO receipt removal does not conserve quantity and value.");
         return new(before, projected.Issues, projected.Layers,
@@ -255,7 +257,9 @@ public static class StockReplayFifoTailProjector
             events.Where(e => !e.Candidate));
 
         var projected = Replay(before.Layers, events, candidateQuantity,
-            candidateDepletesPool);
+            candidateDepletesPool,
+            repriceSalesReturns: candidateReceipt is not null
+                && candidateKey.ClassPriority == StockReplayEventKey.OrdinaryClass);
         var finalQuantity = StockLedgerPrecision.Quantity(
             projected.Layers.Sum(l => l.RemainingQuantity));
         var finalValue = StockLedgerPrecision.Money(
@@ -270,9 +274,11 @@ public static class StockReplayFifoTailProjector
         var changedLaterIssueValue = projected.Issues
             .Where(i => !i.IsCandidate && i.DepletesPool)
             .Sum(i => i.Value - i.PreviousConsumptions.Sum(c => c.Value));
+        var changedReturnValue = ChangedReturnValue(snapshot, projected.Layers);
         if (finalValue != StockLedgerPrecision.Money(
                 snapshot.CurrentValue
                 + (candidateReceipt?.OriginalValue ?? 0m)
+                + changedReturnValue
                 - (candidateDepletesPool ? candidateIssueValue : 0m)
                 - changedLaterIssueValue))
             throw Invalid("FIFO insertion projection does not conserve final value.");
@@ -324,7 +330,7 @@ public static class StockReplayFifoTailProjector
         List<StockReplayFifoProjectedIssue> Issues) Replay(
         IReadOnlyList<StockReplayFifoLayerPosition> opening,
         IEnumerable<TailEvent> events, decimal candidateQuantity,
-        bool candidateDepletesPool = true)
+        bool candidateDepletesPool = true, bool repriceSalesReturns = false)
     {
         var layers = opening.ToList();
         var projectedIssues = new List<StockReplayFifoProjectedIssue>();
@@ -334,6 +340,32 @@ public static class StockReplayFifoTailProjector
             {
                 if (layers.Any(l => l.LayerId == receipt.LayerId))
                     throw Invalid($"FIFO receipt layer {receipt.LayerId} appears twice.");
+                if (repriceSalesReturns && receipt.SalesReturn is { } binding)
+                {
+                    var sale = projectedIssues.SingleOrDefault(i =>
+                        !i.IsCandidate && i.Key.LineIdentity == $"H{binding.SaleHistoryId:D10}");
+                    if (sale is not null)
+                    {
+                        if (!sale.DepletesPool || sale.Quantity <= 0m
+                            || sale.PreviousConsumptions.Count == 0
+                            || sale.PreviousConsumptions.OrderBy(c => c.SplitOrdinal).First().IssueFactId
+                                != binding.SaleFactId
+                            || sale.Allocations.Count == 0
+                            || binding.ReturnedQuantity > sale.Quantity
+                            || binding.ReturnedQuantity != receipt.OriginalQuantity
+                            || binding.ReturnedValue != receipt.RemainingValue)
+                            throw Invalid("FIFO Sales return repricing requires its exact sale generation.");
+                        var slices = StockReplayFifoSalesReturnAllocationWriter.Allocate(
+                            sale.Allocations.Select(a => (a.Quantity, a.Value)).ToArray(), binding.ReturnedQuantity);
+                        var value = StockLedgerPrecision.Money(slices.Sum(s => s.Value));
+                        receipt = receipt with
+                        {
+                            AccumulatedAdjustment = StockLedgerPrecision.Money(value - receipt.OriginalValue),
+                            RemainingValue = value,
+                            CurrentUnitCost = StockLedgerPrecision.Money(value / receipt.OriginalQuantity)
+                        };
+                    }
+                }
                 layers.Add(receipt);
                 continue;
             }
@@ -351,6 +383,15 @@ public static class StockReplayFifoTailProjector
                 layers = allocation.Layers.ToList();
         }
         return (layers, projectedIssues);
+    }
+
+    private static decimal ChangedReturnValue(StockReplayFifoActiveLayerSnapshot snapshot,
+        IReadOnlyList<StockReplayFifoLayerPosition> projected)
+    {
+        var previous = snapshot.Layers.ToDictionary(l => l.LayerId);
+        return StockLedgerPrecision.Money(projected.Sum(layer =>
+            layer.SalesReturn is null || !previous.TryGetValue(layer.LayerId, out var old)
+                ? 0m : layer.AccumulatedAdjustment - old.AccumulatedAdjustment));
     }
 
     private static StockLedgerException Invalid(string message) =>

@@ -73,20 +73,24 @@ public sealed partial class IvInventoryPostingService
             && physical.LaterEvents.Count != 0)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC MR has a later physical movement without valuation.");
+        var productionPlan = await PlanWacProductionLeafAsync(read, companyCode, branchCode,
+            financial.Tail.LaterEvents, cancellationToken);
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
                 batch.TrxDtTime, cancellationToken,
-                allowBoundedSales: true) is string unsupported)
+                allowBoundedSales: true, allowBoundedProduction: productionPlan is not null) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
         await using var write = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
+            financial.Tail.LaterEvents, productionPlan, cancellationToken);
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
                 batch.TrxDtTime, cancellationToken,
-                allowBoundedSales: true) is string changedTail)
+                allowBoundedSales: true, allowBoundedProduction: productionPlan is not null) is string changedTail)
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, changedTail);
@@ -106,6 +110,8 @@ public sealed partial class IvInventoryPostingService
                 "Backdated WAC replay requires an active V2 posting root."));
         var required = await StockReplayWacMrRootWriter.InsertAsync(
             ledger.Context, financial, batchNo, cancellationToken);
+        await ApplyWacProductionLeafAsync(ledger.Context, productionPlan, financial.PlanHash,
+            physical.BranchWatermark, financial.Tail.LaterEvents, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(
             ledger.Context, required, cancellationToken);
         postingScope.MarkCompleted();
@@ -172,16 +178,24 @@ public sealed partial class IvInventoryPostingService
             && physical.LaterEvents.Count != 0)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC GR has a later physical movement without valuation.");
+        var productionPlan = await PlanWacProductionLeafAsync(read, companyCode, branchCode,
+            financial.Tail.LaterEvents, cancellationToken);
+        if (productionPlan is not null && replayInvoice is not null)
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "Backdated GR cannot yet replay both a Production issue and an invoice settlement.");
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
                 batch.TrxDtTime, cancellationToken,
-                replayInvoice, allowBoundedSales: true) is string unsupported)
+                replayInvoice, allowBoundedSales: true,
+                allowBoundedProduction: productionPlan is not null) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
         await using var write = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
+            financial.Tail.LaterEvents, productionPlan, cancellationToken);
         var snapshot = await LoadGoodsReceiptSnapshotAsync(write, companyCode,
             branchCode, batchNo, IvTrxTypes.GoodsReceive, cancellationToken);
         if (snapshot.Error is not null)
@@ -231,7 +245,8 @@ public sealed partial class IvInventoryPostingService
             && await CheckSimpleWacTailAsync(write,
                 financial.Tail.LaterEvents, batch.TrxDtTime,
                 cancellationToken, replayInvoice,
-                allowBoundedSales: true) is string changedTail)
+                allowBoundedSales: true,
+                allowBoundedProduction: productionPlan is not null) is string changedTail)
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, changedTail);
@@ -255,6 +270,8 @@ public sealed partial class IvInventoryPostingService
         await ApplyGoodsReceiptPoQtyAsync(write, locked.Orders!,
             snapshot.Details!, +1, snapshot.Batch!.TrxDtTime, userId,
             cancellationToken);
+        await ApplyWacProductionLeafAsync(ledger.Context, productionPlan, financial.PlanHash,
+            physical.BranchWatermark, financial.Tail.LaterEvents, cancellationToken);
         if (replayInvoice is not null)
         {
             var remap = await new PurchaseReceiptCostSettlementService()
@@ -475,18 +492,30 @@ public sealed partial class IvInventoryPostingService
                     invoiceCheck.Error);
             replayInvoice = invoiceCheck.Invoice;
         }
+        var productionPlan = isReceipt
+            ? await PlanWacProductionLeafAsync(read, companyCode, branchCode,
+                financial.Tail.LaterEvents, cancellationToken)
+            : null;
+        if (productionPlan is not null && replayInvoice is not null)
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "Backdated GR rollback cannot yet replay both a Production issue and an invoice settlement.");
         if (await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
                 original.TrxDtTime, cancellationToken,
-                replayInvoice, allowBoundedSales: isReceipt) is string unsupported)
+                replayInvoice, allowBoundedSales: isReceipt,
+                allowBoundedProduction: productionPlan is not null) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
         await using var write = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (isReceipt)
+            await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
+                financial.Tail.LaterEvents, productionPlan, cancellationToken);
         if (await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
                 original.TrxDtTime, cancellationToken, replayInvoice,
-                allowBoundedSales: isReceipt) is string lockedTailError)
+                allowBoundedSales: isReceipt,
+                allowBoundedProduction: productionPlan is not null) is string lockedTailError)
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, lockedTailError);
@@ -660,7 +689,8 @@ public sealed partial class IvInventoryPostingService
             if (await CheckSimpleWacTailAsync(write,
                     financial.Tail.LaterEvents, original.TrxDtTime,
                     cancellationToken, replayInvoice,
-                    allowBoundedSales: true) is string changedTail)
+                    allowBoundedSales: true,
+                    allowBoundedProduction: productionPlan is not null) is string changedTail)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, changedTail);
@@ -755,6 +785,8 @@ public sealed partial class IvInventoryPostingService
                 cancellationToken, allowSalesReturn: isReceipt);
         await StockReplayWacCostStateWriter.ApplyAsync(
             context, permit, cancellationToken);
+        await ApplyWacProductionLeafAsync(context, productionPlan, financial.PlanHash,
+            physical.BranchWatermark, financial.Tail.LaterEvents, cancellationToken);
         if (replayInvoice is not null)
         {
             var remap = await new PurchaseReceiptCostSettlementService()
@@ -892,7 +924,8 @@ public sealed partial class IvInventoryPostingService
         DateTime candidateDate,
         CancellationToken cancellationToken,
         PoInvoice? replayInvoice = null,
-        bool allowBoundedSales = false)
+        bool allowBoundedSales = false,
+        bool allowBoundedProduction = false)
     {
         if (events.Count == 0 || events.Count > 100
             || events.Any(e => e.EventId <= 0 || e.EventId > int.MaxValue
@@ -921,6 +954,7 @@ public sealed partial class IvInventoryPostingService
                             ? eventById[h.Id].OldSignedQuantity <= 0m
                             : StockReplayFifoInventoryIssueKinds.IsSupported(h.TrxType)
                                 || allowBoundedSales && h.TrxType == IvTrxTypes.SalesOut
+                                || allowBoundedProduction && h.TrxType == IvTrxTypes.IssueToProduction
                                 ? eventById[h.Id].OldSignedQuantity >= 0m
                                 : h.TrxType != IvTrxTypes.StockTransfer
                                     || eventById[h.Id].OldSignedQuantity != 0m))))
@@ -1017,6 +1051,8 @@ public sealed partial class IvInventoryPostingService
             .Select(h => h.Id).ToArray();
         var returnIds = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn)
             .Select(h => h.Id).ToArray();
+        if (allowBoundedProduction && (salesIds.Length > 0 || returnIds.Length > 0))
+            return "Backdated receipt cannot yet replay Production and Sales dependencies together.";
         SalesReturnPermit? permittedReturn = null;
         if (returnIds.Length > 0)
         {
@@ -1182,7 +1218,8 @@ public sealed partial class IvInventoryPostingService
             if (!await HasUnreturnedSaleFactsAsync(db, history,
                     "SA_DO", doNo, costMethod, cancellationToken,
                     permittedReturn?.AllocationId,
-                    permittedReturn?.ReversedWacAllocation == true))
+                    permittedReturn?.ReversedWacAllocation == true,
+                    permittedReturn?.AllocationIds))
                 return unsupported + " Shipment valuation or return allocation is inconsistent.";
         }
         return null;
@@ -1246,7 +1283,8 @@ public sealed partial class IvInventoryPostingService
         if (!await HasUnreturnedSaleFactsAsync(db, history,
                 "SA_INVOICE", invoiceNo, costMethod, cancellationToken,
                 permittedReturn?.AllocationId,
-                permittedReturn?.ReversedWacAllocation == true))
+                permittedReturn?.ReversedWacAllocation == true,
+                permittedReturn?.AllocationIds))
             return unsupported + " Shipment valuation or return allocation is inconsistent.";
         return null;
     }
@@ -1255,7 +1293,8 @@ public sealed partial class IvInventoryPostingService
         ErpWeb.Model.Data.AppDbContext db, IvTrxHistory history,
         string ownerType, string ownerNo, string costMethod,
         CancellationToken cancellationToken, long? permittedAllocationId = null,
-        bool verifiedReversedWacAllocation = false)
+        bool verifiedReversedWacAllocation = false,
+        IReadOnlyCollection<long>? permittedAllocationIds = null)
     {
         var facts = await db.StockValuationFacts.AsNoTracking()
             .Where(f => f.CompanyCode == history.CompanyCode
@@ -1311,7 +1350,10 @@ public sealed partial class IvInventoryPostingService
                 a.ReversesAllocationId == root.Id)).ToArray();
             return costMethod is StockCostMethods.Standard or StockCostMethods.MovingAverage
                     or StockCostMethods.Fifo
-                && activeRoots.Length == 1 && activeRoots[0].Id == permittedAllocationId;
+                && (permittedAllocationIds is null
+                    ? activeRoots.Length == 1 && activeRoots[0].Id == permittedAllocationId
+                    : costMethod == StockCostMethods.Fifo
+                        && activeRoots.Select(a => a.Id).Order().SequenceEqual(permittedAllocationIds.Order()));
         }
         if (costMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Standard
                 or StockCostMethods.Fifo)
@@ -1322,8 +1364,38 @@ public sealed partial class IvInventoryPostingService
         // rows behind. Admit only exact, sealed reversal pairs; ambiguous or active
         // return evidence must continue to block repricing of the sale.
         var roots = allocations.Where(a => a.ReversesAllocationId is null).ToArray();
-        if (roots.Length == 0 || costMethod is StockCostMethods.Standard or StockCostMethods.Fifo
-                && roots.Length != 1)
+        var rootsById = roots.ToDictionary(a => a.Id);
+        var hasFifoRelink = costMethod == StockCostMethods.Fifo
+            && allocations.Any(a => a.ReversesAllocationId is long parent
+                && rootsById.TryGetValue(parent, out var root)
+                && a.ReturnValuationFactId == root.ReturnValuationFactId);
+        if (hasFifoRelink)
+        {
+            if (roots.Length == 0 || roots.Length > 100
+                || roots.Any(a => a.ReturnValuationFactId is null)
+                || allocations.Any(a => a.ReversesAllocationId is long parent
+                    && !rootsById.ContainsKey(parent)))
+                return false;
+            foreach (var group in roots.GroupBy(a => a.ReturnValuationFactId!.Value))
+            {
+                var groupIds = group.Select(a => a.Id).ToHashSet();
+                var groupRows = allocations.Where(a => groupIds.Contains(a.Id)
+                    || a.ReversesAllocationId is long parent && groupIds.Contains(parent)).ToArray();
+                var returned = await db.StockValuationFacts.AsNoTracking()
+                    .SingleOrDefaultAsync(f => f.Id == group.Key, cancellationToken);
+                if (returned is null || !await HasExactFifoSalesReturnLineageAsync(
+                        db, groupRows, history, returned, null, true, cancellationToken))
+                    return false;
+            }
+            return true;
+        }
+        if (roots.Length == 0 || costMethod == StockCostMethods.Standard && roots.Length != 1
+            || costMethod == StockCostMethods.Fifo && (roots.Length > 100
+                || roots.Any(a => a.ReturnDocumentNo != roots[0].ReturnDocumentNo
+                    || a.ReturnDocumentLine != roots[0].ReturnDocumentLine)
+                || roots.GroupBy(a => a.ReturnValuationFactId).Any(g =>
+                    g.Select(a => a.OriginalValuationFactId).Distinct().Count() != g.Count()
+                    || g.Select(a => a.ReturnCostingRevision).Distinct().Count() != 1)))
             return false;
         var rootIds = roots.Select(a => a.Id).ToArray();
         var reversals = await db.SalesReturnCostAllocations.AsNoTracking()
@@ -1391,6 +1463,7 @@ public sealed partial class IvInventoryPostingService
                 || reversal.ReturnDocumentType != root.ReturnDocumentType
                 || reversal.ReturnDocumentNo != root.ReturnDocumentNo
                 || reversal.ReturnDocumentLine != root.ReturnDocumentLine
+                || reversal.ReturnCostingRevision != root.ReturnCostingRevision
                 || reversal.OriginalValuationFactId != root.OriginalValuationFactId
                 || reversal.OriginalOwnerType != root.OriginalOwnerType
                 || reversal.OriginalOwnerDocumentNo != root.OriginalOwnerDocumentNo
@@ -1426,6 +1499,10 @@ public sealed partial class IvInventoryPostingService
                 || reversalFact.ValuationStatus != StockValuationStatuses.Reversed
                 || reversalFact.StockPostingId != reversal.StockPostingId
                 || reversalPosting is null || reversalPosting.SealedAtUtc is null
+                || reversalFact.InventoryHistory is null
+                || reversalFact.InventoryHistory.EntryRole != "REVERSAL"
+                || reversalFact.InventoryHistory.ReversesHistoryId != returnHistory.Id
+                || reversalFact.InventoryHistory.StockPostingId != reversalPosting.Id
                 || reversalPosting.CompanyCode != originalPosting.CompanyCode
                 || reversalPosting.BranchCode != originalPosting.BranchCode
                 || reversalPosting.LedgerEpochId != originalPosting.LedgerEpochId

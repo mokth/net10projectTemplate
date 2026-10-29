@@ -85,6 +85,7 @@ public static class StockReplayFifoReconciliationGate
                 !projected.TryGetValue(layer.LayerId, out var final)
                 || layer.RemainingQuantity != final.RemainingQuantity
                 || layer.RemainingValue != final.RemainingValue
+                || layer.AccumulatedAdjustment != final.AccumulatedAdjustment
                 || layer.CurrentUnitCost != final.CurrentUnitCost
                 || layer.Status != final.Status))
             throw Invalid("Sealed FIFO layers differ from the replay projection.");

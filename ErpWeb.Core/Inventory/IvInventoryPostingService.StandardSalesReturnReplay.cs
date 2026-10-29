@@ -14,7 +14,8 @@ public sealed partial class IvInventoryPostingService
     private sealed record SalesReturnPermit(
         int SaleHistoryId, string NoteNo, long? AllocationId,
         string CostMethod = StockCostMethods.Standard,
-        bool ReversedWacAllocation = false);
+        bool ReversedWacAllocation = false,
+        IReadOnlyList<long>? AllocationIds = null);
 
     // A rolled-back note remains as a draft with immutable stock and cost reversal
     // evidence. Permit only the one draft that still describes that exact return;
@@ -59,14 +60,19 @@ public sealed partial class IvInventoryPostingService
                 && a.OriginalOwnerDocumentNo == ownerNo
                 && a.ReversesAllocationId == null).ToArrayAsync(cancellationToken);
         if (roots.Length == 0 || roots.Length > 100
-            || costMethod is StockCostMethods.Standard or StockCostMethods.Fifo
-                && roots.Length != 1)
+            || costMethod == StockCostMethods.Standard && roots.Length != 1)
             return null;
         var lastRoot = roots.OrderByDescending(a => a.Id).First();
         if (lastRoot.ReturnValuationFactId is not long returnFactId
             || lastRoot.ReturnDocumentType != "SA_CDN"
             || lastRoot.ReturnDocumentNo != note.DocNo
-            || lastRoot.ReturnCostingRevision + 1 != note.CostingRevision)
+            || lastRoot.ReturnCostingRevision + 1 != note.CostingRevision
+            || costMethod == StockCostMethods.Fifo && roots.Any(root =>
+                root.ReturnValuationFactId is null
+                || root.ReturnDocumentType != "SA_CDN"
+                || root.ReturnDocumentNo != lastRoot.ReturnDocumentNo
+                || root.ReturnDocumentLine != lastRoot.ReturnDocumentLine
+                || root.ReturnCostingRevision > lastRoot.ReturnCostingRevision))
             return null;
         var returnFact = await db.StockValuationFacts.AsNoTracking()
             .Include(f => f.InventoryHistory)
@@ -319,6 +325,430 @@ public sealed partial class IvInventoryPostingService
         return true;
     }
 
+    private static async Task<bool> HasExactFifoSalesReturnLineageAsync(
+        AppDbContext db, IReadOnlyList<SalesReturnCostAllocation> rows,
+        IvTrxHistory saleHistory, StockValuationFact returned,
+        long? activeAllocationId, bool requireAllReversed,
+        CancellationToken cancellationToken)
+    {
+        var roots = rows.Where(a => a.ReversesAllocationId is null)
+            .OrderBy(a => a.Id).ToArray();
+        if (roots.Length == 0 || roots.Length > 100
+            || roots.Any(a => a.ReturnValuationFactId != returned.Id))
+            return false;
+        if (roots.GroupBy(a => a.StockPostingId).Any(g => g.Count() > 1))
+            return await HasExactFifoSalesReturnGroupedLineageAsync(db, rows, saleHistory,
+                returned, activeAllocationId, requireAllReversed, cancellationToken);
+        var rootIds = roots.Select(a => a.Id).ToArray();
+        var children = await db.SalesReturnCostAllocations.AsNoTracking()
+            .Where(a => a.ReversesAllocationId.HasValue
+                && rootIds.Contains(a.ReversesAllocationId.Value))
+            .ToArrayAsync(cancellationToken);
+        var childIds = children.Select(c => c.Id).ToArray();
+        if (children.GroupBy(a => a.ReversesAllocationId).Any(g => g.Count() != 1)
+            || rows.Count != roots.Length + children.Length
+            || children.Any(a => !rows.Any(r => r.Id == a.Id))
+            || await db.SalesReturnCostAllocations.AsNoTracking().AnyAsync(a =>
+                a.ReversesAllocationId.HasValue
+                && childIds.Contains(a.ReversesAllocationId.Value), cancellationToken))
+            return false;
+        var childByRoot = children.ToDictionary(a => a.ReversesAllocationId!.Value);
+        var saleIds = roots.Select(a => a.OriginalValuationFactId).Distinct().ToArray();
+        var saleFacts = await db.StockValuationFacts.AsNoTracking().Include(f => f.StockPosting)
+            .Where(f => saleIds.Contains(f.Id)).ToDictionaryAsync(f => f.Id, cancellationToken);
+        var saleReversals = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.ReversesValuationFactId.HasValue
+                && saleIds.Contains(f.ReversesValuationFactId.Value))
+            .ToArrayAsync(cancellationToken);
+        if (saleFacts.Count != saleIds.Length || returned.InventoryHistoryId is not int returnHistoryId
+            || returned.CompanyCode != saleHistory.CompanyCode || returned.BranchCode != saleHistory.BranchCode
+            || returned.ItemCode != saleHistory.ICode || returned.LedgerEpochId != saleHistory.LedgerEpochId
+            || returned.CostMethod != StockCostMethods.Fifo || returned.Direction != 1
+            || returned.MovementCode != "SALE_RETURN_IN"
+            || returned.ValuationSource != StockValuationSources.OriginalSaleReturn
+            || returned.ValuationStatus != StockValuationStatuses.Valued
+            || returned.BaseCostAmount != returned.CostAmount)
+            return false;
+        IReadOnlyList<StockValuationFact> adjustments;
+        try
+        {
+            adjustments = await StockReplayFifoSalesReturnValueAdjustment.ReadVerifiedAsync(
+                db, returned, cancellationToken);
+        }
+        catch (StockLedgerException)
+        {
+            return false;
+        }
+        var usedAdjustments = new HashSet<long>();
+        bool MatchesAdjustment(long postingId, decimal signedValue)
+        {
+            var atPosting = adjustments.Where(f => f.StockPostingId == postingId).ToArray();
+            if (signedValue == 0m)
+                return atPosting.Length == 0;
+            if (atPosting.Length != 1 || atPosting[0].SignedValue != signedValue)
+                return false;
+            return usedAdjustments.Add(atPosting[0].Id);
+        }
+        var returnHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(
+            h => h.Id == returnHistoryId, cancellationToken);
+        var returnOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(
+            p => p.Id == returned.StockPostingId, cancellationToken);
+        if (returnHistory is null || returnHistory.EntryRole != "ORIGINAL"
+            || returnHistory.TrxType != IvTrxTypes.CustomerReturn
+            || returnHistory.CompanyCode != returned.CompanyCode
+            || returnHistory.BranchCode != returned.BranchCode || returnHistory.ICode != returned.ItemCode
+            || returnHistory.StockPostingId != returned.StockPostingId
+            || returnHistory.DocumentRevision != roots[0].ReturnCostingRevision
+            || returnHistory.TrxLineNo != roots[0].ReturnDocumentLine
+            || returnHistory.RefNo != SaCdnSpRefs.ToRefNo(roots[0].ReturnDocumentNo)
+            || returnHistory.ToStdQty != returned.BaseQty
+            || returnOwner is null || returnOwner.SealedAtUtc is null
+            || returnOwner.CompanyCode != returned.CompanyCode || returnOwner.BranchCode != returned.BranchCode
+            || returnOwner.LedgerEpochId != returned.LedgerEpochId
+            || returnOwner.SourceModule != "INVENTORY"
+            || returnOwner.SourceDocumentType != IvTrxTypes.CustomerReturn
+            || returnOwner.PostingRole != "PRIMARY")
+            return false;
+        var originalSaleId = saleFacts[roots[0].OriginalValuationFactId].OriginalValuationFactId
+            ?? roots[0].OriginalValuationFactId;
+        var first = roots[0];
+        for (var i = 0; i < roots.Length; i++)
+        {
+            var root = roots[i];
+            var fact = saleFacts[root.OriginalValuationFactId];
+            var owner = fact.StockPosting;
+            if (root.CompanyCode != returned.CompanyCode || root.BranchCode != returned.BranchCode
+                || root.ReturnDocumentType != "SA_CDN" || root.ReturnDocumentNo != first.ReturnDocumentNo
+                || root.ReturnDocumentLine != first.ReturnDocumentLine
+                || root.ReturnCostingRevision != first.ReturnCostingRevision
+                || root.OriginalOwnerType != first.OriginalOwnerType
+                || root.OriginalOwnerDocumentNo != first.OriginalOwnerDocumentNo
+                || root.OriginalOwnerDocumentLine != first.OriginalOwnerDocumentLine
+                || root.ReturnedBaseQty != returned.BaseQty
+                || i == 0 && root.ReturnedCostAmount != returned.CostAmount
+                || fact.CompanyCode != returned.CompanyCode || fact.BranchCode != returned.BranchCode
+                || fact.LedgerEpochId != returned.LedgerEpochId || fact.ItemCode != returned.ItemCode
+                || fact.InventoryHistoryId != saleHistory.Id || fact.Direction != -1
+                || fact.MovementCode != "SALE_OUT" || fact.CostMethod != StockCostMethods.Fifo
+                || fact.ValuationSource != StockValuationSources.Fifo
+                || fact.ValuationStatus != StockValuationStatuses.Valued || fact.BaseQty <= 0m
+                || fact.SplitOrdinal != 0 || root.ReturnedBaseQty > fact.BaseQty
+                || fact.BaseCostAmount != fact.CostAmount || fact.EffectiveAt != saleHistory.TrxDtTime
+                || fact.SourceDocumentType != root.OriginalOwnerType
+                || fact.SourceDocumentId != root.OriginalOwnerDocumentNo
+                || fact.SourceDocumentNo != root.OriginalOwnerDocumentNo
+                || fact.SourceDocumentLine != root.OriginalOwnerDocumentLine
+                || (fact.OriginalValuationFactId ?? fact.Id) != originalSaleId
+                || root.ReturnedCostAmount != StockLedgerPrecision.Money(
+                    fact.CostAmount * root.ReturnedBaseQty / fact.BaseQty)
+                || owner is null || owner.SealedAtUtc is null
+                || owner.CompanyCode != fact.CompanyCode || owner.BranchCode != fact.BranchCode
+                || owner.LedgerEpochId != fact.LedgerEpochId
+                || i == 0 && root.StockPostingId != returned.StockPostingId
+                || i > 0 && (root.StockPostingId != fact.StockPostingId
+                    || owner.SourceModule != "INVENTORY"
+                    || owner.PostingRole is not ("PRIMARY" or "REVERSAL")
+                    || owner.SourceDocumentType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)))
+                return false;
+            if (!childByRoot.TryGetValue(root.Id, out var child))
+            {
+                if (i != roots.Length - 1 || requireAllReversed || activeAllocationId != root.Id
+                    || saleReversals.Any(r => r.ReversesValuationFactId == fact.Id))
+                    return false;
+                continue;
+            }
+            if (child.CompanyCode != root.CompanyCode || child.BranchCode != root.BranchCode
+                || child.ReturnDocumentType != root.ReturnDocumentType
+                || child.ReturnDocumentNo != root.ReturnDocumentNo
+                || child.ReturnDocumentLine != root.ReturnDocumentLine
+                || child.ReturnCostingRevision != root.ReturnCostingRevision
+                || child.OriginalValuationFactId != root.OriginalValuationFactId
+                || child.OriginalOwnerType != root.OriginalOwnerType
+                || child.OriginalOwnerDocumentNo != root.OriginalOwnerDocumentNo
+                || child.OriginalOwnerDocumentLine != root.OriginalOwnerDocumentLine
+                || child.ReturnedBaseQty != root.ReturnedBaseQty
+                || child.ReturnedCostAmount != root.ReturnedCostAmount)
+                return false;
+            if (i < roots.Length - 1)
+            {
+                if (child.ReturnValuationFactId != returned.Id
+                    || child.StockPostingId != roots[i + 1].StockPostingId
+                    || !MatchesAdjustment(child.StockPostingId, StockLedgerPrecision.Money(
+                        roots[i + 1].ReturnedCostAmount - root.ReturnedCostAmount))
+                    || saleReversals.Count(r => r.ReversesValuationFactId == fact.Id
+                        && r.StockPostingId == child.StockPostingId
+                        && r.InventoryHistoryId == saleHistory.Id && r.Direction == 1
+                        && r.BaseQty == fact.BaseQty && r.CostAmount == fact.CostAmount
+                        && r.ValuationStatus == StockValuationStatuses.Reversed) != 1
+                    || saleReversals.Count(r => r.ReversesValuationFactId == fact.Id) != 1)
+                    return false;
+                continue;
+            }
+            if (!requireAllReversed || child.ReturnValuationFactId is not long reversalId)
+                return false;
+            var reversal = await db.StockValuationFacts.AsNoTracking()
+                .Include(f => f.StockPosting).Include(f => f.InventoryHistory)
+                .SingleOrDefaultAsync(f => f.Id == reversalId, cancellationToken);
+            if (reversal is null || reversal.ReversesValuationFactId != returned.Id
+                || reversal.Direction != -1 || reversal.BaseQty != returned.BaseQty
+                || reversal.CostAmount != returned.CostAmount
+                || reversal.CompanyCode != returned.CompanyCode || reversal.BranchCode != returned.BranchCode
+                || reversal.LedgerEpochId != returned.LedgerEpochId || reversal.ItemCode != returned.ItemCode
+                || reversal.CostMethod != StockCostMethods.Fifo
+                || reversal.ValuationStatus != StockValuationStatuses.Reversed
+                || reversal.StockPostingId != child.StockPostingId
+                || reversal.InventoryHistory?.EntryRole != "REVERSAL"
+                || reversal.InventoryHistory.ReversesHistoryId != returnHistoryId
+                || reversal.StockPosting?.SealedAtUtc is null
+                || reversal.StockPosting.CompanyCode != returned.CompanyCode
+                || reversal.StockPosting.BranchCode != returned.BranchCode
+                || reversal.StockPosting.LedgerEpochId != returned.LedgerEpochId
+                || reversal.StockPosting.PostingRole != "REVERSAL"
+                || reversal.StockPosting.ReversesPostingId != returned.StockPostingId
+                || reversal.StockPosting.SourceDocumentType != IvTrxTypes.CustomerReturn
+                || !MatchesAdjustment(child.StockPostingId, StockLedgerPrecision.Money(
+                    returned.CostAmount - root.ReturnedCostAmount)))
+                return false;
+        }
+        return usedAdjustments.Count == adjustments.Count
+            && (requireAllReversed ? children.Length == roots.Length
+                : children.Length == roots.Length - 1);
+    }
+
+    // A return may cover several FIFO sale splits. Each replay replaces the
+    // entire allocation group under one posting; validate the groups and their
+    // sale generations together rather than treating each slice as a chain.
+    internal static async Task<bool> HasExactFifoSalesReturnGroupedLineageAsync(
+        AppDbContext db, IReadOnlyList<SalesReturnCostAllocation> rows,
+        IvTrxHistory saleHistory, StockValuationFact returned, long? activeAllocationId,
+        bool requireAllReversed, CancellationToken cancellationToken)
+    {
+        var roots = rows.Where(a => a.ReversesAllocationId is null).OrderBy(a => a.Id).ToArray();
+        if (roots.Length == 0 || roots.Length > 100 || roots.Any(a => a.ReturnValuationFactId != returned.Id)
+            || returned.InventoryHistoryId is not int returnHistoryId
+            || returned.CompanyCode != saleHistory.CompanyCode || returned.BranchCode != saleHistory.BranchCode
+            || returned.LedgerEpochId != saleHistory.LedgerEpochId || returned.ItemCode != saleHistory.ICode
+            || returned.CostMethod != StockCostMethods.Fifo || returned.Direction != 1
+            || returned.MovementCode != "SALE_RETURN_IN"
+            || returned.ValuationSource != StockValuationSources.OriginalSaleReturn
+            || returned.ValuationStatus != StockValuationStatuses.Valued
+            || returned.BaseCostAmount != returned.CostAmount || saleHistory.FrStdQty is not > 0m
+            || saleHistory.TrxType != IvTrxTypes.SalesOut || saleHistory.EntryRole != "ORIGINAL"
+            || saleHistory.BatchStatus != IvBatchStatuses.Posted || saleHistory.LedgerVersion != 2
+            || saleHistory.StockPostingId is null || saleHistory.SoLineNo is not > 0)
+            return false;
+        var rootIds = roots.Select(a => a.Id).ToArray();
+        var children = await db.SalesReturnCostAllocations.AsNoTracking().Where(a =>
+            a.ReversesAllocationId.HasValue && rootIds.Contains(a.ReversesAllocationId.Value))
+            .ToArrayAsync(cancellationToken);
+        var childIds = children.Select(a => a.Id).ToArray();
+        if (rows.Count != roots.Length + children.Length
+            || children.Any(c => !rows.Any(r => r.Id == c.Id))
+            || children.GroupBy(c => c.ReversesAllocationId).Any(g => g.Count() != 1)
+            || await db.SalesReturnCostAllocations.AsNoTracking().AnyAsync(a =>
+                a.ReversesAllocationId.HasValue && childIds.Contains(a.ReversesAllocationId.Value), cancellationToken))
+            return false;
+        var childByRoot = children.ToDictionary(c => c.ReversesAllocationId!.Value);
+        var returnHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
+            h.Id == returnHistoryId, cancellationToken);
+        var returnOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p =>
+            p.Id == returned.StockPostingId, cancellationToken);
+        var first = roots[0];
+        var expectedOwnerType = string.IsNullOrWhiteSpace(saleHistory.DoNo) ? "SA_INVOICE" : "SA_DO";
+        var expectedOwnerNo = expectedOwnerType == "SA_INVOICE" ? saleHistory.InvNo : saleHistory.DoNo;
+        var expectedOwnerLine = saleHistory.SoLineNo.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (returnHistory is null || returnHistory.EntryRole != "ORIGINAL"
+            || returnHistory.TrxType != IvTrxTypes.CustomerReturn
+            || returnHistory.CompanyCode != returned.CompanyCode || returnHistory.BranchCode != returned.BranchCode
+            || returnHistory.ICode != returned.ItemCode || returnHistory.StockPostingId != returned.StockPostingId
+            || returnHistory.DocumentRevision != first.ReturnCostingRevision
+            || returnHistory.TrxLineNo != first.ReturnDocumentLine
+            || returnHistory.RefNo != SaCdnSpRefs.ToRefNo(first.ReturnDocumentNo)
+            || returnHistory.ToStdQty != returned.BaseQty || returnOwner is null || returnOwner.SealedAtUtc is null
+            || returnOwner.CompanyCode != returned.CompanyCode || returnOwner.BranchCode != returned.BranchCode
+            || returnOwner.LedgerEpochId != returned.LedgerEpochId || returnOwner.SourceModule != "INVENTORY"
+            || returnOwner.SourceDocumentType != IvTrxTypes.CustomerReturn || returnOwner.PostingRole != "PRIMARY"
+            || string.IsNullOrWhiteSpace(expectedOwnerNo) || first.OriginalOwnerType != expectedOwnerType
+            || first.OriginalOwnerDocumentNo != expectedOwnerNo || first.OriginalOwnerDocumentLine != expectedOwnerLine)
+            return false;
+        var saleFacts = await db.StockValuationFacts.AsNoTracking().Include(f => f.StockPosting)
+            .Where(f => f.InventoryHistoryId == saleHistory.Id && f.Direction == -1
+                && f.ReversesValuationFactId == null && f.ValuationStatus == StockValuationStatuses.Valued)
+            .ToArrayAsync(cancellationToken);
+        var bySaleId = saleFacts.ToDictionary(f => f.Id);
+        var originals = saleFacts.Where(f => f.StockPostingId == saleHistory.StockPostingId
+                && f.OriginalValuationFactId is null)
+            .OrderBy(f => f.SplitOrdinal).ToArray();
+        if (originals.Length == 0 || originals.Sum(f => f.BaseQty) != saleHistory.FrStdQty
+            || roots.Any(a => !bySaleId.ContainsKey(a.OriginalValuationFactId)))
+            return false;
+        var saleFactIds = saleFacts.Select(f => f.Id).ToArray();
+        var saleReversals = await db.StockValuationFacts.AsNoTracking().Where(f =>
+            f.ReversesValuationFactId.HasValue && saleFactIds.Contains(f.ReversesValuationFactId.Value))
+            .ToArrayAsync(cancellationToken);
+        IReadOnlyList<StockValuationFact> adjustments;
+        try
+        {
+            adjustments = await StockReplayFifoSalesReturnValueAdjustment.ReadVerifiedAsync(
+                db, returned, cancellationToken);
+        }
+        catch (StockLedgerException)
+        {
+            return false;
+        }
+        var usedAdjustments = new HashSet<long>();
+        bool MatchesAdjustment(long postingId, decimal signedValue)
+        {
+            var matched = adjustments.Where(f => f.StockPostingId == postingId).ToArray();
+            return signedValue == 0m ? matched.Length == 0
+                : matched.Length == 1 && matched[0].SignedValue == signedValue
+                    && usedAdjustments.Add(matched[0].Id);
+        }
+        var groups = roots.GroupBy(a => a.StockPostingId)
+            .OrderBy(g => g.Min(a => a.Id)).Select(g => g.ToArray()).ToArray();
+        if (groups[0][0].StockPostingId != returned.StockPostingId)
+            return false;
+        for (var i = 0; i < groups.Length; i++)
+        {
+            var group = groups[i];
+            var generationPostings = group.Select(a => bySaleId[a.OriginalValuationFactId].StockPostingId)
+                .Distinct().ToArray();
+            if (generationPostings.Length != 1)
+                return false;
+            var generation = saleFacts.Where(f => f.StockPostingId == generationPostings[0])
+                .OrderBy(f => f.SplitOrdinal).ToArray();
+            var originalGeneration = generationPostings[0] == saleHistory.StockPostingId;
+            if (generation.Length == 0 || generation.Sum(f => f.BaseQty) != saleHistory.FrStdQty
+                || generation.Select((f, ordinal) => f.SplitOrdinal == ordinal).Any(valid => !valid)
+                || generation.Select(f => f.PostingLineNo).Distinct().Count() != 1
+                || generation.Select(f => f.ValuationVersion).Distinct().Count() != 1
+                || i > 0 && generationPostings[0] != group[0].StockPostingId)
+                return false;
+            if (generation.Any(f => f.CompanyCode != returned.CompanyCode || f.BranchCode != returned.BranchCode
+                    || f.LedgerEpochId != returned.LedgerEpochId || f.ItemCode != returned.ItemCode
+                    || f.CostMethod != StockCostMethods.Fifo || f.MovementCode != "SALE_OUT"
+                    || f.ValuationSource != StockValuationSources.Fifo || f.BaseQty <= 0m
+                    || f.BaseCostAmount != f.CostAmount || f.EffectiveAt != saleHistory.TrxDtTime
+                    || f.SourceDocumentType != first.OriginalOwnerType
+                    || f.SourceDocumentId != first.OriginalOwnerDocumentNo
+                    || f.SourceDocumentNo != first.OriginalOwnerDocumentNo
+                    || f.SourceDocumentLine != first.OriginalOwnerDocumentLine
+                    || f.StockPosting is null || f.StockPosting.SealedAtUtc is null
+                    || f.StockPosting.CompanyCode != returned.CompanyCode
+                    || f.StockPosting.BranchCode != returned.BranchCode
+                    || f.StockPosting.LedgerEpochId != returned.LedgerEpochId
+                    || i == 0 && f.StockPosting.PostingSequence >= returnOwner.PostingSequence
+                    || originalGeneration && (f.OriginalValuationFactId is not null
+                        || f.StockPosting.SourceModule != "INVENTORY"
+                        || f.StockPosting.SourceDocumentType != IvTrxTypes.SalesOut
+                        || f.StockPosting.PostingRole != "PRIMARY"
+                        || f.StockPosting.EffectiveAt != saleHistory.TrxDtTime)
+                    || !originalGeneration && (f.OriginalValuationFactId != originals[0].Id
+                        || f.StockPosting.SourceModule != "INVENTORY"
+                        || f.StockPosting.PostingRole is not ("PRIMARY" or "REVERSAL")
+                        || f.StockPosting.SourceDocumentType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive))))
+                return false;
+            IReadOnlyList<StockReplayFifoSalesReturnAllocationWriter.ReturnSlice> slices;
+            try
+            {
+                slices = StockReplayFifoSalesReturnAllocationWriter.Allocate(
+                    generation.Select(f => (f.BaseQty, f.CostAmount)).ToArray(), returned.BaseQty);
+            }
+            catch (StockLedgerException)
+            {
+                return false;
+            }
+            var ordered = group.OrderBy(a => bySaleId[a.OriginalValuationFactId].SplitOrdinal).ToArray();
+            if (ordered.Length != slices.Count || ordered.Where((a, index) =>
+                    a.CompanyCode != returned.CompanyCode || a.BranchCode != returned.BranchCode
+                    || a.ReturnDocumentType != "SA_CDN" || a.ReturnDocumentNo != first.ReturnDocumentNo
+                    || a.ReturnDocumentLine != first.ReturnDocumentLine
+                    || a.ReturnCostingRevision != first.ReturnCostingRevision
+                    || a.OriginalOwnerType != first.OriginalOwnerType
+                    || a.OriginalOwnerDocumentNo != first.OriginalOwnerDocumentNo
+                    || a.OriginalOwnerDocumentLine != first.OriginalOwnerDocumentLine
+                    || a.OriginalValuationFactId != generation[slices[index].Ordinal].Id
+                    || a.ReturnedBaseQty != slices[index].Quantity || a.ReturnedCostAmount != slices[index].Value).Any())
+                return false;
+            var groupValue = StockLedgerPrecision.Money(group.Sum(a => a.ReturnedCostAmount));
+            if (i == 0 && groupValue != returned.CostAmount)
+                return false;
+            var reversed = group.Where(a => childByRoot.ContainsKey(a.Id)).ToArray();
+            if (reversed.Length != 0 && reversed.Length != group.Length)
+                return false;
+            foreach (var root in reversed)
+            {
+                var child = childByRoot[root.Id];
+                if (child.CompanyCode != root.CompanyCode || child.BranchCode != root.BranchCode
+                    || child.ReturnDocumentType != root.ReturnDocumentType || child.ReturnDocumentNo != root.ReturnDocumentNo
+                    || child.ReturnDocumentLine != root.ReturnDocumentLine
+                    || child.ReturnCostingRevision != root.ReturnCostingRevision
+                    || child.OriginalValuationFactId != root.OriginalValuationFactId
+                    || child.OriginalOwnerType != root.OriginalOwnerType
+                    || child.OriginalOwnerDocumentNo != root.OriginalOwnerDocumentNo
+                    || child.OriginalOwnerDocumentLine != root.OriginalOwnerDocumentLine
+                    || child.ReturnedBaseQty != root.ReturnedBaseQty || child.ReturnedCostAmount != root.ReturnedCostAmount)
+                    return false;
+            }
+            if (i < groups.Length - 1)
+            {
+                var nextPosting = groups[i + 1][0].StockPostingId;
+                var nextValue = StockLedgerPrecision.Money(groups[i + 1].Sum(a => a.ReturnedCostAmount));
+                if (reversed.Length != group.Length || reversed.Any(a =>
+                        childByRoot[a.Id].StockPostingId != nextPosting
+                        || childByRoot[a.Id].ReturnValuationFactId != returned.Id)
+                    || !MatchesAdjustment(nextPosting, StockLedgerPrecision.Money(nextValue - groupValue))
+                    || generation.Any(f => saleReversals.Count(r => r.ReversesValuationFactId == f.Id
+                            && r.StockPostingId == nextPosting && r.InventoryHistoryId == saleHistory.Id
+                            && r.Direction == 1 && r.BaseQty == f.BaseQty && r.CostAmount == f.CostAmount
+                            && r.ValuationStatus == StockValuationStatuses.Reversed) != 1
+                        || saleReversals.Count(r => r.ReversesValuationFactId == f.Id) != 1))
+                    return false;
+                continue;
+            }
+            if (!requireAllReversed)
+            {
+                if (reversed.Length != 0 || activeAllocationId is null
+                    || !group.Any(a => a.Id == activeAllocationId)
+                    || generation.Any(f => saleReversals.Any(r => r.ReversesValuationFactId == f.Id)))
+                    return false;
+                continue;
+            }
+            if (reversed.Length != group.Length)
+                return false;
+            var terminal = reversed.Select(a => childByRoot[a.Id]).ToArray();
+            var terminalFacts = terminal.Select(a => a.ReturnValuationFactId).Distinct().ToArray();
+            var terminalPostings = terminal.Select(a => a.StockPostingId).Distinct().ToArray();
+            if (terminalFacts.Length != 1 || terminalFacts[0] is not long reversalId || terminalPostings.Length != 1)
+                return false;
+            var reversal = await db.StockValuationFacts.AsNoTracking().Include(f => f.StockPosting)
+                .Include(f => f.InventoryHistory).SingleOrDefaultAsync(f => f.Id == reversalId, cancellationToken);
+            if (reversal is null || reversal.ReversesValuationFactId != returned.Id
+                || reversal.Direction != -1 || reversal.BaseQty != returned.BaseQty
+                || reversal.CostAmount != returned.CostAmount || reversal.CompanyCode != returned.CompanyCode
+                || reversal.BranchCode != returned.BranchCode || reversal.LedgerEpochId != returned.LedgerEpochId
+                || reversal.ItemCode != returned.ItemCode || reversal.CostMethod != StockCostMethods.Fifo
+                || reversal.MovementCode != "SALE_RETURN_IN_REVERSAL"
+                || reversal.UnitCost != returned.UnitCost || reversal.BaseCostAmount != returned.BaseCostAmount
+                || reversal.BaseCurrency != returned.BaseCurrency
+                || reversal.ValuationSource != StockValuationSources.OriginalReversal
+                || reversal.ValuationStatus != StockValuationStatuses.Reversed
+                || reversal.StockPostingId != terminalPostings[0]
+                || reversal.InventoryHistory?.EntryRole != "REVERSAL"
+                || reversal.InventoryHistory.ReversesHistoryId != returnHistoryId
+                || reversal.StockPosting?.SealedAtUtc is null
+                || reversal.StockPosting.CompanyCode != returned.CompanyCode
+                || reversal.StockPosting.BranchCode != returned.BranchCode
+                || reversal.StockPosting.LedgerEpochId != returned.LedgerEpochId
+                || reversal.StockPosting.PostingRole != "REVERSAL"
+                || reversal.StockPosting.ReversesPostingId != returned.StockPostingId
+                || reversal.StockPosting.SourceDocumentType != IvTrxTypes.CustomerReturn
+                || !MatchesAdjustment(terminalPostings[0], StockLedgerPrecision.Money(returned.CostAmount - groupValue)))
+                return false;
+        }
+        return usedAdjustments.Count == adjustments.Count;
+    }
+
     /// <summary>
     /// Authorizes one posted stock-return CN only when its invoice, stock
     /// movement, active allocation and method-specific cost evidence match.
@@ -430,9 +860,16 @@ public sealed partial class IvInventoryPostingService
 
         var facts = await StockReplayValuationGenerationResolver.ResolveAsync(
             db, companyCode, branchCode, [sale, returned], cancellationToken);
-        var saleFacts = facts[sale.Id];
+        var saleFacts = facts[sale.Id].OrderBy(f => f.SplitOrdinal).ToArray();
         var returnFacts = facts[returned.Id];
-        if (saleFacts.Count != 1 || returnFacts.Count != 1)
+        if ((costMethod == StockCostMethods.Fifo
+                ? saleFacts.Length is 0 or > 100
+                : saleFacts.Length != 1)
+            || returnFacts.Count != 1
+            || costMethod == StockCostMethods.Fifo
+                && (saleFacts[0].SplitOrdinal != 0
+                    || saleFacts.Select(f => f.PostingLineNo).Distinct().Count() != 1
+                    || saleFacts.Select(f => f.SplitOrdinal).Distinct().Count() != saleFacts.Length))
             return (null, unsupported + " Valuation generation is inconsistent.");
         var saleFact = saleFacts[0];
         var returnFact = returnFacts[0];
@@ -444,7 +881,7 @@ public sealed partial class IvInventoryPostingService
         };
         var returnValuationSource = costMethod == StockCostMethods.Standard
             ? StockValuationSources.Standard : StockValuationSources.OriginalSaleReturn;
-        if (costMethod != StockCostMethods.MovingAverage
+        if (costMethod == StockCostMethods.Standard
                 && (saleFact.StockPostingId != sale.StockPostingId
                     || saleFact.OriginalValuationFactId is not null)
             || saleFact.SourceDocumentType != ownerType
@@ -483,7 +920,46 @@ public sealed partial class IvInventoryPostingService
         var roots = allocations.Where(a => a.ReversesAllocationId is null).ToArray();
         var live = roots.Where(root => !allocations.Any(a =>
             a.ReversesAllocationId == root.Id)).ToArray();
-        if (live.Length != 1 || costMethod != StockCostMethods.MovingAverage
+        if (costMethod == StockCostMethods.Fifo)
+        {
+            var layer = await db.StockFifoLayers.AsNoTracking().SingleOrDefaultAsync(l =>
+                l.OriginValuationFactId == returnFact.Id, cancellationToken);
+            var currentRoots = roots.Where(a => a.ReturnValuationFactId == returnFact.Id).ToArray();
+            var currentIds = currentRoots.Select(a => a.Id).ToHashSet();
+            var currentRows = allocations.Where(a => currentIds.Contains(a.Id)
+                || a.ReversesAllocationId is long parent && currentIds.Contains(parent)).ToArray();
+            var priorRoots = roots.Where(a => a.ReturnValuationFactId != returnFact.Id).ToArray();
+            if (priorRoots.Any(a => a.ReturnValuationFactId is null || a.ReturnDocumentNo != noteNo))
+                return (null, unsupported + " Previous return evidence is inconsistent.");
+            foreach (var prior in priorRoots.GroupBy(a => a.ReturnValuationFactId!.Value))
+            {
+                var ids = prior.Select(a => a.Id).ToHashSet();
+                var priorRows = allocations.Where(a => ids.Contains(a.Id)
+                    || a.ReversesAllocationId is long parent && ids.Contains(parent)).ToArray();
+                var previousFact = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f =>
+                    f.Id == prior.Key, cancellationToken);
+                if (previousFact is null || !await HasExactFifoSalesReturnLineageAsync(db,
+                        priorRows, sale, previousFact, null, true, cancellationToken))
+                    return (null, unsupported + " Previous return evidence is inconsistent.");
+            }
+            if (live.Length == 0 || live.Length > 100 || layer is null
+                || live.Any(a => a.ReturnValuationFactId != returnFact.Id
+                    || a.OriginalOwnerType != ownerType || a.OriginalOwnerDocumentNo != ownerNo
+                    || a.OriginalOwnerDocumentLine != saleFact.SourceDocumentLine
+                    || a.ReturnDocumentType != "SA_CDN" || a.ReturnDocumentNo != noteNo
+                    || a.ReturnDocumentLine != returned.TrxLineNo
+                    || a.ReturnCostingRevision != note.CostingRevision)
+                || StockLedgerPrecision.Quantity(live.Sum(a => a.ReturnedBaseQty)) != returnFact.BaseQty
+                || layer.OriginalValue != returnFact.CostAmount || layer.OriginalQty != returnFact.BaseQty
+                || layer.AccumulatedAdjustment != StockLedgerPrecision.Money(
+                    live.Sum(a => a.ReturnedCostAmount) - returnFact.CostAmount)
+                || !await HasExactFifoSalesReturnLineageAsync(db, currentRows,
+                    sale, returnFact, live[0].Id, false, cancellationToken))
+                return (null, unsupported + " Return cost is inconsistent.");
+            return (new SalesReturnPermit(sale.Id, noteNo, live[0].Id,
+                StockCostMethods.Fifo, AllocationIds: live.Select(a => a.Id).ToArray()), null);
+        }
+        if (live.Length != 1 || costMethod == StockCostMethods.Standard
                 && allocations.Length != 1)
             return (null, unsupported + " Return allocation is incomplete.");
         var allocation = live[0];
@@ -495,7 +971,8 @@ public sealed partial class IvInventoryPostingService
             || allocation.OriginalOwnerDocumentNo != ownerNo
             || allocation.OriginalOwnerDocumentLine != saleFact.SourceDocumentLine
             || allocation.ReturnValuationFactId != returnFact.Id
-            || allocation.StockPostingId != returnFact.StockPostingId
+            || costMethod != StockCostMethods.Fifo
+                && allocation.StockPostingId != returnFact.StockPostingId
             || allocation.ReturnDocumentType != "SA_CDN"
             || allocation.ReturnDocumentNo != noteNo
             || allocation.ReturnDocumentLine != returned.TrxLineNo
@@ -514,11 +991,6 @@ public sealed partial class IvInventoryPostingService
             return (new SalesReturnPermit(sale.Id, noteNo, allocation.Id,
                 StockCostMethods.MovingAverage), null);
         }
-        if (costMethod == StockCostMethods.Fifo)
-            return returnFact.CostAmount == allocation.ReturnedCostAmount
-                ? (new SalesReturnPermit(sale.Id, noteNo, allocation.Id,
-                    StockCostMethods.Fifo), null)
-                : (null, unsupported + " Return cost is inconsistent.");
         var variances = await db.SalesReturnStandardCostVariances.AsNoTracking()
             .Where(v => v.CompanyCode == companyCode && v.BranchCode == branchCode
                 && v.ReturnValuationFactId == returnFact.Id)

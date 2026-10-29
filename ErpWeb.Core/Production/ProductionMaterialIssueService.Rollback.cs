@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
@@ -125,6 +126,19 @@ public sealed partial class ProductionMaterialIssueService
             if (await ProductionPoolValuationService.HasActiveDependentsAsync(db, originalBalanceMovements, cancellationToken))
                 return RollbackFail(IvMasterErrorCode.InUse, "Rollback is blocked by an active pooled-value dependency.");
 
+            // Inventory replay can change an issue's effective value without
+            // changing its sealed Production material movement. Reverse the
+            // current value, and verify it still matches the active Inventory
+            // generation before changing either ledger.
+            var effectiveCosts = await ProductionEffectiveCostResolver.ResolveAsync(
+                db, scope.CompanyCode, scope.BranchCode!, originalBalanceMovements, cancellationToken);
+            var activeIssues = await ProductionIssueEffectiveCostReader.ReadAsync(
+                db, scope.CompanyCode, scope.BranchCode!, originalBalanceMovements, cancellationToken);
+            if (originalBalanceMovements.Any(id => activeIssues[id].TotalCost != effectiveCosts[id].TotalCost
+                || activeIssues[id].UnitCost != effectiveCosts[id].UnitCost))
+                return RollbackFail(IvMasterErrorCode.Validation,
+                    "Production issue cost does not match its active Inventory valuation.");
+
             // MATERIAL_IN piles must still hold the full original issue base qty.
             foreach (var original in originalMovements)
             {
@@ -135,6 +149,18 @@ public sealed partial class ProductionMaterialIssueService
                 {
                     return RollbackFail(IvMasterErrorCode.InUse,
                         $"Production balance lot for {original.ItemCode} no longer holds the full issued quantity.");
+                }
+                if (pile is not null && original.ProductionBalLotMovementId is long movementId
+                    && effectiveCosts.TryGetValue(movementId, out var cost)
+                    && cost.RestatementFactId is not null)
+                {
+                    var pool = await db.ProductionPoolValuationRows.AsNoTracking()
+                        .SingleOrDefaultAsync(p => p.ProductionBalLotId == pile.Uid, cancellationToken);
+                    if (pool is null || pool.Status != ProductionPoolValuationService.Verified
+                        || pool.TrackedBaseQty != pile.BaseQty || pool.TrackedValue != cost.TotalCost
+                        || pile.TotalCost != cost.TotalCost || pile.AverageUnitCost != cost.UnitCost)
+                        return RollbackFail(IvMasterErrorCode.Validation,
+                            "The corrected Production material pool does not match the issue cost.");
                 }
             }
             var now = _clock.Now;
@@ -203,6 +229,8 @@ public sealed partial class ProductionMaterialIssueService
 
             foreach (var original in originalMovements)
             {
+                var effective = original.ProductionBalLotMovementId is long movementId
+                    && effectiveCosts.TryGetValue(movementId, out var cost) ? cost : null;
                 db.ProductionMaterialMovements.Add(new ProductionMaterialMovement
                 {
                     CompanyCode = original.CompanyCode,
@@ -230,8 +258,8 @@ public sealed partial class ProductionMaterialIssueService
                     InventoryTrxLineNo = original.InventoryTrxLineNo,
                     InventoryHistoryId = null,
                     InventoryPostingOperationId = rolledBack.OperationId?.ToString("N"),
-                    UnitCost = original.UnitCost,
-                    TotalCost = original.TotalCost,
+                    UnitCost = effective?.UnitCost ?? original.UnitCost,
+                    TotalCost = effective?.TotalCost ?? original.TotalCost,
                     PostingLinkId = rollbackLink.Uid,
                     StockPostingId = ledgerContext.Posting.Id,
                     OriginalMovementId = original.Uid,
@@ -262,6 +290,8 @@ public sealed partial class ProductionMaterialIssueService
                     .FirstOrDefaultAsync(x => x.OriginalIssueMovementId == original.Uid, cancellationToken);
                 if (pile is null)
                     continue;
+                var effective = original.ProductionBalLotMovementId is long movementId
+                    && effectiveCosts.TryGetValue(movementId, out var cost) ? cost : null;
                 db.ProductionBalLotMovements.Add(new ProductionBalLotMovement
                 {
                     ProductionBalLotId = pile.Uid,
@@ -270,8 +300,8 @@ public sealed partial class ProductionMaterialIssueService
                     Uom = original.Uom,
                     BaseQty = original.BaseQty,
                     BaseUom = original.BaseUom,
-                    UnitCost = original.UnitCost,
-                    TotalCost = original.TotalCost,
+                    UnitCost = effective?.UnitCost ?? original.UnitCost,
+                    TotalCost = effective?.TotalCost ?? original.TotalCost,
                     WorkOrderId = original.WorkOrderId,
                     WorkOrderMaterialId = original.WorkOrderMaterialId,
                     WorkOrderOperationId = original.WorkOrderOperationId,
@@ -378,6 +408,10 @@ public sealed partial class ProductionMaterialIssueService
             await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<ProductionMaterialIssueRollbackResult>.Ok(
                 await BuildRollbackResultAsync(db, rollbackLink, cancellationToken));
+        }
+        catch (StockLedgerException ex)
+        {
+            return RollbackFail(IvMasterErrorCode.Validation, ex.Error.Message);
         }
         catch (DbUpdateException)
         {

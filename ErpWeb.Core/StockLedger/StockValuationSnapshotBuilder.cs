@@ -26,9 +26,15 @@ public static class StockValuationSnapshotBuilder
             return null;
 
         var exclusiveEnd = periodTo.Date.AddDays(1);
+        // A replay root can be dated after this period while its correction
+        // belongs to an older, still-open business period. Include its sequence
+        // when taking the snapshot watermark so the older fact is not omitted.
         var watermark = await db.StockPostings.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.BranchCode == branch
-                        && x.SealedAtUtc != null && x.EffectiveAt < exclusiveEnd)
+                        && x.SealedAtUtc != null
+                        && (x.EffectiveAt < exclusiveEnd || db.StockValuationFacts.Any(f =>
+                            f.CompanyCode == company && f.BranchCode == branch
+                            && f.StockPostingId == x.Id && f.EffectiveAt < exclusiveEnd)))
             .MaxAsync(x => (long?)x.PostingSequence, cancellationToken) ?? 0L;
 
         var unvalued = await db.StockValuationFacts.AsNoTracking().CountAsync(x =>

@@ -648,7 +648,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             locked.Values.Select(x => x.Id).ToList(),
             batch.TrxDtTime,
             excludeBatchNo: null,
-            cancellationToken);
+            cancellationToken,
+            _openPeriodBackdatedReplayEnabled && IsCustomerReturnTrxType(expectedTrxType)
+                ? batchNo : null);
         if (laterDayError is not null)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, laterDayError);
@@ -2684,7 +2686,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         var rollbackChronology = postingContext is null
-            || expectedTrxType == IvTrxTypes.SalesOut
+            || expectedTrxType is (IvTrxTypes.SalesOut or IvTrxTypes.IssueToProduction)
                 && !_openPeriodBackdatedReplayEnabled
             ? await ValidateRollbackChronologyAsync(
                 db, companyCode, branchCode, batchNo, history, cancellationToken)
@@ -2695,7 +2697,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         if (postingContext is not null
-            && expectedTrxType == IvTrxTypes.SalesOut
+            && expectedTrxType is (IvTrxTypes.SalesOut or IvTrxTypes.IssueToProduction)
             && _openPeriodBackdatedReplayEnabled
             && (await StockReplayInventoryRouteSelector.ReadRollbackAsync(db,
                 companyCode, branchCode, batchNo, expectedTrxType,

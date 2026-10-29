@@ -23,14 +23,15 @@ public static class StockReplayFifoIssueRepricingWriter
         int replacementPostingLineNo,
         long? receiptLayerId,
         CancellationToken cancellationToken = default,
-        bool allowSales = false)
+        bool allowSales = false, StockReplayFifoProductionPermit? productionPermit = null)
     {
         StockReplayFifoReceiptLayerBinding.Validate(plan, receiptLayerId);
         await ValidateFifoPolicyAsync(context, plan, cancellationToken);
         return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
             plan.Projection.Issues, plan.PlanHash, "INSERT", permit, issueKey,
             reversalPostingLineNo, replacementPostingLineNo,
-            receiptLayerId, cancellationToken, allowSales: allowSales);
+            receiptLayerId, cancellationToken, allowSales: allowSales,
+            productionPermit: productionPermit);
     }
 
     public static async Task<IReadOnlyList<StockValuationFact>> AppendAsync(
@@ -62,7 +63,7 @@ public static class StockReplayFifoIssueRepricingWriter
         int reversalPostingLineNo,
         int replacementPostingLineNo,
         CancellationToken cancellationToken = default,
-        bool allowSales = false)
+        bool allowSales = false, StockReplayFifoProductionPermit? productionPermit = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -80,7 +81,7 @@ public static class StockReplayFifoIssueRepricingWriter
         return await AppendCoreAsync(context, plan.ItemCode, plan.Snapshot,
             plan.Projection.Issues, plan.PlanHash, "REMOVE", permit, issueKey,
             reversalPostingLineNo, replacementPostingLineNo, null, cancellationToken,
-            allowSales: allowSales);
+            allowSales: allowSales, productionPermit: productionPermit);
     }
 
     internal static async Task<IReadOnlyList<StockValuationFact>> AppendCountAsync(
@@ -173,7 +174,7 @@ public static class StockReplayFifoIssueRepricingWriter
         int replacementPostingLineNo, long? receiptLayerId,
         CancellationToken cancellationToken,
         IReadOnlyDictionary<long, long>? countLayerIds = null,
-        bool allowSales = false)
+        bool allowSales = false, StockReplayFifoProductionPermit? productionPermit = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
@@ -198,6 +199,8 @@ public static class StockReplayFifoIssueRepricingWriter
             || !int.TryParse(issueKey.LineIdentity.AsSpan(1), out var historyId)
             || historyId <= 0)
             throw Invalid("FIFO correction has no ordinary Inventory issue in the prepared tail.");
+        var allowProduction = productionPermit?.Authorizes(context, itemCode,
+            planHash, historyId) == true;
         var previous = snapshot.ActiveConsumptions
             .Where(c => c.IssueKey == issueKey).ToArray();
         if (previous.Length == 0
@@ -232,7 +235,8 @@ public static class StockReplayFifoIssueRepricingWriter
                 cancellationToken);
         if (history is null || history.ICode != itemCode
             || !(StockReplayFifoInventoryIssueKinds.IsSupported(history.TrxType)
-                || allowSales && history.TrxType == IvTrxTypes.SalesOut)
+                || allowSales && history.TrxType == IvTrxTypes.SalesOut
+                || allowProduction && history.TrxType == IvTrxTypes.IssueToProduction)
             || history.LedgerVersion != 2
             || history.LedgerEpochId != context.Epoch.Id
             || history.EntryRole != "ORIGINAL"
@@ -252,8 +256,9 @@ public static class StockReplayFifoIssueRepricingWriter
             || activeFacts.Any(f => f.CostMethod != StockCostMethods.Fifo
                 || f.ValuationSource != StockValuationSources.Fifo
                 || f.MovementCode !=
-                    StockReplayFifoInventoryIssueKinds.MovementCode(
-                        history.TrxType)
+                    (history.TrxType == IvTrxTypes.IssueToProduction
+                        ? "PRODUCTION_MATERIAL_OUT"
+                        : StockReplayFifoInventoryIssueKinds.MovementCode(history.TrxType))
                 || f.Direction != -1 || f.EffectiveAt != issueKey.EffectiveAt
                 || f.TransactionCurrency is not null
                 || f.TransactionCostAmount is not null
@@ -262,6 +267,9 @@ public static class StockReplayFifoIssueRepricingWriter
             || activeFacts.Select(f => (f.StockPostingId, f.ValuationVersion))
                 .Distinct().Count() != 1)
             throw Invalid($"FIFO history {historyId} has an unsupported active issue generation.");
+        if (allowProduction && activeFacts.Any(f =>
+                f.ProductionMovementId != productionPermit!.MaterialMovementId))
+            throw Invalid($"FIFO history {historyId} has inconsistent Production ownership.");
         var byFact = previous.ToDictionary(c => c.IssueFactId);
         if (byFact.Count != activeFacts.Length
             || activeFacts.Any(f => !byFact.TryGetValue(f.Id, out var c)
@@ -355,6 +363,10 @@ public static class StockReplayFifoIssueRepricingWriter
                 InventoryHistoryId = historyId,
                 FromBalLocId = template.FromBalLocId,
                 ToBalLocId = template.ToBalLocId,
+                ProductionMovementId = template.ProductionMovementId,
+                WorkOrderId = template.WorkOrderId,
+                WorkOrderOperationId = template.WorkOrderOperationId,
+                ProductionPostingLinkId = template.ProductionPostingLinkId,
                 OriginalValuationFactId = originalFactId,
                 CreatedAtUtc = now,
                 CreatedBy = context.UserId

@@ -314,6 +314,54 @@ public sealed class StockReplayFifoLayerAllocatorTests
     }
 
     [Fact]
+    public void Receipt_projection_reprices_one_unconsumed_sales_return_and_restores_it_on_removal()
+    {
+        var laterReceipt = Layer(1, Day.AddDays(1), 2, 15m, 60m) with
+        {
+            RemainingQuantity = 11m, RemainingValue = 44m,
+            ReceiptKey = IssueKey(Day.AddDays(1), 2)
+        };
+        var saleKey = IssueKey(Day.AddDays(2), 3);
+        var returned = Layer(2, Day.AddDays(3), 4, 1m, 4m) with
+        {
+            ReceiptKey = IssueKey(Day.AddDays(3), 4),
+            SalesReturn = new StockReplayFifoSalesReturnBinding(1, 20, 300, 1m, 4m)
+        };
+        var snapshot = new StockReplayFifoActiveLayerSnapshot("C", "B", "A",
+            12m, 48m, [laterReceipt, returned],
+            [new(10, 20, 1, 4m, 16m, 0, true, saleKey)], "verified");
+
+        var insertion = StockReplayFifoTailProjector.InsertReceipt(snapshot,
+            IssueKey(Day, 5), 5m, 50m, "EA");
+
+        Assert.Equal(40m, Assert.Single(insertion.Issues).Value);
+        Assert.Equal(17m, insertion.FinalQuantity);
+        Assert.Equal(80m, insertion.FinalValue);
+        var adjustedReturn = insertion.FinalLayers.Single(l => l.LayerId == 2);
+        Assert.Equal(4m, adjustedReturn.OriginalValue);
+        Assert.Equal(6m, adjustedReturn.AccumulatedAdjustment);
+        Assert.Equal(10m, adjustedReturn.RemainingValue);
+
+        var postedLayers = insertion.FinalLayers.Select(l => l.LayerId switch
+        {
+            long.MaxValue => l with { LayerId = 3, OriginFactId = 3, OriginPostingId = 3 },
+            2 => l with { SalesReturn = new StockReplayFifoSalesReturnBinding(1, 21, 301, 1m, 10m) },
+            _ => l
+        }).ToArray();
+        var posted = snapshot with
+        {
+            CurrentQuantity = 17m, CurrentValue = 80m, Layers = postedLayers,
+            ActiveConsumptions = [new(11, 21, 3, 4m, 40m, 0, true, saleKey)]
+        };
+        var removal = StockReplayFifoTailProjector.RemoveReceipt(posted, 3);
+        Assert.Equal(16m, Assert.Single(removal.Issues).Value);
+        Assert.Equal(12m, removal.FinalQuantity);
+        Assert.Equal(48m, removal.FinalValue);
+        Assert.Equal(0m, removal.FinalLayers.Single(l => l.LayerId == 2).AccumulatedAdjustment);
+        Assert.Equal(4m, removal.FinalLayers.Single(l => l.LayerId == 2).RemainingValue);
+    }
+
+    [Fact]
     public void Removing_earlier_receipt_reallocates_later_issue_or_refuses_shortage()
     {
         var first = Layer(1, Day, 1, 5m, 15m) with

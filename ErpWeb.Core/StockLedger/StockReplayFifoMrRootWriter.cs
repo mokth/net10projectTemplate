@@ -17,7 +17,7 @@ public static class StockReplayFifoMrRootWriter
         StockReplayFifoWritePermit permit, int batchNo,
         CancellationToken cancellationToken = default,
         bool goodsReceipt = false, bool allowInvoiced = false,
-        bool allowSales = false)
+        bool allowSales = false, StockReplayFifoProductionPermit? productionPermit = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -49,14 +49,17 @@ public static class StockReplayFifoMrRootWriter
             var replacements = issue.DepletesPool
                 ? await StockReplayFifoIssueRepricingWriter.AppendAsync(
                     context, plan, permit, issue.Key,
-                    line, line + 1, receipt.LayerId, cancellationToken, allowSales)
+                    line, line + 1, receipt.LayerId, cancellationToken, allowSales, productionPermit)
                 : await StockReplayFifoTransferRepricingWriter.AppendAsync(
                     context, plan, permit, issue.Key,
                     line, line + 1, receipt.LayerId, cancellationToken);
             if (replacements.Count == 0)
                 throw Invalid("A changed FIFO issue produced no replacement generation.");
+            var adjustmentWritten = allowSales && issue.DepletesPool
+                && await StockReplayFifoSalesReturnAllocationWriter.AppendIfRequiredAsync(
+                    context, plan.Snapshot, plan.Projection, issue, replacements, line + 2, cancellationToken);
             required.Add(StockReplayFifoMiRootWriter.HistoryId(issue.Key));
-            line += 2;
+            line += adjustmentWritten ? 3 : 2;
         }
         await StockReplayFifoStateWriter.ApplyMiscReceiptInsertionAsync(
             context, plan, permit, receipt, cancellationToken);

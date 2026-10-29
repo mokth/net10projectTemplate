@@ -350,7 +350,9 @@ public class IvStockCountSqlServerConcurrencyTests
                 LotNo = string.Empty,
                 IStatus = "ACTIVE",
                 StdQty = qty,
-                StdUom = "EA"
+                StdUom = "EA",
+                // GenerateAsync filters candidates by as-of TransDate, so the seeded pile must carry one.
+                TransDate = Today
             };
             db.IvBalLocs.Add(bal);
             await db.SaveChangesAsync();

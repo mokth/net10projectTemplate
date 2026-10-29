@@ -1,10 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Purchase;
@@ -87,7 +89,7 @@ public class PoSupplierServiceTests : IAsyncLifetime
                 SuppName = "Alpha Supplier",
                 Currency = "MYR",
                 GlCode = "AP001",
-                Tel = "111",
+                Tel = "+60312345678",
                 City = "KL",
                 Country = "MY",
                 ContactPerson = "Alice",
@@ -103,7 +105,7 @@ public class PoSupplierServiceTests : IAsyncLifetime
                 SuppName = "Legacy Null Gl",
                 Currency = "MYR",
                 GlCode = null,
-                Tel = "222",
+                Tel = "+60322345678",
                 Country = "MY",
                 PayCode = "NET30",
                 CreditLimit = 1000m,
@@ -377,7 +379,7 @@ public class PoSupplierServiceTests : IAsyncLifetime
             new PoSupplierAddressVm { SuppName = "Second", Address1 = "A2", Country = "MY", State = "SEL" }
         ];
         var save = await sut.SaveAsync(loaded, false);
-        Assert.True(save.Succeeded, save.Message);
+        Assert.True(save.Succeeded, save.Message + " :: " + string.Join("; ", save.ValidationErrors.Select(x => $"{x.Key}={x.Value}")));
 
         var again = (await sut.GetAsync("SUP01")).Data!;
         Assert.Equal(2, again.Addresses.Count);
@@ -392,9 +394,9 @@ public class PoSupplierServiceTests : IAsyncLifetime
     {
         var sut = CreateSut();
         var loaded = (await sut.GetAsync("SUP02")).Data!;
-        loaded.Tel = "999";
+        loaded.Tel = "+60123456789";
         var result = await sut.SaveAsync(loaded, false);
-        Assert.True(result.Succeeded, result.Message);
+        Assert.True(result.Succeeded, result.Message + " :: " + string.Join("; ", result.ValidationErrors.Select(x => $"{x.Key}={x.Value}")));
     }
 
     [Fact]
@@ -406,7 +408,8 @@ public class PoSupplierServiceTests : IAsyncLifetime
         loaded.CreditLimit = 5000m;
         var result = await sut.SaveAsync(loaded, false);
         Assert.False(result.Succeeded);
-        Assert.True(result.ValidationErrors.ContainsKey("GlCode"));
+        Assert.True(result.ValidationErrors.ContainsKey("GlCode"),
+            string.Join("; ", result.ValidationErrors.Select(x => $"{x.Key}={x.Value}")));
     }
 
     [Fact]
@@ -416,7 +419,7 @@ public class PoSupplierServiceTests : IAsyncLifetime
         var loaded = (await sut.GetAsync("SUP01")).Data!;
         loaded.CreditLimit = 2500m;
         var result = await sut.SaveAsync(loaded, false);
-        Assert.True(result.Succeeded, result.Message);
+        Assert.True(result.Succeeded, result.Message + " :: " + string.Join("; ", result.ValidationErrors.Select(x => $"{x.Key}={x.Value}")));
     }
 
     [Fact]
@@ -521,6 +524,108 @@ public class PoSupplierServiceTests : IAsyncLifetime
         Assert.DoesNotContain(rows, x => x.Code == "XX");
         var expected = await db.SaTaxGroups.CountAsync(x => x.CompanyCode == "DEMO");
         Assert.Equal(expected, rows.Count);
+    }
+
+    [Fact]
+    public async Task SupplierClassification_ActiveValues_SaveAndRoundTrip()
+    {
+        await SeedClassificationAsync();
+        var sut = CreateSut();
+
+        var model = ValidNewModel("CLS01");
+        model.SuppType = "MANUF";
+        model.CreditorSubGroup = "SUB1";
+        model.CategoryCode = "CAT1";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+        Assert.True(result.Succeeded, result.Message);
+
+        var loaded = (await sut.GetAsync("CLS01")).Data!;
+        Assert.Equal("MANUF", loaded.SuppType);
+        Assert.Equal("SUB1", loaded.CreditorSubGroup);
+        Assert.Equal("CAT1", loaded.CategoryCode);
+    }
+
+    [Fact]
+    public async Task SupplierClassification_UnknownValues_AreRejected()
+    {
+        await SeedClassificationAsync();
+        var sut = CreateSut();
+
+        var model = ValidNewModel("CLS02");
+        model.SuppType = "NOSUCH";
+        model.CreditorSubGroup = "NOSUB";
+        model.CategoryCode = "NOCAT";
+
+        var result = await sut.SaveAsync(model, isNew: true);
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.True(result.ValidationErrors.ContainsKey("SuppType"));
+        Assert.True(result.ValidationErrors.ContainsKey("CreditorSubGroup"));
+        Assert.True(result.ValidationErrors.ContainsKey("CategoryCode"));
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.PoSuppliers.AnyAsync(x =>
+            x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.SuppCode == "CLS02"));
+    }
+
+    [Fact]
+    public async Task SupplierClassification_InactiveLegacyValues_SurviveAnUnrelatedEdit()
+    {
+        await SeedClassificationAsync(active: false);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.PoSuppliers
+                .Where(x => x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.SuppCode == "SUP01")
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(x => x.SuppType, "MANUF")
+                    .SetProperty(x => x.CreditorSubGroup, "SUB1")
+                    .SetProperty(x => x.CategoryCode, "CAT1"));
+        }
+
+        var sut = CreateSut();
+        var loaded = (await sut.GetAsync("SUP01")).Data!;
+        loaded.Tel = "+60123456789";
+
+        var result = await sut.SaveAsync(loaded, isNew: false);
+        Assert.True(result.Succeeded, result.Message + " :: " + string.Join("; ", result.ValidationErrors.Select(x => $"{x.Key}={x.Value}")));
+
+        var again = (await sut.GetAsync("SUP01")).Data!;
+        Assert.Equal("MANUF", again.SuppType);
+        Assert.Equal("SUB1", again.CreditorSubGroup);
+        Assert.Equal("CAT1", again.CategoryCode);
+        Assert.Equal("+60123456789", again.Tel);
+    }
+
+    private async Task SeedClassificationAsync(bool active = true)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        db.AdLookupValues.AddRange(
+            new AdLookupValue
+            {
+                CompanyCode = "DEMO",
+                LookupType = AdLookupTypes.SupplierType,
+                Code = "MANUF",
+                Description = "Manufacturer",
+                IsActive = active
+            },
+            new AdLookupValue
+            {
+                CompanyCode = "DEMO",
+                LookupType = AdLookupTypes.SupplierSubGroup,
+                Code = "SUB1",
+                Description = "Subgroup 1",
+                IsActive = active
+            });
+        db.PoCategories.Add(new PoCategory
+        {
+            CompanyCode = "DEMO",
+            Category = "CAT1",
+            Description = "Category 1",
+            IsActive = active,
+            RowVersion = Rv(20)
+        });
+        await db.SaveChangesAsync();
     }
 
     private PoSupplierService CreateSut(

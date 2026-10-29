@@ -1,8 +1,10 @@
+using ErpWeb.Core.Admin;
 using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.Sqlite;
@@ -385,6 +387,87 @@ public class IvInventoryRefServiceTests : IAsyncLifetime
         Assert.Equal(IvMasterErrorCode.Concurrency, del.ErrorCode);
     }
 
+    [Fact]
+    public async Task Warehouse_Create_AcceptsAnActiveLookupType()
+    {
+        await SeedLookupAsync(AdLookupTypes.WarehouseType, "RAW", "Raw material");
+        var sut = CreateSut();
+
+        var result = await sut.SaveWarehouseAsync(
+            new IvWarehouseEditVm { Code = "WHRAW", Desc = "Raw store", WarehouseType = "RAW" },
+            isNew: true);
+        Assert.True(result.Succeeded, result.Message);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.IvWarehouses.SingleAsync(x => x.WarehouseCode == "WHRAW" && x.BranchCode == "HQ");
+        Assert.Equal("RAW", row.WarehouseType);
+    }
+
+    [Fact]
+    public async Task Warehouse_Create_RejectsAnUnknownLookupType()
+    {
+        await SeedLookupAsync(AdLookupTypes.WarehouseType, "RAW", "Raw material");
+        var sut = CreateSut();
+
+        var result = await sut.SaveWarehouseAsync(
+            new IvWarehouseEditVm { Code = "WHBAD", Desc = "Bad type", WarehouseType = "NOSUCH" },
+            isNew: true);
+        Assert.False(result.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Validation, result.ErrorCode);
+        Assert.Contains("WarehouseType", result.ValidationErrors.Keys);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.IvWarehouses.AnyAsync(x => x.WarehouseCode == "WHBAD"));
+    }
+
+    [Fact]
+    public async Task Warehouse_Update_KeepsAnInactiveLegacyTypeOnAnUnrelatedEdit()
+    {
+        await using (var seed = await _factory.CreateDbContextAsync())
+        {
+            await seed.AdLookupValues.AddAsync(new AdLookupValue
+            {
+                CompanyCode = "DEMO",
+                LookupType = AdLookupTypes.WarehouseType,
+                Code = "LEGACY",
+                Description = "Retired type",
+                IsActive = false
+            });
+            await seed.IvWarehouses
+                .Where(x => x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.WarehouseCode == "MAIN")
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.WarehouseType, "LEGACY"));
+            await seed.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var loaded = await sut.GetWarehouseAsync("MAIN");
+        Assert.True(loaded.Succeeded, loaded.Message);
+        var model = loaded.Data!;
+        model.Desc = "Main renamed";
+
+        var result = await sut.SaveWarehouseAsync(model, isNew: false);
+        Assert.True(result.Succeeded, result.Message);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = await db.IvWarehouses.SingleAsync(x => x.WarehouseCode == "MAIN" && x.BranchCode == "HQ");
+        Assert.Equal("LEGACY", row.WarehouseType);
+        Assert.Equal("Main renamed", row.WarehouseDesc);
+    }
+
+    private async Task SeedLookupAsync(string lookupType, string code, string desc)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.AdLookupValues.AddAsync(new AdLookupValue
+        {
+            CompanyCode = "DEMO",
+            LookupType = lookupType,
+            Code = code,
+            Description = desc,
+            IsActive = true
+        });
+        await db.SaveChangesAsync();
+    }
+
     private IvInventoryRefService CreateSut(
         string company = "DEMO",
         string branch = "HQ",
@@ -394,11 +477,22 @@ public class IvInventoryRefServiceTests : IAsyncLifetime
         access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
+        // Warehouse Type validation reads the generic lookup master. The test database simply has no
+        // AdLookupValue rows, which is valid: the field is optional and blank stays accepted.
+        var current = new Mock<ICurrentUserService>();
+        current.SetupGet(x => x.IsAuthenticated).Returns(true);
+        current.SetupGet(x => x.SubjectUid).Returns("1");
+        current.SetupGet(x => x.UserId).Returns("admin");
+        current.SetupGet(x => x.CompanyCode).Returns(company);
+        current.SetupGet(x => x.BranchCode).Returns(branch);
+        current.SetupGet(x => x.LocationCode).Returns(location);
+
         return new IvInventoryRefService(
             _factory,
             InventoryTenantTestHelper.CreateTenantContext(company, branch, location),
             access.Object,
             new FixedCurrentDateService(FixedToday),
-            new IvStockCommonRepository(_factory));
+            new IvStockCommonRepository(_factory),
+            new AdLookupService(_factory, new TenantScopeContext(current.Object), access.Object));
     }
 }

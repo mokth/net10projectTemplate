@@ -7,6 +7,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.StockLedger;
 
+public sealed record StockReplayFifoSalesReturnBinding(
+    int SaleHistoryId, long SaleFactId, long AllocationId,
+    decimal ReturnedQuantity, decimal ReturnedValue, string AllocationSignature = "");
+
 public sealed record StockReplayFifoLayerPosition(
     long LayerId, long OriginFactId, long OriginPostingId,
     long OriginPostingSequence,
@@ -15,7 +19,8 @@ public sealed record StockReplayFifoLayerPosition(
     decimal RemainingQuantity, decimal RemainingValue,
     decimal CurrentUnitCost, string BaseUom, string Status,
     string RowVersionHex,
-    StockReplayEventKey? ReceiptKey = null);
+    StockReplayEventKey? ReceiptKey = null,
+    StockReplayFifoSalesReturnBinding? SalesReturn = null);
 
 public sealed record StockReplayFifoConsumptionPosition(
     long ConsumptionId, long IssueFactId, long LayerId,
@@ -32,7 +37,8 @@ public sealed record StockReplayFifoActiveLayerSnapshot(
 /// <summary>
 /// Reads an exact current FIFO layer base for historical simulation. Exact MR/GR
 /// receipt and customer-return reversals and direct initial-count removals are
-/// supported when their sealed lineage is exact; layer value adjustments fail closed.
+/// supported when their sealed lineage is exact; only verified Sales-return
+/// replay adjustments may change a layer's value.
 /// </summary>
 public static class StockReplayFifoActiveLayerReader
 {
@@ -266,9 +272,13 @@ public static class StockReplayFifoActiveLayerReader
                         || reversalOwner.PostingRole != "REVERSAL"
                         || reversalOwner.ReversesPostingId
                             != l.OriginStockPostingId
-                        || reversal.MovementCode != (originalHistory.TrxType
-                                == IvTrxTypes.CustomerReturn
-                            ? origin.MovementCode + "_REVERSAL" : origin.MovementCode)
+                        || originalHistory.TrxType == IvTrxTypes.CustomerReturn
+                            && reversal.MovementCode != origin.MovementCode + "_REVERSAL"
+                        || originalHistory.TrxType != IvTrxTypes.CustomerReturn
+                            && reversal.MovementCode != origin.MovementCode
+                            && (!(originalHistory.TrxType is IvTrxTypes.MiscellaneousReceipt
+                                    or IvTrxTypes.GoodsReceive)
+                                || reversal.MovementCode != origin.MovementCode + "_REVERSAL")
                         || reversal.ValuationSource
                             != StockValuationSources.OriginalReversal;
                 }))
@@ -329,6 +339,10 @@ public static class StockReplayFifoActiveLayerReader
                 || original.SourceDocumentType != f.SourceDocumentType
                 || original.SourceDocumentId != f.SourceDocumentId
                 || original.SourceDocumentLine != f.SourceDocumentLine
+                || original.ProductionMovementId != f.ProductionMovementId
+                || original.WorkOrderId != f.WorkOrderId
+                || original.WorkOrderOperationId != f.WorkOrderOperationId
+                || original.ProductionPostingLinkId != f.ProductionPostingLinkId
                 || f.ValuationVersion <= original.ValuationVersion))
             throw Invalid($"Item {itemCode} has an invalid FIFO issue correction lineage.");
 
@@ -363,6 +377,16 @@ public static class StockReplayFifoActiveLayerReader
             .Where(c => facts[c.IssueValuationFactId].MovementCode != "TRANSFER_OUT")
             .GroupBy(c => c.FifoLayerId)
             .ToDictionary(g => g.Key, g => g.ToArray());
+        var returnAdjustments = new Dictionary<long, IReadOnlyList<StockValuationFact>>();
+        foreach (var layer in layers)
+        {
+            if (!facts.TryGetValue(layer.OriginValuationFactId, out var origin)
+                || origin.MovementCode != "SALE_RETURN_IN"
+                || origin.ValuationSource != StockValuationSources.OriginalSaleReturn)
+                continue;
+            returnAdjustments[origin.Id] = await StockReplayFifoSalesReturnValueAdjustment
+                .ReadVerifiedAsync(db, origin, cancellationToken);
+        }
         foreach (var layer in layers)
         {
             if (!facts.TryGetValue(layer.OriginValuationFactId,
@@ -378,14 +402,17 @@ public static class StockReplayFifoActiveLayerReader
                 || origin.BaseUom != layer.BaseUom
                 || origin.ValuationStatus != StockValuationStatuses.Valued
                 || layer.OriginalQty <= 0m || layer.OriginalValue < 0m
-                || layer.AccumulatedAdjustment != 0m)
+                || StockLedgerPrecision.Money(layer.OriginalValue + layer.AccumulatedAdjustment) < 0m
+                || layer.AccumulatedAdjustment != StockLedgerPrecision.Money(
+                    returnAdjustments.GetValueOrDefault(origin.Id)?.Sum(f => f.SignedValue) ?? 0m))
                 throw Invalid($"FIFO layer {layer.Id} has an invalid origin.");
             if (reversedLayerIds.Contains(layer.Id))
             {
                 if (layer.Status != StockFifoLayerStatuses.Closed
                     || layer.RemainingQty != 0m
                     || layer.RemainingValue != 0m
-                    || layer.CurrentUnitCost != 0m)
+                    || layer.CurrentUnitCost != 0m
+                    || layer.AccumulatedAdjustment != 0m)
                     throw Invalid($"Reversed FIFO layer {layer.Id} still has active stock.");
                 continue;
             }
@@ -397,18 +424,19 @@ public static class StockReplayFifoActiveLayerReader
                     && (StockLedgerPrecision.Quantity(layer.OriginalQty
                             - allocations.Sum(c => c.ConsumedQty))
                         != layer.RemainingQty
-                        || StockLedgerPrecision.Money(layer.OriginalValue
+                        || StockLedgerPrecision.Money(layer.OriginalValue + layer.AccumulatedAdjustment
                             - allocations.Sum(c => c.ConsumedValue))
                             != layer.RemainingValue)
                 || !activeByLayer.ContainsKey(layer.Id)
                     && (layer.OriginalQty != layer.RemainingQty
-                        || layer.OriginalValue != layer.RemainingValue)
+                        || StockLedgerPrecision.Money(layer.OriginalValue + layer.AccumulatedAdjustment)
+                            != layer.RemainingValue)
                 || layer.RemainingQty == 0m
                     && layer.CurrentUnitCost != 0m
                 || layer.RemainingQty > 0m
                     && layer.CurrentUnitCost != StockLedgerPrecision.Money(
                         layer.RemainingValue / layer.RemainingQty)
-                    && (activeByLayer.ContainsKey(layer.Id)
+                    && (activeByLayer.ContainsKey(layer.Id) || layer.AccumulatedAdjustment != 0m
                         || layer.CurrentUnitCost != origin.UnitCost))
                 throw Invalid($"FIFO layer {layer.Id} does not reconcile to its origin and active issues.");
         }
@@ -468,6 +496,74 @@ public static class StockReplayFifoActiveLayerReader
             layers.Sum(l => l.RemainingValue));
         if (quantity != state.OnHandBaseQty || value != state.InventoryValue)
             throw Invalid($"Item {itemCode} FIFO layers differ from its cost state.");
+        // Bind a return layer to its exact active FIFO sale allocations. All
+        // consumption and reversal rows were checked above; document ownership
+        // is checked separately by the locked receipt route.
+        var returnOriginIds = layers.Where(l => !reversedLayerIds.Contains(l.Id)
+                && facts[l.OriginValuationFactId].MovementCode == "SALE_RETURN_IN"
+                && facts[l.OriginValuationFactId].ValuationSource == StockValuationSources.OriginalSaleReturn)
+            .Select(l => l.OriginValuationFactId).ToArray();
+        var returnRoots = await db.SalesReturnCostAllocations.AsNoTracking()
+            .Where(a => a.CompanyCode == companyCode && a.BranchCode == branchCode
+                && a.ReversesAllocationId == null && a.ReturnValuationFactId.HasValue
+                && returnOriginIds.Contains(a.ReturnValuationFactId.Value))
+            .ToArrayAsync(cancellationToken);
+        var returnRootIds = returnRoots.Select(a => a.Id).ToArray();
+        var returnReversals = await db.SalesReturnCostAllocations.AsNoTracking()
+            .Where(a => a.ReversesAllocationId.HasValue
+                && returnRootIds.Contains(a.ReversesAllocationId.Value))
+            .ToArrayAsync(cancellationToken);
+        var bindings = new Dictionary<long, StockReplayFifoSalesReturnBinding>();
+        foreach (var layer in layers.Where(l => returnOriginIds.Contains(l.OriginValuationFactId)))
+        {
+            var roots = returnRoots.Where(a => a.ReturnValuationFactId == layer.OriginValuationFactId).ToArray();
+            var current = roots.Where(a => !returnReversals.Any(r => r.ReversesAllocationId == a.Id))
+                .OrderBy(a => facts.TryGetValue(a.OriginalValuationFactId, out var fact)
+                    ? fact.SplitOrdinal : int.MaxValue).ThenBy(a => a.Id).ToArray();
+            if (current.Length == 0 || roots.Any(a => returnReversals.Count(r => r.ReversesAllocationId == a.Id) > 1)
+                || !facts.TryGetValue(current[0].OriginalValuationFactId, out var sale)
+                || sale.InventoryHistoryId is not int saleHistoryId
+                || !histories.TryGetValue(saleHistoryId, out var saleHistory)
+                || saleHistory.TrxType != IvTrxTypes.SalesOut
+                || sale.MovementCode != "SALE_OUT" || sale.Direction != -1
+                || sale.SplitOrdinal != 0
+                || sale.BaseQty <= 0m
+                || !active.Any(c => c.IssueValuationFactId == sale.Id))
+                continue;
+            var saleSplits = active.Select(c => facts[c.IssueValuationFactId])
+                .Where(f => f.InventoryHistoryId == saleHistoryId)
+                .DistinctBy(f => f.Id).OrderBy(f => f.SplitOrdinal).ToArray();
+            if (saleSplits.Length == 0 || saleSplits.Select((f, i) => f.SplitOrdinal == i).Any(ok => !ok)
+                || saleSplits.Select(f => f.PostingLineNo).Distinct().Count() != 1
+                || current.Any(a => a.ReturnDocumentType != current[0].ReturnDocumentType
+                    || a.ReturnDocumentNo != current[0].ReturnDocumentNo
+                    || a.ReturnDocumentLine != current[0].ReturnDocumentLine
+                    || a.ReturnCostingRevision != current[0].ReturnCostingRevision
+                    || a.OriginalOwnerType != current[0].OriginalOwnerType
+                    || a.OriginalOwnerDocumentNo != current[0].OriginalOwnerDocumentNo
+                    || a.OriginalOwnerDocumentLine != current[0].OriginalOwnerDocumentLine))
+                continue;
+            IReadOnlyList<StockReplayFifoSalesReturnAllocationWriter.ReturnSlice> slices;
+            try
+            {
+                slices = StockReplayFifoSalesReturnAllocationWriter.Allocate(
+                    saleSplits.Select(f => (f.BaseQty, f.CostAmount)).ToArray(), layer.OriginalQty);
+            }
+            catch (StockLedgerException)
+            {
+                continue;
+            }
+            if (current.Length != slices.Count || current.Where((a, i) =>
+                    a.OriginalValuationFactId != saleSplits[slices[i].Ordinal].Id
+                    || a.ReturnedBaseQty != slices[i].Quantity
+                    || a.ReturnedCostAmount != slices[i].Value).Any()
+                || StockLedgerPrecision.Money(current.Sum(a => a.ReturnedCostAmount))
+                    != StockLedgerPrecision.Money(layer.OriginalValue + layer.AccumulatedAdjustment))
+                continue;
+            bindings[layer.Id] = new(saleHistoryId, sale.Id, current[0].Id,
+                layer.OriginalQty, StockLedgerPrecision.Money(current.Sum(a => a.ReturnedCostAmount)),
+                StockReplayFifoSalesReturnAllocationWriter.Signature(current));
+        }
         var positions = layers.Where(l => !reversedLayerIds.Contains(l.Id))
             .Select(l =>
         {
@@ -487,7 +583,7 @@ public static class StockReplayFifoActiveLayerReader
                 l.ReceiptEffectiveAt, l.OriginalQty, l.OriginalValue,
                 l.AccumulatedAdjustment, l.RemainingQty, l.RemainingValue,
                 l.CurrentUnitCost, l.BaseUom, l.Status,
-                Convert.ToHexString(l.RowVersion), key);
+                Convert.ToHexString(l.RowVersion), key, bindings.GetValueOrDefault(l.Id));
         }).ToArray();
         var consumptions = active.Select(c =>
             new StockReplayFifoConsumptionPosition(c.Id,
@@ -511,7 +607,12 @@ public static class StockReplayFifoActiveLayerReader
             companyCode, branchCode, itemCode,
             state.OnHandBaseQty, state.InventoryValue,
             StateRowVersion = Convert.ToHexString(state.RowVersion),
-            Layers = positions, ActiveConsumptions = consumptions
+            Layers = positions, ActiveConsumptions = consumptions,
+            ReturnAdjustments = returnAdjustments.OrderBy(p => p.Key)
+                .SelectMany(p => p.Value.OrderBy(f => f.Id).Select(f => new
+                {
+                    Origin = p.Key, f.Id, f.StockPostingId, f.Direction, f.CostAmount
+                })).ToArray()
         }, new { }).RequestFingerprint;
         return new(companyCode, branchCode, itemCode,
             quantity, value, positions, consumptions, hash);

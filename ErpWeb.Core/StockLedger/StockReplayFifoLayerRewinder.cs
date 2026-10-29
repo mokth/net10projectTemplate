@@ -50,13 +50,15 @@ public static class StockReplayFifoLayerRewinder
             .ToDictionary(g => g.Key, g => g.ToArray());
         var restored = snapshot.Layers.Select(layer =>
         {
+            var effectiveValue = StockLedgerPrecision.Money(
+                layer.OriginalValue + layer.AccumulatedAdjustment);
             var allocations = laterDepletions.GetValueOrDefault(layer.LayerId);
             var quantity = StockLedgerPrecision.Quantity(layer.RemainingQuantity
                 + (allocations?.Sum(c => c.Quantity) ?? 0m));
             var value = StockLedgerPrecision.Money(layer.RemainingValue
                 + (allocations?.Sum(c => c.Value) ?? 0m));
-            if (quantity > layer.OriginalQuantity
-                || value > layer.OriginalValue
+            if (effectiveValue < 0m || quantity > layer.OriginalQuantity
+                || value > effectiveValue
                 || quantity == 0m && value != 0m)
                 throw Invalid($"FIFO layer {layer.LayerId} over-restores during rewind.");
             return layer with
@@ -74,7 +76,8 @@ public static class StockReplayFifoLayerRewinder
             .Where(l => l.ReceiptKey!.Value.CompareTo(before) >= 0)
             .OrderBy(l => l.ReceiptKey).ThenBy(l => l.LayerId).ToArray();
         if (laterReceipts.Any(l => l.RemainingQuantity != l.OriginalQuantity
-                || l.RemainingValue != l.OriginalValue))
+                || l.RemainingValue != StockLedgerPrecision.Money(
+                    l.OriginalValue + l.AccumulatedAdjustment)))
             throw Invalid("A later FIFO receipt was consumed before the rewind boundary.");
         var historical = restored
             .Where(l => l.ReceiptKey!.Value.CompareTo(before) < 0)
@@ -90,7 +93,7 @@ public static class StockReplayFifoLayerRewinder
             || valueBefore != StockLedgerPrecision.Money(
                 snapshot.CurrentValue
                 + later.Where(c => c.DepletesPool).Sum(c => c.Value)
-                - laterReceipts.Sum(l => l.OriginalValue)))
+                - laterReceipts.Sum(l => l.OriginalValue + l.AccumulatedAdjustment)))
             throw Invalid("FIFO rewind does not conserve quantity and value.");
         return new(historical, later, laterReceipts,
             quantityBefore, valueBefore);

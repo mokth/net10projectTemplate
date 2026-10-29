@@ -138,7 +138,7 @@ internal static class StockReplayInventoryRouteSelector
             var firstOwner = group.Select(h => owners[h.StockPostingId!.Value])
                 .OrderBy(p => p.EffectiveAt).ThenBy(p => p.PostingSequence)
                 .First();
-            if (await db.StockValuationFacts.AsNoTracking().AnyAsync(f =>
+            var laterFacts = db.StockValuationFacts.AsNoTracking().Where(f =>
                 f.CompanyCode == companyCode && f.BranchCode == branchCode
                 && f.ItemCode == group.Key
                 && (f.EffectiveAt > firstOwner.EffectiveAt
@@ -175,9 +175,28 @@ internal static class StockReplayInventoryRouteSelector
                     && f.OriginalValuationFact.SourceDocumentLine == f.SourceDocumentLine
                     && f.OriginalValuationFact.StockPosting!.SealedAtUtc != null
                     && f.OriginalValuationFact.StockPosting.PostingSequence
-                        <= firstOwner.PostingSequence),
-                cancellationToken))
+                        <= firstOwner.PostingSequence));
+            var later = await laterFacts.Select(f => new
+            {
+                f.InventoryHistoryId, f.OriginalValuationFactId, f.BaseQty,
+                f.MovementCode, f.ValuationSource
+            }).ToArrayAsync(cancellationToken);
+            if (later.Any(f => f.InventoryHistoryId != null
+                    || f.OriginalValuationFactId == null || f.BaseQty != 0m
+                    || f.MovementCode != StockReplayFifoSalesReturnValueAdjustment.Movement
+                    || f.ValuationSource != StockReplayFifoSalesReturnValueAdjustment.Source))
                 return new(false, true, false);
+            var returnFactIds = later.Select(f => f.OriginalValuationFactId!.Value)
+                .Distinct().ToArray();
+            var saleHistoryIds = group.Where(h => h.TrxType == IvTrxTypes.SalesOut)
+                .Select(h => h.Id).ToArray();
+            foreach (var returnFactId in returnFactIds)
+                if (!await IvInventoryPostingService.IsVerifiedFifoReturnBeforeRollbackAsync(
+                        db, companyCode, branchCode, returnFactId, firstOwner.EffectiveAt,
+                        firstOwner.PostingSequence, cancellationToken)
+                    && !await IvInventoryPostingService.IsNeutralizedFifoReturnForSalesRollbackAsync(
+                        db, companyCode, branchCode, returnFactId, saleHistoryIds, cancellationToken))
+                    return new(false, true, false);
         }
         return new(false, false, false);
     }

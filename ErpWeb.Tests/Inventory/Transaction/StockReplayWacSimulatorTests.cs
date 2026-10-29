@@ -8,6 +8,46 @@ namespace ErpWeb.Tests.Inventory.Transaction;
 public sealed class StockReplayWacSimulatorTests
 {
     [Fact]
+    public void Replayed_customer_return_follows_the_repriced_sale_on_insertion_and_removal()
+    {
+        var receipt = new StockReplayWacEvent(1,
+            Key(new DateTime(2026, 10, 1, 8, 0, 0), 3),
+            0m, 0m, 5m, FixedSignedValue: 50m);
+        var sale = new StockReplayWacEvent(2,
+            Key(new DateTime(2026, 10, 2, 8, 0, 0), 4),
+            -4m, -12m, -4m);
+        var returned = new StockReplayWacEvent(3,
+            Key(new DateTime(2026, 10, 3, 8, 0, 0), 5),
+            1m, 3m, 1m, FixedSignedValue: 3m, ReturnOfSaleEventId: 2,
+            SalesReturnAllocationId: 1);
+
+        var inserted = StockReplayWacSimulator.SimulateInsertion(
+            12m, 36m, receipt, [sale, returned]);
+        Assert.Equal(new[] { -19m, 4.75m },
+            inserted.LaterSteps.Select(step => step.SignedValue));
+        Assert.Equal(17m, inserted.FinalQuantity);
+        Assert.Equal(80.75m, inserted.FinalValue);
+
+        var removed = StockReplayWacSimulator.SimulateRemoval(
+            17m, 80.75m, receipt with { OldSignedQuantity = 5m, OldSignedValue = 50m },
+            [sale with { OldSignedValue = -19m },
+                returned with { OldSignedValue = 4.75m, FixedSignedValue = 4.75m }]);
+        Assert.Equal(new[] { -12m, 3m },
+            removed.LaterSteps.Select(step => step.SignedValue));
+        Assert.Equal(12m, removed.FinalQuantity);
+        Assert.Equal(36m, removed.FinalValue);
+
+        Assert.Throws<StockLedgerException>(() => StockReplayWacSimulator.SimulateInsertion(
+            12m, 36m, receipt, [sale, returned with { ReturnOfSaleEventId = 99 }]));
+        Assert.Throws<StockLedgerException>(() => StockReplayWacSimulator.SimulateInsertion(
+            16m, 48m, receipt, [sale, returned with
+            {
+                OldSignedQuantity = 5m, OldSignedValue = 15m,
+                ReplaySignedQuantity = 5m, FixedSignedValue = 15m
+            }]));
+    }
+
+    [Fact]
     public void Late_receipt_revalues_a_later_issue_at_the_replayed_average()
     {
         var receipt = new StockReplayWacEvent(1,

@@ -143,6 +143,31 @@ public static class StockReplayFifoStateWriter
             .Where(f => f.StockPostingId == context.Posting.Id
                 && f.ItemCode == itemCode)
             .ToArrayAsync(cancellationToken);
+        var snapshotLayers = snapshot.Layers.ToDictionary(l => l.LayerId);
+        var expectedAdjustments = projection.FinalLayers.Where(l =>
+                snapshotLayers.TryGetValue(l.LayerId, out var before)
+                && l.AccumulatedAdjustment != before.AccumulatedAdjustment)
+            .Select(l => new
+            {
+                Before = snapshotLayers[l.LayerId], Final = l,
+                SignedValue = StockLedgerPrecision.Money(
+                    l.AccumulatedAdjustment - snapshotLayers[l.LayerId].AccumulatedAdjustment)
+            }).ToArray();
+        var adjustmentOriginIds = expectedAdjustments.Select(x => x.Before.OriginFactId).ToArray();
+        var adjustmentOrigins = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => adjustmentOriginIds.Contains(f.Id))
+            .ToDictionaryAsync(f => f.Id, cancellationToken);
+        var valueFacts = facts.Where(f => f.BaseQty == 0m).ToArray();
+        if (expectedAdjustments.Any(x => x.Before.SalesReturn is null
+                || !adjustmentOrigins.TryGetValue(x.Before.OriginFactId, out var origin)
+                || origin.BaseQty != x.Before.OriginalQuantity
+                || origin.CostAmount != x.Before.OriginalValue
+                || x.Before.SalesReturn.ReturnedValue != StockLedgerPrecision.Money(
+                    origin.CostAmount + x.Before.AccumulatedAdjustment)
+                || valueFacts.Count(f => StockReplayFifoSalesReturnValueAdjustment.Matches(
+                    f, origin, x.SignedValue)) != 1)
+            || valueFacts.Length != expectedAdjustments.Length)
+            throw Invalid("FIFO return value facts do not match the prepared layer adjustments.");
         if (facts.Length == 0 || facts.Any(f =>
                 f.CompanyCode != context.CompanyCode
                 || f.BranchCode != context.BranchCode
@@ -151,7 +176,7 @@ public static class StockReplayFifoStateWriter
                 || f.Direction is not (-1 or 1)
                 || f.ValuationStatus is not (
                     StockValuationStatuses.Valued or StockValuationStatuses.Reversed)
-                || f.BaseQty <= 0m || f.CostAmount < 0m
+                || f.BaseQty < 0m || f.CostAmount < 0m
                 || IvQty.Round(f.BaseQty) != f.BaseQty
                 || StockLedgerPrecision.Money(f.CostAmount) != f.CostAmount)
             || StockLedgerPrecision.Quantity(facts.Sum(f => f.SignedQty))
@@ -201,6 +226,17 @@ public static class StockReplayFifoStateWriter
                     && f.BranchCode == context.BranchCode
                     && f.CostMethod == StockCostMethods.Fifo
                     && (f.MovementCode == "RECEIPT_IN"
+                        || f.MovementCode == "RECEIPT_IN_REVERSAL"
+                            && f.ValuationSource == StockValuationSources.OriginalReversal
+                            && f.OriginalMovement == "RECEIPT_IN"
+                            && f.OriginalType is (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+                            && f.OriginalPostingId == l.OriginStockPostingId
+                            && f.OriginalHistoryId == f.ReversedHistoryId
+                            && f.PostingType == f.OriginalType
+                            && f.PostingRole == "REVERSAL"
+                            && f.ReversesPostingId == l.OriginStockPostingId
+                            && f.BaseQty == l.OriginalQty
+                            && f.CostAmount == l.OriginalValue
                         || f.MovementCode == "SALE_RETURN_IN_REVERSAL"
                             && f.ValuationSource == StockValuationSources.OriginalReversal
                             && f.OriginalMovement == "SALE_RETURN_IN"
@@ -300,11 +336,14 @@ public static class StockReplayFifoStateWriter
                 || final.OriginalQuantity != before.OriginalQuantity
                 || final.OriginalValue != before.OriginalValue
                 || final.AccumulatedAdjustment != before.AccumulatedAdjustment
+                    && !expectedAdjustments.Any(x => x.Before.LayerId == before.LayerId
+                        && x.Final.AccumulatedAdjustment == final.AccumulatedAdjustment)
                 || final.RemainingQuantity < 0m
                 || final.RemainingValue < 0m)
                 throw Invalid($"FIFO layer {layer.Id} changed after root preparation.");
             layer.RemainingQty = final.RemainingQuantity;
             layer.RemainingValue = final.RemainingValue;
+            layer.AccumulatedAdjustment = final.AccumulatedAdjustment;
             layer.CurrentUnitCost = final.CurrentUnitCost;
             layer.Status = final.Status;
         }
