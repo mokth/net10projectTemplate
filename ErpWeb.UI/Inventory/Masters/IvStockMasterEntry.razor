@@ -362,6 +362,7 @@
                                                 TextFieldName="@nameof(IvLifecycleOption.Label)"
                                                 ValueFieldName="@nameof(IvLifecycleOption.Code)"
                                                 Value="@Model.LifecycleStatus"
+                                                ValueExpression="() => Model.LifecycleStatus"
                                                 ValueChanged="@OnLifecycleStatusChanged"
                                                 Enabled="@(!IsSubmitting && !IsNewMode)"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never" />

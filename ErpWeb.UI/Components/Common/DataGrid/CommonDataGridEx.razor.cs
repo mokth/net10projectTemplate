@@ -138,8 +138,8 @@ public class CommonDataGridExBase<T> : ComponentBase
     protected static string? GetEffectiveWidth(GridColumnData column) =>
         GridColumnSizing.GetEffectiveWidth(column);
 
-    protected static int GetEffectiveMinWidth(GridColumnData column) =>
-        GridColumnSizing.GetEffectiveMinWidth(column);
+    protected static int GetEffectiveMinWidth(GridColumnData column) => 20;
+        //GridColumnSizing.GetEffectiveMinWidth(column);
 
     public async Task OnRefreshClick()
     {
