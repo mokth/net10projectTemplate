@@ -1,6 +1,6 @@
 ﻿# UI Search Evidence Matrix
 
-Generated: 2026-10-29 22:20:29 +08:00
+Generated: 2026-10-29 22:20:29 +08:00 / live browser session 2026-10-30 00:43-00:52 +08:00
 
 Every converted search control has its own row. A representative screen never stands in for another control.
 
