@@ -12,7 +12,8 @@ internal static class ProductionOutputIssueCostCorrectionWriter
 {
     public static async Task AppendWithinRootAsync(
         StockPostingContext context, long issueId, long consumeId, long produceId,
-        bool outputReversed, ProductionEffectiveCost expectedIssue, CancellationToken ct)
+        bool outputReversed, ProductionEffectiveCost expectedIssue, CancellationToken ct,
+        long? activeFinishedGoodId = null, decimal activeFinishedGoodValue = 0m)
     {
         context.EnsureUnsealed();
         var db = context.Db;
@@ -52,22 +53,32 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         var sourcePool = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == source.Uid, ct);
         var target = await db.ProductionBalLots.SingleAsync(l => l.Uid == produce.ProductionBalLotId, ct);
         var targetPool = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == target.Uid, ct);
+        var finished = activeFinishedGoodId is long finishedId
+            ? await db.ProductionBalLotMovements.AsNoTracking().SingleOrDefaultAsync(m => m.Uid == finishedId, ct)
+            : null;
+        if (activeFinishedGoodId is not null && (outputReversed || context.CostMethod != StockCostMethods.MovingAverage
+            || finished is null || finished.MovementType != ProductionBalLotMovementTypes.FgReceiptOut
+            || finished.ProductionBalLotId != target.Uid || finished.BaseQty > produce.BaseQty))
+            throw Invalid("Production output has an unsupported finished-good dependency.");
         if (source.Uid == target.Uid || sourcePool.Status != ProductionPoolValuationService.Verified
             || targetPool.Status != ProductionPoolValuationService.Verified
             || sourcePool.TrackedBaseQty != source.BaseQty || sourcePool.TrackedValue != source.TotalCost
             || targetPool.TrackedBaseQty != target.BaseQty || targetPool.TrackedValue != target.TotalCost
             || source.TotalCost != expectedIssue.TotalCost - (outputReversed ? 0m : costs[consumeId].TotalCost)
             || source.BaseQty != issue.BaseQty - (outputReversed ? 0m : consume.BaseQty)
-            || target.BaseQty != (outputReversed ? 0m : produce.BaseQty)
-            || target.TotalCost != (outputReversed ? 0m : costs[produceId].TotalCost))
+            || target.BaseQty != (outputReversed ? 0m : produce.BaseQty - (finished?.BaseQty ?? 0m))
+            || target.TotalCost != (outputReversed ? 0m : costs[produceId].TotalCost - activeFinishedGoodValue))
             throw Invalid("Production output pools changed after replay planning.");
 
         var graph = await ProductionReplayDependencyPlanner.BuildAsync(db,
             context.CompanyCode, context.BranchCode, [issueId], ct);
         if (outputReversed && (graph.OrderedMovementIds.Count != 1 || graph.Edges.Count != 0)
-            || !outputReversed && (graph.OrderedMovementIds.Count != 3 || graph.Edges.Count != 2
+            || !outputReversed && (graph.OrderedMovementIds.Count != (finished is null ? 3 : 4)
+                || graph.Edges.Count != (finished is null ? 2 : 3)
                 || !graph.Edges.Any(e => e.ContributorMovementId == issueId && e.ConsumerMovementId == consumeId)
-                || !graph.Edges.Any(e => e.ContributorMovementId == consumeId && e.ConsumerMovementId == produceId)))
+                || !graph.Edges.Any(e => e.ContributorMovementId == consumeId && e.ConsumerMovementId == produceId)
+                || finished is not null && !graph.Edges.Any(e => e.ContributorMovementId == produceId
+                    && e.ConsumerMovementId == finished.Uid)))
             throw Invalid("Production output dependencies changed after replay planning.");
 
         var correctedConsume = outputReversed ? costs[consumeId].TotalCost
@@ -95,7 +106,7 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         source.AverageUnitCost = source.BaseQty > 0m
             ? StockLedgerPrecision.Money(correctedSource / source.BaseQty) : 0m;
         sourcePool.TrackedValue = correctedSource;
-        if (!outputReversed)
+        if (!outputReversed && finished is null)
         {
             target.TotalCost = correctedProduce;
             target.AverageUnitCost = StockLedgerPrecision.Money(correctedProduce / produce.BaseQty);

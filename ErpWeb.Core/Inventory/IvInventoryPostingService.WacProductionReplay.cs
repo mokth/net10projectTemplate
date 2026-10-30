@@ -9,27 +9,48 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
-    // A receipt can affect one verified material issue and, when present,
-    // one bounded Production output with no downstream WIP consumer.
+    // A receipt can affect one verified material issue and one bounded output.
     private sealed record ProductionLeafReplayPlan(
         int HistoryId, long MovementId, long MaterialMovementId,
         long PoolId, int PoolGeneration, string PoolRowVersion,
         decimal Quantity, ProductionEffectiveCost EffectiveCost,
         string ActiveValuationIds, DateTime EffectiveAt,
-        StandardProductionReplayPlan? Output = null);
+        StandardProductionReplayPlan? Output = null,
+        WacFinishedGoodCostPlan? FinishedGoodCost = null);
 
-    private static Task<ProductionLeafReplayPlan?> PlanWacProductionLeafAsync(
+    private static async Task<ProductionLeafReplayPlan?> PlanWacProductionLeafAsync(
         AppDbContext db, string companyCode, string branchCode,
-        IReadOnlyList<StockReplayWacEvent> events, DateTime candidateDate,
-        CancellationToken cancellationToken)
+        IReadOnlyList<StockReplayWacEvent> events, IReadOnlyList<StockReplayWacStep> projectedSteps,
+        DateTime candidateDate,
+        CancellationToken cancellationToken, long? removingReceiptOwnerId = null,
+        int? insertingReceiptBatchId = null)
     {
         var ids = events.Where(e => e.EventId is > 0 and <= int.MaxValue)
             .Select(e => (int)e.EventId).ToArray();
-        return PlanProductionLeafAsync(db, companyCode, branchCode, ids, cancellationToken,
-            candidateDate, allowOutput: true);
+        var plan = await PlanProductionLeafAsync(db, companyCode, branchCode, ids, cancellationToken,
+            candidateDate, allowOutput: true, removingReceiptOwnerId: removingReceiptOwnerId);
+        if (plan?.Output?.ActiveFinishedGood is not null)
+        {
+            var steps = projectedSteps.Where(s => s.EventId == plan.HistoryId).ToArray();
+            if (steps.Length != 1 || steps[0].SignedQuantity != -plan.Quantity)
+                throw ProductionReplayError("The backdated receipt changes finished-good source quantity.");
+            if (steps[0].SignedValue != -plan.EffectiveCost.TotalCost)
+                plan = plan with { FinishedGoodCost = await PlanWacFinishedGoodCostAsync(
+                    db, companyCode, branchCode, plan, steps[0], removingReceiptOwnerId,
+                    insertingReceiptBatchId, cancellationToken) };
+        }
+        if (plan?.Output?.CorrectedReversedFinishedGood is not null)
+        {
+            var steps = projectedSteps.Where(s => s.EventId == plan.HistoryId).ToArray();
+            if (steps.Length != 1 || steps[0].SignedQuantity != -plan.Quantity)
+                throw ProductionReplayError("The reversed finished-good source projection is incomplete.");
+            await VerifyCorrectedReversedFinishedGoodProjectionAsync(db, companyCode, branchCode,
+                plan, steps[0], cancellationToken);
+        }
+        return plan;
     }
 
-    private static Task<ProductionLeafReplayPlan?> PlanFifoProductionLeafAsync(
+    private static async Task<ProductionLeafReplayPlan?> PlanFifoProductionLeafAsync(
         AppDbContext db, string companyCode, string branchCode,
         StockReplayFifoTailProjection projection, StockReplayEventKey candidateKey,
         CancellationToken cancellationToken)
@@ -37,8 +58,17 @@ public sealed partial class IvInventoryPostingService
         var ids = projection.Issues.Where(i => !i.IsCandidate
                 && i.Key.CompareTo(candidateKey) > 0)
             .Select(i => StockReplayFifoMiRootWriter.HistoryId(i.Key)).ToArray();
-        return PlanProductionLeafAsync(db, companyCode, branchCode, ids, cancellationToken,
+        var plan = await PlanProductionLeafAsync(db, companyCode, branchCode, ids, cancellationToken,
             candidateKey.EffectiveAt, allowOutput: true);
+        if (plan?.Output?.ActiveFinishedGood is not null)
+        {
+            var issues = projection.Issues.Where(i => !i.IsCandidate && i.Key.CompareTo(candidateKey) > 0
+                && StockReplayFifoMiRootWriter.HistoryId(i.Key) == plan.HistoryId).ToArray();
+            if (issues.Length != 1 || issues[0].Quantity != plan.Quantity
+                || issues[0].Value != plan.EffectiveCost.TotalCost)
+                throw ProductionReplayError("The backdated receipt would change finished-good cost; full downstream replay is required.");
+        }
+        return plan;
     }
 
     private static Task<StandardProductionReplayPlan?> PlanStandardProductionTailAsync(
@@ -56,7 +86,8 @@ public sealed partial class IvInventoryPostingService
     private static async Task<ProductionLeafReplayPlan?> PlanProductionLeafAsync(
         AppDbContext db, string companyCode, string branchCode,
         IReadOnlyList<int> ids, CancellationToken cancellationToken,
-        DateTime? candidateDate = null, bool allowOutput = false)
+        DateTime? candidateDate = null, bool allowOutput = false,
+        long? removingReceiptOwnerId = null)
     {
         var histories = await db.IvTrxHistories.AsNoTracking()
             .Where(h => ids.Contains(h.Id) && h.TrxType == IvTrxTypes.IssueToProduction)
@@ -85,7 +116,8 @@ public sealed partial class IvInventoryPostingService
         if (allowOutput && otherMovements > 1 && candidateDate is DateTime date)
         {
             var output = await PlanStandardProductionAsync(db, companyCode, branchCode,
-                [historyId], date, cancellationToken, allowRestatements: true);
+                [historyId], date, cancellationToken, allowRestatements: true,
+                removingReceiptOwnerId: removingReceiptOwnerId);
             var outputLot = await db.ProductionBalLots.AsNoTracking().SingleAsync(
                 l => l.Uid == movement.ProductionBalLotId, cancellationToken);
             var outputPool = await db.ProductionPoolValuationRows.AsNoTracking().SingleAsync(
@@ -136,12 +168,15 @@ public sealed partial class IvInventoryPostingService
 
     private static async Task RecheckWacProductionLeafAsync(
         AppDbContext db, string companyCode, string branchCode,
-        IReadOnlyList<StockReplayWacEvent> events, DateTime candidateDate,
+        IReadOnlyList<StockReplayWacEvent> events, IReadOnlyList<StockReplayWacStep> projectedSteps,
+        DateTime candidateDate,
         ProductionLeafReplayPlan? expected,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, long? removingReceiptOwnerId = null,
+        int? insertingReceiptBatchId = null)
     {
         var current = await PlanWacProductionLeafAsync(db, companyCode, branchCode,
-            events, candidateDate, cancellationToken);
+            events, projectedSteps, candidateDate, cancellationToken, removingReceiptOwnerId,
+            insertingReceiptBatchId);
         if (current != expected)
             throw new StockLedgerException(new StockLedgerError(
                 StockLedgerErrorCodes.StaleDocument,
@@ -209,19 +244,37 @@ public sealed partial class IvInventoryPostingService
             LatestEffectiveAt = plan.Output is not null && plan.Output.LatestEffectiveAt > latestEffectiveAt
                 ? plan.Output.LatestEffectiveAt : latestEffectiveAt,
             PlanWatermark = branchWatermark, PlanHash = planHash,
-            AffectedHistoryCount = affectedHistoryCount, AffectedItemCount = 1,
+            AffectedHistoryCount = affectedHistoryCount + (plan.FinishedGoodCost is not null ? 1
+                : plan.Output?.CorrectedReversedFinishedGood is not null ? 2 : 0),
+            AffectedItemCount = plan.FinishedGoodCost is not null
+                || plan.Output?.CorrectedReversedFinishedGood is not null ? 2 : 1,
             AffectedProductionMovementCount = plan.Output?.MovementCount ?? 1,
             CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
         });
         await db.SaveChangesAsync(cancellationToken);
-        if (plan.Output is null)
+        if (plan.FinishedGoodCost is not null)
+            await ApplyWacFinishedGoodCostAsync(context, plan, plan.FinishedGoodCost, cancellationToken);
+        else if (plan.Output?.ActiveFinishedGood is not null)
+        {
+            var issue = (await ProductionIssueEffectiveCostReader.ReadWithinRootAsync(
+                context, [plan.MovementId], cancellationToken))[plan.MovementId];
+            if (issue.BaseQty != plan.Quantity || issue.TotalCost != plan.EffectiveCost.TotalCost
+                || issue.UnitCost != plan.EffectiveCost.UnitCost)
+                throw ProductionReplayError("The finished-good source cost changed after replay planning.");
+        }
+        else if (plan.Output is null)
             await ProductionLeafIssueCostCorrectionWriter.AppendWithinRootAsync(
                 context, plan.EffectiveCost, cancellationToken);
         else
+        {
             await ProductionOutputIssueCostCorrectionWriter.AppendWithinRootAsync(
                 context, plan.Output.IssueMovementId!.Value,
                 plan.Output.ConsumeMovementId!.Value, plan.Output.ProduceMovementId!.Value,
                 plan.Output.OutputReversed, plan.EffectiveCost, cancellationToken);
+            if (plan.Output.CorrectedReversedFinishedGood is not null)
+                await ApplyCorrectedReversedFinishedGoodAsync(context,
+                    plan.Output.CorrectedReversedFinishedGood, cancellationToken);
+        }
     }
 
     private static StockLedgerException ProductionReplayError(string message) =>

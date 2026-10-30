@@ -726,6 +726,13 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 || StockLedgerPrecision.Money(facts.Sum(x => x.CostAmount)) != movement.TotalCost)
                 throw new TraceFailure($"Production ISSUE movement {movement.Uid} does not reconcile to StockValuationFact evidence.");
 
+            var originalFactIds = facts.Select(x => x.Id).ToArray();
+            if (await _db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
+                    x.OriginalValuationFactId.HasValue
+                    && originalFactIds.Contains(x.OriginalValuationFactId.Value)
+                    && x.ReversesValuationFactId == null, ct))
+                throw new TraceFailure($"Production ISSUE movement {movement.Uid} has replayed cost or FIFO origin; corrected finished-good trace is not yet available.");
+
             var result = new List<TraceAtom>(facts.Count);
             foreach (var fact in facts)
             {

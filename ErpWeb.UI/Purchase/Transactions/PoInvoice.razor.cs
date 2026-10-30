@@ -1,6 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
+using ErpWeb.Core.Security;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
@@ -13,6 +14,7 @@ public partial class PoInvoice : PageBase
     [Parameter] public string? DocNo { get; set; }
 
     [Inject] private IPoInvoiceService Invoices { get; set; } = default!;
+    [Inject] private IAccessRightService AccessRights { get; set; } = default!;
 
     /// <summary>
     /// The (mode, document) pair this instance last loaded. See <see cref="OnParametersSetAsync"/>: the
@@ -101,14 +103,28 @@ public partial class PoInvoice : PageBase
     /// screen: the credit note moves money, this screen only corrects quantity against the PO/GR.
     /// Only offered for a saved, posted invoice with a document number.
     /// </summary>
+    private bool _canAddCreditNote;
+    private bool _canAddDebitNote;
+
     protected bool CanCreateCreditNote =>
         !IsNew
         && string.Equals(Model.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase)
         && string.Equals(Model.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
-        && !string.IsNullOrWhiteSpace(Model.DocNo);
+        && !string.IsNullOrWhiteSpace(Model.DocNo)
+        && _canAddCreditNote;
+
+    protected bool CanCreateDebitNote =>
+        !IsNew
+        && string.Equals(Model.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(Model.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(Model.DocNo)
+        && _canAddDebitNote;
 
     protected void CreateCreditNoteAsync() =>
         Navigation.NavigateTo($"/purchase/credit-notes/new?invNo={Uri.EscapeDataString(Model.DocNo)}");
+
+    protected void CreateDebitNoteAsync() =>
+        Navigation.NavigateTo($"/purchase/debit-notes/new?invNo={Uri.EscapeDataString(Model.DocNo)}");
 
     /// <summary>
     /// Nothing happens in the per-instance <c>OnInitializedAsync</c> hook: the load lives in
@@ -142,6 +158,8 @@ public partial class PoInvoice : PageBase
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
+        _canAddCreditNote = false;
+        _canAddDebitNote = false;
 
         var lookups = await Invoices.GetLookupsAsync();
         if (lookups.Succeeded && lookups.Lookups is not null)
@@ -179,6 +197,18 @@ public partial class PoInvoice : PageBase
                 CanEdit = true
             };
             EditLines = [];
+        }
+
+        _canAddCreditNote = false;
+        _canAddDebitNote = false;
+        var postedInvoice = !IsNew
+            && string.Equals(Model.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(Model.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(Model.DocNo);
+        if (postedInvoice)
+        {
+            _canAddCreditNote = await AccessRights.CanAsync(MenuCodes.PurchaseCreditNote, PermissionCodes.Add);
+            _canAddDebitNote = await AccessRights.CanAsync(MenuCodes.PurchaseDebitNote, PermissionCodes.Add);
         }
 
         IsLoading = false;

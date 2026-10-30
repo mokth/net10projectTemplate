@@ -31,6 +31,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\ErpWeb\ErpWeb.csproj" />
     <ProjectReference Include="..\ErpWeb.Core\ErpWeb.Core.csproj" />
     <ProjectReference Include="..\ErpWeb.Model\ErpWeb.Model.csproj" />
     <ProjectReference Include="..\ErpWeb.Library\ErpWeb.Library.csproj" />

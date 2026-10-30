@@ -375,6 +375,12 @@
                                   RenderStyle="ButtonRenderStyle.Secondary"
                                   Click="@CreateCreditNoteAsync" />
                     }
+                    @if (CanCreateDebitNote)
+                    {
+                        <DxButton Text="Create Purchase Debit Note"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="@CreateDebitNoteAsync" />
+                    }
                 </div>
             </footer>
         }

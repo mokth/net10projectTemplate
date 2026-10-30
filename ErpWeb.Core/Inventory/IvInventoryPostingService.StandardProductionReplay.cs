@@ -14,14 +14,22 @@ public sealed partial class IvInventoryPostingService
         int HistoryId, ProductionLeafReplayPlan? Leaf, string StableHash,
         DateTime LatestEffectiveAt, int MovementCount,
         long? IssueMovementId = null, long? ConsumeMovementId = null,
-        long? ProduceMovementId = null, bool OutputReversed = false);
+        long? ProduceMovementId = null, bool OutputReversed = false,
+        ActiveFinishedGoodReplayPlan? ActiveFinishedGood = null,
+        CorrectedReversedFinishedGoodPlan? CorrectedReversedFinishedGood = null);
+
+    private sealed record ActiveFinishedGoodReplayPlan(
+        int BatchId, long MovementId, decimal Quantity, decimal BaseQuantity, decimal Value,
+        ProductionEffectiveCost EffectiveCost,
+        DateTime EffectiveAt, string StableHash);
 
     // Standard receipts may pass an already consumed issue only when every
     // affected quantity and cost remains unchanged. This bounded case admits
     // one output and its exact reversal, with no later WIP consumption.
     private static async Task<StandardProductionReplayPlan?> PlanStandardProductionAsync(
         AppDbContext db, string company, string branch, IReadOnlyList<int> historyIds,
-        DateTime candidateDate, CancellationToken ct, bool allowRestatements = false)
+        DateTime candidateDate, CancellationToken ct, bool allowRestatements = false,
+        long? removingReceiptOwnerId = null)
     {
         var ids = await db.IvTrxHistories.AsNoTracking()
             .Where(h => historyIds.Contains(h.Id) && h.TrxType == IvTrxTypes.IssueToProduction)
@@ -177,8 +185,39 @@ public sealed partial class IvInventoryPostingService
         var outputPoolMovements = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(m => m.ProductionBalLotId == produce.ProductionBalLotId)
             .OrderBy(m => m.Uid).ToArrayAsync(ct);
+        var downstreamMovements = outputPoolMovements.Where(m => m.Uid != produce.Uid
+            && !(reversed && m.OriginalMovementId == produce.Uid
+                && m.MovementType == ProductionBalLotMovementTypes.ProduceReversal)).ToArray();
+        string? reversedFinishedGoodHash = null;
+        ActiveFinishedGoodReplayPlan? activeFinishedGood = null;
+        CorrectedReversedFinishedGoodPlan? correctedReversedFinishedGood = null;
+        if (downstreamMovements.Length != 0)
+        {
+            if (!allowRestatements)
+                throw ProductionReplayError("Production output has unsupported downstream history.");
+            if (!reversed && downstreamMovements.Length == 1
+                && downstreamMovements[0].MovementType == ProductionBalLotMovementTypes.FgReceiptOut)
+            {
+                var issueMethods = await db.StockValuationFacts.AsNoTracking()
+                    .Where(f => authority.ActiveValuationFactIds.Contains(f.Id))
+                    .Select(f => f.CostMethod).Distinct().ToArrayAsync(ct);
+                if (issueMethods.Length != 1)
+                    throw ProductionReplayError("Production issue has inconsistent cost methods.");
+                activeFinishedGood = await VerifyActiveFinishedGoodAsync(db, company, branch,
+                    candidateDate, produce, costs[produce.Uid], downstreamMovements[0], issueMethods[0], ct);
+            }
+            else
+            {
+                var verified = await VerifyReversedFinishedGoodAsync(db, company, branch,
+                    candidateDate, produce, downstreamMovements, removingReceiptOwnerId, ct);
+                reversedFinishedGoodHash = verified.Hash;
+                correctedReversedFinishedGood = verified.Corrected;
+            }
+        }
+        if (reversed && correctedReversedFinishedGood is not null)
+            throw ProductionReplayError("Corrected finished goods and their reversed Production output require a wider replay.");
         if (outputLot is null || outputPool is null || outputLot.Uid == sourceLot.Uid
-            || outputPoolMovements.Length != (reversed ? 2 : 1)
+            || outputPoolMovements.Length != (reversed ? 2 : 1) + downstreamMovements.Length
             || outputPoolMovements.Count(m => m.Uid == produce.Uid) != 1
             || sourceLot.CompanyCode != company || sourceLot.BranchCode != branch
             || outputLot.CompanyCode != company || outputLot.BranchCode != branch
@@ -198,9 +237,9 @@ public sealed partial class IvInventoryPostingService
                 : StockLedgerPrecision.Money(costs[issue.Uid].TotalCost * consume.BaseQty / issue.BaseQty))
             || sourceLot.AverageUnitCost != (sourceLot.BaseQty == 0m ? 0m
                 : StockLedgerPrecision.Money(sourceLot.TotalCost / sourceLot.BaseQty))
-            || outputLot.BaseQty != (reversed ? 0m : produce.BaseQty)
-            || outputLot.Qty != (reversed ? 0m : produce.Qty)
-            || outputLot.TotalCost != (reversed ? 0m : costs[produce.Uid].TotalCost)
+            || outputLot.BaseQty != (reversed ? 0m : produce.BaseQty - (activeFinishedGood?.BaseQuantity ?? 0m))
+            || outputLot.Qty != (reversed ? 0m : produce.Qty - (activeFinishedGood?.Quantity ?? 0m))
+            || outputLot.TotalCost != (reversed ? 0m : costs[produce.Uid].TotalCost - (activeFinishedGood?.Value ?? 0m))
             || outputLot.AverageUnitCost != (outputLot.BaseQty == 0m ? 0m
                 : StockLedgerPrecision.Money(outputLot.TotalCost / outputLot.BaseQty)))
             throw ProductionReplayError("Production issue or output pool does not reconcile.");
@@ -209,13 +248,19 @@ public sealed partial class IvInventoryPostingService
         var allocations = await ProductionActiveEdgeResolver.Allocations(db).AsNoTracking()
             .Where(a => a.ReceiptMovementId == issue.Uid || a.ReceiptMovementId == produce.Uid
                 || a.OutboundMovementId == consume.Uid).ToArrayAsync(ct);
-        if (!reversed && (graph.OrderedMovementIds.Count != 3 || graph.Edges.Count != 2
+        if (!reversed && (graph.OrderedMovementIds.Count != (activeFinishedGood is null ? 3 : 4)
+                || graph.Edges.Count != (activeFinishedGood is null ? 2 : 3)
                 || !graph.Edges.Any(e => e.ContributorMovementId == issue.Uid && e.ConsumerMovementId == consume.Uid)
                 || !graph.Edges.Any(e => e.ContributorMovementId == consume.Uid && e.ConsumerMovementId == produce.Uid)
-                || allocations.Length != 1 || allocations[0].ReceiptMovementId != issue.Uid
-                || allocations[0].OutboundMovementId != consume.Uid
-                || allocations[0].StockPostingId != outputPostingId
-                || allocations[0].BaseQty != consume.BaseQty)
+                || activeFinishedGood is not null && !graph.Edges.Any(e =>
+                    e.ContributorMovementId == produce.Uid && e.ConsumerMovementId == activeFinishedGood.MovementId)
+                || allocations.Length != (activeFinishedGood is null ? 1 : 2)
+                || allocations.Count(a => a.ReceiptMovementId == issue.Uid
+                    && a.OutboundMovementId == consume.Uid && a.StockPostingId == outputPostingId
+                    && a.BaseQty == consume.BaseQty) != 1
+                || activeFinishedGood is not null && allocations.Count(a =>
+                    a.ReceiptMovementId == produce.Uid && a.OutboundMovementId == activeFinishedGood.MovementId
+                    && a.BaseQty == activeFinishedGood.BaseQuantity) != 1)
             || reversed && (graph.OrderedMovementIds.Count != 1 || graph.Edges.Count != 0
                 || allocations.Length != 0))
             throw ProductionReplayError("Production output has an unsupported or inconsistent dependency.");
@@ -358,6 +403,8 @@ public sealed partial class IvInventoryPostingService
                 material[0].WorkOrderId, material[0].WorkOrderMaterialId, material[0].WorkOrderOperationId,
                 material[0].PostingLinkId, material[0].StockPostingId, material[0].ItemCode, material[0].BaseUom },
             OutputId = outputId, OutputPostingId = outputPostingId, output.DocumentRevision, output.Status,
+            ReversedFinishedGood = reversedFinishedGoodHash,
+            ActiveFinishedGood = activeFinishedGood,
             output.ReversalPostingId, OutputRowVersion = Convert.ToHexString(output.RowVersion ?? []),
             Movements = outputMovements.Select(m => new { m.Uid, m.ProductionBalLotId, m.BaseQty, m.Qty,
                 m.TotalCost, m.UnitCost, m.PostingLinkId, m.StockPostingId, m.LedgerEpochId,
@@ -385,8 +432,12 @@ public sealed partial class IvInventoryPostingService
                 RowVersion = Convert.ToHexString(outputLot.RowVersion ?? []) },
             Graph = graph.Edges, Allocations = allocations.Select(a => new { a.Id, a.BaseQty }).ToArray()
         }, new { }).RequestFingerprint;
-        return new(ids[0], null, hash, consume.MovementDate, outputMovements.Length + 1,
-            issue.Uid, consume.Uid, produce.Uid, reversed);
+        return new(ids[0], null, hash,
+            new[] { consume.MovementDate, activeFinishedGood?.EffectiveAt ?? consume.MovementDate,
+                correctedReversedFinishedGood?.ReversalAt ?? consume.MovementDate }.Max(),
+            outputMovements.Length + 1 + (activeFinishedGood is null ? 0 : 1)
+                + (correctedReversedFinishedGood is null ? 0 : 2),
+            issue.Uid, consume.Uid, produce.Uid, reversed, activeFinishedGood, correctedReversedFinishedGood);
     }
 
     private static async Task ApplyStandardProductionAsync(

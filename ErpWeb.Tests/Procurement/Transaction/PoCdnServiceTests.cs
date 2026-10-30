@@ -885,6 +885,254 @@ public class PoCdnServiceTests : IAsyncLifetime
         Assert.False(result.Succeeded);
     }
 
+    [Fact]
+    public async Task Typed_search_requires_family_access_and_a_vendor()
+    {
+        var denied = AlwaysAllowed();
+        denied.Setup(x => x.CanAsync(
+                MenuCodes.PurchaseCreditNote, PermissionCodes.Access, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var sut = CreateSut(denied);
+
+        var unauthorized = await sut.SearchPostedInvoicesAsync("CN", "VEND01", null);
+        Assert.False(unauthorized.Succeeded);
+        Assert.Equal(PoCdnErrorKind.Authorization, unauthorized.ErrorKind);
+
+        var allowed = CreateSut();
+        var missingVendor = await allowed.SearchPostedInvoicesAsync("CN", "  ", null);
+        Assert.False(missingVendor.Succeeded);
+
+        var rows = await allowed.SearchPostedInvoicesAsync("DN", "VEND01", null);
+        Assert.True(rows.Succeeded, rows.ErrorMessage);
+        var found = Assert.Single(rows.InvoicePickerRows);
+        Assert.Equal("PINV01", found.InvNo);
+        Assert.Equal("MYR", found.Currency);
+    }
+
+    [Fact]
+    public async Task Typed_search_finds_internal_and_supplier_invoice_numbers_and_rejects_other_vendors()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.PoInvoices.FirstAsync(x => x.DocNo == "PINV01");
+            inv.InvNo = "SUP-INV-77";
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var byInternal = await sut.SearchPostedInvoicesAsync("CN", "VEND01", "PINV01");
+        Assert.True(byInternal.Succeeded);
+        Assert.Equal("PINV01", Assert.Single(byInternal.InvoicePickerRows).InvNo);
+        Assert.Equal("SUP-INV-77", byInternal.InvoicePickerRows[0].SupplierInvNo);
+
+        var bySupplier = await sut.SearchPostedInvoicesAsync("CN", "VEND01", "SUP-INV-77");
+        Assert.True(bySupplier.Succeeded);
+        Assert.Equal("PINV01", Assert.Single(bySupplier.InvoicePickerRows).InvNo);
+
+        var otherVendor = await sut.SearchPostedInvoicesAsync("CN", "VEND02", "PINV01");
+        Assert.True(otherVendor.Succeeded);
+        Assert.Empty(otherVendor.InvoicePickerRows);
+    }
+
+    [Fact]
+    public async Task Typed_search_returns_at_most_fifty_newest_and_search_finds_the_older_invoice()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            for (var i = 1; i <= 51; i++)
+            {
+                db.PoInvoices.Add(new PoInvoice
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    DocNo = $"PINV{i:D3}-EXTRA",
+                    DocDate = new DateTime(2026, 1, 1).AddDays(i),
+                    Status = "POSTED",
+                    Type = "INV",
+                    VendorCode = "VEND02",
+                    VendorName = "Beta Supplier",
+                    Currency = "MYR",
+                    TotAmnt = i,
+                    RowVersion = [1]
+                });
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var page = await sut.SearchPostedInvoicesAsync("CN", "VEND02", null);
+        Assert.True(page.Succeeded, page.ErrorMessage);
+        Assert.Equal(50, page.InvoicePickerRows.Count);
+        Assert.DoesNotContain(page.InvoicePickerRows, r => r.InvNo == "PINV001-EXTRA");
+
+        var older = await sut.SearchPostedInvoicesAsync("CN", "VEND02", "PINV001-EXTRA");
+        Assert.Equal("PINV001-EXTRA", Assert.Single(older.InvoicePickerRows).InvNo);
+    }
+
+    [Fact]
+    public async Task Exact_header_resolver_bootstraps_without_vendor_and_rejects_unposted_or_wrong_vendor()
+    {
+        var sut = CreateSut();
+        var ok = await sut.GetPostedInvoiceSourceAsync("CN", "PINV01", null);
+        Assert.True(ok.Succeeded, ok.ErrorMessage);
+        Assert.Equal("PINV01", ok.PostedInvoiceSource!.InvNo);
+        Assert.Equal("VEND01", ok.PostedInvoiceSource.VendorCode);
+        Assert.Equal("MYR", ok.PostedInvoiceSource.Currency);
+
+        var wrongVendor = await sut.GetPostedInvoiceSourceAsync("CN", "PINV01", "VEND02");
+        Assert.False(wrongVendor.Succeeded);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv = await db.PoInvoices.FirstAsync(x => x.DocNo == "PINV01");
+            inv.Status = "NEW";
+            await db.SaveChangesAsync();
+        }
+
+        var unposted = await sut.GetPostedInvoiceSourceAsync("DN", "PINV01", null);
+        Assert.False(unposted.Succeeded);
+        Assert.Equal(PoCdnErrorKind.NotFound, unposted.ErrorKind);
+    }
+
+    [Fact]
+    public async Task Typed_invoice_lines_require_vendor_and_reject_forged_exclude_documents()
+    {
+        var sut = CreateSut();
+        var missingVendor = await sut.GetInvoiceLinesAsync("CN", "PINV01", null, " ");
+        Assert.False(missingVendor.Succeeded);
+
+        var wrongVendor = await sut.GetInvoiceLinesAsync("CN", "PINV01", null, "VEND02");
+        Assert.False(wrongVendor.Succeeded);
+
+        var dnExclude = await sut.GetInvoiceLinesAsync("DN", "PINV01", "PCN-FORGED", "VEND01");
+        Assert.False(dnExclude.Succeeded);
+
+        var forged = await sut.GetInvoiceLinesAsync("CN", "PINV01", "PCN-FORGED", "VEND01");
+        Assert.False(forged.Succeeded);
+
+        var first = await sut.SaveNewAsync(CNRequest(qty: 4m, reasonCode: "RETURN"));
+        Assert.True(first.Succeeded, first.ErrorMessage);
+
+        var counted = await sut.GetInvoiceLinesAsync("CN", "PINV01", null, "VEND01");
+        Assert.True(counted.Succeeded, counted.ErrorMessage);
+        Assert.Equal(6m, Assert.Single(counted.InvoiceLinePickerRows).RemainingStdQty);
+
+        var lines = await sut.GetInvoiceLinesAsync("CN", "PINV01", first.DocNo, "VEND01");
+        Assert.True(lines.Succeeded, lines.ErrorMessage);
+        var row = Assert.Single(lines.InvoiceLinePickerRows);
+        Assert.Equal((short)1, row.Line);
+        Assert.Equal(10m, row.StdQty);
+        Assert.Equal(10m, row.RemainingStdQty);
+        Assert.Equal("PO1", row.PoNo);
+        Assert.Null(row.UnsupportedSourceFields);
+    }
+
+    [Fact]
+    public async Task Typed_invoice_lines_flag_unrepresentable_item_discount_levels()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var line = await db.Set<PoInvoiceDetail>().FirstAsync(x => x.DocNo == "PINV01" && x.Line == 1);
+            line.ItemDiscount2 = 5m;
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var result = await sut.GetInvoiceLinesAsync("CN", "PINV01", null, "VEND01");
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        var row = Assert.Single(result.InvoiceLinePickerRows);
+        Assert.Equal(5m, row.ItemDiscount2);
+        Assert.Contains("ItemDiscount2", row.UnsupportedSourceFields);
+    }
+
+    [Fact]
+    public async Task Typed_invoice_lines_do_not_treat_leftover_discount_amount_as_unrepresentable()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var line = await db.Set<PoInvoiceDetail>().FirstAsync(x => x.DocNo == "PINV01" && x.Line == 1);
+            line.Discount = 12m;
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var result = await sut.GetInvoiceLinesAsync("CN", "PINV01", null, "VEND01");
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        var row = Assert.Single(result.InvoiceLinePickerRows);
+        Assert.Equal(12m, row.Discount);
+        Assert.Null(row.UnsupportedSourceFields);
+    }
+
+    [Fact]
+    public async Task Typed_header_and_search_reject_quantity_corrections_and_supplier_numbers_as_doc_no()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PoInvoices.Add(new PoInvoice
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DocNo = "QCN01",
+                DocDate = new DateTime(2026, 8, 2),
+                Status = "POSTED",
+                Type = "CN",
+                VendorCode = "VEND01",
+                VendorName = "Alpha Supplier",
+                Currency = "MYR",
+                TotAmnt = 10m,
+                InvNo = "PINV01",
+                RowVersion = [1]
+            });
+            var inv = await db.PoInvoices.FirstAsync(x => x.DocNo == "PINV01");
+            inv.InvNo = "SUP-INV-99";
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var correction = await sut.GetPostedInvoiceSourceAsync("CN", "QCN01", null);
+        Assert.False(correction.Succeeded);
+        Assert.Equal(PoCdnErrorKind.NotFound, correction.ErrorKind);
+
+        var supplierAsDoc = await sut.GetPostedInvoiceSourceAsync("CN", "SUP-INV-99", null);
+        Assert.False(supplierAsDoc.Succeeded);
+        Assert.Equal(PoCdnErrorKind.NotFound, supplierAsDoc.ErrorKind);
+
+        var search = await sut.SearchPostedInvoicesAsync("DN", "VEND01", "QCN01");
+        Assert.True(search.Succeeded, search.ErrorMessage);
+        Assert.Empty(search.InvoicePickerRows);
+    }
+
+    [Fact]
+    public async Task Typed_search_dn_access_is_independent_of_credit_note_access()
+    {
+        var access = AlwaysAllowed();
+        access.Setup(x => x.CanAsync(
+                MenuCodes.PurchaseDebitNote, PermissionCodes.Access, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var sut = CreateSut(access);
+
+        var deniedDn = await sut.SearchPostedInvoicesAsync("DN", "VEND01", null);
+        Assert.False(deniedDn.Succeeded);
+        Assert.Equal(PoCdnErrorKind.Authorization, deniedDn.ErrorKind);
+
+        var allowedCn = await sut.SearchPostedInvoicesAsync("CN", "VEND01", null);
+        Assert.True(allowedCn.Succeeded, allowedCn.ErrorMessage);
+        Assert.Equal("PINV01", Assert.Single(allowedCn.InvoicePickerRows).InvNo);
+    }
+
+    [Fact]
+    public async Task Legacy_untyped_line_read_still_reports_remaining_after_other_credit_notes()
+    {
+        var sut = CreateSut();
+        var first = await sut.SaveNewAsync(CNRequest(qty: 4m, reasonCode: "RETURN"));
+        Assert.True(first.Succeeded, first.ErrorMessage);
+
+        var result = await sut.GetInvoiceLinesAsync("PINV01", null);
+        Assert.True(result.Succeeded);
+        Assert.Equal(6m, Assert.Single(result.InvoiceLinePickerRows).RemainingStdQty);
+    }
+
     // ─────────────────────────── Reservation reporting ───────────────────────────
 
     [Fact]

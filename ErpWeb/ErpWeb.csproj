@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="ErpWeb.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- ErpAuthPolicies is referenced by every endpoint mapping file; one project-level using keeps
          the policy name out of the call sites without 20+ duplicated using directives. -->
     <Using Include="ErpWeb.Core.Authentication" />
@@ -22,6 +25,8 @@
     <None Remove="App_Data\**" />
     <None Remove="artifacts\**" />
     <None Remove="Logs\**" />
+    <Content Remove="DataProtection-Keys\**" />
+    <None Remove="DataProtection-Keys\**" />
   </ItemGroup>
   <ItemGroup>
     <Content Remove="C:\Users\User\.nuget\packages\microsoft.codeanalysis.workspaces.msbuild\4.14.0\contentFiles\any\any\BuildHost-net472\cs\System.CommandLine.resources.dll" />
@@ -88,6 +93,12 @@
     <ProjectReference Include="..\ErpWeb.Model\ErpWeb.Model.csproj" />
     <ProjectReference Include="..\ErpWeb.Library\ErpWeb.Library.csproj" />
     <ProjectReference Include="..\ErpWeb.Report\ErpWeb.Report.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Update="DataProtection-Keys\**">
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <None Update="Menus\menus.xml">

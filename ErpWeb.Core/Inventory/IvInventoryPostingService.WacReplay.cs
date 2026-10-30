@@ -74,7 +74,8 @@ public sealed partial class IvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC MR has a later physical movement without valuation.");
         var productionPlan = await PlanWacProductionLeafAsync(read, companyCode, branchCode,
-            financial.Tail.LaterEvents, batch.TrxDtTime, cancellationToken);
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, cancellationToken,
+            insertingReceiptBatchId: batch.Id);
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
                 batch.TrxDtTime, cancellationToken,
@@ -86,7 +87,8 @@ public sealed partial class IvInventoryPostingService
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
         await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
-            financial.Tail.LaterEvents, batch.TrxDtTime, productionPlan, cancellationToken);
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, productionPlan, cancellationToken,
+            insertingReceiptBatchId: batch.Id);
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
                 batch.TrxDtTime, cancellationToken,
@@ -179,7 +181,8 @@ public sealed partial class IvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC GR has a later physical movement without valuation.");
         var productionPlan = await PlanWacProductionLeafAsync(read, companyCode, branchCode,
-            financial.Tail.LaterEvents, batch.TrxDtTime, cancellationToken);
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, cancellationToken,
+            insertingReceiptBatchId: batch.Id);
         if (productionPlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated GR cannot yet replay both a Production issue and an invoice settlement.");
@@ -195,7 +198,8 @@ public sealed partial class IvInventoryPostingService
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
         await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
-            financial.Tail.LaterEvents, batch.TrxDtTime, productionPlan, cancellationToken);
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, productionPlan, cancellationToken,
+            insertingReceiptBatchId: batch.Id);
         var snapshot = await LoadGoodsReceiptSnapshotAsync(write, companyCode,
             branchCode, batchNo, IvTrxTypes.GoodsReceive, cancellationToken);
         if (snapshot.Error is not null)
@@ -494,7 +498,8 @@ public sealed partial class IvInventoryPostingService
         }
         var productionPlan = isReceipt
             ? await PlanWacProductionLeafAsync(read, companyCode, branchCode,
-                financial.Tail.LaterEvents, original.TrxDtTime, cancellationToken)
+                financial.Tail.LaterEvents, financial.Projection.LaterSteps, original.TrxDtTime,
+                cancellationToken, owner.Id)
             : null;
         if (productionPlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
@@ -511,7 +516,8 @@ public sealed partial class IvInventoryPostingService
             companyCode, branchCode, cancellationToken);
         if (isReceipt)
             await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
-                financial.Tail.LaterEvents, original.TrxDtTime, productionPlan, cancellationToken);
+                financial.Tail.LaterEvents, financial.Projection.LaterSteps, original.TrxDtTime,
+                productionPlan, cancellationToken, owner.Id);
         if (await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
                 original.TrxDtTime, cancellationToken, replayInvoice,
                 allowBoundedSales: isReceipt,

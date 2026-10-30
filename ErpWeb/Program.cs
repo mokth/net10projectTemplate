@@ -1,5 +1,6 @@
 using ErpWeb.Authentication;
 using ErpWeb.Components;
+using ErpWeb.Hosting;
 using ErpWeb.Core;
 using ErpWeb.Core.Authentication;
 using ErpWeb.Core.Menus;
@@ -14,7 +15,6 @@ using ErpWeb.UI.Services.Theme;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -55,12 +55,7 @@ try
     });
     builder.Services.AddMvc();
 
-    // Configure Data Protection to persist keys to file system
-    // This prevents antiforgery token errors when the application restarts
-    var keysFolder = Path.Combine(builder.Environment.ContentRootPath, "DataProtection-Keys");
-    builder.Services.AddDataProtection()
-        .PersistKeysToFileSystem(new DirectoryInfo(keysFolder))
-        .SetApplicationName("ErpWeb");
+    builder.Services.AddErpWebDataProtection(builder.Configuration, builder.Environment);
 
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
         ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is missing.");
@@ -159,6 +154,8 @@ try
     });
 
     var app = builder.Build();
+
+    DataProtectionKeyRing.LogStartupDiagnostics(app.Services, builder.Configuration, app.Environment);
 
     // Deployment base path. When the app is hosted below the site root - an IIS sub-application such as
     // https://host/erpweb - the request path arrives carrying that prefix (ANCM passes it through), so

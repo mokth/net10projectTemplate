@@ -114,38 +114,69 @@
         </section>
     </div>
 
-    <DxPopup @bind-Visible="FilterPopupVisible" HeaderText="Filter documents" Width="420px" CloseOnOutsideClick="false" ShowFooter="true">
-        <BodyTemplate>
-            <div class="mb-3">
-                <label class="form-label">Status</label>
-                <DxComboBox Data="@StatusFilterOptions"
-                            ValueFieldName="Key"
-                            TextFieldName="Name"
-                            @bind-Value="DraftStatusKey"
-                            CssClass="w-100" />
+    <DxPopup HeaderText="Filter documents"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@StatusFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatusKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit T="DateTime?"
+                                        @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit T="DateTime?"
+                                        @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
             </div>
-            <div class="mb-3">
-                <label class="form-label">Date from</label>
-                <DxDateEdit @bind-Date="DraftDateFrom" CssClass="w-100" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+                </div>
             </div>
-            <div class="mb-3">
-                <label class="form-label">Date to</label>
-                <DxDateEdit @bind-Date="DraftDateTo" CssClass="w-100" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-            </div>
-        </BodyTemplate>
-        <FooterTemplate>
-            <DxButton Text="Clear" RenderStyle="ButtonRenderStyle.Secondary" Click="@ClearFiltersAsync" />
-            <DxButton Text="Apply" RenderStyle="ButtonRenderStyle.Primary" Click="@ApplyFiltersAsync" />
-        </FooterTemplate>
+        </Content>
     </DxPopup>
 
-    <DxPopup @bind-Visible="ConfirmVisible" HeaderText="Confirm" Width="420px" CloseOnOutsideClick="false" ShowFooter="true">
-        <BodyTemplate>
-            <p class="mb-0">@ConfirmMessage</p>
-        </BodyTemplate>
-        <FooterTemplate>
-            <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => ConfirmVisible = false)" Enabled="@(!IsSubmitting)" />
-            <DxButton Text="@ConfirmButtonText" RenderStyle="@ConfirmButtonStyle" Click="@ConfirmActionAsync" Enabled="@(!IsSubmitting)" />
-        </FooterTemplate>
+    <DxPopup HeaderText="Confirm"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@ConfirmVisible">
+        <Content>
+            <p class="iv-confirm__copy">@ConfirmMessage</p>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Cancel"
+                              Click="@(() => ConfirmVisible = false)"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="@ConfirmButtonStyle"
+                              Text="@ConfirmButtonText"
+                              Click="@ConfirmActionAsync"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </div>
+        </Content>
     </DxPopup>
 </MenuAuthorize>

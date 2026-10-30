@@ -184,6 +184,34 @@ public sealed partial class ProductionOutputService
             if (await ProductionPoolValuationService.HasActiveDependentsAsync(db, produceMovements.Select(x => x.Uid).ToArray(), cancellationToken))
                 return Fail("Rollback is blocked by an active pooled-value dependency. Reverse downstream production/FG receipts first.");
 
+            // A corrected FG receipt can already have been reversed. Removing the
+            // output before its active source receipt would require replaying both
+            // reversal pairs, which this bounded route does not yet support.
+            var outputPoolIds = produceMovements.Select(m => m.ProductionBalLotId).Distinct().ToArray();
+            var reversedFinishedIds = await db.ProductionBalLotMovements.AsNoTracking()
+                .Where(m => outputPoolIds.Contains(m.ProductionBalLotId)
+                    && m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut
+                    && m.OriginalMovementId == null
+                    && db.ProductionBalLotMovements.Any(r => r.OriginalMovementId == m.Uid
+                        && r.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal))
+                .Select(m => m.Uid).ToArrayAsync(cancellationToken);
+            if (reversedFinishedIds.Length != 0)
+            {
+                var finishedCosts = await ProductionReplayEffectiveCostReader.ReadAsync(db,
+                    scope.CompanyCode, scope.BranchCode!, reversedFinishedIds, cancellationToken);
+                var correctionIds = finishedCosts.Values.Where(c => c.RestatementFactId.HasValue)
+                    .Select(c => c.RestatementFactId!.Value).ToArray();
+                if (correctionIds.Length != 0 && await (from correction in db.ProductionCostRestatementFacts.AsNoTracking()
+                    join source in db.StockPostings.AsNoTracking() on correction.ReplayStockPostingId equals source.Id
+                    where correctionIds.Contains(correction.Id) && source.SourceModule == "INVENTORY"
+                        && (source.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+                            || source.SourceDocumentType == IvTrxTypes.GoodsReceive)
+                        && source.PostingRole == "PRIMARY" && source.SealedAtUtc != null
+                        && !db.StockPostings.Any(r => r.ReversesPostingId == source.Id && r.SealedAtUtc != null)
+                    select source.Id).AnyAsync(cancellationToken))
+                    return Fail("Reverse the backdated source receipt before reversing this Production output.");
+            }
+
             foreach (var produce in produceMovements)
             {
                 var lotMovements = await db.ProductionBalLotMovements
