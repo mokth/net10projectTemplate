@@ -586,3 +586,9 @@ button.iv-chip {
         animation: none;
     }
 }
+
+/* Standard ERP search: caption, text editor and icon button share a single line. */
+.erp-inline-search { display: flex; align-items: center; flex-wrap: nowrap; gap: .4rem; min-width: 0; }
+.erp-inline-search > .erp-inline-search__caption { flex: 0 0 auto; font-size: .875rem; font-weight: 600; white-space: nowrap; }
+.erp-inline-search > .dxbl-text-edit, .erp-inline-search > .dxbl-edit, .erp-inline-search > .dxbl-textbox { flex: 1 1 160px; min-width: 0; width: auto !important; }
+.erp-inline-search > .erp-inline-search__button { flex: 0 0 36px; min-width: 36px; width: 36px; display: inline-flex; justify-content: center; align-items: center; }

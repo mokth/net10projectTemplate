@@ -14,7 +14,9 @@
         </header>
         <section class="iv-card">
             <div class="iv-toolbar-row">
-                <div class="iv-toolbar-row__search"><DxTextBox Text="@SearchText" TextChanged="OnSearchChanged" NullText="Search return, Work Order or reference…" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" /></div>
+                <div class="iv-toolbar-row__search erp-inline-search"><label class="erp-inline-search__caption">Search</label>
+                    <DxTextBox Text="@SearchText" TextChanged="OnSearchChanged" NullText="Search return, Work Order or reference…" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" IconCssClass="fa-solid fa-magnifying-glass" CssClass="erp-inline-search__button" Click="@(() => OnSearchChanged(SearchText))" aria-label="Search" title="Search" /></div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="FILTER" IconCssClass="fa-solid fa-filter" Click="OpenFilterPopup" />
             </div>
             @if (Loading) { <div class="iv-skeleton" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div> }
