@@ -59,12 +59,26 @@
         <Columns>
             @if (AllowSelection)
             {
-                <DxGridSelectionColumn Width="60px" MinWidth="48" />
+                <DxGridSelectionColumn Width="60px"
+                                       MinWidth="48"
+                                       VisibleIndex="@(RowActions.Count > 0 ? 1 : 0)"
+                                       FixedPosition="GridColumnFixedPosition.Left"
+                                       AllowReorder="false"
+                                       ShowInColumnChooser="false" />
             }
 
             @if (RowActions.Count > 0)
             {
-                <DxGridCommandColumn Caption="" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false" Width="@GetActionColumnWidth()" MinWidth="@GetActionColumnMinWidth()">
+                <DxGridCommandColumn Caption=""
+                                     NewButtonVisible="false"
+                                     EditButtonVisible="false"
+                                     DeleteButtonVisible="false"
+                                     VisibleIndex="0"
+                                     FixedPosition="GridColumnFixedPosition.Left"
+                                     AllowReorder="false"
+                                     ShowInColumnChooser="false"
+                                     Width="@GetActionColumnWidth()"
+                                     MinWidth="@GetActionColumnMinWidth()">
                     <CellDisplayTemplate>
                         <DxToolbar ItemRenderStyleMode="ToolbarRenderStyleMode.Plain">
                             <Items>

@@ -385,10 +385,27 @@ public class CommonDataGridExBase<T> : ComponentBase
 
         try
         {
+            var hasActions = ActionButtons.Count > 0;
+            var hasSelection = allowSelect;
+
             var activeLayout = await LayoutStorage.LoadAsync(VersionTwoLayoutKey);
             if (activeLayout is not null)
             {
-                e.Layout = activeLayout;
+                var normalized = GridLayoutPersistence.NormalizeLeftActionColumns(
+                    activeLayout,
+                    hasActions,
+                    hasSelection);
+                if (normalized is not null)
+                {
+                    e.Layout = normalized;
+                }
+                else
+                {
+                    Logger.LogWarning(
+                        "Skipped restoring grid layout for {LayoutKey}: optional Command/Selection schema could not be reconciled.",
+                        LayoutKey);
+                }
+
                 return;
             }
 
@@ -397,10 +414,22 @@ public class CommonDataGridExBase<T> : ComponentBase
             {
                 var migratedLayout = GridLayoutPersistence.StripFilterCriteria(
                     GridLayoutPersistence.StripColumnWidths(legacyLayout));
-                e.Layout = migratedLayout;
+                var normalized = GridLayoutPersistence.NormalizeLeftActionColumns(
+                    migratedLayout,
+                    hasActions,
+                    hasSelection);
+                if (normalized is null)
+                {
+                    Logger.LogWarning(
+                        "Skipped migrating grid layout for {LayoutKey}: optional Command/Selection schema could not be reconciled.",
+                        LayoutKey);
+                    return;
+                }
+
+                e.Layout = normalized;
 
                 // Migrate once so future loads preserve user-resized widths.
-                await LayoutStorage.SaveAsync(VersionTwoLayoutKey, migratedLayout);
+                await LayoutStorage.SaveAsync(VersionTwoLayoutKey, normalized);
             }
         }
         catch (Exception ex)

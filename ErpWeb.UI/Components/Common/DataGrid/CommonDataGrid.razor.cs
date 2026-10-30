@@ -118,10 +118,27 @@ public partial class CommonDataGrid<T>
             return;
         }
 
+        var hasActions = RowActions.Count > 0;
+        var hasSelection = AllowSelection;
+
         var activeLayout = await LayoutStorage.LoadAsync(VersionTwoLayoutKey);
         if (activeLayout is not null)
         {
-            e.Layout = activeLayout;
+            var normalized = GridLayoutPersistence.NormalizeLeftActionColumns(
+                activeLayout,
+                hasActions,
+                hasSelection);
+            if (normalized is not null)
+            {
+                e.Layout = normalized;
+            }
+            else
+            {
+                Logger.LogWarning(
+                    "Skipped restoring grid layout for {GridKey}: optional Command/Selection schema could not be reconciled.",
+                    GridKey);
+            }
+
             return;
         }
 
@@ -129,8 +146,20 @@ public partial class CommonDataGrid<T>
         if (legacyLayout is not null)
         {
             var migratedLayout = GridLayoutPersistence.StripColumnWidths(legacyLayout);
-            e.Layout = migratedLayout;
-            await LayoutStorage.SaveAsync(VersionTwoLayoutKey, migratedLayout);
+            var normalized = GridLayoutPersistence.NormalizeLeftActionColumns(
+                migratedLayout,
+                hasActions,
+                hasSelection);
+            if (normalized is null)
+            {
+                Logger.LogWarning(
+                    "Skipped migrating grid layout for {GridKey}: optional Command/Selection schema could not be reconciled.",
+                    GridKey);
+                return;
+            }
+
+            e.Layout = normalized;
+            await LayoutStorage.SaveAsync(VersionTwoLayoutKey, normalized);
         }
     }
 

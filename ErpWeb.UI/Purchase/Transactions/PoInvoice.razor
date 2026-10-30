@@ -354,7 +354,7 @@
                     }
                     else
                     {
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@GoBack" Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" IconCssClass="fa-solid fa-xmark" Click="@GoBack" Enabled="@(!IsSubmitting)" />
                         <DxButton RenderStyle="ButtonRenderStyle.Primary"
                                   Text="@(IsSubmitting ? "Saving…" : "Save")"
                                   IconCssClass="fa-solid fa-floppy-disk"

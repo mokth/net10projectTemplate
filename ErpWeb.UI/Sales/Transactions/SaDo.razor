@@ -393,7 +393,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (SaDoLineVm)context.DataItem;
@@ -729,7 +729,7 @@
                         <DxGridDataColumn FieldName="@nameof(SaDocSourceHeaderOption.CustomerName)" Caption="Customer name" Width="250px" MinWidth="190" />
                         <DxGridDataColumn FieldName="@nameof(SaDocSourceHeaderOption.DocumentDate)" Caption="Date" Width="115px" MinWidth="105" DisplayFormat="dd/MM/yyyy" />
                         <DxGridDataColumn FieldName="@nameof(SaDocSourceHeaderOption.Status)" Caption="Status" Width="105px" MinWidth="90" />
-                        <DxGridCommandColumn Caption=" " Width="115px" MinWidth="105">
+                        <DxGridCommandColumn Caption=" " Width="115px" MinWidth="105" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left">
                             <CellDisplayTemplate>
                                 @{
                                     var source = (SaDocSourceHeaderOption)context.DataItem;
@@ -769,7 +769,7 @@
             <p class="sdoc-confirm__copy">Post @DoNoDisplay? Posting will issue stock from the allocated shipment and apply the Delivery Order to its source Sales Order(s).</p>
             <div class="sdoc-popup-footer__actions">
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@CancelPost" Enabled="@(!IsSubmitting)" />
-                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="POST DELIVERY ORDER" Click="@ConfirmPostAsync" Enabled="@(!IsSubmitting && CanPostDeliveryOrder)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Success" Text="POST DELIVERY ORDER" Click="@ConfirmPostAsync" Enabled="@(!IsSubmitting && CanPostDeliveryOrder)" />
             </div>
         </Content>
     </DxPopup>

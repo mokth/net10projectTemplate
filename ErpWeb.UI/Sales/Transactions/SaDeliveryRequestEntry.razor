@@ -255,7 +255,7 @@
                                     @(source.RequestedDeliveryDate?.ToString("dd/MM/yyyy") ?? "—")
                                 </CellDisplayTemplate>
                             </DxGridDataColumn>
-                            <DxGridCommandColumn Caption="" Width="88px" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Caption="" Width="88px" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var source = (SourceEditorRow)context.DataItem;
@@ -386,7 +386,7 @@
                                     <span>@(string.IsNullOrWhiteSpace(trace) ? "—" : trace)</span>
                                 </CellDisplayTemplate>
                             </DxGridDataColumn>
-                            <DxGridCommandColumn Caption="" Width="110px" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Caption="" Width="110px" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var material = (SaDeliveryRequestMaterialShortageTrace)context.DataItem;

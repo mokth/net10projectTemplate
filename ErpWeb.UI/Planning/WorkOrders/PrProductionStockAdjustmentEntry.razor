@@ -33,8 +33,6 @@
                 @if (CanChangeWorkOrder) { <DxButton Text="CHANGE WORK ORDER" RenderStyle="ButtonRenderStyle.Secondary" Click="RequestChangeWorkOrder" Enabled="@(!Busy)" /> }
             </div>
             <div class="pr-stock-commandbar__right">
-                @if (CanEditDraft) { <DxButton Text="EDIT DRAFT" RenderStyle="ButtonRenderStyle.Secondary" Click="EditDraft" /> }
-                @if (CanSave) { <DxButton Text="SAVE DRAFT" IconCssClass="fa-solid fa-floppy-disk" RenderStyle="ButtonRenderStyle.Primary" Click="SaveAsync" Enabled="@(!Busy)" /> }
                 @if (ShowPost) { <DxButton Text="POST" IconCssClass="fa-solid fa-check" RenderStyle="ButtonRenderStyle.Success" Click="BeginPost" Enabled="@(!Busy)" /> }
                 @if (CanRollback) { <DxButton Text="ROLLBACK" IconCssClass="fa-solid fa-rotate-left" RenderStyle="ButtonRenderStyle.Warning" Click="BeginRollback" Enabled="@(!Busy)" /> }
                 @if (CanDelete) { <DxButton Text="DELETE" IconCssClass="fa-solid fa-trash" RenderStyle="ButtonRenderStyle.Danger" Click="BeginDelete" Enabled="@(!Busy)" /> }
@@ -133,7 +131,7 @@
                                 <DxGridDataColumn Caption="REASON" Width="150px"><CellDisplayTemplate>@{var row=(AdjustmentEditor)context.DataItem;}<DxComboBox Data="@ReasonOptions" TData="string" TValue="string" @bind-Value="row.Reason" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
                                 <DxGridDataColumn Caption="COST STATUS" Width="260px" MinWidth="225"><CellDisplayTemplate>@{var row=(AdjustmentEditor)context.DataItem;}<span>@CostStatus(row)</span>@if(row.Direction=="ADD"&&row.Source.PoolKind==ProductionBalLotKinds.Wip&&row.Source.BaseQty==0m&&row.CostEvidenceType is null){<small class="d-block text-muted">If no effective Standard Cost exists, POST will require an approved override.</small>}@if(CanSetCostOverride(row)){<DxButton Text="@(row.CostEvidenceType is null ? "SET COST OVERRIDE" : "EDIT COST OVERRIDE")" RenderStyle="ButtonRenderStyle.Secondary" CssClass="pr-stock-cost-button" Click="@(() => OpenCostOverride(row))" />}</CellDisplayTemplate></DxGridDataColumn>
                                 <DxGridDataColumn Caption="REMARKS" Width="170px"><CellDisplayTemplate>@{var row=(AdjustmentEditor)context.DataItem;}<DxTextBox @bind-Text="row.Remarks" maxlength="250" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
-                                <DxGridDataColumn Caption="" Width="90px"><CellDisplayTemplate>@{var row=(AdjustmentEditor)context.DataItem;}<DxButton Text="REMOVE" RenderStyle="ButtonRenderStyle.Danger" Click="@(() => RemoveEditor(row))" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
+                                <DxGridDataColumn Caption="" Width="90px" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left"><CellDisplayTemplate>@{var row=(AdjustmentEditor)context.DataItem;}<DxButton Text="REMOVE" RenderStyle="ButtonRenderStyle.Danger" Click="@(() => RemoveEditor(row))" Enabled="@CanEditFields" /></CellDisplayTemplate></DxGridDataColumn>
                             </Columns>
                         </DxGrid>
                     }
@@ -145,6 +143,24 @@
                     @if (Document.ReadinessErrors.Count > 0) { <div class="pr-stock-domain-readiness" role="alert"><strong>Server readiness</strong><ul>@foreach (var error in Document.ReadinessErrors) { <li>@error</li> }</ul></div> }
                 }
             </section>
+        }
+
+        @if (!BusyLoading)
+        {
+            <footer class="iv-footer pr-stock-footer">
+                <div class="iv-footer__actions" style="margin-inline-start: auto;">
+                    @if (!IsView)
+                    {
+                        <DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" IconCssClass="fa-solid fa-xmark" Click="BackAsync" Enabled="@(!Busy)" />
+                        @if (CanSave) { <DxButton Text="SAVE DRAFT" IconCssClass="fa-solid fa-floppy-disk" RenderStyle="ButtonRenderStyle.Primary" Click="SaveAsync" Enabled="@(!Busy)" /> }
+                    }
+                    else
+                    {
+                        <DxButton Text="CLOSE" RenderStyle="ButtonRenderStyle.Secondary" IconCssClass="fa-solid fa-xmark" Click="BackAsync" />
+                        @if (CanEditDraft) { <DxButton Text="EDIT DRAFT" RenderStyle="ButtonRenderStyle.Primary" Click="EditDraft" /> }
+                    }
+                </div>
+            </footer>
         }
 
         <DxPopup HeaderText="Add Production Stock Adjustment Pools" CloseOnOutsideClick="false" Width="90vw" CssClass="common-popup pr-popup-grid-dialog" @bind-Visible="SourcePickerVisible">

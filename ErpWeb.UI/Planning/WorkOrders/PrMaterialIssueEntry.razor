@@ -209,6 +209,16 @@
                     </Columns>
                 </DxGrid>
             </section>
+
+            <footer class="pr-issue-footer">
+                <div class="pr-issue-footer__actions" style="margin-inline-start: auto;">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CLOSE"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@BackToList"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </footer>
         }
         else if (Workspace is null)
         {

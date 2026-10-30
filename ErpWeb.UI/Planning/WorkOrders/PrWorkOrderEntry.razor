@@ -66,13 +66,6 @@
                           Text="HOW TO USE"
                           IconCssClass="fa-solid fa-circle-question"
                           Click="@(() => HelpVisible = true)" />
-                @if (CanOpenEdit)
-                {
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                              Text="EDIT DRAFT"
-                              IconCssClass="fa-regular fa-pen-to-square"
-                              Click="@OpenEdit" />
-                }
                 @if (CanReopenForEdit)
                 {
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
@@ -93,11 +86,6 @@
                 }
                 @if (CanEditInputs)
                 {
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                              Text="SAVE DRAFT"
-                              IconCssClass="fa-regular fa-floppy-disk"
-                              Click="@SaveDraftAsync"
-                              Enabled="@CanSaveDraft" />
                     <DxDropDownButton Text="MORE"
                                       RenderStyle="ButtonRenderStyle.Secondary"
                                       IconCssClass="fa-solid fa-ellipsis"
@@ -544,7 +532,7 @@
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.IssueMethod)" Caption="Issue" Width="100px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.SupplySource)" Caption="Supply" Width="140px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMaterialVm.WarehouseCode)" Caption="Warehouse" Width="120px" MinWidth="105" />
-                                    <DxGridDataColumn Caption="" Width="90px">
+                                    <DxGridDataColumn Caption="" Width="90px" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left">
                                         <CellDisplayTemplate>
                                             @{
                                                 var material = (ProductionWorkOrderMaterialVm)context.DataItem;
@@ -588,7 +576,7 @@
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.QueueSeconds)" Caption="Queue sec" DisplayFormat="n4" Width="90px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedStartDateTime)" Caption="Start" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
                                     <DxGridDataColumn FieldName="@nameof(ProductionWorkOrderMachineVm.PlannedCompletionDateTime)" Caption="Completion" DisplayFormat="dd MMM yyyy HH:mm" Width="160px" />
-                                    <DxGridDataColumn Caption="" Width="90px">
+                                    <DxGridDataColumn Caption="" Width="90px" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left">
                                         <CellDisplayTemplate>
                                             @{
                                                 var machine = (ProductionWorkOrderMachineVm)context.DataItem;
@@ -729,6 +717,37 @@
                     </DxTabPage>
                 </DxTabs>
             </section>
+
+            <footer class="iv-footer pwo-footer">
+                <div class="iv-footer__actions" style="margin-inline-start: auto;">
+                    @if (CanEditInputs)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="CANCEL"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@BackToList" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="SAVE DRAFT"
+                                  IconCssClass="fa-regular fa-floppy-disk"
+                                  Click="@SaveDraftAsync"
+                                  Enabled="@CanSaveDraft" />
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="CLOSE"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@BackToList" />
+                        @if (CanOpenEdit)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="EDIT DRAFT"
+                                      IconCssClass="fa-regular fa-pen-to-square"
+                                      Click="@OpenEdit" />
+                        }
+                    }
+                </div>
+            </footer>
         }
 
         <DxPopup HeaderText="How to use Work Order Entry"

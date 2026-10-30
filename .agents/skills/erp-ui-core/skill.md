@@ -206,6 +206,8 @@ The `iv-*` prefix on list pages is an existing shared implementation detail. Do 
 
 Place free-text search above the grid.
 
+**Markup and layout:** follow `.agents/skills/erp-inline-search-standard/skill.md` (one row: caption + input + icon-only magnifier; global `inventory-chrome.css`). Do not invent page-specific search styling.
+
 Use:
 
 - meaningful placeholder naming real searchable fields;

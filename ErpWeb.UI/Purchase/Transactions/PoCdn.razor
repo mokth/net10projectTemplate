@@ -391,37 +391,55 @@
             </section>
 
             <footer class="sdoc-footer">
-                <div class="sdoc-footer__actions">
+                @if (((IsEditMode || IsViewMode) && IsNewDocument && !string.IsNullOrWhiteSpace(DocNo))
+                    || ((IsEditMode || IsViewMode) && IsPostedDocument && !string.IsNullOrWhiteSpace(DocNo)))
+                {
+                    <div class="sdoc-footer__actions">
+                        @if ((IsEditMode || IsViewMode) && IsNewDocument && !string.IsNullOrWhiteSpace(DocNo))
+                        {
+                            <DxButton Text="Post"
+                                      RenderStyle="ButtonRenderStyle.Success"
+                                      Enabled="@CanPostCommand"
+                                      Click="@OnPostAsync" />
+                            <DxButton Text="Delete"
+                                      RenderStyle="ButtonRenderStyle.Danger"
+                                      Enabled="@(CanEditPermission && !IsSubmitting)"
+                                      Click="@OnDeleteAsync" />
+                        }
+                        @if ((IsEditMode || IsViewMode) && IsPostedDocument && !string.IsNullOrWhiteSpace(DocNo))
+                        {
+                            <DxButton Text="Rollback"
+                                      RenderStyle="ButtonRenderStyle.Warning"
+                                      Enabled="@(CanPostPermission && !IsSubmitting)"
+                                      Click="@OnRollbackAsync" />
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="sdoc-footer__hint">@LineCountLabel</p>
+                }
+                <div class="sdoc-footer__actions pocdn-footer__entry">
                     @if (IsNewMode || IsEditMode)
                     {
-                        <DxButton Text="Save"
+                        <DxButton Text="Cancel"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnClose" />
+                        <DxButton Text="@(IsSubmitting ? "Saving…" : "Save")"
                                   RenderStyle="ButtonRenderStyle.Primary"
+                                  IconCssClass="fa-solid fa-floppy-disk"
                                   Enabled="@CanSave"
                                   Click="@OnSaveAsync" />
                     }
-                    @if (IsViewMode && CanEditFromView)
+                    @if (IsViewMode)
                     {
-                        <DxButton Text="Edit" RenderStyle="ButtonRenderStyle.Primary" Click="@OnEditFromView" />
+                        <DxButton Text="Close" RenderStyle="ButtonRenderStyle.Secondary" Click="@OnClose" />
+                        @if (CanEditFromView)
+                        {
+                            <DxButton Text="Edit" RenderStyle="ButtonRenderStyle.Primary" Click="@OnEditFromView" />
+                        }
                     }
-                    @if ((IsEditMode || IsViewMode) && IsNewDocument && !string.IsNullOrWhiteSpace(DocNo))
-                    {
-                        <DxButton Text="Post"
-                                  RenderStyle="ButtonRenderStyle.Success"
-                                  Enabled="@CanPostCommand"
-                                  Click="@OnPostAsync" />
-                        <DxButton Text="Delete"
-                                  RenderStyle="ButtonRenderStyle.Danger"
-                                  Enabled="@(CanEditPermission && !IsSubmitting)"
-                                  Click="@OnDeleteAsync" />
-                    }
-                    @if ((IsEditMode || IsViewMode) && IsPostedDocument && !string.IsNullOrWhiteSpace(DocNo))
-                    {
-                        <DxButton Text="Rollback"
-                                  RenderStyle="ButtonRenderStyle.Warning"
-                                  Enabled="@(CanPostPermission && !IsSubmitting)"
-                                  Click="@OnRollbackAsync" />
-                    }
-                    <DxButton Text="Close" RenderStyle="ButtonRenderStyle.Secondary" Click="@OnClose" />
                 </div>
             </footer>
         }
@@ -626,7 +644,7 @@
                             PageSize="10"
                             CssClass="sdoc-line-grid">
                         <Columns>
-                            <DxGridCommandColumn Width="220px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="220px" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var row = (PoCdnInvoicePickerRow)context.DataItem;
@@ -796,7 +814,7 @@
                             PageSize="10"
                             CssClass="sdoc-line-grid">
                         <Columns>
-                            <DxGridCommandColumn Width="90px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="90px" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var row = (PoCdnInvoiceLinePickerRow)context.DataItem;

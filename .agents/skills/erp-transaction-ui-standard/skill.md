@@ -26,6 +26,7 @@ Before writing or changing UI code:
 
 1. Read:
    - `.agents/skills/erp-ui-core/skill.md`
+   - If the task adds or changes a list/popup search row: `.agents/skills/erp-inline-search-standard/skill.md`
 2. Identify the target module from its actual repository path.
 3. Read exactly one primary module skill:
    - Inventory -> `.agents/skills/inventory-transaction-ui/skill.md`

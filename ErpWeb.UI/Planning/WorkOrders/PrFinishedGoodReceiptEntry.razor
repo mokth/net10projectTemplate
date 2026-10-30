@@ -287,6 +287,16 @@
             {
                 @ReadinessBlock
             }
+
+            <footer class="pr-dp-footer">
+                <div class="pr-dp-footer__actions" style="margin-inline-start: auto;">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CLOSE"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@BackToList"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </footer>
         }
         else if (EntryPermissionDenied)
         {
@@ -578,7 +588,7 @@
                                     </CellDisplayTemplate>
                                 </DxGridDataColumn>
                             }
-                            <DxGridDataColumn Caption="" Width="110px">
+                            <DxGridDataColumn Caption="" Width="110px" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left">
                                 <CellDisplayTemplate>
                                     @{
                                         var editor = (ReceiptLineEditor)context.DataItem;
