@@ -15,7 +15,7 @@ public partial class PrProductionStockAdjustmentList : PageBase, IDisposable
 {
     [Inject] private IProductionStockAdjustmentService Adjustments { get; set; } = default!;
     [Inject] private IAccessRightService Access { get; set; } = default!;
-    private DxGrid? _grid; private Timer? _debounce; private int _version; private readonly List<ProductionStockAdjustmentSummary> _selected=[];
+    private DxGrid? _grid; private Timer? _debounce; private int _version; private bool _disposed; private readonly List<ProductionStockAdjustmentSummary> _selected=[];
     private readonly Dictionary<(int,string),ProductionStockAdjustmentCommand> _requests=[];
     protected bool Loading=true,Busy,CanAdd,CanEdit,CanPost,CanRollback,ConfirmVisible,FilterPopupVisible; protected int TotalCount;
     protected string SearchText="",StatusFilter="",DraftStatus="",ConfirmAction="",RollbackReason=""; protected string? StatusMessage;
@@ -31,7 +31,58 @@ public partial class PrProductionStockAdjustmentList : PageBase, IDisposable
     protected List<ButtonInfo> Buttons{get;private set;}=[]; protected List<ButtonInfo> ActionButtons{get;private set;}=[];
     protected override async Task OnPageInitializedAsync(){DataSource=new(LoadAsync);CanAdd=await Access.CanAsync(MenuCodes.PlanningStockAdjustment,PermissionCodes.Add);CanEdit=await Access.CanAsync(MenuCodes.PlanningStockAdjustment,PermissionCodes.Edit);CanPost=await Access.CanAsync(MenuCodes.PlanningStockAdjustment,PermissionCodes.Post);CanRollback=await Access.CanAsync(MenuCodes.PlanningStockAdjustment,PermissionCodes.Rollback);ActionButtons=[new(){Text="VIEW",IConClass="fa-regular fa-eye",Style="primary"},new(){Text="EDIT",IConClass="far fa-edit",Style="primary",Enabled=CanEdit,ToolTip="Edit draft"}];await ReloadAsync();Loading=false;}
     protected void OnGridInstance(DxGrid grid)=>_grid=grid; protected void OnSelections(List<ProductionStockAdjustmentSummary> rows){_selected.Clear();_selected.AddRange(rows);}
-    protected Task OnSearchChanged(string value){SearchText=value??"";_debounce?.Stop();_debounce?.Dispose();_debounce=new Timer(400){AutoReset=false};var n=++_version;_debounce.Elapsed+=async(_,_)=>{if(n==_version)await InvokeAsync(ReloadAsync);};_debounce.Start();return Task.CompletedTask;}
+
+    /// <summary>
+    /// Invalidates a pending debounced search and any in-flight response so the
+    /// newest filter set owns the grid state.
+    /// </summary>
+    private void CancelPendingSearch()
+    {
+        Interlocked.Increment(ref _version);
+        var timer = Interlocked.Exchange(ref _debounce, null);
+        timer?.Stop();
+        timer?.Dispose();
+    }
+
+    /// <summary>
+    /// Explicit magnifier action: applies the latest text once and cancels the
+    /// pending debounce so no second reload follows the click.
+    /// </summary>
+    protected async Task ApplySearchAsync()
+    {
+        CancelPendingSearch();
+        await ReloadAsync();
+    }
+
+    protected Task OnSearchChanged(string value)
+    {
+        SearchText = value ?? string.Empty;
+        CancelPendingSearch();
+        _debounce = new Timer(400) { AutoReset = false };
+        var version = Volatile.Read(ref _version);
+        _debounce.Elapsed += async (_, _) =>
+        {
+            try
+            {
+                if (version != Volatile.Read(ref _version)) return;
+                await InvokeAsync(async () =>
+                {
+                    if (_disposed || version != Volatile.Read(ref _version)) return;
+                    await ReloadAsync();
+                });
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                await InvokeAsync(() =>
+                {
+                    if (_disposed) return;
+                    ErrorMessage = "Search could not be completed.";
+                });
+            }
+        };
+        _debounce.Start();
+        return Task.CompletedTask;
+    }
     protected void OpenFilterPopup(){DraftStatus=StatusFilter;FilterPopupVisible=true;} protected async Task ApplyFiltersAsync(){StatusFilter=DraftStatus;FilterPopupVisible=false;await ReloadAsync();} protected async Task ClearFiltersAsync(){DraftStatus="";await ApplyFiltersAsync();}
     protected void OpenView(int id)=>Navigation.NavigateTo($"/planning/stock-adjustments/{id}/view");
     protected Task OnAction(SelectedButtonInfo<ProductionStockAdjustmentSummary> info){if(info.SelectedRow is null)return Task.CompletedTask;if(CanEdit&&(info.SelectedButton.Text??"").Equals("EDIT",StringComparison.OrdinalIgnoreCase)&&info.SelectedRow.Status=="NEW")Navigation.NavigateTo($"/planning/stock-adjustments/{info.SelectedRow.Id}/edit");else OpenView(info.SelectedRow.Id);return Task.CompletedTask;}
@@ -95,7 +146,7 @@ public partial class PrProductionStockAdjustmentList : PageBase, IDisposable
     private async Task ReloadAsync(){DataSource?.Update(SearchText,StatusFilter);await RefreshCompactAsync();RebuildButtons();_grid?.Reload();await InvokeAsync(StateHasChanged);}
     private async Task<(IReadOnlyList<ProductionStockAdjustmentSummary>,int)> LoadAsync(ProductionStockAdjustmentQuery q,CancellationToken ct){var r=await Adjustments.SearchAsync(q,ct);if(!r.Succeeded||r.Data is null){await InvokeAsync(()=>ErrorMessage=r.Message);return([],0);}TotalCount=r.Data.TotalCount;return(r.Data.Rows,r.Data.TotalCount);}
     private async Task RefreshCompactAsync(){var q=DataSource.Current;q.Skip=0;q.Take=50;var r=await Adjustments.SearchAsync(q);CompactRows=r.Data?.Rows.ToList()??[];TotalCount=r.Data?.TotalCount??0;}
-    public void Dispose(){_debounce?.Stop();_debounce?.Dispose();} protected sealed record StatusChoice(string Value,string Text);
+    public void Dispose(){ if (_disposed) return; _disposed = true; Interlocked.Increment(ref _version); var timer = Interlocked.Exchange(ref _debounce, null); timer?.Stop(); timer?.Dispose(); } protected sealed record StatusChoice(string Value,string Text);
 }
 public sealed class ProductionStockAdjustmentGridDataSource(Func<ProductionStockAdjustmentQuery,CancellationToken,Task<(IReadOnlyList<ProductionStockAdjustmentSummary>,int)>> loader):GridCustomDataSource
 {

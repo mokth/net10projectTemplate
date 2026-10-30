@@ -16,6 +16,12 @@ public partial class IvCodeComboBox
     [Parameter] public string? InputCssClass { get; set; }
     [Parameter] public string? NullText { get; set; }
 
+    /// <summary>
+    /// Rendered onto the inner input element so an external <c>&lt;label for="..."&gt;</c>
+    /// can name the editor.
+    /// </summary>
+    [Parameter] public string? InputId { get; set; }
+
     private Expression<Func<string?>> EffectiveValueExpression =>
         ValueExpression ?? (() => Value);
 

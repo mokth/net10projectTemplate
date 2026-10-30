@@ -15,7 +15,7 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
 {
     [Inject] private IProductionStockReturnService Returns { get; set; } = default!;
     [Inject] private IAccessRightService Access { get; set; } = default!;
-    private DxGrid? _grid; private Timer? _debounce; private int _version;
+    private DxGrid? _grid; private Timer? _debounce; private int _version; private bool _disposed;
     private readonly List<ProductionStockReturnSummary> _selected = [];
     private readonly Dictionary<(int, string), ProductionStockReturnCommand> _requests = [];
     protected bool Loading = true, Busy, CanAdd, CanEdit, CanPost, CanRollback, ConfirmVisible, FilterPopupVisible;
@@ -51,7 +51,58 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
     }
     protected void OnGridInstance(DxGrid grid) => _grid = grid;
     protected void OnSelections(List<ProductionStockReturnSummary> rows) { _selected.Clear(); _selected.AddRange(rows); }
-    protected async Task OnSearchChanged(string value) { SearchText = value ?? ""; _debounce?.Stop(); _debounce?.Dispose(); _debounce = new Timer(400) { AutoReset=false }; var n=++_version; _debounce.Elapsed += async (_,_) => { if(n==_version) await InvokeAsync(ReloadAsync); }; _debounce.Start(); }
+
+    /// <summary>
+    /// Invalidates a pending debounced search and any in-flight response so the
+    /// newest filter set owns the grid state.
+    /// </summary>
+    private void CancelPendingSearch()
+    {
+        Interlocked.Increment(ref _version);
+        var timer = Interlocked.Exchange(ref _debounce, null);
+        timer?.Stop();
+        timer?.Dispose();
+    }
+
+    /// <summary>
+    /// Explicit magnifier action: applies the latest text once and cancels the
+    /// pending debounce so no second reload follows the click.
+    /// </summary>
+    protected async Task ApplySearchAsync()
+    {
+        CancelPendingSearch();
+        await ReloadAsync();
+    }
+
+    protected Task OnSearchChanged(string value)
+    {
+        SearchText = value ?? string.Empty;
+        CancelPendingSearch();
+        _debounce = new Timer(400) { AutoReset = false };
+        var version = Volatile.Read(ref _version);
+        _debounce.Elapsed += async (_, _) =>
+        {
+            try
+            {
+                if (version != Volatile.Read(ref _version)) return;
+                await InvokeAsync(async () =>
+                {
+                    if (_disposed || version != Volatile.Read(ref _version)) return;
+                    await ReloadAsync();
+                });
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                await InvokeAsync(() =>
+                {
+                    if (_disposed) return;
+                    ErrorMessage = "Search could not be completed.";
+                });
+            }
+        };
+        _debounce.Start();
+        return Task.CompletedTask;
+    }
     protected Task OnStatusChanged(string value) { StatusFilter = value ?? ""; return ReloadAsync(); }
     protected Task NewAsync() { if (CanAdd) Navigation.NavigateTo("/planning/stock-returns/new"); return Task.CompletedTask; }
     protected void OpenView(int id) => Navigation.NavigateTo($"/planning/stock-returns/{id}/view");
@@ -130,7 +181,7 @@ public partial class PrProductionStockReturnList : PageBase, IDisposable
     private async Task<(IReadOnlyList<ProductionStockReturnSummary>,int)> LoadAsync(ProductionStockReturnQuery query,CancellationToken ct)
     { var r=await Returns.SearchAsync(query,ct); if(!r.Succeeded||r.Data is null) { await InvokeAsync(()=>ErrorMessage=r.Message); return([],0); } TotalCount=r.Data.TotalCount; return(r.Data.Rows,r.Data.TotalCount); }
     private async Task RefreshCompactAsync() { var q=DataSource.Current; q.Skip=0; q.Take=50; var r=await Returns.SearchAsync(q); CompactRows=r.Data?.Rows.ToList()??[]; TotalCount=r.Data?.TotalCount??0; }
-    public void Dispose(){_debounce?.Stop();_debounce?.Dispose();}
+    public void Dispose(){ if (_disposed) return; _disposed = true; Interlocked.Increment(ref _version); var timer = Interlocked.Exchange(ref _debounce, null); timer?.Stop(); timer?.Dispose(); }
     protected sealed record StatusChoice(string Value,string Text);
 }
 

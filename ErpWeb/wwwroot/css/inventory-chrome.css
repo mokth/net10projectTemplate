@@ -307,6 +307,93 @@ button.iv-chip {
     min-width: 180px;
 }
 
+/* Global inline search standard: caption, editor and icon share one non-wrapping row. */
+.erp-inline-search {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+    min-inline-size: 0;
+}
+
+/* A toolbar wrapper that is also the inline row must not reserve more width than the row needs. */
+.iv-toolbar-row__search.erp-inline-search {
+    flex: 1 1 18rem;
+    min-inline-size: 0;
+}
+
+.erp-inline-search__caption {
+    flex: 0 1 auto;
+    max-inline-size: 40%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--field-label, var(--iv-muted));
+    cursor: pointer;
+}
+
+.erp-inline-search__editor {
+    flex: 1 1 12rem;
+    min-inline-size: 8rem;
+}
+
+.erp-inline-search__editor > * {
+    inline-size: 100%;
+    min-inline-size: 0;
+}
+
+.erp-inline-search__button {
+    flex: 0 0 auto;
+    inline-size: 2.25rem;
+    min-inline-size: 2.25rem;
+    padding-inline: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* SmartLookupInput (vendor/customer/item pickers): DxButton ignores scoped flex, so pin the
+   icon the same way as erp-inline-search__button or the magnifier shrinks to ~19 px. */
+.smart-lookup__search {
+    flex: 0 0 auto;
+    inline-size: 2.25rem;
+    min-inline-size: 2.25rem;
+    padding-inline: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Popup and picker rows: same contract, no surrounding card padding assumptions. */
+.erp-inline-search--popup {
+    margin-bottom: 0.5rem;
+}
+
+.erp-inline-search--popup .erp-inline-search__caption {
+    max-inline-size: 45%;
+}
+
+@media (max-width: 575.98px) {
+    .erp-inline-search {
+        gap: 0.25rem;
+    }
+
+    .erp-inline-search__caption {
+        max-inline-size: 30%;
+    }
+
+    .erp-inline-search__editor {
+        min-inline-size: 6rem;
+    }
+
+    .erp-inline-search--popup .erp-inline-search__caption {
+        max-inline-size: 35%;
+    }
+}
+
 .iv-footer {
     position: sticky;
     bottom: -20px;

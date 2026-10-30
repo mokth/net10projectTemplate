@@ -31,10 +31,16 @@
             </div>
 
             <div class="company-rail__search">
-                <DxTextBox @bind-Text="@ListFilter"
-                           NullText="Search code or name…"
-                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                           CssClass="w-100" />
+                <div class="erp-inline-search erp-inline-search--live">
+                    <label class="erp-inline-search__caption" for="admin-company-rail-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="admin-company-rail-search"
+                                   @bind-Text="@ListFilter"
+                                   BindValueMode="BindValueMode.OnInput"
+                                   NullText="Code or name…"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                    </div>
+                </div>
             </div>
 
             @if (IsLoading)

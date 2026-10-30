@@ -21,6 +21,7 @@ public partial class PrWorkOrderTransferList : PageBase, IDisposable
     private DxGrid? _grid;
     private Timer? _debounce;
     private int _searchVersion;
+    private bool _disposed;
     private readonly List<ProductionWorkOrderTransferSummary> _selected = [];
     private readonly Dictionary<(long Id, string Action), ProductionWorkOrderTransferCommand> _pendingCommands = [];
 
@@ -90,16 +91,53 @@ public partial class PrWorkOrderTransferList : PageBase, IDisposable
         _selected.AddRange(rows);
     }
 
+    /// <summary>
+    /// Invalidates a pending debounced search and any in-flight response so the
+    /// newest filter set owns the grid state.
+    /// </summary>
+    private void CancelPendingSearch()
+    {
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _debounce, null);
+        timer?.Stop();
+        timer?.Dispose();
+    }
+
+    /// <summary>
+    /// Explicit magnifier action: applies the latest text once and cancels the
+    /// pending debounce so no second reload follows the click.
+    /// </summary>
+    protected async Task ApplySearchAsync()
+    {
+        CancelPendingSearch();
+        await ReloadAsync();
+    }
+
     protected Task SearchChanged(string value)
     {
         SearchText = value ?? string.Empty;
-        _debounce?.Stop();
-        _debounce?.Dispose();
+        CancelPendingSearch();
         _debounce = new Timer(350) { AutoReset = false };
-        var version = ++_searchVersion;
+        var version = Volatile.Read(ref _searchVersion);
         _debounce.Elapsed += async (_, _) =>
         {
-            if (version == _searchVersion) await InvokeAsync(ReloadAsync);
+            try
+            {
+                if (version != Volatile.Read(ref _searchVersion)) return;
+                await InvokeAsync(async () =>
+                {
+                    if (_disposed || version != Volatile.Read(ref _searchVersion)) return;
+                    await ReloadAsync();
+                });
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                await InvokeAsync(() =>
+                {
+                    if (_disposed) return;
+                    ErrorMessage = "Search could not be completed.";
+                });
+            }
         };
         _debounce.Start();
         return Task.CompletedTask;
@@ -271,8 +309,11 @@ public partial class PrWorkOrderTransferList : PageBase, IDisposable
 
     public void Dispose()
     {
-        _debounce?.Stop();
-        _debounce?.Dispose();
+        _disposed = true;
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _debounce, null);
+        timer?.Stop();
+        timer?.Dispose();
     }
 
     protected sealed record StatusChoice(string Value, string Text);

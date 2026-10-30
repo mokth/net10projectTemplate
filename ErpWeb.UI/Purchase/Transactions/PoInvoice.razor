@@ -386,15 +386,23 @@
                  @bind-Visible="PoPickerVisible">
             <Content>
                 <div class="sdoc-popup-body">
-                    <div class="sdoc-field-row mb-2">
-                        <DxTextBox @bind-Text="@PoPickerSearchText"
-                                   NullText="Search PO / item…"
-                                   CssClass="w-100"
-                                   Enabled="@(!PoPickerLoading)" />
-                        <DxButton Text="Search"
-                                  RenderStyle="ButtonRenderStyle.Secondary"
+                    <div class="erp-inline-search erp-inline-search--popup">
+                        <label class="erp-inline-search__caption" for="po-invoice-po-picker-search">Search</label>
+                        <div class="erp-inline-search__editor">
+                            <DxTextBox InputId="po-invoice-po-picker-search"
+                                       @bind-Text="@PoPickerSearchText"
+                                       BindValueMode="BindValueMode.OnInput"
+                                       NullText="Search PO / item…"
+                                       CssClass="w-100"
+                                       Enabled="@(!PoPickerLoading)" />
+                        </div>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  CssClass="erp-inline-search__button"
                                   Click="@SearchPoPickerAsync"
-                                  Enabled="@(!PoPickerLoading)" />
+                                  Enabled="@(!PoPickerLoading)"
+                                  aria-label="Search invoiceable purchase order lines"
+                                  title="Search invoiceable purchase order lines" />
                     </div>
                     @if (PoPickerLoading && PoPickerRows.Count == 0)
                     {

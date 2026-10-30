@@ -20,6 +20,7 @@ public partial class PoInvoiceList : PageBase, IDisposable
     private DxGrid? _grid;
     private Timer? _searchDebounce;
     private int _searchVersion;
+    private bool _disposed;
     private readonly List<PoInvoiceListRow> _selectedRows = [];
 
     protected bool IsBootstrapping = true;
@@ -168,6 +169,30 @@ public partial class PoInvoiceList : PageBase, IDisposable
     protected async Task SetTypeAsync(string? type)
     {
         AppliedType = type;
+        CancelPendingSearch();
+        SyncDataSourceFilters();
+        await ReloadGridAsync();
+    }
+
+    /// <summary>
+    /// Invalidates any pending debounced search and any in-flight response so a newer
+    /// filter set or an explicit apply owns the UI state.
+    /// </summary>
+    private void CancelPendingSearch()
+    {
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _searchDebounce, null);
+        timer?.Stop();
+        timer?.Dispose();
+    }
+
+    /// <summary>
+    /// Explicit magnifier/Enter action: applies the latest text exactly once and cancels
+    /// the pending debounce so no second reload follows the click.
+    /// </summary>
+    protected async Task ApplySearchAsync()
+    {
+        CancelPendingSearch();
         SyncDataSourceFilters();
         await ReloadGridAsync();
     }
@@ -175,18 +200,36 @@ public partial class PoInvoiceList : PageBase, IDisposable
     protected async Task OnSearchTextChanged(string text)
     {
         SearchText = text ?? string.Empty;
-        _searchDebounce?.Stop();
-        _searchDebounce?.Dispose();
+        CancelPendingSearch();
         _searchDebounce = new Timer(400) { AutoReset = false };
-        var version = Interlocked.Increment(ref _searchVersion);
+        var version = Volatile.Read(ref _searchVersion);
         _searchDebounce.Elapsed += async (_, _) =>
         {
-            if (version != _searchVersion) return;
-            await InvokeAsync(async () =>
+            try
             {
-                SyncDataSourceFilters();
-                await ReloadGridAsync();
-            });
+                if (version != Volatile.Read(ref _searchVersion)) return;
+                await InvokeAsync(async () =>
+                {
+                    if (_disposed || version != Volatile.Read(ref _searchVersion)) return;
+                    SyncDataSourceFilters();
+                    await ReloadGridAsync();
+                });
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                try
+                {
+                    await InvokeAsync(() =>
+                    {
+                        if (_disposed) return;
+                        ErrorMessage = "Search could not be completed.";
+                    });
+                }
+                catch
+                {
+                    // Swallow only the notification of an already-failed background search.
+                }
+            }
         };
         _searchDebounce.Start();
         await Task.CompletedTask;
@@ -206,6 +249,7 @@ public partial class PoInvoiceList : PageBase, IDisposable
         AppliedDateFrom = DraftDateFrom;
         AppliedDateTo = DraftDateTo;
         FilterPopupVisible = false;
+        CancelPendingSearch();
         SyncDataSourceFilters();
         await ReloadGridAsync();
     }
@@ -219,6 +263,7 @@ public partial class PoInvoiceList : PageBase, IDisposable
         AppliedDateFrom = null;
         AppliedDateTo = null;
         FilterPopupVisible = false;
+        CancelPendingSearch();
         SyncDataSourceFilters();
         await ReloadGridAsync();
     }
@@ -327,25 +372,42 @@ public partial class PoInvoiceList : PageBase, IDisposable
         PoInvoiceListQuery query,
         CancellationToken cancellationToken)
     {
+        var generation = Volatile.Read(ref _searchVersion);
         var result = await Invoices.SearchAsync(query, cancellationToken);
-        if (!result.Succeeded || result.ListPage is null)
+
+        // Publish UI state only if this response still belongs to the current search generation.
+        // The guard runs inside the dispatched callback so a filter change queued after this
+        // response was received cannot be overwritten by it.
+        await InvokeAsync(() =>
         {
-            await InvokeAsync(() =>
+            if (_disposed || cancellationToken.IsCancellationRequested
+                || generation != Volatile.Read(ref _searchVersion))
+            {
+                return;
+            }
+
+            if (!result.Succeeded || result.ListPage is null)
             {
                 ErrorMessage = result.ErrorMessage ?? "Unable to load documents.";
                 TotalCount = 0;
-            });
-            return ([], 0);
-        }
+                return;
+            }
 
-        await InvokeAsync(() => TotalCount = result.ListPage.TotalCount);
+            TotalCount = result.ListPage.TotalCount;
+        });
+
+        if (!result.Succeeded || result.ListPage is null) return ([], 0);
         return (result.ListPage.Rows, result.ListPage.TotalCount);
     }
 
     public void Dispose()
     {
-        _searchDebounce?.Stop();
-        _searchDebounce?.Dispose();
+        if (_disposed) return;
+        _disposed = true;
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _searchDebounce, null);
+        timer?.Stop();
+        timer?.Dispose();
     }
 
     protected sealed record StatusFilterOption(string Key, string Name);

@@ -608,6 +608,29 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// Magnifier action: cancels the pending 350 ms debounce and reloads the schedule with the
+    /// latest search text exactly once. The debounce itself is untouched for typing.
+    /// </summary>
+    private async Task ApplySearchAsync()
+    {
+        var pending = Volatile.Read(ref _searchDebounceCts);
+        if (pending is not null)
+        {
+            try
+            {
+                pending.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The debounce owner already completed and disposed itself.
+            }
+        }
+
+        if (_disposed) return;
+        await ReloadAsync();
+    }
+
     private async Task OnAppointmentSelectedAsync()
     {
         // A drag can update the selected appointment while the reschedule dialog is opening.

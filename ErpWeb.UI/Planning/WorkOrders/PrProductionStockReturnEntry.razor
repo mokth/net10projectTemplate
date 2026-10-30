@@ -535,13 +535,24 @@
             <Content>
                 <div class="pr-stock-source-search">
                     <div class="pr-stock-source-search__field">
-                        <label class="form-label">Search source pools</label>
-                        <DxTextBox Text="@SourceSearch"
-                                   TextChanged="OnSourceSearchChanged"
-                                   BindValueMode="BindValueMode.OnInput"
-                                   NullText="Item code, description, or production lot"
-                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                   CssClass="w-100" />
+                        <div class="erp-inline-search erp-inline-search--popup">
+                            <label class="erp-inline-search__caption" for="pr-stock-return-source-search">Search source pools</label>
+                            <div class="erp-inline-search__editor">
+                                <DxTextBox InputId="pr-stock-return-source-search"
+                                           Text="@SourceSearch"
+                                           TextChanged="OnSourceSearchChanged"
+                                           TextExpression="@(() => SourceSearch)"
+                                           BindValueMode="BindValueMode.OnInput"
+                                           NullText="Item code, description, or production lot"
+                                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </div>
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      IconCssClass="fa-solid fa-magnifying-glass"
+                                      CssClass="erp-inline-search__button"
+                                      Click="@ApplySourceSearchAsync"
+                                      aria-label="Search production stock source pools"
+                                      title="Search production stock source pools" />
+                        </div>
                         <small>Search is blank by default. Leave it blank to see all eligible source pools for @Document.WorkOrderNo.</small>
                     </div>
                     <div class="pr-stock-source-search__summary">

@@ -272,17 +272,26 @@
                 {
                     <p class="mr-popup-error">@PoPickerError</p>
                 }
-                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-popup-form erp-form-scope">
-                    <DxFormLayoutItem Caption="Search PO lines" ColSpanMd="12">
-                        <Template>
-<DxTextBox Text="@PoPickerSearchText"
-                                       TextChanged="@OnPoPickerSearchChangedAsync"
-                                       NullText="PO no, vendor, item code or description…"
-                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                       Enabled="@(!PoPickerLoading)" CssClass="erp-form-control--full" TextExpression="@(() => PoPickerSearchText)" />
-                        </Template>
-                    </DxFormLayoutItem>
-                </DxFormLayout>
+                <div class="erp-inline-search erp-inline-search--popup">
+                    <label class="erp-inline-search__caption" for="iv-goods-receipt-po-search">Search PO lines</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="iv-goods-receipt-po-search"
+                                   Text="@PoPickerSearchText"
+                                   TextChanged="@OnPoPickerSearchChangedAsync"
+                                   TextExpression="@(() => PoPickerSearchText)"
+                                   BindValueMode="BindValueMode.OnInput"
+                                   NullText="PO no, vendor, item code or description…"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   Enabled="@(!PoPickerLoading)" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
+                              Click="@ApplyPoPickerSearchAsync"
+                              Enabled="@(!PoPickerLoading)"
+                              aria-label="Search purchase order lines"
+                              title="Search purchase order lines" />
+                </div>
 
                 @if (PoPickerLoading)
                 {

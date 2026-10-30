@@ -20,6 +20,7 @@ public partial class SaDoList : PageBase, IDisposable
     private DxGrid? _grid;
     private Timer? _searchDebounce;
     private int _searchVersion;
+    private bool _disposed;
     private readonly List<SaDoListRow> _selectedRows = [];
 
     protected bool IsBootstrapping = true;
@@ -183,18 +184,41 @@ public partial class SaDoList : PageBase, IDisposable
     protected void NavigateView(string doNo) =>
         Navigation.NavigateTo($"/sales/delivery-orders/view/{doNo}");
 
+    /// <summary>
+    /// Invalidates a pending debounced search and any in-flight response so the
+    /// newest filter set owns the grid state.
+    /// </summary>
+    private void CancelPendingSearch()
+    {
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _searchDebounce, null);
+        timer?.Stop();
+        timer?.Dispose();
+    }
+
+    /// <summary>
+    /// Explicit magnifier action: applies the latest text once and cancels the
+    /// pending debounce so no second reload follows the click.
+    /// </summary>
+    protected async Task ApplySearchAsync()
+    {
+        CancelPendingSearch();
+        SyncDataSourceFilters();
+        await ReloadGridAsync();
+    }
+
     protected async Task OnSearchTextChanged(string text)
     {
         SearchText = text ?? string.Empty;
-        _searchDebounce?.Stop();
-        _searchDebounce?.Dispose();
+        CancelPendingSearch();
         _searchDebounce = new Timer(400) { AutoReset = false };
-        var version = Interlocked.Increment(ref _searchVersion);
+        var version = Volatile.Read(ref _searchVersion);
         _searchDebounce.Elapsed += async (_, _) =>
         {
-            if (version != _searchVersion) return;
+            if (version != Volatile.Read(ref _searchVersion)) return;
             await InvokeAsync(async () =>
             {
+                if (_disposed || version != Volatile.Read(ref _searchVersion)) return;
                 SyncDataSourceFilters();
                 await ReloadGridAsync();
             });
@@ -213,6 +237,7 @@ public partial class SaDoList : PageBase, IDisposable
 
     protected async Task ApplyFiltersAsync()
     {
+        CancelPendingSearch();
         AppliedStatus = string.Equals(DraftStatusKey, "all", StringComparison.OrdinalIgnoreCase) ? null : DraftStatusKey;
         AppliedDateFrom = DraftDateFrom;
         AppliedDateTo = DraftDateTo;
@@ -223,6 +248,7 @@ public partial class SaDoList : PageBase, IDisposable
 
     protected async Task ClearFiltersAsync()
     {
+        CancelPendingSearch();
         DraftStatusKey = "all";
         DraftDateFrom = null;
         DraftDateTo = null;
@@ -318,8 +344,11 @@ public partial class SaDoList : PageBase, IDisposable
 
     public void Dispose()
     {
-        _searchDebounce?.Stop();
-        _searchDebounce?.Dispose();
+        _disposed = true;
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _searchDebounce, null);
+        timer?.Stop();
+        timer?.Dispose();
     }
 
     protected static string StatusChipClass(string? status) =>
@@ -442,6 +471,7 @@ public partial class SaDoList : PageBase, IDisposable
 
     private async Task RefreshCompactPreviewAsync()
     {
+        var searchGeneration = Volatile.Read(ref _searchVersion);
         var query = DataSource.CurrentQuery;
         query.Skip = 0;
         query.Take = 50;
