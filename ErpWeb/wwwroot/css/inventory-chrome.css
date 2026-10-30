@@ -300,6 +300,18 @@ button.iv-chip {
     justify-content: center;
 }
 
+/* SmartLookupInput (vendor/customer/item pickers): DxButton ignores scoped flex, so pin the
+   icon the same way as erp-inline-search__button or the magnifier shrinks to ~19 px. */
+.smart-lookup__search {
+    flex: 0 0 auto;
+    inline-size: 2.25rem;
+    min-inline-size: 2.25rem;
+    padding-inline: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
 /* Popup and picker rows: same contract, no surrounding card padding assumptions. */
 .erp-inline-search--popup {
     margin-bottom: 0.5rem;
