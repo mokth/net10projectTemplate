@@ -193,9 +193,9 @@ public sealed class PoOrderService : IPoOrderService
 
 	private readonly ILogger<PoOrderService> _logger;
 
-	private readonly IProcurementApprovalGuard? _approval;
+	private readonly IProcurementApprovalGuard _approval;
 
-	public PoOrderService(IDbContextFactory<AppDbContext> dbFactory, IInventoryTenantContext tenant, IAccessRightService accessRights, IDocumentNumberingService documentNumbers, ICurrentDateService dates, IPoOrderRepository repository, IOptions<PoOrderOptions> options, IPoOrderAttachmentService attachments, ILogger<PoOrderService> logger, IProcurementApprovalGuard? approval = null)
+	public PoOrderService(IDbContextFactory<AppDbContext> dbFactory, IInventoryTenantContext tenant, IAccessRightService accessRights, IDocumentNumberingService documentNumbers, ICurrentDateService dates, IPoOrderRepository repository, IOptions<PoOrderOptions> options, IPoOrderAttachmentService attachments, ILogger<PoOrderService> logger, IProcurementApprovalGuard approval)
 	{
 		_dbFactory = dbFactory;
 		_tenant = tenant;
@@ -206,7 +206,7 @@ public sealed class PoOrderService : IPoOrderService
 		_options = options.Value;
 		_attachments = attachments;
 		_logger = logger;
-		_approval = approval;
+		_approval = approval ?? throw new ArgumentNullException(nameof(approval));
 	}
 
 	public async Task<PoOrderOperationResult> CreateTempDocIdAsync(CancellationToken cancellationToken = default(CancellationToken))
@@ -490,33 +490,50 @@ public sealed class PoOrderService : IPoOrderService
 			{
 				query = query.Where((PoPr x) => x.PrNo.Contains(term) || (x.Requester != null && x.Requester.Contains(term)) || (x.Remarks != null && x.Remarks.Contains(term)) || x.Details.Any((PoPrDetail d) => (d.ICode != null && d.ICode.Contains(term)) || (d.IDesc != null && d.IDesc.Contains(term))));
 			}
-			var rows = await (from x in (from x in query
-					orderby x.CreateDt descending, x.PrNo descending
-					select x).Take(100)
-				select new PoPrForPoRow
-				{
-					PrNo = x.PrNo,
-					CreateDt = x.CreateDt,
-					Status = x.Status,
-					Requester = x.Requester,
-					ProjId = x.ProjId,
-					Remarks = x.Remarks
-				}).ToListAsync(cancellationToken);
-			if (_approval is not null)
+			const int window = 100;
+			const int take = 100;
+			var eligible = new List<PoPrForPoRow>();
+			var skip = 0;
+			while (eligible.Count < take)
 			{
-				var visible = new List<PoPrForPoRow>();
-				foreach (var row in rows)
-				{
-					if (await _approval.IsPrVisibleForPoAsync(db, company, branch, row.PrNo, cancellationToken))
+				var chunk = await (from x in query
+					orderby x.CreateDt descending, x.PrNo descending
+					select new PoPrForPoRow
 					{
-						visible.Add(row);
+						PrNo = x.PrNo,
+						CreateDt = x.CreateDt,
+						Status = x.Status,
+						Requester = x.Requester,
+						ProjId = x.ProjId,
+						Remarks = x.Remarks
+					}).Skip(skip).Take(window).ToListAsync(cancellationToken);
+				if (chunk.Count == 0)
+				{
+					break;
+				}
+
+				var visibleNos = await _approval.FilterConvertiblePrNosReadOnlyAsync(
+					db, company, branch, chunk.Select(x => x.PrNo).ToList(), cancellationToken);
+				foreach (var row in chunk)
+				{
+					if (visibleNos.Contains(row.PrNo))
+					{
+						eligible.Add(row);
+						if (eligible.Count == take)
+						{
+							break;
+						}
 					}
 				}
 
-				rows = visible;
+				skip += window;
+				if (chunk.Count < window)
+				{
+					break;
+				}
 			}
 
-			result = PoOrderOperationResult.OkPrRows(rows);
+			result = PoOrderOperationResult.OkPrRows(eligible);
 		}
 		return result;
 	}
@@ -549,8 +566,8 @@ public sealed class PoOrderService : IPoOrderService
 			{
 				result = PoOrderOperationResult.Fail("PR " + no + " is not available for PO.");
 			}
-			else if (_approval is not null
-				&& await _approval.AssertPrConvertibleAsync(db, context.CompanyCode, context.BranchCode, no, cancellationToken) is string prGate)
+			else if (await _approval.EvaluatePrConvertibleReadOnlyAsync(
+				db, context.CompanyCode, context.BranchCode, no, cancellationToken) is string prGate)
 			{
 				result = PoOrderOperationResult.Fail(prGate);
 			}
@@ -1020,6 +1037,15 @@ public sealed class PoOrderService : IPoOrderService
 			{
 				try
 				{
+					var revisionLock = await PurchaseOrderRevisionSetLock.AcquireAsync(
+						db, context.CompanyCode, context.BranchCode, no, cancellationToken);
+					if (revisionLock is not null)
+					{
+						await tx.RollbackAsync(cancellationToken);
+						poOrderOperationResult = PoOrderOperationResult.Fail(revisionLock);
+						goto end_IL_0604;
+					}
+
 					PoOrder header = await _repository.LockLatestForUpdateAsync(db, context.CompanyCode, context.BranchCode, no, cancellationToken);
 					IReadOnlyDictionary<string, string?> itemTypes;
 					if (header == null)
@@ -1030,6 +1056,14 @@ public sealed class PoOrderService : IPoOrderService
 					else
 					{
 						await db.Entry(header).Collection((PoOrder x) => x.Details).LoadAsync(cancellationToken);
+						var latestRel = await _repository.GetMaxRelNoAsync(db, context.CompanyCode, context.BranchCode, no, cancellationToken);
+						if (latestRel is null || latestRel.Value != header.PoRelNo)
+						{
+							await tx.RollbackAsync(cancellationToken);
+							poOrderOperationResult = PoOrderOperationResult.Fail(PurchaseOrderRevisionSetLock.MessageFor(no));
+							goto end_IL_0604;
+						}
+
 						if (_approval is not null)
 						{
 							await _approval.LockInstancesAsync(
@@ -1321,16 +1355,25 @@ public sealed class PoOrderService : IPoOrderService
 								}
 								else
 								{
-									if (_approval is not null)
-									{
-										await _approval.LockInstancesAsync(
-											db,
-											context.CompanyCode,
-											context.BranchCode,
-											ProcurementApprovalDocTypes.Po,
-											[(header.PoNo, header.PoRelNo)],
-											cancellationToken);
-										var closeGate = await _approval.AssertPoCloseableAsync(
+					if (_approval is not null)
+					{
+						var policyLock = await _approval.LockPublishedPolicyAsync(
+							db, context.CompanyCode, ProcurementApprovalDocTypes.Po, cancellationToken);
+						if (policyLock is not null)
+						{
+							await tx.RollbackAsync(cancellationToken);
+							poOrderOperationResult = PoOrderOperationResult.Fail(policyLock);
+							goto end_IL_0263;
+						}
+
+						await _approval.LockInstancesAsync(
+							db,
+							context.CompanyCode,
+							context.BranchCode,
+							ProcurementApprovalDocTypes.Po,
+							[(header.PoNo, header.PoRelNo)],
+							cancellationToken);
+						var closeGate = await _approval.AssertPoCloseableAsync(
 											db,
 											context.CompanyCode,
 											context.BranchCode,
@@ -1404,6 +1447,13 @@ public sealed class PoOrderService : IPoOrderService
 		{
 			return (Header: null, Result: PoOrderOperationResult.Fail("This Purchase Order was changed by another user. Reload before " + verb + ".", PoOrderErrorKind.Concurrency));
 		}
+		var revisionLock = await PurchaseOrderRevisionSetLock.AcquireAsync(
+			db, context.CompanyCode, context.BranchCode, no, cancellationToken);
+		if (revisionLock is not null)
+		{
+			return (Header: null, Result: PoOrderOperationResult.Fail(revisionLock));
+		}
+
 		short? poRelNo = request.PoRelNo;
 		PoOrder poOrder;
 		if (poRelNo.HasValue)
@@ -1420,6 +1470,13 @@ public sealed class PoOrderService : IPoOrderService
 		{
 			return (Header: null, Result: PoOrderOperationResult.Fail("Purchase Order was not found.", PoOrderErrorKind.NotFound));
 		}
+
+		var latestRel = await _repository.GetMaxRelNoAsync(db, context.CompanyCode, context.BranchCode, no, cancellationToken);
+		if (latestRel is null || latestRel.Value != header.PoRelNo)
+		{
+			return (Header: null, Result: PoOrderOperationResult.Fail(PurchaseOrderRevisionSetLock.MessageFor(no)));
+		}
+
 		await db.Entry(header).Collection((PoOrder x) => x.Details).LoadAsync(cancellationToken);
 		if (!RowVersionsEqual(header.RowVersion, request.RowVersion))
 		{
@@ -1739,6 +1796,16 @@ public sealed class PoOrderService : IPoOrderService
 		Dictionary<(string, short Value), decimal> requestedByPr = (from x in requested
 			where !string.IsNullOrWhiteSpace(x.PrNo) && x.PrLineNo.HasValue
 			group x by (x.PrNo, Value: x.PrLineNo.Value)).ToDictionary((IGrouping<(string, short Value), PreparedLine> g) => g.Key, (IGrouping<(string, short Value), PreparedLine> g) => g.Sum((PreparedLine x) => x.PoPurQty));
+		if (requestedByPr.Count > 0)
+		{
+			var policyLock = await _approval.LockPublishedPolicyAsync(
+				db, companyCode, ProcurementApprovalDocTypes.Pr, cancellationToken);
+			if (policyLock is not null)
+			{
+				return PoOrderOperationResult.Fail(policyLock);
+			}
+		}
+
 		foreach (KeyValuePair<(string, short), decimal> group in requestedByPr)
 		{
 			PoPrDetail prDetail = await db.PoPrDetails.FirstOrDefaultAsync((PoPrDetail x) => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.PrNo == group.Key.Item1 && x.Line == group.Key.Item2, cancellationToken);

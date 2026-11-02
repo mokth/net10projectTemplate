@@ -131,6 +131,13 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var policyLock = await LockPublishedPolicyAsync(db, scope.CompanyCode, type, cancellationToken);
+        if (policyLock is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ProcurementApprovalResult.Fail(policyLock);
+        }
+
         var current = await LoadPublishedPolicyAsync(db, scope.CompanyCode, type, cancellationToken);
         var now = DateTime.UtcNow;
         var uid = Truncate(scope.UserId, 20);
@@ -322,21 +329,14 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
-        var instance = await LockInstanceByIdAsync(db, request.InstanceId, cancellationToken);
-        if (instance is null
-            || !string.Equals(instance.CompanyCode, scope.CompanyCode, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(instance.BranchCode, scope.BranchCode, StringComparison.OrdinalIgnoreCase))
+        var locked = await LockDocumentThenInstanceAsync(
+            db, scope, request.InstanceId, request.RowVersion, cancellationToken);
+        if (locked.Fail is not null)
         {
-            return ProcurementApprovalResult.Fail("Approval request was not found.");
+            return locked.Fail;
         }
 
-        if (request.RowVersion is { Length: > 0 }
-            && instance.RowVersion is { Length: > 0 }
-            && !instance.RowVersion.SequenceEqual(request.RowVersion))
-        {
-            return ProcurementApprovalResult.Fail("This approval was changed by another user. Reload and try again.");
-        }
-
+        var instance = locked.Instance!;
         if (!string.Equals(instance.Status, ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase))
         {
             return ProcurementApprovalResult.Fail("This approval is no longer pending.");
@@ -380,6 +380,26 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
                 && string.Equals(x.UserId, actor, StringComparison.OrdinalIgnoreCase)))
         {
             return new ProcurementApprovalResult { Succeeded = true, Instance = MapInstance(instance) };
+        }
+
+        if (decision == ProcurementApprovalDecisions.Approve)
+        {
+            var fingerprint = await CurrentFingerprintAsync(
+                db, instance.CompanyCode, instance.BranchCode, instance.DocType, instance.DocNo, instance.DocRev,
+                cancellationToken);
+            if (fingerprint is null)
+            {
+                return ProcurementApprovalResult.Fail(
+                    instance.DocType == ProcurementApprovalDocTypes.Pr
+                        ? "Purchase Requisition was not found."
+                        : "Purchase Order was not found.");
+            }
+
+            if (!string.Equals(fingerprint, instance.MaterialFingerprint, StringComparison.Ordinal))
+            {
+                return ProcurementApprovalResult.Fail(
+                    "This document changed after it was submitted. Withdraw and submit it again.");
+            }
         }
 
         if (decision == ProcurementApprovalDecisions.Return)
@@ -457,12 +477,14 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
-        var instance = await LockInstanceByIdAsync(db, request.InstanceId, cancellationToken);
-        if (instance is null || instance.CompanyCode != scope.CompanyCode || instance.BranchCode != scope.BranchCode)
+        var locked = await LockDocumentThenInstanceAsync(
+            db, scope, request.InstanceId, request.RowVersion, cancellationToken);
+        if (locked.Fail is not null)
         {
-            return ProcurementApprovalResult.Fail("Approval request was not found.");
+            return locked.Fail;
         }
 
+        var instance = locked.Instance!;
         var actor = Truncate(scope.UserId, 20);
         if (!string.Equals(instance.SubmittedBy, actor, StringComparison.OrdinalIgnoreCase))
         {
@@ -854,18 +876,30 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
 
     public async Task<string?> AssertAttachmentMutationAsync(
         AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool deleting = false)
     {
-        var instance = await FindActiveAsync(db, companyCode, branchCode, docType, docNo, docRev, cancellationToken);
-        if (instance is null)
+        var statuses = await db.ProcurementApprovalInstances.AsNoTracking()
+            .Where(x => x.CompanyCode == companyCode
+                && x.BranchCode == branchCode
+                && x.DocType == docType
+                && x.DocNo == docNo)
+            .Select(x => x.Status)
+            .ToListAsync(cancellationToken);
+
+        var hasLiveCycle = statuses.Any(s =>
+            string.Equals(s, ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(s, ProcurementApprovalStatuses.Approved, StringComparison.OrdinalIgnoreCase));
+        var hasSubmittedCycle = hasLiveCycle || statuses.Any(s =>
+            string.Equals(s, ProcurementApprovalStatuses.NotRequired, StringComparison.OrdinalIgnoreCase));
+
+        if (deleting && hasSubmittedCycle)
         {
-            return null;
+            return "Attachments cannot be deleted or replaced after this document has been submitted for approval.";
         }
 
-        if (string.Equals(instance.Status, ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(instance.Status, ProcurementApprovalStatuses.Approved, StringComparison.OrdinalIgnoreCase))
+        if (!deleting && hasLiveCycle)
         {
-            return "Attachments cannot be changed while this document is pending or approved.";
+            return "Attachments cannot be added while this document is pending or approved.";
         }
 
         return null;
@@ -889,6 +923,14 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
         return null;
     }
 
+    public Task<string?> LockPublishedPolicyAsync(
+        AppDbContext db, string companyCode, string docType, CancellationToken cancellationToken = default) =>
+        ProcurementApprovalSqlLocks.TryAcquireAsync(
+            db,
+            ProcurementApprovalSqlLocks.PolicyResource(companyCode, docType),
+            "Approval settings are being updated. Retry the command.",
+            cancellationToken);
+
     public async Task LockInstancesAsync(
         AppDbContext db, string companyCode, string branchCode, string docType,
         IEnumerable<(string DocNo, short DocRev)> keys, CancellationToken cancellationToken = default)
@@ -908,7 +950,30 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
 
     public async Task<bool> IsPrVisibleForPoAsync(
         AppDbContext db, string companyCode, string branchCode, string prNo, CancellationToken cancellationToken = default) =>
-        await AssertPrConvertibleAsync(db, companyCode, branchCode, prNo, cancellationToken) is null;
+        await AssertGateAsync(db, companyCode, branchCode, ProcurementApprovalDocTypes.Pr, prNo, 0,
+            progressed: false, cancellationToken, persistCutover: false) is null;
+
+    public Task<string?> EvaluatePrConvertibleReadOnlyAsync(
+        AppDbContext db, string companyCode, string branchCode, string prNo, CancellationToken cancellationToken = default) =>
+        AssertGateAsync(db, companyCode, branchCode, ProcurementApprovalDocTypes.Pr, prNo, 0,
+            progressed: false, cancellationToken, persistCutover: false);
+
+    public async Task<IReadOnlySet<string>> FilterConvertiblePrNosReadOnlyAsync(
+        AppDbContext db, string companyCode, string branchCode, IReadOnlyCollection<string> prNos,
+        CancellationToken cancellationToken = default)
+    {
+        var visible = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var prNo in prNos.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (await AssertGateAsync(db, companyCode, branchCode, ProcurementApprovalDocTypes.Pr, prNo, 0,
+                    progressed: false, cancellationToken, persistCutover: false) is null)
+            {
+                visible.Add(prNo);
+            }
+        }
+
+        return visible;
+    }
 
     public async Task<bool> IsPoVisibleForGrAsync(
         AppDbContext db, string companyCode, string branchCode, string poNo, short poRelNo, CancellationToken cancellationToken = default) =>
@@ -954,6 +1019,12 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
         if (string.IsNullOrWhiteSpace(totals.Currency))
         {
             return ProcurementApprovalResult.Fail("Document currency is missing. Approval cannot continue.");
+        }
+
+        var policyLock = await LockPublishedPolicyAsync(db, scope.CompanyCode, docType, cancellationToken);
+        if (policyLock is not null)
+        {
+            return ProcurementApprovalResult.Fail(policyLock);
         }
 
         await LockInstancesAsync(db, scope.CompanyCode, scope.BranchCode!, docType, [(docNo, docRev)], cancellationToken);
@@ -1086,7 +1157,7 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
 
     private async Task<string?> AssertGateAsync(
         AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
-        bool progressed, CancellationToken cancellationToken)
+        bool progressed, CancellationToken cancellationToken, bool persistCutover = true)
     {
         var policy = await LoadPublishedPolicyAsync(db, companyCode, docType, cancellationToken);
         var instance = await FindActiveAsync(db, companyCode, branchCode, docType, docNo, docRev, cancellationToken);
@@ -1105,7 +1176,14 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
                 || string.Equals(instance.Status, ProcurementApprovalStatuses.NotRequired, StringComparison.OrdinalIgnoreCase)))
         {
             var fingerprint = await CurrentFingerprintAsync(db, companyCode, branchCode, docType, docNo, docRev, cancellationToken);
-            if (fingerprint is not null && !string.Equals(fingerprint, instance.MaterialFingerprint, StringComparison.Ordinal))
+            if (fingerprint is null)
+            {
+                return docType == ProcurementApprovalDocTypes.Pr
+                    ? "Purchase Requisition was not found."
+                    : "Purchase Order was not found.";
+            }
+
+            if (!string.Equals(fingerprint, instance.MaterialFingerprint, StringComparison.Ordinal))
             {
                 return "This document changed after approval. Submit it again before continuing.";
             }
@@ -1132,7 +1210,7 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
                 return "Purchase Requisition was not found.";
             }
 
-            created = pr.CreatedDate ?? pr.CreateDt;
+            created = pr.CreatedDate;
             status = pr.Status;
             consumed = IsPrConsumed(pr);
         }
@@ -1145,7 +1223,7 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
                 return "Purchase Order was not found.";
             }
 
-            created = po.CreatedDate ?? po.PoDate;
+            created = po.CreatedDate;
             status = po.Status;
             consumed = po.Details.Any(x => x.RecvQty > 0m)
                 || string.Equals(status, PoOrderStatuses.Received, StringComparison.OrdinalIgnoreCase)
@@ -1165,6 +1243,11 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
         {
             if (string.Equals(policy.LegacyDraftMode, ProcurementApprovalLegacyModes.LegacyExempt, StringComparison.OrdinalIgnoreCase))
             {
+                if (!persistCutover)
+                {
+                    return null;
+                }
+
                 db.ProcurementApprovalCutoverExemptions.Add(new ProcurementApprovalCutoverExemption
                 {
                     CompanyCode = companyCode,
@@ -1329,6 +1412,69 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
                 && x.DocNo == docNo && x.DocRev == docRev)
             .OrderByDescending(x => x.Cycle)
             .FirstOrDefaultAsync(cancellationToken);
+
+    private async Task<(ProcurementApprovalResult? Fail, ProcurementApprovalInstance? Instance)> LockDocumentThenInstanceAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        long instanceId,
+        byte[]? rowVersion,
+        CancellationToken cancellationToken)
+    {
+        var key = await db.ProcurementApprovalInstances.AsNoTracking()
+            .Where(x => x.Uid == instanceId)
+            .Select(x => new { x.CompanyCode, x.BranchCode, x.DocType, x.DocNo, x.DocRev })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (key is null
+            || !string.Equals(key.CompanyCode, scope.CompanyCode, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(key.BranchCode, scope.BranchCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return (ProcurementApprovalResult.Fail("Approval request was not found."), null);
+        }
+
+        if (string.Equals(key.DocType, ProcurementApprovalDocTypes.Pr, StringComparison.OrdinalIgnoreCase))
+        {
+            var pr = await LockPrAsync(db, key.CompanyCode, key.BranchCode, key.DocNo, cancellationToken);
+            if (pr is null)
+            {
+                return (ProcurementApprovalResult.Fail("Purchase Requisition was not found."), null);
+            }
+        }
+        else
+        {
+            var revisionLock = await PurchaseOrderRevisionSetLock.AcquireAsync(
+                db, key.CompanyCode, key.BranchCode, key.DocNo, cancellationToken);
+            if (revisionLock is not null)
+            {
+                return (ProcurementApprovalResult.Fail(revisionLock), null);
+            }
+
+            var po = await LockPoAsync(db, key.CompanyCode, key.BranchCode, key.DocNo, key.DocRev, cancellationToken);
+            if (po is null)
+            {
+                return (ProcurementApprovalResult.Fail("Purchase Order was not found."), null);
+            }
+        }
+
+        var instance = await LockInstanceByIdAsync(db, instanceId, cancellationToken);
+        if (instance is null
+            || !string.Equals(instance.CompanyCode, scope.CompanyCode, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(instance.BranchCode, scope.BranchCode, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(instance.DocType, key.DocType, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(instance.DocNo, key.DocNo, StringComparison.OrdinalIgnoreCase)
+            || instance.DocRev != key.DocRev)
+        {
+            return (ProcurementApprovalResult.Fail("Approval request was not found."), null);
+        }
+
+        if (rowVersion is { Length: > 0 }
+            && instance.RowVersion is { Length: > 0 }
+            && !instance.RowVersion.SequenceEqual(rowVersion))
+        {
+            return (ProcurementApprovalResult.Fail("This approval was changed by another user. Reload and try again."), null);
+        }
+
+        return (null, instance);
+    }
 
     private static async Task<PoPr?> LockPrAsync(
         AppDbContext db, string company, string branch, string prNo, CancellationToken cancellationToken)

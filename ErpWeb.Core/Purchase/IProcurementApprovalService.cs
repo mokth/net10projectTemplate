@@ -178,7 +178,7 @@ public interface IProcurementApprovalGuard
 
     Task<string?> AssertAttachmentMutationAsync(
         AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, bool deleting = false);
 
     Task<string?> ClosePendingOnDocumentCancelAsync(
         AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
@@ -188,8 +188,18 @@ public interface IProcurementApprovalGuard
         AppDbContext db, string companyCode, string branchCode, string docType,
         IEnumerable<(string DocNo, short DocRev)> keys, CancellationToken cancellationToken = default);
 
+    Task<string?> LockPublishedPolicyAsync(
+        AppDbContext db, string companyCode, string docType, CancellationToken cancellationToken = default);
+
     Task<bool> IsPrVisibleForPoAsync(
         AppDbContext db, string companyCode, string branchCode, string prNo, CancellationToken cancellationToken = default);
+
+    Task<string?> EvaluatePrConvertibleReadOnlyAsync(
+        AppDbContext db, string companyCode, string branchCode, string prNo, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlySet<string>> FilterConvertiblePrNosReadOnlyAsync(
+        AppDbContext db, string companyCode, string branchCode, IReadOnlyCollection<string> prNos,
+        CancellationToken cancellationToken = default);
 
     Task<bool> IsPoVisibleForGrAsync(
         AppDbContext db, string companyCode, string branchCode, string poNo, short poRelNo, CancellationToken cancellationToken = default);

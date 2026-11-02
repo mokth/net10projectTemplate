@@ -36,7 +36,7 @@ public sealed class PoPrService : IPoPrService
     private readonly IPoPrAttachmentService _attachments;
     private readonly ILogger<PoPrService> _logger;
     private readonly IProductionMaterialStockAvailabilityReader? _materialAvailability;
-    private readonly IProcurementApprovalGuard? _approval;
+    private readonly IProcurementApprovalGuard _approval;
 
     public PoPrService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -48,9 +48,9 @@ public sealed class PoPrService : IPoPrService
         IOptions<PoPrOptions> options,
         IPoPrAttachmentService attachments,
         ILogger<PoPrService> logger,
+        IProcurementApprovalGuard approval,
         IPoOrderRepository? poOrders = null,
-        IProductionMaterialStockAvailabilityReader? materialAvailability = null,
-        IProcurementApprovalGuard? approval = null)
+        IProductionMaterialStockAvailabilityReader? materialAvailability = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -63,7 +63,7 @@ public sealed class PoPrService : IPoPrService
         _attachments = attachments;
         _logger = logger;
         _materialAvailability = materialAvailability;
-        _approval = approval;
+        _approval = approval ?? throw new ArgumentNullException(nameof(approval));
     }
 
     public async Task<PoPrOperationResult> CreateTempDocIdAsync(CancellationToken cancellationToken = default)
