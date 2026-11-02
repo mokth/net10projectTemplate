@@ -41,6 +41,7 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
     private readonly AttachmentStorageOptions _options;
     private readonly PoOrderOptions _orderOptions;
     private readonly ILogger<PoOrderAttachmentService> _logger;
+    private readonly IProcurementApprovalGuard? _approval;
 
     public PoOrderAttachmentService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -49,7 +50,8 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
         ICurrentDateService dates,
         IOptions<AttachmentStorageOptions> options,
         IOptions<PoOrderOptions> orderOptions,
-        ILogger<PoOrderAttachmentService> logger)
+        ILogger<PoOrderAttachmentService> logger,
+        IProcurementApprovalGuard? approval = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -58,6 +60,7 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
         _options = options.Value;
         _orderOptions = orderOptions.Value;
         _logger = logger;
+        _approval = approval;
     }
 
     public async Task MoveDraftToPoAsync(
@@ -369,6 +372,26 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
             return Fail<PoOrderAttachmentRow>(access.Value.Code, access.Value.Message);
         }
 
+        if (_approval is not null && !IsTempDocId(id))
+        {
+            var relNo = await db.PoOrders
+                .Where(x => x.CompanyCode == context.CompanyCode && x.BranchCode == context.BranchCode && x.PoNo == id)
+                .Select(x => (short?)x.PoRelNo)
+                .MaxAsync(cancellationToken) ?? 0;
+            var approvalError = await _approval.AssertAttachmentMutationAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                ProcurementApprovalDocTypes.Po,
+                id,
+                relNo,
+                cancellationToken);
+            if (approvalError is not null)
+            {
+                return Fail<PoOrderAttachmentRow>(IvMasterErrorCode.Validation, approvalError);
+            }
+        }
+
         var count = await db.PoAttachFiles.CountAsync(
             x => x.CompanyCode == context.CompanyCode
                  && x.BranchCode == context.BranchCode
@@ -599,6 +622,26 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
         if (access is not null)
         {
             return Fail<object>(access.Value.Code, access.Value.Message);
+        }
+
+        if (_approval is not null && !IsTempDocId(id))
+        {
+            var relNo = await db.PoOrders
+                .Where(x => x.CompanyCode == context.CompanyCode && x.BranchCode == context.BranchCode && x.PoNo == id)
+                .Select(x => (short?)x.PoRelNo)
+                .MaxAsync(cancellationToken) ?? 0;
+            var approvalError = await _approval.AssertAttachmentMutationAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                ProcurementApprovalDocTypes.Po,
+                id,
+                relNo,
+                cancellationToken);
+            if (approvalError is not null)
+            {
+                return Fail<object>(IvMasterErrorCode.Validation, approvalError);
+            }
         }
 
         var row = await db.PoAttachFiles.FirstOrDefaultAsync(

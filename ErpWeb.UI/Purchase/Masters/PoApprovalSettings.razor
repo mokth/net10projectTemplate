@@ -1,0 +1,279 @@
+@page "/purchase/approval/settings"
+@inherits PageBase
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Purchase
+@using ErpWeb.Model.Entities.Purchase
+@using ErpWeb.UI.Components.Security
+
+<PageTitle>Purchase Approval</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseApprovalSettings">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !DiscardVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-stamp"></i></div>
+        <div class="iv-hero__copy">
+            <p class="iv-eyebrow">Purchase · Approval</p>
+            <h1 class="iv-title">Purchase Approval</h1>
+            <div class="iv-chips">
+                <span class="iv-chip">Company-wide</span>
+                <span class="iv-chip">Document currency bands</span>
+                <span class="iv-chip">@(PolicyEnabled ? "Enabled" : "Default off")</span>
+            </div>
+        </div>
+        <div class="iv-hero__kpi">
+            <span>Published version</span>
+            <strong>@(PolicyVersion == 0 ? "—" : PolicyVersion.ToString("N0"))</strong>
+        </div>
+    </header>
+
+    <section class="iv-card">
+        <DxTabs ActiveTabIndex="@ActiveTabIndex" ActiveTabIndexChanged="@OnTabIndexChangedAsync">
+            <DxTabPage Text="Purchase Requisition" />
+            <DxTabPage Text="Purchase Order" />
+        </DxTabs>
+
+        @if (IsLoading || Editor is null)
+        {
+            <div class="iv-skeleton mt-3" aria-busy="true">
+                <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                <div class="iv-skeleton__line"></div>
+            </div>
+        }
+        else
+        {
+            <p class="sdoc-field-hint mt-3">
+                Amount bands are per currency. A missing currency fails closed. Header discount on PO must be zero before submit.
+            </p>
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Enabled" ColSpanMd="3">
+                    <Template>
+                        <DxCheckBox @bind-Checked="@Editor.Enabled"
+                                    AllowIndeterminateState="false"
+                                    Enabled="@CanEdit" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Existing drafts when enabled" ColSpanMd="6">
+                    <Template>
+                        <DxComboBox Data="@LegacyModeOptions"
+                                    TextFieldName="@nameof(LegacyModeOption.Name)"
+                                    ValueFieldName="@nameof(LegacyModeOption.Key)"
+                                    @bind-Value="@Editor.LegacyDraftMode"
+                                    Enabled="@CanEdit" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Published version" ColSpanMd="3">
+                    <Template>
+                        <DxTextBox Text="@(Editor.Version == 0 ? "Not published" : Editor.Version.ToString())" ReadOnly="true" />
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+
+            <h2 class="iv-card__title mt-3">Amount bands</h2>
+            @for (var bandIndex = 0; bandIndex < Editor.Bands.Count; bandIndex++)
+            {
+                var band = Editor.Bands[bandIndex];
+                var capturedBandIndex = bandIndex;
+                <div class="iv-card mt-2">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Currency" ColSpanMd="2">
+                            <Template>
+                                <DxTextBox @bind-Text="@band.Currency" MaxLength="20" Enabled="@CanEdit" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="From (inclusive)" ColSpanMd="2">
+                            <Template>
+                                <DxSpinEdit @bind-Value="@band.MinInclusive" Enabled="@CanEdit" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="To (exclusive)" ColSpanMd="2">
+                            <Template>
+                                <DxSpinEdit @bind-Value="@band.MaxExclusive" NullText="Unbounded" Enabled="@CanEdit" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Not required" ColSpanMd="2">
+                            <Template>
+                                <DxCheckBox @bind-Checked="@band.NotRequired" AllowIndeterminateState="false" Enabled="@CanEdit" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        @if (CanEdit)
+                        {
+                            <DxFormLayoutItem Caption=" " ColSpanMd="4">
+                                <Template>
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Remove band"
+                                              Click="@(() => RemoveBand(capturedBandIndex))"
+                                              Enabled="@(!IsSubmitting)" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        }
+                    </DxFormLayout>
+                    @if (!band.NotRequired)
+                    {
+                        @for (var levelIndex = 0; levelIndex < band.Levels.Count; levelIndex++)
+                        {
+                            var level = band.Levels[levelIndex];
+                            var capturedLevelIndex = levelIndex;
+                            <DxFormLayout SizeMode="SizeMode.Small">
+                                <DxFormLayoutItem Caption="Level" ColSpanMd="2">
+                                    <Template>
+                                        <DxSpinEdit @bind-Value="@level.Sequence" Enabled="@CanEdit" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Match" ColSpanMd="2">
+                                    <Template>
+                                        <DxComboBox Data="@MatchModes" @bind-Value="@level.MatchMode" Enabled="@CanEdit" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Kind" ColSpanMd="2">
+                                    <Template>
+                                        <DxComboBox Data="@AssigneeKindOptions"
+                                                    TextFieldName="@nameof(AssigneeKindOption.Name)"
+                                                    ValueFieldName="@nameof(AssigneeKindOption.Key)"
+                                                    Value="@level.PendingKind"
+                                                    ValueChanged="@((string value) => OnAssigneeKindChanged(level, value))"
+                                                    ValueExpression="@(() => level.PendingKind)"
+                                                    Enabled="@CanEdit" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="@(IsRoleKind(level) ? "Role" : "User")" ColSpanMd="4">
+                                    <Template>
+                                        <DxComboBox Data="@AvailableAssignees(level)"
+                                                    TextFieldName="@nameof(ProcurementApprovalLookupRow.DisplayText)"
+                                                    ValueFieldName="@nameof(ProcurementApprovalLookupRow.Code)"
+                                                    @bind-Value="@level.PendingRefCode"
+                                                    SearchMode="ListSearchMode.AutoSearch"
+                                                    SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    NullText="@(IsRoleKind(level) ? "Select role" : "Select user")"
+                                                    Enabled="@CanEdit" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                @if (CanEdit)
+                                {
+                                    <DxFormLayoutItem Caption=" " ColSpanMd="2">
+                                        <Template>
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                      Text="Add"
+                                                      Click="@(() => AddAssignee(level))"
+                                                      Enabled="@(!IsSubmitting)" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                }
+                                <DxFormLayoutItem Caption="Assignees" ColSpanMd="10" BeginRow="true">
+                                    <Template>
+                                        <div class="po-approval-assignees">
+                                            @if (level.Assignees.Count == 0)
+                                            {
+                                                <p class="po-approval-assignees__empty">Select a user or role, then Add.</p>
+                                            }
+                                            else
+                                            {
+                                                @foreach (var assignee in level.Assignees)
+                                                {
+                                                    var captured = assignee;
+                                                    @if (CanEdit)
+                                                    {
+                                                        <button type="button"
+                                                                class="iv-chip"
+                                                                @onclick="() => RemoveAssignee(level, captured)"
+                                                                aria-label="@($"Remove {AssigneeLabel(captured)}")">
+                                                            @AssigneeLabel(captured)
+                                                            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                                                        </button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="iv-chip">@AssigneeLabel(captured)</span>
+                                                    }
+                                                }
+                                            }
+                                        </div>
+                                    </Template>
+                                </DxFormLayoutItem>
+                                @if (CanEdit)
+                                {
+                                    <DxFormLayoutItem Caption=" " ColSpanMd="2">
+                                        <Template>
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                      Text="Remove level"
+                                                      Click="@(() => RemoveLevel(band, capturedLevelIndex))"
+                                                      Enabled="@(!IsSubmitting)" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                }
+                            </DxFormLayout>
+                        }
+                        @if (CanEdit && band.Levels.Count < 3)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      Text="Add level"
+                                      Click="@(() => AddLevel(band))"
+                                      Enabled="@(!IsSubmitting)" />
+                        }
+                    }
+                </div>
+            }
+            @if (CanEdit)
+            {
+                <div class="mt-2">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Add band"
+                              Click="AddBand"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            }
+        }
+    </section>
+
+    @if (CanEdit && Editor is not null)
+    {
+        <footer class="iv-footer">
+            <p class="iv-footer__hint">@(IsDirty ? "Unsaved changes" : "Ready")</p>
+            <div class="iv-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          IconCssClass="fa-solid fa-xmark"
+                          Click="@OnCancelAsync"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsSubmitting ? "Saving…" : "Save")"
+                          IconCssClass="fa-solid fa-floppy-disk"
+                          Click="SaveAsync"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </footer>
+    }
+</div>
+
+<DxPopup HeaderText="Discard unsaved changes?"
+         CloseOnOutsideClick="false"
+         Width="480px"
+         CssClass="common-popup"
+         @bind-Visible="@DiscardVisible">
+    <Content>
+        <p class="iv-confirm__copy">Leave this document type without saving the current approval rules?</p>
+        <div class="iv-popup-footer">
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => DiscardVisible = false)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
+            </div>
+        </div>
+    </Content>
+</DxPopup>
+</MenuAuthorize>

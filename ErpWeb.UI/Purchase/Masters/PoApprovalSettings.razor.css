@@ -1,0 +1,17 @@
+.po-approval-assignees {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+}
+
+.po-approval-assignees__empty {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--iv-muted);
+}
+
+.po-approval-assignees button.iv-chip {
+    gap: 6px;
+}

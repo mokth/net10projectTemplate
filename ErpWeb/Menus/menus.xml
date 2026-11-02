@@ -241,7 +241,15 @@
       <Menu Code="PO_SB_DN" Name="Self-billed Debit Note" Route="/purchase/self-billed-debit-notes" SortOrder="9"
             Icon="fa-solid fa-file-circle-question" />
     </Menu>
-    <Menu Code="PO_INQUIRY" Name="Inquiry" SortOrder="3" Icon="fa-solid fa-magnifying-glass-chart">
+    <Menu Code="PO_APPROVAL" Name="Approval" SortOrder="3" Icon="fa-solid fa-stamp">
+      <Menu Code="PO_APPROVAL_SETTINGS" Name="Purchase Approval" Route="/purchase/approval/settings" SortOrder="1"
+            Icon="fa-solid fa-sliders" />
+      <Menu Code="PO_APPROVAL_INBOX" Name="My Approvals" Route="/purchase/approval/inbox" SortOrder="2"
+            Icon="fa-solid fa-inbox" />
+      <Menu Code="PO_APPROVAL_ALL" Name="All Pending Approvals" Route="/purchase/approval/inbox?all=1" SortOrder="3"
+            Icon="fa-solid fa-list-check" />
+    </Menu>
+    <Menu Code="PO_INQUIRY" Name="Inquiry" SortOrder="4" Icon="fa-solid fa-magnifying-glass-chart">
       <Menu Code="PO_WORKBENCH" Name="Procurement Workbench" Route="/purchase/inquiry/workbench" SortOrder="0"
             IsActive="false" Icon="fa-solid fa-list-check" />
       <Menu Code="PO_ORDER_OUTSTANDING" Name="PO Outstanding" Route="/purchase/inquiry/po-outstanding" SortOrder="1"

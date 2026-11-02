@@ -344,6 +344,9 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IPoMasterRefService, PoMasterRefService>();
 
+        services.AddScoped<IProcurementApprovalService, ProcurementApprovalService>();
+        services.AddScoped<IProcurementApprovalGuard>(sp => sp.GetRequiredService<IProcurementApprovalService>());
+
         services.AddScoped<IPoPrService, PoPrService>();
         services.AddScoped<IWorkOrderMaterialProcurementTraceService, WorkOrderMaterialProcurementTraceService>();
 

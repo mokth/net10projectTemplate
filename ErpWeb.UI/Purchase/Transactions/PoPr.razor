@@ -29,6 +29,10 @@
                 <span class="sdoc-titlebar__status" title="@StatusDisplay">
                     @StatusDisplay
                     <span class="sdoc-titlebar__status-extra">@ModeChip</span>
+                    @if (!string.IsNullOrWhiteSpace(ApprovalBadge))
+                    {
+                        <span class="sdoc-titlebar__status-extra">@ApprovalBadge</span>
+                    }
                 </span>
                 <div class="sdoc-titlebar__kpi">
                     <span>Total</span>
@@ -409,6 +413,14 @@
                         {
                             <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" IconCssClass="fa-solid fa-pen" Click="@OnEditFromView" />
                         }
+                        @if (CanSubmitApproval)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Submit for approval" Click="@OnSubmitApprovalAsync" Enabled="@(!IsSubmitting)" />
+                        }
+                        @if (CanWithdrawApproval)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Withdraw" Click="@OnWithdrawApprovalAsync" Enabled="@(!IsSubmitting)" />
+                        }
                     }
                     else
                     {
@@ -418,6 +430,10 @@
                                   IconCssClass="fa-solid fa-floppy-disk"
                                   Click="@OnSaveAsync"
                                   Enabled="@CanSave" />
+                        @if (CanSubmitApproval)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Submit for approval" Click="@OnSubmitApprovalAsync" Enabled="@(!IsSubmitting)" />
+                        }
                     }
                 </div>
             </footer>

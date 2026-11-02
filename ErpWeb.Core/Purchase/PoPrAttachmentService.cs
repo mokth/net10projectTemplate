@@ -41,6 +41,7 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
     private readonly AttachmentStorageOptions _options;
     private readonly PoPrOptions _prOptions;
     private readonly ILogger<PoPrAttachmentService> _logger;
+    private readonly IProcurementApprovalGuard? _approval;
 
     public PoPrAttachmentService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -49,7 +50,8 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
         ICurrentDateService dates,
         IOptions<AttachmentStorageOptions> options,
         IOptions<PoPrOptions> prOptions,
-        ILogger<PoPrAttachmentService> logger)
+        ILogger<PoPrAttachmentService> logger,
+        IProcurementApprovalGuard? approval = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -58,6 +60,7 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
         _options = options.Value;
         _prOptions = prOptions.Value;
         _logger = logger;
+        _approval = approval;
     }
 
     public async Task MoveDraftToPrAsync(
@@ -368,6 +371,22 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
             return Fail<PoPrAttachmentRow>(access.Value.Code, access.Value.Message);
         }
 
+        if (_approval is not null && !IsTempDocId(id))
+        {
+            var approvalError = await _approval.AssertAttachmentMutationAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                ProcurementApprovalDocTypes.Pr,
+                id,
+                0,
+                cancellationToken);
+            if (approvalError is not null)
+            {
+                return Fail<PoPrAttachmentRow>(IvMasterErrorCode.Validation, approvalError);
+            }
+        }
+
         var count = await db.PoPrAttachFiles.CountAsync(
             x => x.CompanyCode == context.CompanyCode
                  && x.BranchCode == context.BranchCode
@@ -585,6 +604,22 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
         if (access is not null)
         {
             return Fail<object>(access.Value.Code, access.Value.Message);
+        }
+
+        if (_approval is not null && !IsTempDocId(id))
+        {
+            var approvalError = await _approval.AssertAttachmentMutationAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                ProcurementApprovalDocTypes.Pr,
+                id,
+                0,
+                cancellationToken);
+            if (approvalError is not null)
+            {
+                return Fail<object>(IvMasterErrorCode.Validation, approvalError);
+            }
         }
 
         var row = await db.PoPrAttachFiles.FirstOrDefaultAsync(

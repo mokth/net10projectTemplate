@@ -20,6 +20,7 @@ public partial class PoPr : PageBase, IAsyncDisposable
 
     [Inject] private IPoPrService Prs { get; set; } = default!;
     [Inject] private IPoPrAttachmentService Attachments { get; set; } = default!;
+    [Inject] private IProcurementApprovalService Approval { get; set; } = default!;
     [Inject] private ICurrentDateService Dates { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
     [Inject] private IJSRuntime JsRuntime { get; set; } = default!;
@@ -35,6 +36,7 @@ public partial class PoPr : PageBase, IAsyncDisposable
     protected bool ConcurrencyVisible;
     protected string? PopupError;
     protected bool CanEditPermission;
+    protected bool CanSubmitPermission;
     protected bool CanViewCost;
     protected string PrNoDisplay = "AUTO";
     protected string StatusDisplay = PoPrStatuses.New;
@@ -100,7 +102,24 @@ public partial class PoPr : PageBase, IAsyncDisposable
     protected bool IsCancelledStatus => string.Equals(StatusDisplay, PoPrStatuses.Cancelled, StringComparison.OrdinalIgnoreCase);
     protected bool IsApprovedStatus => string.Equals(StatusDisplay, PoPrStatuses.Approved, StringComparison.OrdinalIgnoreCase);
     protected bool IsReadOnlyPresentation => IsViewMode || IsCancelledStatus || IsApprovedStatus;
-    protected bool CanEditDocument => (IsNewMode || IsEditMode || IsCopyMode) && !IsViewMode && !IsCancelledStatus && !IsApprovedStatus;
+    protected ProcurementApprovalInstanceDto? ApprovalInstance { get; set; }
+    protected string? ApprovalBadge => ApprovalInstance is null ? null : $"Approval: {ApprovalInstance.Status}";
+    protected bool ApprovalLocksEdits =>
+        ApprovalInstance is not null
+        && (string.Equals(ApprovalInstance.Status, ErpWeb.Model.Entities.Purchase.ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ApprovalInstance.Status, ErpWeb.Model.Entities.Purchase.ProcurementApprovalStatuses.Approved, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ApprovalInstance.Status, ErpWeb.Model.Entities.Purchase.ProcurementApprovalStatuses.NotRequired, StringComparison.OrdinalIgnoreCase));
+    protected bool CanSubmitApproval =>
+        !IsNewMode
+        && !IsCopyMode
+        && !IsCancelledStatus
+        && !string.IsNullOrWhiteSpace(PrNo)
+        && !ApprovalLocksEdits
+        && CanSubmitPermission;
+    protected bool CanWithdrawApproval =>
+        ApprovalInstance is not null
+        && string.Equals(ApprovalInstance.Status, ErpWeb.Model.Entities.Purchase.ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase);
+    protected bool CanEditDocument => (IsNewMode || IsEditMode || IsCopyMode) && !IsViewMode && !IsCancelledStatus && !IsApprovedStatus && !ApprovalLocksEdits;
     protected bool CanEditFromView =>
         IsViewMode
         && CanEditPermission
@@ -189,6 +208,7 @@ public partial class PoPr : PageBase, IAsyncDisposable
         AttachmentRows = [];
 
         CanEditPermission = await AccessRights.CanAsync(MenuCodes.PurchaseRequisition, PermissionCodes.Edit);
+        CanSubmitPermission = await AccessRights.CanAsync(MenuCodes.PurchaseRequisition, PermissionCodes.Submit);
         var lookups = await Prs.GetLookupsAsync(_cts.Token);
         if (_disposed)
         {
@@ -240,6 +260,7 @@ public partial class PoPr : PageBase, IAsyncDisposable
 
         ApplyDocument(result.Document);
         TempDocId = null;
+        await LoadApprovalAsync();
         await LoadAttachmentsAsync();
         IsLoading = false;
     }
@@ -702,6 +723,84 @@ public partial class PoPr : PageBase, IAsyncDisposable
 
     protected void OnEditFromView() => Navigation.NavigateTo(
         DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/purchase/requisitions/edit/{PrNo}"));
+
+    private async Task LoadApprovalAsync()
+    {
+        ApprovalInstance = null;
+        if (string.IsNullOrWhiteSpace(PrNo))
+        {
+            return;
+        }
+
+        ApprovalInstance = await Approval.GetActiveAsync(
+            ErpWeb.Model.Entities.Purchase.ProcurementApprovalDocTypes.Pr,
+            PrNo,
+            0,
+            _cts.Token);
+    }
+
+    protected async Task OnSubmitApprovalAsync()
+    {
+        if (!CanSubmitApproval || string.IsNullOrWhiteSpace(PrNo))
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await Approval.SubmitAsync(new ProcurementApprovalSubmitRequest
+            {
+                DocType = ErpWeb.Model.Entities.Purchase.ProcurementApprovalDocTypes.Pr,
+                DocNo = PrNo
+            }, _cts.Token);
+            if (!result.Succeeded)
+            {
+                ErrorMessage = result.ErrorMessage;
+                return;
+            }
+
+            ApprovalInstance = result.Instance;
+            StatusMessage = "Submitted for approval.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task OnWithdrawApprovalAsync()
+    {
+        if (ApprovalInstance is null)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await Approval.WithdrawAsync(new ProcurementApprovalDecisionRequest
+            {
+                InstanceId = ApprovalInstance.Uid,
+                RowVersion = ApprovalInstance.RowVersion,
+                Reason = "Withdrawn by submitter."
+            }, _cts.Token);
+            if (!result.Succeeded)
+            {
+                ErrorMessage = result.ErrorMessage;
+                return;
+            }
+
+            ApprovalInstance = result.Instance;
+            StatusMessage = "Approval withdrawn.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
 
     protected async Task ConfirmDiscardAsync()
     {

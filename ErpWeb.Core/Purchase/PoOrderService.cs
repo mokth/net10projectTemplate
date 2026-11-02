@@ -193,7 +193,9 @@ public sealed class PoOrderService : IPoOrderService
 
 	private readonly ILogger<PoOrderService> _logger;
 
-	public PoOrderService(IDbContextFactory<AppDbContext> dbFactory, IInventoryTenantContext tenant, IAccessRightService accessRights, IDocumentNumberingService documentNumbers, ICurrentDateService dates, IPoOrderRepository repository, IOptions<PoOrderOptions> options, IPoOrderAttachmentService attachments, ILogger<PoOrderService> logger)
+	private readonly IProcurementApprovalGuard? _approval;
+
+	public PoOrderService(IDbContextFactory<AppDbContext> dbFactory, IInventoryTenantContext tenant, IAccessRightService accessRights, IDocumentNumberingService documentNumbers, ICurrentDateService dates, IPoOrderRepository repository, IOptions<PoOrderOptions> options, IPoOrderAttachmentService attachments, ILogger<PoOrderService> logger, IProcurementApprovalGuard? approval = null)
 	{
 		_dbFactory = dbFactory;
 		_tenant = tenant;
@@ -204,6 +206,7 @@ public sealed class PoOrderService : IPoOrderService
 		_options = options.Value;
 		_attachments = attachments;
 		_logger = logger;
+		_approval = approval;
 	}
 
 	public async Task<PoOrderOperationResult> CreateTempDocIdAsync(CancellationToken cancellationToken = default(CancellationToken))
@@ -487,7 +490,7 @@ public sealed class PoOrderService : IPoOrderService
 			{
 				query = query.Where((PoPr x) => x.PrNo.Contains(term) || (x.Requester != null && x.Requester.Contains(term)) || (x.Remarks != null && x.Remarks.Contains(term)) || x.Details.Any((PoPrDetail d) => (d.ICode != null && d.ICode.Contains(term)) || (d.IDesc != null && d.IDesc.Contains(term))));
 			}
-			result = PoOrderOperationResult.OkPrRows(await (from x in (from x in query
+			var rows = await (from x in (from x in query
 					orderby x.CreateDt descending, x.PrNo descending
 					select x).Take(100)
 				select new PoPrForPoRow
@@ -498,7 +501,22 @@ public sealed class PoOrderService : IPoOrderService
 					Requester = x.Requester,
 					ProjId = x.ProjId,
 					Remarks = x.Remarks
-				}).ToListAsync(cancellationToken));
+				}).ToListAsync(cancellationToken);
+			if (_approval is not null)
+			{
+				var visible = new List<PoPrForPoRow>();
+				foreach (var row in rows)
+				{
+					if (await _approval.IsPrVisibleForPoAsync(db, company, branch, row.PrNo, cancellationToken))
+					{
+						visible.Add(row);
+					}
+				}
+
+				rows = visible;
+			}
+
+			result = PoOrderOperationResult.OkPrRows(rows);
 		}
 		return result;
 	}
@@ -530,6 +548,11 @@ public sealed class PoOrderService : IPoOrderService
 			else if (!PoPrCalc.IsAvailableForPo(header.Status))
 			{
 				result = PoOrderOperationResult.Fail("PR " + no + " is not available for PO.");
+			}
+			else if (_approval is not null
+				&& await _approval.AssertPrConvertibleAsync(db, context.CompanyCode, context.BranchCode, no, cancellationToken) is string prGate)
+			{
+				result = PoOrderOperationResult.Fail(prGate);
 			}
 			else
 			{
@@ -780,6 +803,26 @@ public sealed class PoOrderService : IPoOrderService
 							}
 							else
 							{
+								if (_approval is not null)
+								{
+									await _approval.LockInstancesAsync(
+										db,
+										context.CompanyCode,
+										context.BranchCode,
+										ProcurementApprovalDocTypes.Po,
+										[(header.PoNo, header.PoRelNo)],
+										cancellationToken);
+									await _approval.ClosePendingOnDocumentCancelAsync(
+										db,
+										context.CompanyCode,
+										context.BranchCode,
+										ProcurementApprovalDocTypes.Po,
+										header.PoNo,
+										header.PoRelNo,
+										context.UserId ?? string.Empty,
+										cancellationToken);
+								}
+
 								PoStatusPolicy.Cancel(header);
 								header.ModifiedDate = _dates.Now;
 								header.ModifiedBy = Truncate(context.UserId, 20);
@@ -853,6 +896,26 @@ public sealed class PoOrderService : IPoOrderService
 						{
 							await LockConsumptionAsync(db, context.CompanyCode, context.BranchCode, header.Details, Array.Empty<PreparedLine>(), cancellationToken);
 							ApplyCjConsumption(header.Details.Select(MapExistingLine).ToList(), Array.Empty<PreparedLine>(), 1, out string _);
+							if (_approval is not null)
+							{
+								await _approval.LockInstancesAsync(
+									db,
+									context.CompanyCode,
+									context.BranchCode,
+									ProcurementApprovalDocTypes.Po,
+									[(header.PoNo, header.PoRelNo)],
+									cancellationToken);
+								await _approval.ClosePendingOnDocumentCancelAsync(
+									db,
+									context.CompanyCode,
+									context.BranchCode,
+									ProcurementApprovalDocTypes.Po,
+									header.PoNo,
+									header.PoRelNo,
+									context.UserId ?? string.Empty,
+									cancellationToken);
+							}
+
 							IReadOnlyList<(string PrNo, short Line)> prKeys = CollectPrKeys(header.Details);
 							List<PoAttachFile> attachRows = await db.PoAttachFiles.Where((PoAttachFile x) => x.CompanyCode == ((UserContext)context).CompanyCode && x.BranchCode == ((UserContext)context).BranchCode && x.DocKey == "PO" && x.DocId == header.PoNo).ToListAsync(cancellationToken);
 							IReadOnlyList<(string DocName, string? DocName2)> attachFiles = attachRows.Select((PoAttachFile x) => (DocName: x.DocName, DocPath: x.DocPath)).ToList();
@@ -967,6 +1030,17 @@ public sealed class PoOrderService : IPoOrderService
 					else
 					{
 						await db.Entry(header).Collection((PoOrder x) => x.Details).LoadAsync(cancellationToken);
+						if (_approval is not null)
+						{
+							await _approval.LockInstancesAsync(
+								db,
+								context.CompanyCode,
+								context.BranchCode,
+								ProcurementApprovalDocTypes.Po,
+								[(header.PoNo, header.PoRelNo)],
+								cancellationToken);
+						}
+
 						if (!RowVersionsEqual(header.RowVersion, request.RowVersion))
 						{
 							await tx.RollbackAsync(cancellationToken);
@@ -1088,6 +1162,35 @@ public sealed class PoOrderService : IPoOrderService
 										{
 											newHeader.Details.Add(ToDetailEntity(newHeader, line, lineNo++));
 										}
+										if (_approval is not null)
+										{
+											var approvalError = await _approval.AssertDocumentMaterialEditAsync(
+												db,
+												context.CompanyCode,
+												context.BranchCode,
+												ProcurementApprovalDocTypes.Po,
+												header.PoNo,
+												header.PoRelNo,
+												ProcurementApprovalFingerprint.ForPo(newHeader),
+												cancellationToken);
+											if (approvalError is not null)
+											{
+												await tx.RollbackAsync(cancellationToken);
+												poOrderOperationResult = PoOrderOperationResult.Fail(approvalError);
+												goto end_IL_0604;
+											}
+
+											await _approval.ClosePendingOnDocumentCancelAsync(
+												db,
+												context.CompanyCode,
+												context.BranchCode,
+												ProcurementApprovalDocTypes.Po,
+												header.PoNo,
+												header.PoRelNo,
+												context.UserId ?? string.Empty,
+												cancellationToken);
+										}
+
 										PoStatusPolicy.Cancel(header);
 										header.ModifiedDate = _dates.Now;
 										header.ModifiedBy = Truncate(context.UserId, 20);
@@ -1117,6 +1220,24 @@ public sealed class PoOrderService : IPoOrderService
 											header.Status = PoStatusPolicy.CalculateOperationalStatus(header, (PoOrderDetail d) => IsServiceLine(d, itemTypes));
 											header.ModifiedDate = _dates.Now;
 											header.ModifiedBy = Truncate(context.UserId, 20);
+											if (_approval is not null)
+											{
+												var approvalError = await _approval.AssertDocumentMaterialEditAsync(
+													db,
+													context.CompanyCode,
+													context.BranchCode,
+													ProcurementApprovalDocTypes.Po,
+													header.PoNo,
+													header.PoRelNo,
+													ProcurementApprovalFingerprint.ForPo(header),
+													cancellationToken);
+												if (approvalError is not null)
+												{
+													await tx.RollbackAsync(cancellationToken);
+													poOrderOperationResult = PoOrderOperationResult.Fail(approvalError);
+													goto end_IL_0604;
+												}
+											}
 											if (tempDocId != null)
 											{
 												await StampAttachDocIdsInDbAsync(db, context.CompanyCode, context.BranchCode, tempDocId, header.PoNo, header.PoRelNo, Truncate(context.UserId, 20), cancellationToken);
@@ -1200,6 +1321,30 @@ public sealed class PoOrderService : IPoOrderService
 								}
 								else
 								{
+									if (_approval is not null)
+									{
+										await _approval.LockInstancesAsync(
+											db,
+											context.CompanyCode,
+											context.BranchCode,
+											ProcurementApprovalDocTypes.Po,
+											[(header.PoNo, header.PoRelNo)],
+											cancellationToken);
+										var closeGate = await _approval.AssertPoCloseableAsync(
+											db,
+											context.CompanyCode,
+											context.BranchCode,
+											header.PoNo,
+											header.PoRelNo,
+											cancellationToken);
+										if (closeGate is not null)
+										{
+											await tx.RollbackAsync(cancellationToken);
+											poOrderOperationResult = PoOrderOperationResult.Fail(closeGate);
+											goto end_IL_0263;
+										}
+									}
+
 									PoStatusPolicy.ForceClose(header, reason, context.UserId ?? string.Empty, _dates.Now);
 									goto IL_064d;
 								}
@@ -1308,21 +1453,35 @@ public sealed class PoOrderService : IPoOrderService
 			{
 				result = PoOrderOperationResult.Fail("Purchase Order was not found.", PoOrderErrorKind.NotFound);
 			}
-			else if (_options.SelfViewEdit && !string.Equals(header.CreatedBy, Truncate(context.UserId, 20), StringComparison.OrdinalIgnoreCase))
-			{
-				result = PoOrderOperationResult.Fail("Purchase Order was not found.", PoOrderErrorKind.NotFound);
-			}
 			else
 			{
+				var approvalReadOnly = false;
+				if (_options.SelfViewEdit && !string.Equals(header.CreatedBy, Truncate(context.UserId, 20), StringComparison.OrdinalIgnoreCase))
+				{
+					approvalReadOnly = _approval is not null
+						&& await _approval.CanReadDocumentAsync(
+							db,
+							context.CompanyCode,
+							context.BranchCode,
+							ProcurementApprovalDocTypes.Po,
+							header.PoNo,
+							header.PoRelNo,
+							context.UserId ?? string.Empty,
+							cancellationToken);
+					if (!approvalReadOnly)
+					{
+						result = PoOrderOperationResult.Fail("Purchase Order was not found.", PoOrderErrorKind.NotFound);
+						goto end_get;
+					}
+				}
+
 				IReadOnlyDictionary<string, string?> itemTypes = await LoadItemTypesAsync(db, context.CompanyCode, header.Details.Select((PoOrderDetail x) => x.ICode), cancellationToken);
 				short? maxRel = await _repository.GetMaxRelNoAsync(db, context.CompanyCode, context.BranchCode, header.PoNo, cancellationToken);
 				IReadOnlyList<PoOrder> revisions = await _repository.ListRevisionsAsync(db, context.CompanyCode, context.BranchCode, header.PoNo, cancellationToken);
-				PoOrder header2 = header;
-				IReadOnlyDictionary<string, string?> itemTypes2 = itemTypes;
-				bool isLatest = maxRel == header.PoRelNo;
-				IReadOnlyList<PoOrder> revisions2 = revisions;
-				result = PoOrderOperationResult.OkDocument(MapDocument(header2, itemTypes2, isLatest, revisions2, await CanAsync("EDIT", cancellationToken), await CanAsync("DELETE", cancellationToken), await CanAsync("CANCEL", cancellationToken), await CanAsync("EDIT", cancellationToken), await CanAsync("CLOSE", cancellationToken), await CanAsync("REOPEN", cancellationToken)));
+				var canWrite = !approvalReadOnly;
+				result = PoOrderOperationResult.OkDocument(MapDocument(header, itemTypes, maxRel == header.PoRelNo, revisions, canWrite && await CanAsync("EDIT", cancellationToken), canWrite && await CanAsync("DELETE", cancellationToken), canWrite && await CanAsync("CANCEL", cancellationToken), canWrite && await CanAsync("EDIT", cancellationToken), canWrite && await CanAsync("CLOSE", cancellationToken), canWrite && await CanAsync("REOPEN", cancellationToken)));
 			}
+			end_get:;
 		}
 		return result;
 	}
@@ -1554,6 +1713,17 @@ public sealed class PoOrderService : IPoOrderService
 			.Select(x => (PrNo: x.PrNo!, Line: x.PrLineNo!.Value))
 			.ToList();
 		await _repository.LockPrHeadersAsync(db, companyCode, branchCode, prKeys.Select(x => x.PrNo), cancellationToken);
+		if (_approval is not null)
+		{
+			await _approval.LockInstancesAsync(
+				db,
+				companyCode,
+				branchCode,
+				ProcurementApprovalDocTypes.Pr,
+				prKeys.Select(x => (x.PrNo, (short)0)),
+				cancellationToken);
+		}
+
 		await _repository.LockPrDetailsAsync(db, companyCode, branchCode, prKeys, cancellationToken);
 
 		var cjKeys = oldLines.Select(x => (CjNo: x.CjNo, CjRelNo: x.CjRelNo, Line: (int?)null))
@@ -1591,6 +1761,14 @@ public sealed class PoOrderService : IPoOrderService
 			if (!PoPrCalc.IsAvailableForPo(headerStatus) && !fullyOrderedUpdate)
 			{
 				return PoOrderOperationResult.Fail("PR " + group.Key.Item1 + " is not available for PO.");
+			}
+			if (_approval is not null)
+			{
+				var gate = await _approval.AssertPrConvertibleAsync(db, companyCode, branchCode, group.Key.Item1, cancellationToken);
+				if (gate is not null)
+				{
+					return PoOrderOperationResult.Fail(gate);
+				}
 			}
 			decimal otherConsumed = await LivePoConsumedForPrAsync(db, companyCode, branchCode, group.Key.Item1, group.Key.Item2, excludePo, cancellationToken);
 			decimal remaining = PoOrderCalc.RoundQty(prDetail.PurchaseQty - otherConsumed);

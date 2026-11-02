@@ -245,6 +245,12 @@ public static class MenuCodes
     public const string PurchaseKpi = "PO_PROC_KPI";
     public const string PurchaseDeliveryFollowUp = "PO_DELIVERY_FOLLOWUP";
 
+    // Purchase Approval — policy + inbox queues (parent has no route).
+    public const string PurchaseApproval = "PO_APPROVAL";
+    public const string PurchaseApprovalSettings = "PO_APPROVAL_SETTINGS";
+    public const string PurchaseApprovalInbox = "PO_APPROVAL_INBOX";
+    public const string PurchaseApprovalAll = "PO_APPROVAL_ALL";
+
     public const string Planning = "PLANNING";
     public const string PlanningMaster = "PLN_MASTER";
     public const string PlanningProductDef = "PLN_PRODUCT_DEF";
