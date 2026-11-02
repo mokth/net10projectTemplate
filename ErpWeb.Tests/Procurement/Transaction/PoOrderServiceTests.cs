@@ -811,7 +811,8 @@ public class PoOrderServiceTests : IAsyncLifetime
             new FixedCurrentDateService(FixedToday),
             Options.Create(new AttachmentStorageOptions { RootPath = _attachRoot }),
             Options.Create(new PoOrderOptions()),
-            NullLogger<PoOrderAttachmentService>.Instance);
+            NullLogger<PoOrderAttachmentService>.Instance,
+            TestDisabledProcurementApprovalGuard.Instance);
 
         return new PoOrderService(
             _factory,
@@ -822,7 +823,8 @@ public class PoOrderServiceTests : IAsyncLifetime
             new PoOrderRepository(),
             Options.Create(new PoOrderOptions()),
             attach,
-            NullLogger<PoOrderService>.Instance);
+            NullLogger<PoOrderService>.Instance,
+            TestDisabledProcurementApprovalGuard.Instance);
     }
 
     private static Mock<IAccessRightService> Access()

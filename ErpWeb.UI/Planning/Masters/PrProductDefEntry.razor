@@ -41,8 +41,16 @@
                     }
                     @if (!IsNewMode && !string.IsNullOrWhiteSpace(Model.ProdCode))
                     {
-                        <span class="iv-chip">V@Model.Version</span>
+                        <span class="iv-chip">Editing V@Model.Version</span>
                         <span class="iv-chip">@Model.Status</span>
+                        @if (Model.IsDefaultDefinition)
+                        {
+                            <span class="iv-chip">Default</span>
+                        }
+                    }
+                    @if (IsBomOnlyDefinition)
+                    {
+                        <span class="iv-chip">BOM-only — cannot create/release a routed Work Order</span>
                     }
                     @if (!IsNewMode)
                     {
@@ -100,6 +108,16 @@
                             <span class="pdf-breadcrumb code-style">@OwnerBreadcrumb</span>
                         }
                     </header>
+                    @if (ShowsBuyMakeNotice)
+                    {
+                        <div class="iv-toast iv-toast--warn pdf-buy-notice" role="status">
+                            Saving this definition will reclassify stock item @Model.ProdCode from BUY to MAKE, including Save Draft.
+                        </div>
+                    }
+                    @if (IsBomOnlyDefinition)
+                    {
+                        <p class="pdf-bom-only-note">BOM-only — cannot create/release a routed Work Order. This is informational and does not block save or activate.</p>
+                    }
                     <div class="pdf-product-info">
                         <div class="pdf-product-info__col">
                             <div class="iv-field pdf-head__code pdf-field-product-code">
@@ -238,7 +256,7 @@
                         </div>
                         <div class="pdf-summary-item @(ValidationErrors.Count == 0 ? "is-ready" : "is-attention")">
                             <span class="pdf-summary-item__icon"><i class="fa-solid @(ValidationErrors.Count == 0 ? "fa-circle-check" : "fa-circle-exclamation")"></i></span>
-                            <div><strong>@(ValidationErrors.Count == 0 ? "Ready" : ValidationErrors.Count.ToString())</strong><span>@(ValidationErrors.Count == 0 ? "No current issues" : "Issues to review")</span></div>
+                            <div><strong>@(ValidationErrors.Count == 0 ? "No editor issues" : ValidationErrors.Count.ToString())</strong><span>@(ValidationErrors.Count == 0 ? "Not a Work Order release check" : "Issues to review")</span></div>
                         </div>
                     </div>
                 </section>
@@ -258,7 +276,10 @@
                             <li class="@(ActiveTabIndex == 4 ? "is-current" : null)"><span>5</span>Labour</li>
                         </ol>
                     </header>
-                    <DxTabs @bind-ActiveTabIndex="@ActiveTabIndex" CssClass="pdf-tabs" RenderMode="TabsRenderMode.OnDemand">
+                    <DxTabs ActiveTabIndex="@ActiveTabIndex"
+                            ActiveTabIndexChanged="OnActiveTabIndexChanged"
+                            CssClass="pdf-tabs"
+                            RenderMode="TabsRenderMode.OnDemand">
                         <DxTabPage Text="1 · ROUTE">
                             <div class="pdf-tab-body">
                                 @if (CentreRows.Count == 0)
@@ -620,7 +641,7 @@
                                             <DxTextBox @bind-Text="@LineUomText" ReadOnly="true" NullText="From Stock Master" InputCssClass="code-style" />
                                         </div>
                                         <div class="iv-field pdf-field-warehouse">
-                                            <label class="iv-field__label">Warehouse</label>
+                                            <label class="iv-field__label">Preferred issue warehouse</label>
                                             <IvCodeComboBox Data="@Warehouses"
                                                             @bind-Value="@LineWarehouse"
                                                             NullText="Select warehouse"
@@ -947,7 +968,7 @@
                         }
                         else
                         {
-                            <text>@(IsDirty ? "Unsaved changes" : "Ready") · Save applies to @CurrentOwnerProdCode only</text>
+                            <text>@(HasUnsavedWork ? "Unsaved changes" : "No editor issues") · Save applies to @CurrentOwnerProdCode only@(IsBomOnlyDefinition ? " · BOM-only" : "")</text>
                         }
                     </p>
                     <div class="iv-footer__actions">
@@ -1193,34 +1214,38 @@
             </Content>
         </DxPopup>
 
-        <DxPopup HeaderText="Discard changes?"
+        <DxPopup HeaderText="Unsaved editor changes"
                  CloseOnOutsideClick="false"
-                 Width="420px"
+                 Width="480px"
                  CssClass="common-popup"
                  @bind-Visible="@ConfirmDiscardVisible">
             <Content>
                 <p class="iv-confirm__copy">
                     @if (!string.IsNullOrWhiteSpace(PendingOwnerProdCode))
                     {
-                        <text>You have unsaved changes on @CurrentOwnerProdCode [@CurrentOwnerDefinitionCode]. Discard them and switch to @PendingOwnerProdCode [@PendingOwnerDefinitionCode]?</text>
+                        <text>You have unsaved changes on @CurrentOwnerProdCode [@CurrentOwnerDefinitionCode]. Apply the current editor, discard it, or stay here.</text>
                     }
-                    else if (_pendingSelectionAction is not null)
+                    else if (_pendingSelectionAction is not null || _pendingTabIndex is not null || _pendingSaveActivate is not null)
                     {
-                        <text>You have unsaved editor changes. Discard them and continue?</text>
+                        <text>The current nested editor or material line has unsaved values. Apply it, discard it, or stay here. Invalid rows are not saved.</text>
                     }
                     else if (_pendingUpdateAfterDiscard)
                     {
-                        <text>You have unsaved changes. Discard them and load the selected product?</text>
+                        <text>You have unsaved changes. Apply the current editor, discard them, or stay here before loading another product.</text>
                     }
                     else
                     {
-                        <text>You have unsaved changes. Discard them and leave this page?</text>
+                        <text>You have unsaved changes. Apply the current editor, discard them, or stay here.</text>
                     }
                 </p>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@CancelDiscardAsync" />
-                        <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Stay here" Click="@CancelDiscardAsync" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard current editor" Click="@ConfirmDiscardAsync" />
+                        @if (HasUnsavedChildEditor)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply current editor" Click="@ApplyCurrentEditorAsync" />
+                        }
                     </div>
                 </div>
             </Content>

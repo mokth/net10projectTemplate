@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 [Trait(TestCategories.Name, TestCategories.InventoryAdjustment)]
@@ -457,7 +458,8 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
             _factory, tenant, access.Object, postingRepo,
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
         return new IvStockAdjustmentService(
             _factory, tenant, access.Object, new RunningNumberService(),
@@ -484,7 +486,8 @@ public class IvStockAdjustmentPostingServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
     }
 
     private static Mock<IAccessRightService> Access()

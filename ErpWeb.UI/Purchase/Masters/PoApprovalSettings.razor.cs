@@ -646,6 +646,7 @@ public partial class PoApprovalSettings : PageBase
         {
             DocType = policy.DocType,
             Version = policy.Version,
+            RowVersion = policy.RowVersion ?? [],
             Enabled = policy.Enabled,
             LegacyDraftMode = string.IsNullOrWhiteSpace(policy.LegacyDraftMode)
                 ? ProcurementApprovalLegacyModes.RequireGoingForward
@@ -675,6 +676,8 @@ public partial class PoApprovalSettings : PageBase
         new()
         {
             DocType = editor.DocType,
+            Version = editor.Version,
+            RowVersion = editor.RowVersion ?? [],
             Enabled = editor.Enabled,
             LegacyDraftMode = editor.LegacyDraftMode,
             Bands = editor.Bands.Select(band => new ProcurementApprovalBandDto
@@ -822,6 +825,11 @@ public partial class PoApprovalSettings : PageBase
             return "Choose at least one person or role for every approval step.";
         }
 
+        if (string.Equals(message, "These approval settings were changed by another user. Reload and try again.", StringComparison.Ordinal))
+        {
+            return "Someone else saved these approval settings. Reload and try again.";
+        }
+
         var gap = Regex.Match(message, @"^Currency (.+) has a gap or overlap in amount bands\.$");
         if (gap.Success)
         {
@@ -950,6 +958,7 @@ public partial class PoApprovalSettings : PageBase
     {
         public string DocType { get; set; } = ProcurementApprovalDocTypes.Pr;
         public int Version { get; set; }
+        public byte[] RowVersion { get; set; } = [];
         public bool Enabled { get; set; }
         public string LegacyDraftMode { get; set; } = ProcurementApprovalLegacyModes.RequireGoingForward;
         public List<BandEditor> Bands { get; set; } = [];

@@ -15,6 +15,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Procurement.Transaction;
 /// <summary>Issues PCN/PDN document numbers; anything else gets PINV so invoice seeding works too.</summary>
 internal sealed class FakePoCdnDocumentNumberingService : IDocumentNumberingService
@@ -249,7 +250,8 @@ public class PoCdnServiceTests : IAsyncLifetime
             new IvInventoryPostingService(
                 _factory, tenant, access.Object, new IvStockPostingRepository(),
                 common, new PoOrderRepository(), NullLogger<IvInventoryPostingService>.Instance,
-                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)),
+                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance),
             NullLogger<PoCdnService>.Instance);
     }
 

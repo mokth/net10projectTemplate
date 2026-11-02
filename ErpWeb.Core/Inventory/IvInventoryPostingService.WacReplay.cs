@@ -214,6 +214,13 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, locked.Error);
         }
+        var approvalError = await AssertNewGoodsReceiptPoApprovalAsync(
+            write, companyCode, branchCode, locked.Orders!.Values, cancellationToken);
+        if (approvalError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, approvalError);
+        }
         var lockedPoNo = snapshot.Details![0].PoNo?.Trim();
         var lockedPoLine = locked.Orders!.GetValueOrDefault(lockedPoNo ?? string.Empty)?
             .Details.SingleOrDefault(d =>

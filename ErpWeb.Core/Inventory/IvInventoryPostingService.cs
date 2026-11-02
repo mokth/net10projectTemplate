@@ -29,6 +29,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     private readonly IPurchaseCostAdjustmentPostingService? _purchaseCostAdjustments;
     private readonly bool _openPeriodBackdatedReplayEnabled;
     private readonly IIvFailureEvidenceReader? _failureEvidence;
+    private readonly IProcurementApprovalGuard _approval;
     private static readonly HashSet<string> NormalInventoryFutureDraftTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         IvTrxTypes.MiscellaneousReceipt,
@@ -55,7 +56,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         IStockPostingCoordinator? coordinator = null,
         IConfiguration? configuration = null,
         IPurchaseCostAdjustmentPostingService? purchaseCostAdjustments = null,
-        IIvFailureEvidenceReader? failureEvidence = null)
+        IIvFailureEvidenceReader? failureEvidence = null,
+        IProcurementApprovalGuard? approval = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -67,6 +69,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         _currentDate = currentDate;
         _historyWriter = historyWriter;
         _coordinator = coordinator;
+        _approval = approval ?? throw new ArgumentNullException(nameof(approval));
         _purchaseCostAdjustments = purchaseCostAdjustments;
         _failureEvidence = failureEvidence;
         _openPeriodBackdatedReplayEnabled =
@@ -1118,6 +1121,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, locked.Error);
+        }
+
+        var approvalError = await AssertNewGoodsReceiptPoApprovalAsync(
+            db, companyCode, branchCode, locked.Orders!.Values, cancellationToken);
+        if (approvalError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, approvalError);
         }
 
         var poValidation = await ValidateGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, sign: +1, expectedTrxType, cancellationToken);
@@ -4204,10 +4215,23 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         foreach (var poNo in poNos)
         {
+            var revisionLock = await PurchaseOrderRevisionSetLock.AcquireAsync(
+                db, companyCode, branchCode, poNo, cancellationToken);
+            if (revisionLock is not null)
+            {
+                return (revisionLock, null);
+            }
+
             var po = await _poOrders.LockLatestForUpdateAsync(db, companyCode, branchCode, poNo, cancellationToken);
             if (po is null)
             {
                 return ($"Purchase Order {poNo} was not found.", null);
+            }
+
+            var latestRel = await _poOrders.GetMaxRelNoAsync(db, companyCode, branchCode, poNo, cancellationToken);
+            if (latestRel is null || latestRel.Value != po.PoRelNo)
+            {
+                return (PurchaseOrderRevisionSetLock.MessageFor(poNo), null);
             }
 
             await db.Entry(po).Collection(x => x.Details).LoadAsync(cancellationToken);
@@ -4215,6 +4239,48 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         return (null, orders);
+    }
+
+    private async Task<string?> AssertNewGoodsReceiptPoApprovalAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IEnumerable<PoOrder> orders,
+        CancellationToken cancellationToken)
+    {
+        var policyLock = await _approval.LockPublishedPolicyAsync(
+            db, companyCode, ProcurementApprovalDocTypes.Po, cancellationToken);
+        if (policyLock is not null)
+        {
+            return policyLock;
+        }
+
+        var keys = orders
+            .Select(x => (x.PoNo, x.PoRelNo))
+            .OrderBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.PoRelNo)
+            .ToList();
+        await _approval.LockInstancesAsync(
+            db, companyCode, branchCode, ProcurementApprovalDocTypes.Po, keys, cancellationToken);
+
+        foreach (var po in orders.OrderBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.PoRelNo))
+        {
+            var gate = await _approval.AssertPoReceivableAsync(
+                db, companyCode, branchCode, po.PoNo, po.PoRelNo, cancellationToken);
+            if (gate is not null)
+            {
+                if (gate.Contains("not found", StringComparison.OrdinalIgnoreCase)
+                    || gate.Contains("changed after approval", StringComparison.OrdinalIgnoreCase)
+                    || gate.Contains("revised", StringComparison.OrdinalIgnoreCase))
+                {
+                    return gate;
+                }
+
+                return $"Purchase Order {po.PoNo} needs approval before this receipt can be posted.";
+            }
+        }
+
+        return null;
     }
 
     private async Task<string?> ValidateGoodsReceiptPoQtyAsync(
@@ -4237,7 +4303,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
             if (detail.PoRelNo != po.PoRelNo)
             {
-                return $"Purchase Order {poNo}/{detail.PoRelNo} is no longer the latest revision.";
+                return sign > 0
+                    ? PurchaseOrderRevisionSetLock.MessageFor(poNo)
+                    : $"Purchase Order {poNo}/{detail.PoRelNo} is no longer the latest revision.";
             }
 
             if (sign > 0 && !PoStatusPolicy.IsGrPickable(po.Status))

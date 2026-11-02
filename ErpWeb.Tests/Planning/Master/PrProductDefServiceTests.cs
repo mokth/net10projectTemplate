@@ -368,6 +368,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var activate = await sut.SaveAsync(new PrProductDefEditVm
         {
             ProdCode = "FG001",
+            DefinitionCode = PrProductDefinitionCodes.Standard,
             Version = draft.Data!.Version,
             BomHdrId = draft.Data.BomHdrId,
             HeaderRowVersion = draft.Data.HeaderRowVersion,

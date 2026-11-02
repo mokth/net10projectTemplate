@@ -18,6 +18,7 @@ using Moq;
 // alias is required for the name to resolve. (The duplication is worth collapsing in the product code.)
 using PoCdnStatuses = ErpWeb.Core.Purchase.PoCdnStatuses;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Procurement.Transaction;
 /// <summary>
 /// Captures logged exceptions so a failing test can explain itself.
@@ -401,7 +402,8 @@ public class PoCdnSqlServerConcurrencyTests : IAsyncLifetime
             common,
             new IvInventoryPostingService(
                 _factory!, tenant, access.Object, new IvStockPostingRepository(),
-                common, new PoOrderRepository(), _postLog, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)),
+                common, new PoOrderRepository(), _postLog, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance),
             _cdnLog);
     }
 

@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 [Trait(TestCategories.Name, TestCategories.InventoryStockReturn)]
@@ -1042,7 +1043,8 @@ public class IvStockReturnServiceTests : IAsyncLifetime
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance,
-            currentDate: new FixedCurrentDateService(postingBusinessDate ?? DateTime.MaxValue.Date));
+            currentDate: new FixedCurrentDateService(postingBusinessDate ?? DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
         return new IvStockReturnService(
             _factory,

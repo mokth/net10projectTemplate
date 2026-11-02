@@ -9,6 +9,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Sales;
+using ErpWeb.Tests.Procurement.Transaction;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -1838,7 +1839,8 @@ public class SaDocApplicationTests : IAsyncLifetime
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance,
-            currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
     private static Mock<IAccessRightService> Access()
     {

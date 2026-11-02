@@ -139,6 +139,17 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
         }
 
         var current = await LoadPublishedPolicyAsync(db, scope.CompanyCode, type, cancellationToken);
+        if (current is not null
+            && ((policy.Version > 0 && policy.Version != current.Version)
+                || (policy.RowVersion is { Length: > 0 }
+                    && current.RowVersion is { Length: > 0 }
+                    && !current.RowVersion.SequenceEqual(policy.RowVersion))))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return ProcurementApprovalResult.Fail(
+                "These approval settings were changed by another user. Reload and try again.");
+        }
+
         var now = DateTime.UtcNow;
         var uid = Truncate(scope.UserId, 20);
         if (current is not null)
@@ -277,10 +288,39 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
         }
         else
         {
-            var header = await LockPoAsync(db, scope.CompanyCode, scope.BranchCode!, docNo, request.DocRev, cancellationToken);
+            var revisionLock = await PurchaseOrderRevisionSetLock.AcquireAsync(
+                db, scope.CompanyCode, scope.BranchCode!, docNo, cancellationToken);
+            if (revisionLock is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return ProcurementApprovalResult.Fail(revisionLock);
+            }
+
+            var latestRelNo = await GetMaxPoRelNoAsync(db, scope.CompanyCode, scope.BranchCode!, docNo, cancellationToken);
+            if (latestRelNo is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return ProcurementApprovalResult.Fail("Purchase Order was not found.");
+            }
+
+            if (request.DocRev != latestRelNo.Value)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return ProcurementApprovalResult.Fail(PurchaseOrderRevisionSetLock.MessageFor(docNo));
+            }
+
+            var header = await LockPoAsync(db, scope.CompanyCode, scope.BranchCode!, docNo, latestRelNo.Value, cancellationToken);
             if (header is null)
             {
+                await tx.RollbackAsync(cancellationToken);
                 return ProcurementApprovalResult.Fail("Purchase Order was not found.");
+            }
+
+            var latestAfterLock = await GetMaxPoRelNoAsync(db, scope.CompanyCode, scope.BranchCode!, docNo, cancellationToken);
+            if (latestAfterLock != header.PoRelNo)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return ProcurementApprovalResult.Fail(PurchaseOrderRevisionSetLock.MessageFor(docNo));
             }
 
             await db.Entry(header).Collection(x => x.Details).LoadAsync(cancellationToken);
@@ -534,9 +574,18 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var instance = await LockInstanceByIdAsync(db, request.InstanceId, cancellationToken);
-        if (instance is null || instance.CompanyCode != scope.CompanyCode)
+        if (instance is null
+            || !string.Equals(instance.CompanyCode, scope.CompanyCode, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(instance.BranchCode, scope.BranchCode, StringComparison.OrdinalIgnoreCase))
         {
             return ProcurementApprovalResult.Fail("Approval request was not found.");
+        }
+
+        if (request.RowVersion is { Length: > 0 }
+            && instance.RowVersion is { Length: > 0 }
+            && !instance.RowVersion.SequenceEqual(request.RowVersion))
+        {
+            return ProcurementApprovalResult.Fail("This approval was changed by another user. Reload and try again.");
         }
 
         if (!string.Equals(instance.Status, ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase))
@@ -886,11 +935,8 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
             .Select(x => x.Status)
             .ToListAsync(cancellationToken);
 
-        var hasLiveCycle = statuses.Any(s =>
-            string.Equals(s, ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(s, ProcurementApprovalStatuses.Approved, StringComparison.OrdinalIgnoreCase));
-        var hasSubmittedCycle = hasLiveCycle || statuses.Any(s =>
-            string.Equals(s, ProcurementApprovalStatuses.NotRequired, StringComparison.OrdinalIgnoreCase));
+        var hasLiveCycle = statuses.Any(IsLiveAttachmentStatus);
+        var hasSubmittedCycle = statuses.Any(IsSubmittedAttachmentStatus);
 
         if (deleting && hasSubmittedCycle)
         {
@@ -977,7 +1023,8 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
 
     public async Task<bool> IsPoVisibleForGrAsync(
         AppDbContext db, string companyCode, string branchCode, string poNo, short poRelNo, CancellationToken cancellationToken = default) =>
-        await AssertPoReceivableAsync(db, companyCode, branchCode, poNo, poRelNo, cancellationToken) is null;
+        await AssertGateAsync(db, companyCode, branchCode, ProcurementApprovalDocTypes.Po, poNo, poRelNo,
+            progressed: false, cancellationToken, persistCutover: false) is null;
 
     public async Task<bool> CanReadDocumentAsync(
         AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
@@ -1019,6 +1066,12 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
         if (string.IsNullOrWhiteSpace(totals.Currency))
         {
             return ProcurementApprovalResult.Fail("Document currency is missing. Approval cannot continue.");
+        }
+
+        var statusError = SubmitDocumentStatusError(docType, documentStatus);
+        if (statusError is not null)
+        {
+            return ProcurementApprovalResult.Fail(statusError);
         }
 
         var policyLock = await LockPublishedPolicyAsync(db, scope.CompanyCode, docType, cancellationToken);
@@ -1475,6 +1528,51 @@ public sealed class ProcurementApprovalService : IProcurementApprovalService
 
         return (null, instance);
     }
+
+    private static async Task<short?> GetMaxPoRelNoAsync(
+        AppDbContext db, string company, string branch, string poNo, CancellationToken cancellationToken) =>
+        await db.PoOrders.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch && x.PoNo == poNo)
+            .Select(x => (short?)x.PoRelNo)
+            .MaxAsync(cancellationToken);
+
+    private static string? SubmitDocumentStatusError(string docType, string? status)
+    {
+        var normalized = (status ?? string.Empty).Trim().ToUpperInvariant();
+        if (string.Equals(docType, ProcurementApprovalDocTypes.Pr, StringComparison.OrdinalIgnoreCase))
+        {
+            if (normalized is PoPrStatuses.New or PoPrStatuses.Open)
+            {
+                return null;
+            }
+
+            return string.Equals(normalized, PoPrStatuses.Cancelled, StringComparison.OrdinalIgnoreCase)
+                ? "This purchase requisition was cancelled and cannot be submitted for approval."
+                : "This purchase requisition cannot be submitted for approval.";
+        }
+
+        if (normalized is PoOrderStatuses.New or PoOrderStatuses.Open)
+        {
+            return null;
+        }
+
+        return string.Equals(normalized, PoOrderStatuses.Cancelled, StringComparison.OrdinalIgnoreCase)
+            ? "This purchase order was cancelled and cannot be submitted for approval."
+            : "This purchase order cannot be submitted for approval.";
+    }
+
+    private static bool IsLiveAttachmentStatus(string status) =>
+        string.Equals(status, ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, ProcurementApprovalStatuses.Approved, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSubmittedAttachmentStatus(string status) =>
+        IsLiveAttachmentStatus(status)
+        || string.Equals(status, ProcurementApprovalStatuses.NotRequired, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, ProcurementApprovalStatuses.Rejected, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, ProcurementApprovalStatuses.Returned, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, ProcurementApprovalStatuses.Withdrawn, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, ProcurementApprovalStatuses.Cancelled, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, ProcurementApprovalStatuses.Superseded, StringComparison.OrdinalIgnoreCase);
 
     private static async Task<PoPr?> LockPrAsync(
         AppDbContext db, string company, string branch, string prNo, CancellationToken cancellationToken)

@@ -15,6 +15,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 [Trait(TestCategories.Name, TestCategories.InventoryMiscReceipt)]
@@ -3402,7 +3403,8 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
                 {
                     ["OpenPeriodBackdatedReplayEnabled"] = "true"
                 }
-                : null);
+                : null,
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
         return new IvMiscReceiptService(
             _factory,

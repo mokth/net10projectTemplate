@@ -37,6 +37,9 @@ public partial class PrProductDefEntry : PageBase
     private string _operationEditorSnapshot = string.Empty;
     private string _machineEditorSnapshot = string.Empty;
     private string _labourEditorSnapshot = string.Empty;
+    private string _lineEditorSnapshot = string.Empty;
+    private int? _pendingTabIndex;
+    private bool? _pendingSaveActivate;
     private PrProductDefCentreProjection.CentreKey? _originalCentreKey;
     private IReadOnlyList<PrBomStructureNode> _persistedNodes = [];
 
@@ -52,23 +55,7 @@ public partial class PrProductDefEntry : PageBase
     protected int ActiveTabIndex
     {
         get => _activeTabIndex;
-        set
-        {
-            _activeTabIndex = value;
-            // Operations (1) also needs a centre; Materials/Machines/Labour reuse the same selection.
-            if (value is 1 or 2 or 3 or 4)
-            {
-                EnsureBomProcessSelected();
-                if (value == 2)
-                {
-                    RebuildProcessBomNodes();
-                }
-                else if (value is 3 or 4)
-                {
-                    EnsureResourceSelection();
-                }
-            }
-        }
+        set => ApplyTabIndex(value);
     }
     protected string UpdateProdCode { get; set; } = string.Empty;
     protected PrProductDefEditVm Model { get; set; } = new();
@@ -214,6 +201,18 @@ public partial class PrProductDefEntry : PageBase
         !IsViewMode
         && !IsLoading
         && !string.Equals(_cleanSnapshot, Snapshot(Model), StringComparison.Ordinal);
+
+    protected bool ShowsBuyMakeNotice =>
+        !IsViewMode
+        && string.Equals(Model.MfgType, PrMfgTypes.Buy, StringComparison.OrdinalIgnoreCase);
+
+    protected bool IsBomOnlyDefinition =>
+        Model.Operations.Count == 0 && Model.Lines.Count > 0;
+
+    protected bool HasUnsavedChildEditor =>
+        !IsViewMode && (IsChildEditorDirty || IsPendingLineEditorDirty);
+
+    protected bool HasUnsavedWork => IsDirty || HasUnsavedChildEditor;
 
     protected bool IsEditingRoot =>
         string.Equals(CurrentOwnerProdCode, StructureRootProdCode, StringComparison.OrdinalIgnoreCase)
@@ -443,6 +442,45 @@ public partial class PrProductDefEntry : PageBase
         !string.Equals(_labourEditorSnapshot, SnapshotLabour(LabourEdit), StringComparison.Ordinal);
     private bool IsChildEditorDirty =>
         IsCentreEditorDirty || IsOperationEditorDirty || IsMachineEditorDirty || IsLabourEditorDirty;
+
+    private bool IsPendingLineEditorDirty =>
+        !string.Equals(_lineEditorSnapshot, SnapshotLineEditorCurrent(), StringComparison.Ordinal);
+
+    protected Task OnActiveTabIndexChanged(int value)
+    {
+        if (value == _activeTabIndex)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (HasUnsavedChildEditor)
+        {
+            _pendingTabIndex = value;
+            ConfirmDiscardVisible = true;
+            return Task.CompletedTask;
+        }
+
+        ApplyTabIndex(value);
+        return Task.CompletedTask;
+    }
+
+    private void ApplyTabIndex(int value)
+    {
+        _activeTabIndex = value;
+        _pendingTabIndex = null;
+        if (value is 1 or 2 or 3 or 4)
+        {
+            EnsureBomProcessSelected();
+            if (value == 2)
+            {
+                RebuildProcessBomNodes();
+            }
+            else if (value is 3 or 4)
+            {
+                EnsureResourceSelection();
+            }
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -841,6 +879,17 @@ public partial class PrProductDefEntry : PageBase
             var line = FindLine(node);
             if (line is not null)
             {
+                if (HasUnsavedChildEditor)
+                {
+                    _pendingSelectionAction = () =>
+                    {
+                        BeginEditLine(line);
+                        return Task.CompletedTask;
+                    };
+                    ConfirmDiscardVisible = true;
+                    return;
+                }
+
                 BeginEditLine(line);
                 return;
             }
@@ -897,7 +946,7 @@ public partial class PrProductDefEntry : PageBase
         bool addAfter,
         string? selectKey)
     {
-        if (IsDirty)
+        if (HasUnsavedWork)
         {
             _pendingOwnerProdCode = ownerProdCode;
             _pendingOwnerDefinitionCode = ownerDefinitionCode;
@@ -1051,6 +1100,7 @@ public partial class PrProductDefEntry : PageBase
             : line.SupplySource;
         LineComponentDefinitionCode = line.ComponentDefinitionCode;
         LineProducingRouteStepKey = line.ProducingRouteStepKey;
+        CaptureLineEditorClean();
         _ = RefreshComponentDefinitionOptionsAsync();
     }
 
@@ -1277,6 +1327,13 @@ public partial class PrProductDefEntry : PageBase
             return;
         }
 
+        if (HasUnsavedChildEditor)
+        {
+            _pendingSaveActivate = activate;
+            ConfirmDiscardVisible = true;
+            return;
+        }
+
         IsSubmitting = true;
         ErrorMessage = null;
         ValidationErrors.Clear();
@@ -1350,7 +1407,7 @@ public partial class PrProductDefEntry : PageBase
                 return;
             }
 
-            StatusMessage = $"Created draft version {result.Data.Version}.";
+            StatusMessage = $"Created Draft V{result.Data.Version} from V{Model.Version}.";
             Navigation.NavigateTo(CanonicalEntryUrl("edit", StructureRootProdCode, StructureRootDefinitionCode));
         }
         finally
@@ -1377,7 +1434,7 @@ public partial class PrProductDefEntry : PageBase
 
     protected Task CancelAsync()
     {
-        if (IsDirty)
+        if (HasUnsavedWork)
         {
             _pendingOwnerProdCode = null;
             _pendingOwnerDefinitionCode = null;
@@ -1393,12 +1450,26 @@ public partial class PrProductDefEntry : PageBase
     protected async Task ConfirmDiscardAsync()
     {
         ConfirmDiscardVisible = false;
+        CaptureEditorClean();
+        CaptureLineEditorClean();
         if (_pendingSelectionAction is not null)
         {
             var action = _pendingSelectionAction;
             _pendingSelectionAction = null;
-            CaptureEditorClean();
             await action();
+            return;
+        }
+
+        if (_pendingTabIndex is int tab)
+        {
+            ApplyTabIndex(tab);
+            return;
+        }
+
+        if (_pendingSaveActivate is bool activate)
+        {
+            _pendingSaveActivate = null;
+            await SaveAsync(activate);
             return;
         }
 
@@ -1407,7 +1478,6 @@ public partial class PrProductDefEntry : PageBase
             _pendingUpdateAfterDiscard = false;
             var code = UpdateProdCode.Trim().ToUpperInvariant();
             CaptureClean();
-            CaptureEditorClean();
             await ApplyUpdateAsync(code);
             return;
         }
@@ -1428,6 +1498,60 @@ public partial class PrProductDefEntry : PageBase
         Navigation.NavigateTo("/planning/product-definitions");
     }
 
+    protected async Task ApplyCurrentEditorAsync()
+    {
+        ErrorMessage = null;
+        if (IsCentreEditorDirty)
+        {
+            await SaveCentreAsync();
+        }
+        else if (IsOperationEditorDirty)
+        {
+            await SaveOperationAsync();
+        }
+        else if (IsMachineEditorDirty)
+        {
+            await SaveMachineAsync();
+        }
+        else if (IsLabourEditorDirty)
+        {
+            await SaveLabourAsync();
+        }
+        else if (IsPendingLineEditorDirty)
+        {
+            await AddOrUpdateLineAsync();
+        }
+
+        if (!string.IsNullOrWhiteSpace(ErrorMessage) || HasUnsavedChildEditor)
+        {
+            return;
+        }
+
+        ConfirmDiscardVisible = false;
+        var tab = _pendingTabIndex;
+        var save = _pendingSaveActivate;
+        var action = _pendingSelectionAction;
+        _pendingTabIndex = null;
+        _pendingSaveActivate = null;
+        _pendingSelectionAction = null;
+        if (action is not null)
+        {
+            await action();
+            return;
+        }
+
+        if (tab is int nextTab)
+        {
+            ApplyTabIndex(nextTab);
+            return;
+        }
+
+        if (save is bool activate)
+        {
+            await SaveAsync(activate);
+        }
+    }
+
     protected Task CancelDiscardAsync()
     {
         ConfirmDiscardVisible = false;
@@ -1436,6 +1560,8 @@ public partial class PrProductDefEntry : PageBase
         _pendingAddAfterSwitch = false;
         _pendingUpdateAfterDiscard = false;
         _pendingSelectionAction = null;
+        _pendingTabIndex = null;
+        _pendingSaveActivate = null;
         return Task.CompletedTask;
     }
 
@@ -1511,6 +1637,7 @@ public partial class PrProductDefEntry : PageBase
         LineComponentDefinitionCode = null;
         ComponentDefinitionOptions = [];
         LineProducingRouteStepKey = null;
+        CaptureLineEditorClean();
     }
 
     protected async Task UpdateProductAsync()
@@ -1523,7 +1650,7 @@ public partial class PrProductDefEntry : PageBase
             return;
         }
 
-        if (IsDirty || IsChildEditorDirty)
+        if (HasUnsavedWork)
         {
             _pendingUpdateAfterDiscard = true;
             UpdateProdCode = code;
@@ -2124,7 +2251,7 @@ public partial class PrProductDefEntry : PageBase
 
     private async Task RequestEditorNavigationAsync(Func<Task> action)
     {
-        if (IsChildEditorDirty)
+        if (HasUnsavedChildEditor)
         {
             _pendingSelectionAction = action;
             ConfirmDiscardVisible = true;
@@ -2151,12 +2278,61 @@ public partial class PrProductDefEntry : PageBase
 
     private void ResetMachineEditor() => MachineEdit = NewMachine();
 
+    private void CaptureLineEditorClean() => _lineEditorSnapshot = SnapshotLineEditorCurrent();
+
+    private string SnapshotLineEditorCurrent() => SnapshotLineEditor(
+        LineItem, LineItemDesc, LineUom, LineMfgType, LineStdQty, LineScrapPercent,
+        LineWarehouse, LineBomDefault, LineAlternateGroupCode, LineTolerance,
+        LineIssueMethod, LineSupplySource, LineComponentDefinitionCode,
+        LineProducingRouteStepKey, LineEditUid, LineEditTempId);
+
+    public static string SnapshotLineEditor(
+        string? item,
+        string? desc,
+        string? uom,
+        string mfgType,
+        decimal stdQty,
+        decimal scrapPercent,
+        string? warehouse,
+        bool bomDefault,
+        string? alternateGroup,
+        decimal tolerance,
+        string issueMethod,
+        string supplySource,
+        string? componentDefinition,
+        Guid? producingRouteStepKey,
+        long? editUid,
+        string? editTempId) =>
+        JsonSerializer.Serialize(new
+        {
+            item,
+            desc,
+            uom,
+            mfgType,
+            stdQty,
+            scrapPercent,
+            warehouse,
+            bomDefault,
+            alternateGroup,
+            tolerance,
+            issueMethod,
+            supplySource,
+            componentDefinition,
+            producingRouteStepKey,
+            editUid,
+            editTempId
+        });
+
+    public static bool LineEditorIsDirty(string cleanSnapshot, string currentSnapshot) =>
+        !string.Equals(cleanSnapshot, currentSnapshot, StringComparison.Ordinal);
+
     private void CaptureEditorClean()
     {
         CaptureCentreEditorClean();
         CaptureOperationEditorClean();
         CaptureMachineEditorClean();
         CaptureLabourEditorClean();
+        CaptureLineEditorClean();
     }
 
     private void CaptureCentreEditorClean() => _centreEditorSnapshot = SnapshotCentre(CentreEdit);

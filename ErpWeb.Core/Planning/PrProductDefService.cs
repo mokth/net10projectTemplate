@@ -1,3 +1,4 @@
+using System.Data;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
@@ -6,6 +7,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace ErpWeb.Core.Planning;
 
@@ -434,50 +436,60 @@ public sealed class PrProductDefService : IPrProductDefService
         string definitionCode;
         string? definitionName;
 
+        var rawDefinitionCode = model.DefinitionCode ?? string.Empty;
+        if (rawDefinitionCode.Trim().Length > PrProductDefinitionCodes.MaxLength)
+        {
+            errors[nameof(model.DefinitionCode)] =
+                "Definition code must be 1–30 characters (A–Z, 0–9, hyphen, underscore).";
+        }
+
         if (!isNew)
         {
-            // DefinitionCode is immutable after first save — resolve the revision first, then lock the code.
-            var requestedDef = PrProductDefinitionCodes.Normalize(model.DefinitionCode);
-            existingHeader = await db.PrBomHdrs
-                .FirstOrDefaultAsync(x => x.CompanyCode == company
-                                          && x.ProdCode == prodCode
-                                          && x.DefinitionCode == requestedDef
-                                          && x.Version == model.Version, cancellationToken);
-            if (existingHeader is null && requestedDef.Length > 0)
+            if (errors.ContainsKey(nameof(model.DefinitionCode)))
             {
-                // Fallback: locate by Prod+Version then enforce DefinitionCode match (legacy rows).
+                definitionCode = string.Empty;
+                definitionName = null;
+            }
+            else
+            {
+                // DefinitionCode is immutable after first save — resolve the exact revision only.
+                var requestedDef = PrProductDefinitionCodes.Normalize(model.DefinitionCode);
                 existingHeader = await db.PrBomHdrs
                     .FirstOrDefaultAsync(x => x.CompanyCode == company
                                               && x.ProdCode == prodCode
+                                              && x.DefinitionCode == requestedDef
                                               && x.Version == model.Version, cancellationToken);
+
+                if (existingHeader is null)
+                {
+                    return FailVm(IvMasterErrorCode.NotFound, "Product definition not found.");
+                }
+
+                definitionCode = string.IsNullOrWhiteSpace(existingHeader.DefinitionCode)
+                    ? PrProductDefinitionCodes.Standard
+                    : PrProductDefinitionCodes.Normalize(existingHeader.DefinitionCode);
+
+                if (existingHeader.Status is PrBomStatuses.Active or PrBomStatuses.Superseded or PrBomStatuses.Inactive)
+                {
+                    return FailVm(IvMasterErrorCode.Validation,
+                        $"Product Definition version {model.Version} is {existingHeader.Status} and immutable. Create a new draft version.");
+                }
+
+                var stale = RejectStaleOrMissingRowVersion(db, existingHeader, model.HeaderRowVersion);
+                if (stale is not null)
+                {
+                    return stale;
+                }
+
+                definitionName = Truncate(
+                    string.IsNullOrWhiteSpace(model.DefinitionName) ? existingHeader.DefinitionName : model.DefinitionName,
+                    NameMax);
             }
-
-            if (existingHeader is null)
-            {
-                return FailVm(IvMasterErrorCode.NotFound, "Product definition not found.");
-            }
-
-            definitionCode = string.IsNullOrWhiteSpace(existingHeader.DefinitionCode)
-                ? PrProductDefinitionCodes.Standard
-                : PrProductDefinitionCodes.Normalize(existingHeader.DefinitionCode);
-
-            if (existingHeader.Status is PrBomStatuses.Active or PrBomStatuses.Superseded or PrBomStatuses.Inactive)
-            {
-                return FailVm(IvMasterErrorCode.Validation,
-                    $"Product Definition version {model.Version} is {existingHeader.Status} and immutable. Create a new draft version.");
-            }
-
-            if (model.HeaderRowVersion is { Length: > 0 }
-                && existingHeader.RowVersion is { Length: > 0 }
-                && !model.HeaderRowVersion.SequenceEqual(existingHeader.RowVersion))
-            {
-                return FailVm(IvMasterErrorCode.Concurrency,
-                    "This product definition was changed by another user. Reload and try again.");
-            }
-
-            definitionName = Truncate(
-                string.IsNullOrWhiteSpace(model.DefinitionName) ? existingHeader.DefinitionName : model.DefinitionName,
-                NameMax);
+        }
+        else if (errors.ContainsKey(nameof(model.DefinitionCode)))
+        {
+            definitionCode = string.Empty;
+            definitionName = null;
         }
         else
         {
@@ -882,7 +894,9 @@ public sealed class PrProductDefService : IPrProductDefService
         var prefix = prefixRaw.Length == 0 ? null : Truncate(prefixRaw, PrefixMax);
         var remark = Truncate(string.IsNullOrWhiteSpace(model.Remark) ? null : model.Remark.Trim(), HeaderRemarkMax);
 
-        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var tx = isNew
+            ? await db.Database.BeginTransactionAsync(cancellationToken)
+            : await BeginProductDefWriteTransactionAsync(db, cancellationToken);
         try
         {
             PrBomHdr header;
@@ -916,6 +930,43 @@ public sealed class PrProductDefService : IPrProductDefService
             else
             {
                 header = existingHeader!;
+                if (IsSqlServerProvider(db))
+                {
+                    await db.Entry(header).ReloadAsync(cancellationToken);
+                }
+
+                var staleInside = RejectStaleOrMissingRowVersion(db, header, model.HeaderRowVersion);
+                if (staleInside is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return staleInside;
+                }
+
+                var persistedOps = await db.PrBomOperations
+                    .Where(x => x.BomHdrId == header.Uid)
+                    .ToListAsync(cancellationToken);
+                var persistedSteps = await db.PrBomRouteSteps
+                    .Where(x => x.BomHdrId == header.Uid)
+                    .ToListAsync(cancellationToken);
+                var persistedLines = await db.PrDefBOMs
+                    .Where(x => x.BomHdrId == header.Uid)
+                    .ToListAsync(cancellationToken);
+                var refusal = await ClassifyPersistedSourceShapeAsync(
+                    db, header, persistedOps, persistedSteps, persistedLines, cancellationToken);
+                if (refusal is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailVm(IvMasterErrorCode.Validation, refusal);
+                }
+
+                if (await ChildrenChangedUnderLockAsync(
+                        db, header.Uid, persistedOps, persistedSteps, persistedLines, cancellationToken))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailVm(IvMasterErrorCode.Concurrency,
+                        "This product definition was changed by another user. Reload and try again.");
+                }
+
                 header.DefinitionName = definitionName;
                 header.BaseQty = baseQty;
                 header.BaseUom = baseUom;
@@ -925,16 +976,9 @@ public sealed class PrProductDefService : IPrProductDefService
                 header.ModifiedBy = user;
                 InventoryLeftoverSite.Apply(header, writeScope);
 
-                var oldLines = await db.PrDefBOMs.Where(x => x.BomHdrId == header.Uid).ToListAsync(cancellationToken);
-                db.PrDefBOMs.RemoveRange(oldLines);
-                var oldOperations = await db.PrBomOperations
-                    .Where(x => x.BomHdrId == header.Uid)
-                    .ToListAsync(cancellationToken);
-                db.PrBomOperations.RemoveRange(oldOperations);
-                var oldRouteSteps = await db.PrBomRouteSteps
-                    .Where(x => x.BomHdrId == header.Uid)
-                    .ToListAsync(cancellationToken);
-                db.PrBomRouteSteps.RemoveRange(oldRouteSteps);
+                db.PrDefBOMs.RemoveRange(persistedLines);
+                db.PrBomOperations.RemoveRange(persistedOps);
+                db.PrBomRouteSteps.RemoveRange(persistedSteps);
                 await db.SaveChangesAsync(cancellationToken);
             }
 
@@ -1061,7 +1105,9 @@ public sealed class PrProductDefService : IPrProductDefService
 
         var company = ctx.CompanyCode!;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-
+        await using var tx = await BeginProductDefWriteTransactionAsync(db, cancellationToken);
+        try
+        {
         var source = fromVersion is int v
             ? await db.PrBomHdrs.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.CompanyCode == company
@@ -1077,6 +1123,7 @@ public sealed class PrProductDefService : IPrProductDefService
 
         if (source is null)
         {
+            await tx.RollbackAsync(cancellationToken);
             return FailVm(IvMasterErrorCode.NotFound, "Product definition not found.");
         }
 
@@ -1099,6 +1146,26 @@ public sealed class PrProductDefService : IPrProductDefService
         var sourceRouteSteps = await db.PrBomRouteSteps.AsNoTracking()
             .Where(x => x.BomHdrId == source.Uid)
             .ToListAsync(cancellationToken);
+        var refusal = await ClassifyPersistedSourceShapeAsync(
+            db, source, sourceOperations, sourceRouteSteps, lines, cancellationToken);
+        if (refusal is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailVm(IvMasterErrorCode.Validation, refusal);
+        }
+
+        var sourceNow = await db.PrBomHdrs.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Uid == source.Uid, cancellationToken);
+        if (sourceNow is null
+            || (source.RowVersion is { Length: > 0 }
+                && sourceNow.RowVersion is { Length: > 0 }
+                && !source.RowVersion.SequenceEqual(sourceNow.RowVersion)))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "This product definition was changed by another user. Reload and try again.");
+        }
+
         var existingStepKeys = sourceRouteSteps
             .GroupBy(x => (x.WorkCentreCode, x.OutputItemCode, x.StageSequence))
             .ToDictionary(g => g.Key, g => g.First().RouteStepKey);
@@ -1211,7 +1278,26 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
         return await GetAsync(code, defCode, header.Version, cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "This product definition was changed by another user. Reload and try again.");
+        }
+        catch (DbUpdateException ex) when (IsUniqueIndexConflict(ex))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "Another user created a version of this product definition. Reload and try again.");
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     public async Task<IvMasterOperationResult<PrProductDefEditVm>> ActivateAsync(
@@ -1221,6 +1307,12 @@ public sealed class PrProductDefService : IPrProductDefService
         byte[]? headerRowVersion,
         CancellationToken cancellationToken = default)
     {
+        if (headerRowVersion is not { Length: > 0 })
+        {
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "This product definition was changed by another user. Reload and try again.");
+        }
+
         var get = await GetAsync(prodCode, definitionCode, version, cancellationToken);
         if (!get.Succeeded || get.Data is null)
         {
@@ -1228,7 +1320,7 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         var model = get.Data;
-        model.HeaderRowVersion = headerRowVersion ?? model.HeaderRowVersion;
+        model.HeaderRowVersion = headerRowVersion;
         return await SaveAsync(model, isNew: false, activate: true, cancellationToken);
     }
 
@@ -2296,6 +2388,224 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         return (operationsByKey, routeStepsByKey);
+    }
+
+    private static async Task<IDbContextTransaction> BeginProductDefWriteTransactionAsync(
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (IsSqlServerProvider(db))
+        {
+            return await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        }
+
+        return await db.Database.BeginTransactionAsync(cancellationToken);
+    }
+
+    private static bool IsSqlServerProvider(AppDbContext db) =>
+        db.Database.ProviderName is not null
+        && db.Database.ProviderName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase);
+
+    private IvMasterOperationResult<PrProductDefEditVm>? RejectStaleOrMissingRowVersion(
+        AppDbContext db,
+        PrBomHdr existingHeader,
+        byte[]? callerToken)
+    {
+        if (IsSqlServerProvider(db) && callerToken is not { Length: > 0 })
+        {
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "This product definition was changed by another user. Reload and try again.");
+        }
+
+        if (callerToken is { Length: > 0 }
+            && existingHeader.RowVersion is { Length: > 0 }
+            && !callerToken.SequenceEqual(existingHeader.RowVersion))
+        {
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "This product definition was changed by another user. Reload and try again.");
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> ChildrenChangedUnderLockAsync(
+        AppDbContext db,
+        long headerId,
+        IReadOnlyList<PrBomOperation> operations,
+        IReadOnlyList<PrBomRouteStep> routeSteps,
+        IReadOnlyList<PrDefBOM> lines,
+        CancellationToken cancellationToken)
+    {
+        var lineCount = await db.PrDefBOMs.CountAsync(x => x.BomHdrId == headerId, cancellationToken);
+        var opCount = await db.PrBomOperations.CountAsync(x => x.BomHdrId == headerId, cancellationToken);
+        var stepCount = await db.PrBomRouteSteps.CountAsync(x => x.BomHdrId == headerId, cancellationToken);
+        if (lineCount != lines.Count || opCount != operations.Count || stepCount != routeSteps.Count)
+        {
+            return true;
+        }
+
+        if (!IsSqlServerProvider(db))
+        {
+            return false;
+        }
+
+        var lineTokens = lines.ToDictionary(x => x.Uid, x => x.RowVersion.ToArray());
+        var opTokens = operations.ToDictionary(x => x.Uid, x => x.RowVersion.ToArray());
+        var stepTokens = routeSteps.ToDictionary(x => x.Uid, x => x.RowVersion.ToArray());
+
+        foreach (var line in lines)
+        {
+            await db.Entry(line).ReloadAsync(cancellationToken);
+            if (TokenChanged(lineTokens[line.Uid], line.RowVersion))
+            {
+                return true;
+            }
+        }
+
+        foreach (var operation in operations)
+        {
+            await db.Entry(operation).ReloadAsync(cancellationToken);
+            if (TokenChanged(opTokens[operation.Uid], operation.RowVersion))
+            {
+                return true;
+            }
+        }
+
+        foreach (var step in routeSteps)
+        {
+            await db.Entry(step).ReloadAsync(cancellationToken);
+            if (TokenChanged(stepTokens[step.Uid], step.RowVersion))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TokenChanged(byte[] prior, byte[] current) =>
+        prior is { Length: > 0 }
+        && current is { Length: > 0 }
+        && !prior.SequenceEqual(current);
+
+    /// <summary>
+    /// WO-facing-loss classifier shared by clone and existing-Draft save.
+    /// Matches census SQL: UPPER(LTRIM(RTRIM(x))) equality, where NULL = NULL is not equivalent.
+    /// </summary>
+    internal static bool IsBackfillEquivalentBranchDefault(
+        string? defaultBranch,
+        string? defaultWarehouse,
+        string? lineBranch,
+        string? lineWarehouse)
+    {
+        var db = CensusNormalize(defaultBranch);
+        var dw = CensusNormalize(defaultWarehouse);
+        var lb = CensusNormalize(lineBranch);
+        var lw = CensusNormalize(lineWarehouse);
+        if (db is null || dw is null || lb is null || lw is null)
+        {
+            return false;
+        }
+
+        return db == lb && dw == lw;
+    }
+
+    internal static string? CensusNormalize(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        return value.Trim().ToUpperInvariant();
+    }
+
+    private async Task<string?> ClassifyPersistedSourceShapeAsync(
+        AppDbContext db,
+        PrBomHdr header,
+        IReadOnlyList<PrBomOperation> operations,
+        IReadOnlyList<PrBomRouteStep> routeSteps,
+        IReadOnlyList<PrDefBOM> lines,
+        CancellationToken cancellationToken)
+    {
+        var operationIds = operations.Select(x => x.Uid).Where(id => id > 0).ToList();
+        if (operationIds.Count > 0
+            && await db.PrBomLabourRequirements.AsNoTracking()
+                .AnyAsync(x => operationIds.Contains(x.OperationId), cancellationToken))
+        {
+            return "This definition contains advanced labour requirements that this editor cannot safely preserve.";
+        }
+
+        var materialIds = lines.Select(x => x.Uid).Where(id => id > 0).ToList();
+        if (materialIds.Count > 0)
+        {
+            var defaults = await db.PrBomMaterialBranchDefaults.AsNoTracking()
+                .Where(x => materialIds.Contains(x.MaterialId))
+                .ToListAsync(cancellationToken);
+            var lineById = lines.ToDictionary(x => x.Uid);
+            foreach (var row in defaults)
+            {
+                if (!lineById.TryGetValue(row.MaterialId, out var line)
+                    || !IsBackfillEquivalentBranchDefault(
+                        row.BranchCode, row.WarehouseCode, line.BranchCode, line.Warehouse))
+                {
+                    var item = line?.ICode ?? row.MaterialId.ToString();
+                    return $"This definition contains a branch warehouse default for material {item} / branch {row.BranchCode} that this editor cannot safely preserve.";
+                }
+            }
+        }
+
+        var opsByGroup = operations
+            .GroupBy(x => (x.WorkCentreCode, x.OutputItemCode, x.CentralSequence))
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var step in routeSteps)
+        {
+            var key = (step.WorkCentreCode, step.OutputItemCode, step.StageSequence);
+            if (!opsByGroup.TryGetValue(key, out var group) || group.Count == 0)
+            {
+                return $"Route step {step.StageSequence} ({step.WorkCentreCode}) has no process this editor can preserve.";
+            }
+
+            var first = group
+                .OrderBy(x => x.CentralSequence)
+                .ThenBy(x => x.WorkCentreCode)
+                .ThenBy(x => x.OutputItemCode)
+                .ThenBy(x => x.ProcessSequence)
+                .First();
+            var expectedType = string.Equals(first.OutputItemCode, header.ProdCode, StringComparison.OrdinalIgnoreCase)
+                ? PrRouteOutputTypes.FinishedGoods
+                : PrRouteOutputTypes.WipStocked;
+            var expectedQty = IvQty.Round(first.OutputBaseQty);
+            var expectedUom = CensusNormalize(first.OutputUom ?? header.BaseUom ?? string.Empty);
+            if (!string.Equals(CensusNormalize(step.OutputType), CensusNormalize(expectedType), StringComparison.Ordinal)
+                || IvQty.Round(step.YieldPercent) != 100m
+                || IvQty.Round(step.StandardOutputQty) != expectedQty
+                || !string.Equals(CensusNormalize(step.OutputUom ?? string.Empty), expectedUom, StringComparison.Ordinal))
+            {
+                return $"Route step {step.StageSequence} ({step.WorkCentreCode}) has route output data this editor cannot safely preserve.";
+            }
+        }
+
+        var stepById = routeSteps.ToDictionary(x => x.Uid);
+        foreach (var line in lines)
+        {
+            if (!string.Equals(line.SupplySource, PrMaterialSupplySources.InternalRouteWip,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (line.ProducingRouteStepId is not { } producerId
+                || !stepById.TryGetValue(producerId, out var producer))
+            {
+                return $"Material {line.ICode} is internal route WIP whose producer cannot be preserved.";
+            }
+
+            _ = producer;
+        }
+
+        return null;
     }
 
     /// <summary>

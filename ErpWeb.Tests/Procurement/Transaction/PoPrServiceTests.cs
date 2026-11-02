@@ -796,7 +796,8 @@ public class PoPrServiceTests : IAsyncLifetime
             new PoPrRepository(),
             Options.Create(options ?? new PoPrOptions()),
             attach,
-            NullLogger<PoPrService>.Instance);
+            NullLogger<PoPrService>.Instance,
+            TestDisabledProcurementApprovalGuard.Instance);
     }
 
     private PoPrAttachmentService CreateAttachmentSut(
@@ -815,7 +816,8 @@ public class PoPrServiceTests : IAsyncLifetime
             new FixedCurrentDateService(FixedToday),
             Options.Create(new AttachmentStorageOptions { RootPath = _attachRoot }),
             Options.Create(new PoPrOptions()),
-            NullLogger<PoPrAttachmentService>.Instance);
+            NullLogger<PoPrAttachmentService>.Instance,
+            TestDisabledProcurementApprovalGuard.Instance);
     }
 
     private static Mock<IAccessRightService> Access()

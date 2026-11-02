@@ -102,7 +102,7 @@ public class ProcurementApprovalServiceTests : IAsyncLifetime
     [Fact]
     public async Task Policy_off_allows_existing_PR_conversion()
     {
-        var prs = CreatePr("user");
+        var prs = CreatePr("user", TestDisabledProcurementApprovalGuard.Instance);
         var save = await prs.SaveNewAsync(PrRequest(PrLine("A100", 1m)));
         Assert.True(save.Succeeded, save.ErrorMessage);
 
@@ -425,6 +425,74 @@ public class ProcurementApprovalServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Approve_fails_closed_when_document_fingerprint_changed()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null);
+        var userApproval = CreateApproval("user");
+        var prs = CreatePr("user", userApproval);
+        var save = await prs.SaveNewAsync(PrRequest(PrLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var submitted = await userApproval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Pr,
+            DocNo = save.PrNo!
+        });
+        Assert.True(submitted.Succeeded, submitted.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var line = await db.PoPrDetails.SingleAsync(x => x.PrNo == save.PrNo);
+            line.PurchaseQty = 80m;
+            line.Qty = 80m;
+            line.Amount = 2000m;
+            await db.SaveChangesAsync();
+        }
+
+        var approved = await CreateApproval("mgr").DecideAsync(new ProcurementApprovalDecisionRequest
+        {
+            InstanceId = submitted.Instance!.Uid,
+            RowVersion = submitted.Instance.RowVersion,
+            Decision = ProcurementApprovalDecisions.Approve
+        });
+        Assert.False(approved.Succeeded);
+        Assert.Contains("changed after it was submitted", approved.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Pr_picker_excludes_unapproved_documents_without_writing_cutover()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null);
+        var userApproval = CreateApproval("user");
+        var prs = CreatePr("user", userApproval);
+        var blocked = await prs.SaveNewAsync(PrRequest(PrLine("A100", 50m)));
+        Assert.True(blocked.Succeeded, blocked.ErrorMessage);
+        var allowed = await prs.SaveNewAsync(PrRequest(PrLine("A100", 50m)));
+        Assert.True(allowed.Succeeded, allowed.ErrorMessage);
+
+        var submitted = await userApproval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Pr,
+            DocNo = allowed.PrNo!
+        });
+        Assert.True(submitted.Succeeded, submitted.ErrorMessage);
+        var approved = await CreateApproval("mgr").DecideAsync(new ProcurementApprovalDecisionRequest
+        {
+            InstanceId = submitted.Instance!.Uid,
+            RowVersion = submitted.Instance.RowVersion,
+            Decision = ProcurementApprovalDecisions.Approve
+        });
+        Assert.True(approved.Succeeded, approved.ErrorMessage);
+
+        var picker = await CreatePo("user", userApproval).SearchPrForPoAsync("SUP01", null);
+        Assert.True(picker.Succeeded, picker.ErrorMessage);
+        Assert.Contains(picker.PrRows!, x => x.PrNo == allowed.PrNo);
+        Assert.DoesNotContain(picker.PrRows!, x => x.PrNo == blocked.PrNo);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.ProcurementApprovalCutoverExemptions.ToListAsync());
+    }
+
+    [Fact]
     public async Task Header_discount_rejects_PO_submit()
     {
         await EnablePolicyAsync(notRequired: false, maxExclusive: null, docType: ProcurementApprovalDocTypes.Po);
@@ -443,6 +511,305 @@ public class ProcurementApprovalServiceTests : IAsyncLifetime
         });
         Assert.False(submit.Succeeded);
         Assert.Contains("header discount", submit.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Cancelled_PR_cannot_be_submitted()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null);
+        var approval = CreateApproval("user");
+        var prs = CreatePr("user", approval);
+        var save = await prs.SaveNewAsync(PrRequest(PrLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var cancel = await prs.CancelAsync(new PoPrCancelRequest
+        {
+            PrNo = save.PrNo!,
+            RowVersion = save.Document!.RowVersion,
+            ApprReason = "Not needed"
+        });
+        Assert.True(cancel.Succeeded, cancel.ErrorMessage);
+
+        var submit = await approval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Pr,
+            DocNo = save.PrNo!
+        });
+        Assert.False(submit.Succeeded);
+        Assert.Contains("cancelled", submit.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Cancelled_PO_cannot_be_submitted()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null, docType: ProcurementApprovalDocTypes.Po);
+        var approval = CreateApproval("user");
+        var orders = CreatePo("user", approval);
+        var save = await orders.SaveNewAsync(PoRequest(PoLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var cancel = await orders.CancelAsync(new PoOrderKeyedRequest
+        {
+            PoNo = save.Document!.PoNo,
+            RowVersion = save.Document.RowVersion
+        });
+        Assert.True(cancel.Succeeded, cancel.ErrorMessage);
+
+        var submit = await approval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Po,
+            DocNo = save.Document.PoNo,
+            DocRev = save.Document.PoRelNo
+        });
+        Assert.False(submit.Succeeded);
+        Assert.Contains("cancelled", submit.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Closed_PO_cannot_be_submitted()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null, docType: ProcurementApprovalDocTypes.Po);
+        var approval = CreateApproval("user");
+        var orders = CreatePo("user", approval);
+        var save = await orders.SaveNewAsync(PoRequest(PoLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var header = await db.PoOrders.SingleAsync(x => x.PoNo == save.Document!.PoNo && x.PoRelNo == save.Document.PoRelNo);
+            header.Status = PoOrderStatuses.Closed;
+            await db.SaveChangesAsync();
+        }
+
+        var submit = await approval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Po,
+            DocNo = save.Document!.PoNo,
+            DocRev = save.Document.PoRelNo
+        });
+        Assert.False(submit.Succeeded);
+        Assert.Contains("cannot be submitted", submit.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PO_submit_rejects_stale_revision_and_accepts_latest()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null, docType: ProcurementApprovalDocTypes.Po);
+        var approval = CreateApproval("user");
+        var orders = CreatePo("user", approval);
+        var save = await orders.SaveNewAsync(PoRequest(PoLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+
+        var current = await orders.GetAsync(save.Document!.PoNo);
+        Assert.True(current.Succeeded, current.ErrorMessage);
+        var reviseRequest = PoRequest(PoLine("A100", 50m, line: current.Document!.Lines[0].Line));
+        reviseRequest.RowVersion = current.Document.RowVersion;
+        reviseRequest.RevisionReason = "Price unchanged";
+        var revise = await orders.ReviseAsync(save.Document.PoNo, reviseRequest);
+        Assert.True(revise.Succeeded, revise.ErrorMessage);
+        Assert.Equal((short)2, revise.Document!.PoRelNo);
+
+        var stale = await approval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Po,
+            DocNo = save.Document.PoNo,
+            DocRev = 1
+        });
+        Assert.False(stale.Succeeded);
+        Assert.Contains("revised", stale.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        var latest = await approval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Po,
+            DocNo = save.Document.PoNo,
+            DocRev = revise.Document.PoRelNo
+        });
+        Assert.True(latest.Succeeded, latest.ErrorMessage);
+        Assert.Equal(revise.Document.PoRelNo, latest.Instance!.DocRev);
+    }
+
+    [Fact]
+    public async Task Reassign_rejects_stale_rowversion()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null);
+        var userApproval = CreateApproval("user");
+        var prs = CreatePr("user", userApproval);
+        var save = await prs.SaveNewAsync(PrRequest(PrLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var submitted = await userApproval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Pr,
+            DocNo = save.PrNo!
+        });
+        Assert.True(submitted.Succeeded, submitted.ErrorMessage);
+
+        var admin = CreateApproval("admin");
+        var first = await admin.ReassignAsync(new ProcurementApprovalReassignRequest
+        {
+            InstanceId = submitted.Instance!.Uid,
+            RowVersion = submitted.Instance.RowVersion,
+            LevelSequence = submitted.Instance.CurrentLevel,
+            RemoveUserId = "mgr",
+            AddUserId = "mgr2",
+            Reason = "First swap"
+        });
+        Assert.True(first.Succeeded, first.ErrorMessage);
+
+        var stale = await admin.ReassignAsync(new ProcurementApprovalReassignRequest
+        {
+            InstanceId = submitted.Instance.Uid,
+            RowVersion = submitted.Instance.RowVersion,
+            LevelSequence = submitted.Instance.CurrentLevel,
+            RemoveUserId = "mgr2",
+            AddUserId = "mgr",
+            Reason = "Stale swap"
+        });
+        Assert.False(stale.Succeeded);
+        Assert.Contains("changed by another user", stale.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Reassign_rejects_other_branch()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null);
+        var userApproval = CreateApproval("user");
+        var prs = CreatePr("user", userApproval);
+        var save = await prs.SaveNewAsync(PrRequest(PrLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var submitted = await userApproval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Pr,
+            DocNo = save.PrNo!
+        });
+        Assert.True(submitted.Succeeded, submitted.ErrorMessage);
+
+        var otherBranch = CreateApproval("admin", branch: "WH2");
+        var reassigned = await otherBranch.ReassignAsync(new ProcurementApprovalReassignRequest
+        {
+            InstanceId = submitted.Instance!.Uid,
+            RowVersion = submitted.Instance.RowVersion,
+            LevelSequence = submitted.Instance.CurrentLevel,
+            RemoveUserId = "mgr",
+            AddUserId = "mgr2",
+            Reason = "Cross-branch"
+        });
+        Assert.False(reassigned.Succeeded);
+        Assert.Contains("not found", reassigned.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("REJECT")]
+    [InlineData("RETURN")]
+    [InlineData("WITHDRAW")]
+    public async Task Attachment_delete_is_frozen_after_historical_cycle(string action)
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null);
+        var userApproval = CreateApproval("user");
+        var prs = CreatePr("user", userApproval);
+        var save = await prs.SaveNewAsync(PrRequest(PrLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var submitted = await userApproval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Pr,
+            DocNo = save.PrNo!
+        });
+        Assert.True(submitted.Succeeded, submitted.ErrorMessage);
+
+        if (action == "WITHDRAW")
+        {
+            var withdrawn = await userApproval.WithdrawAsync(new ProcurementApprovalDecisionRequest
+            {
+                InstanceId = submitted.Instance!.Uid,
+                RowVersion = submitted.Instance.RowVersion,
+                Reason = "Need to fix the file"
+            });
+            Assert.True(withdrawn.Succeeded, withdrawn.ErrorMessage);
+        }
+        else
+        {
+            var decided = await CreateApproval("mgr").DecideAsync(new ProcurementApprovalDecisionRequest
+            {
+                InstanceId = submitted.Instance!.Uid,
+                RowVersion = submitted.Instance.RowVersion,
+                Decision = action,
+                Reason = "Historical freeze"
+            });
+            Assert.True(decided.Succeeded, decided.ErrorMessage);
+        }
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var deleting = await userApproval.AssertAttachmentMutationAsync(
+            db, "DEMO", "HQ", ProcurementApprovalDocTypes.Pr, save.PrNo!, 0, deleting: true);
+        Assert.Contains("cannot be deleted", deleting, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Attachment_delete_is_frozen_after_document_cancel()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null);
+        var userApproval = CreateApproval("user");
+        var prs = CreatePr("user", userApproval);
+        var save = await prs.SaveNewAsync(PrRequest(PrLine("A100", 50m)));
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var submitted = await userApproval.SubmitAsync(new ProcurementApprovalSubmitRequest
+        {
+            DocType = ProcurementApprovalDocTypes.Pr,
+            DocNo = save.PrNo!
+        });
+        Assert.True(submitted.Succeeded, submitted.ErrorMessage);
+
+        var cancel = await prs.CancelAsync(new PoPrCancelRequest
+        {
+            PrNo = save.PrNo!,
+            RowVersion = (await prs.GetAsync(save.PrNo!)).Document!.RowVersion,
+            ApprReason = "Cancelled after submit"
+        });
+        Assert.True(cancel.Succeeded, cancel.ErrorMessage);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var deleting = await userApproval.AssertAttachmentMutationAsync(
+            db, "DEMO", "HQ", ProcurementApprovalDocTypes.Pr, save.PrNo!, 0, deleting: true);
+        Assert.Contains("cannot be deleted", deleting, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Stale_policy_save_is_rejected_and_prior_versions_remain()
+    {
+        await EnablePolicyAsync(notRequired: false, maxExclusive: null);
+        var admin = CreateApproval("admin");
+        var loaded = await admin.GetPolicyAsync(ProcurementApprovalDocTypes.Pr);
+        Assert.True(loaded.Succeeded, loaded.ErrorMessage);
+        var firstVersion = loaded.Policy!.Version;
+        Assert.True(firstVersion > 0);
+
+        loaded.Policy.Enabled = false;
+        var published = await admin.SavePolicyAsync(loaded.Policy);
+        Assert.True(published.Succeeded, published.ErrorMessage);
+        Assert.Equal(firstVersion + 1, published.Policy!.Version);
+        Assert.False(published.Policy.Enabled);
+
+        loaded.Policy.Enabled = true;
+        var stale = await admin.SavePolicyAsync(loaded.Policy);
+        Assert.False(stale.Succeeded);
+        Assert.Contains("changed by another user", stale.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        var latest = await admin.GetPolicyAsync(ProcurementApprovalDocTypes.Pr);
+        Assert.True(latest.Succeeded, latest.ErrorMessage);
+        latest.Policy!.Enabled = true;
+        var fresh = await admin.SavePolicyAsync(latest.Policy);
+        Assert.True(fresh.Succeeded, fresh.ErrorMessage);
+        Assert.True(fresh.Policy!.Enabled);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var versions = await db.ProcurementApprovalPolicies.AsNoTracking()
+            .Where(x => x.CompanyCode == "DEMO" && x.DocType == ProcurementApprovalDocTypes.Pr)
+            .Select(x => new { x.Version, x.IsPublished, x.Enabled })
+            .OrderBy(x => x.Version)
+            .ToListAsync();
+        Assert.True(versions.Count >= 3);
+        Assert.Single(versions, x => x.IsPublished);
+        Assert.Contains(versions, x => !x.IsPublished && x.Version == firstVersion);
+        Assert.Equal(fresh.Policy.Version, versions.Single(x => x.IsPublished).Version);
     }
 
     private async Task EnablePolicyAsync(bool notRequired, decimal? maxExclusive, string docType = ProcurementApprovalDocTypes.Pr)
@@ -488,6 +855,7 @@ public class ProcurementApprovalServiceTests : IAsyncLifetime
 
     private PoPrService CreatePr(string userId, IProcurementApprovalGuard? approval = null)
     {
+        approval ??= TestDisabledProcurementApprovalGuard.Instance;
         var tenant = InventoryTenantTestHelper.CreateTenantContext("DEMO", "HQ", "MAIN", userId);
         var attach = new PoPrAttachmentService(
             _factory,
@@ -508,11 +876,12 @@ public class ProcurementApprovalServiceTests : IAsyncLifetime
             Options.Create(new PoPrOptions()),
             attach,
             NullLogger<PoPrService>.Instance,
-            approval: approval);
+            approval);
     }
 
     private PoOrderService CreatePo(string userId, IProcurementApprovalGuard? approval = null)
     {
+        approval ??= TestDisabledProcurementApprovalGuard.Instance;
         var tenant = InventoryTenantTestHelper.CreateTenantContext("DEMO", "HQ", "MAIN", userId);
         var attach = new PoOrderAttachmentService(
             _factory,
@@ -536,10 +905,13 @@ public class ProcurementApprovalServiceTests : IAsyncLifetime
             approval);
     }
 
-    private ProcurementApprovalService CreateApproval(string userId, Mock<IAccessRightService>? access = null) =>
+    private ProcurementApprovalService CreateApproval(
+        string userId,
+        Mock<IAccessRightService>? access = null,
+        string branch = "HQ") =>
         new(
             _factory,
-            InventoryTenantTestHelper.CreateTenantContext("DEMO", "HQ", "MAIN", userId),
+            InventoryTenantTestHelper.CreateTenantContext("DEMO", branch, "MAIN", userId),
             (access ?? Access()).Object);
 
     private static Mock<IAccessRightService> Access(bool viewCost = true)
@@ -611,9 +983,10 @@ public class ProcurementApprovalServiceTests : IAsyncLifetime
             Lines = [line]
         };
 
-    private static PoOrderLineDto PoLine(string iCode, decimal qty, string? prNo = null, short? prLine = null) =>
+    private static PoOrderLineDto PoLine(string iCode, decimal qty, string? prNo = null, short? prLine = null, short line = 0) =>
         new()
         {
+            Line = line,
             ICode = iCode,
             PoPurQty = qty,
             PoQty = qty,

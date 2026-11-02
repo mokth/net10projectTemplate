@@ -17,6 +17,7 @@ using Moq;
 using CdnStatuses = ErpWeb.Core.Sales.SaCdnStatuses;
 using CdnTypes = ErpWeb.Core.Sales.SaCdnTypes;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Sales.Transaction;
 // ─────────────────────────── Fake numbering ───────────────────────────
 
@@ -1788,7 +1789,8 @@ public class SaCdnServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
     }
 
     private static Mock<IAccessRightService> AlwaysAllowed()
@@ -1918,7 +1920,8 @@ public class SaCdnServiceTests : IAsyncLifetime
                 new IvStockCommonRepository(_factory),
                 new PoOrderRepository(),
                 NullLogger<IvInventoryPostingService>.Instance,
-                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)),
+                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance),
             new IvSpShipmentService(postingRepo, new IvStockTransactionRepository(), new RunningNumberService()),
             salesOrders,
             docApplication,

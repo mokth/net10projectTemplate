@@ -1026,3 +1026,12 @@
         border-bottom: 1px solid var(--line, #d7dde5);
     }
 }
+
+.pdf-buy-notice {
+    margin: 0 1rem 1rem;
+}
+
+.pdf-bom-only-note {
+    margin: 0 1rem 1rem;
+    color: var(--iv-muted, #5b6470);
+}

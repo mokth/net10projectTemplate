@@ -27,6 +27,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
     private readonly IIvInventoryPostingService _posting;
     private readonly ILogger<IvGoodsReceiptService> _logger;
     private readonly ICompanyCurrencyRateResolver _currencyRates;
+    private readonly IProcurementApprovalGuard _approval;
 
     public IvGoodsReceiptService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -40,7 +41,8 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         IIvStockPostingRepository postingRepo,
         IIvInventoryPostingService posting,
         ILogger<IvGoodsReceiptService> logger,
-        ICompanyCurrencyRateResolver? currencyRates = null)
+        ICompanyCurrencyRateResolver? currencyRates = null,
+        IProcurementApprovalGuard? approval = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -54,6 +56,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         _posting = posting;
         _logger = logger;
         _currencyRates = currencyRates ?? new CompanyCurrencyRateResolver();
+        _approval = approval ?? throw new ArgumentNullException(nameof(approval));
     }
 
     public async Task<IvGoodsReceiptOperationResult> PeekNextBatchNoAsync(CancellationToken cancellationToken = default)
@@ -237,33 +240,78 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 || (x.d.IDesc != null && x.d.IDesc.Contains(term)));
         }
 
-        var rows = await q
+        var ordered = q
             .OrderByDescending(x => x.h.PoDate)
             .ThenByDescending(x => x.h.PoNo)
-            .ThenBy(x => x.d.Line)
-            .Take(50)
-            .Select(x => new IvGoodsReceiptPoLineLookupRow
+            .ThenBy(x => x.d.Line);
+        const int window = 50;
+        const int take = 50;
+        var rows = new List<IvGoodsReceiptPoLineLookupRow>();
+        var skip = 0;
+        while (rows.Count < take)
+        {
+            var chunk = await ordered
+                .Skip(skip)
+                .Take(window)
+                .Select(x => new IvGoodsReceiptPoLineLookupRow
+                {
+                    PoNo = x.h.PoNo,
+                    PoRelNo = x.h.PoRelNo,
+                    PoLineNo = x.d.Line,
+                    VendCode = x.h.VendCode,
+                    VendName = x.h.VendName,
+                    ICode = x.d.ICode ?? string.Empty,
+                    IDesc = x.d.IDesc,
+                    OrderedQty = x.d.PoPurQty,
+                    ReceivedQty = x.d.RecvQty,
+                    BalanceQty = x.d.BalanceQty,
+                    DraftQty = 0m,
+                    AvailableQty = x.d.BalanceQty,
+                    PurchaseUom = x.d.PurchaseUom,
+                    StdUom = x.d.StdUom,
+                    PackSz = x.d.PackSz,
+                    UnitPrice = x.d.PoUnitPrice,
+                    ToWarehouse = x.d.ToWarehouse,
+                    IsIndirect = indirect
+                })
+                .ToListAsync(cancellationToken);
+            if (chunk.Count == 0)
             {
-                PoNo = x.h.PoNo,
-                PoRelNo = x.h.PoRelNo,
-                PoLineNo = x.d.Line,
-                VendCode = x.h.VendCode,
-                VendName = x.h.VendName,
-                ICode = x.d.ICode ?? string.Empty,
-                IDesc = x.d.IDesc,
-                OrderedQty = x.d.PoPurQty,
-                ReceivedQty = x.d.RecvQty,
-                BalanceQty = x.d.BalanceQty,
-                DraftQty = 0m,
-                AvailableQty = x.d.BalanceQty,
-                PurchaseUom = x.d.PurchaseUom,
-                StdUom = x.d.StdUom,
-                PackSz = x.d.PackSz,
-                UnitPrice = x.d.PoUnitPrice,
-                ToWarehouse = x.d.ToWarehouse,
-                IsIndirect = indirect
-            })
-            .ToListAsync(cancellationToken);
+                break;
+            }
+
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in chunk
+                .Select(x => (x.PoNo, x.PoRelNo))
+                .Distinct())
+            {
+                if (await _approval.IsPoVisibleForGrAsync(
+                    db, company, branch, key.PoNo, key.PoRelNo, cancellationToken))
+                {
+                    allowed.Add($"{key.PoNo}|{key.PoRelNo}");
+                }
+            }
+
+            foreach (var row in chunk)
+            {
+                if (!allowed.Contains($"{row.PoNo}|{row.PoRelNo}"))
+                {
+                    continue;
+                }
+
+                rows.Add(row);
+                if (rows.Count == take)
+                {
+                    break;
+                }
+            }
+
+            skip += window;
+            if (chunk.Count < window)
+            {
+                break;
+            }
+        }
 
         if (rows.Count > 0)
         {

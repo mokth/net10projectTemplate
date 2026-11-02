@@ -1,6 +1,5 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
-using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
@@ -10,7 +9,6 @@ using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -18,10 +16,11 @@ using Moq;
 namespace ErpWeb.Tests.Procurement.Transaction;
 
 /// <summary>
-/// SQL Server races for PR/PO approval. Skipped unless DefaultConnection can open DEMO
-/// and PoApprovalPolicy exists. Policy is snapshotted and restored in finally so DEMO
-/// is not left with approval enabled.
+/// Gate 3 SQL Server races for PR/PO approval. Uses only
+/// <see cref="PoApprovalSqlGate3Fixture.ConnectionEnv"/> against an isolated catalog named
+/// erpweb_poapr_test_*. Never DefaultConnection / shared ERPWeb DEMO.
 /// </summary>
+[Collection("PoApprovalSqlGate3")]
 [Trait(TestCategories.Name, TestCategories.Purchase)]
 [Trait(TestCategories.Name, TestCategories.SqlServer)]
 public class ProcurementApprovalSqlServerConcurrencyTests
@@ -31,61 +30,61 @@ public class ProcurementApprovalSqlServerConcurrencyTests
     private const string Manager1 = "AVMG1";
     private const string Manager2 = "AVMG2";
     private const string Admin = "AVADM";
+    private const string OtherCompany = "ISO2";
+    private const string OtherUser = "ISO2USR";
 
-    private static string? GetSqlServerConnectionString()
+    private readonly PoApprovalSqlGate3Fixture _harness;
+
+    public ProcurementApprovalSqlServerConcurrencyTests(PoApprovalSqlGate3Fixture harness)
     {
-        var testDir = AppContext.BaseDirectory;
-        var repoAppSettings = Path.GetFullPath(Path.Combine(testDir, "..", "..", "..", "..", "ErpWeb", "appsettings.json"));
-        var config = new ConfigurationBuilder()
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile("../ErpWeb/appsettings.json", optional: true)
-            .AddJsonFile(repoAppSettings, optional: true)
-            .AddEnvironmentVariables()
-            .Build();
-        var cs = config.GetConnectionString("DefaultConnection");
-        if (string.IsNullOrWhiteSpace(cs))
-        {
-            return null;
-        }
-
-        if (!cs.Contains("Database=", StringComparison.OrdinalIgnoreCase)
-            && !cs.Contains("Initial Catalog=", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        return cs;
+        _harness = harness;
     }
 
-    public static bool IsSqlServerAvailable()
+    private IDbContextFactory<AppDbContext> Factory => _harness.RequireFactory();
+
+    [PoApprovalSqlFact]
+    public async Task Preflight_isolated_catalog_has_filtered_unique_index()
     {
-        var cs = GetSqlServerConnectionString();
-        if (cs is null)
+        await using var db = Factory.CreateDbContext();
+        var connection = db.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
         {
-            return false;
+            await connection.OpenAsync();
         }
 
-        try
-        {
-            var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options;
-            using var db = new AppDbContext(options);
-            return db.Database.IsSqlServer() && db.Database.CanConnect();
-        }
-        catch
-        {
-            return false;
-        }
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DB_NAME()";
+        var catalog = Assert.IsType<string>(await command.ExecuteScalarAsync());
+        Assert.StartsWith(
+            PoApprovalSqlGate3Fixture.CatalogPrefix,
+            catalog,
+            StringComparison.OrdinalIgnoreCase);
+        await PoApprovalSqlGate3Fixture.AssertFilteredUniqueIndexAsync(db);
     }
 
-    private static IDbContextFactory<AppDbContext> CreateFactory()
+    [PoApprovalSqlFact]
+    public async Task SqlServer_two_policy_publishers_leave_one_published_row()
     {
-        var cs = GetSqlServerConnectionString()
-            ?? throw new InvalidOperationException("SQL Server connection string is required.");
-        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options;
-        return new TestDbContextFactory(options);
+        var factory = Factory;
+        await SeedMastersAsync(factory);
+        var first = CreateApproval(factory, Admin);
+        var second = CreateApproval(factory, Manager1);
+        var results = await Task.WhenAll(
+            first.SavePolicyAsync(EnabledPolicy()),
+            second.SavePolicyAsync(EnabledPolicy()));
+
+        Assert.Contains(results, r => r.Succeeded);
+        await using var db = factory.CreateDbContext();
+        var published = await db.ProcurementApprovalPolicies.AsNoTracking()
+            .Where(x => x.CompanyCode == "DEMO"
+                && x.DocType == ProcurementApprovalDocTypes.Pr
+                && x.IsPublished)
+            .ToListAsync();
+        Assert.Single(published);
+        Assert.True(published[0].Enabled);
     }
 
-    [Fact]
+    [PoApprovalSqlFact]
     public async Task SqlServer_concurrent_submit_returns_the_same_pending_instance()
     {
         await RunWithPolicyAsync(async (factory, fixture) =>
@@ -121,7 +120,7 @@ public class ProcurementApprovalSqlServerConcurrencyTests
         });
     }
 
-    [Fact]
+    [PoApprovalSqlFact]
     public async Task SqlServer_concurrent_approve_and_reject_exactly_one_wins()
     {
         await RunWithPolicyAsync(async (factory, fixture) =>
@@ -162,7 +161,7 @@ public class ProcurementApprovalSqlServerConcurrencyTests
         });
     }
 
-    [Fact]
+    [PoApprovalSqlFact]
     public async Task SqlServer_disabling_policy_does_not_unlock_pending_conversion()
     {
         await RunWithPolicyAsync(async (factory, fixture) =>
@@ -189,209 +188,222 @@ public class ProcurementApprovalSqlServerConcurrencyTests
         });
     }
 
-    private static async Task RunWithPolicyAsync(Func<IDbContextFactory<AppDbContext>, PrFixture, Task> body)
+    [PoApprovalSqlFact]
+    public async Task SqlServer_cross_company_pending_is_not_visible_to_demo_inbox()
     {
-        if (!IsSqlServerAvailable())
-        {
-            return;
-        }
+        var factory = Factory;
+        await SeedMastersAsync(factory);
+        var demoAdmin = CreateApproval(factory, Admin);
+        Assert.True((await demoAdmin.SavePolicyAsync(EnabledPolicy())).Succeeded);
 
-        var factory = CreateFactory();
-        if (!await SchemaReadyAsync(factory))
-        {
-            return;
-        }
+        var otherAdmin = CreateApproval(factory, Admin, OtherCompany);
+        Assert.True((await otherAdmin.SavePolicyAsync(EnabledPolicy())).Succeeded);
 
-        var admin = CreateApproval(factory, Admin);
-        var snapshot = await admin.GetPolicyAsync(ProcurementApprovalDocTypes.Pr);
-        if (!snapshot.Succeeded)
-        {
-            return;
-        }
-
-        var restore = ClonePolicy(snapshot.Policy ?? new ProcurementApprovalPolicyDto
-        {
-            DocType = ProcurementApprovalDocTypes.Pr,
-            Enabled = false
-        });
-
-        try
-        {
-            var fixture = await SeedFixtureAsync(factory);
-            if (fixture is null)
+        var otherPr = await SeedPrAsync(factory, OtherCompany, OtherUser);
+        var submitted = await CreateApproval(factory, OtherUser, OtherCompany).SubmitAsync(
+            new ProcurementApprovalSubmitRequest
             {
-                return;
-            }
+                DocType = ProcurementApprovalDocTypes.Pr,
+                DocNo = otherPr
+            });
+        Assert.True(submitted.Succeeded, submitted.ErrorMessage);
 
-            var enabled = await admin.SavePolicyAsync(EnabledPolicy());
-            Assert.True(enabled.Succeeded, enabled.ErrorMessage);
-            await body(factory, fixture);
-        }
-        finally
-        {
-            var restored = await CreateApproval(factory, Admin).SavePolicyAsync(restore);
-            Assert.True(restored.Succeeded, restored.ErrorMessage);
-            Assert.Equal(restore.Enabled, restored.Policy!.Enabled);
-        }
+        var inbox = await CreateApproval(factory, Manager1).GetInboxAsync(allPending: true, completed: false);
+        Assert.True(inbox.Succeeded, inbox.ErrorMessage);
+        Assert.DoesNotContain(inbox.Inbox ?? [], row =>
+            string.Equals(row.DocNo, otherPr, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static async Task<bool> SchemaReadyAsync(IDbContextFactory<AppDbContext> factory)
+    private async Task RunWithPolicyAsync(Func<IDbContextFactory<AppDbContext>, PrFixture, Task> body)
     {
-        try
-        {
-            await using var db = factory.CreateDbContext();
-            _ = await db.ProcurementApprovalPolicies.CountAsync();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        var factory = Factory;
+        var fixture = await SeedFixtureAsync(factory);
+        var admin = CreateApproval(factory, Admin);
+        var enabled = await admin.SavePolicyAsync(EnabledPolicy());
+        Assert.True(enabled.Succeeded, enabled.ErrorMessage);
+        await body(factory, fixture);
     }
 
-    private static async Task<PrFixture?> SeedFixtureAsync(IDbContextFactory<AppDbContext> factory)
+    private static async Task SeedMastersAsync(IDbContextFactory<AppDbContext> factory)
     {
         await using var db = factory.CreateDbContext();
-        try
-        {
-            _ = await db.PoPrs.CountAsync();
-        }
-        catch
-        {
-            return null;
-        }
-
         if (!await db.SaCurrencies.AnyAsync(x => x.CompanyCode == "DEMO" && x.CurrCode == "MYR"))
         {
-            return null;
+            db.SaCurrencies.Add(new SaCurrency
+            {
+                CompanyCode = "DEMO",
+                CurrCode = "MYR",
+                CurrDesc = "Ringgit",
+                IsActive = true
+            });
+        }
+
+        if (!await db.SaCurrencies.AnyAsync(x => x.CompanyCode == OtherCompany && x.CurrCode == "MYR"))
+        {
+            db.SaCurrencies.Add(new SaCurrency
+            {
+                CompanyCode = OtherCompany,
+                CurrCode = "MYR",
+                CurrDesc = "Ringgit",
+                IsActive = true
+            });
+        }
+
+        foreach (var company in new[] { "DEMO", OtherCompany })
+        {
+            if (!await db.MsUoms.AnyAsync(x => x.CompanyCode == company && x.UomCode == "EA"))
+            {
+                db.MsUoms.Add(new MsUom { CompanyCode = company, UomCode = "EA", IsActive = true });
+            }
+
+            if (!await db.IvClasses.AnyAsync(x => x.CompanyCode == company && x.IClassCode == "RAW"))
+            {
+                db.IvClasses.Add(new IvClass { CompanyCode = company, IClassCode = "RAW", IsActive = true });
+            }
         }
 
         foreach (var id in new[] { Submitter, Manager1, Manager2, Admin })
         {
             if (!await db.UserLogins.AnyAsync(x => x.CompanyCode == "DEMO" && x.id == id))
             {
-                db.UserLogins.Add(new UserLogin
-                {
-                    id = id,
-                    name = id,
-                    password = "x",
-                    CompanyCode = "DEMO",
-                    BranchCode = "HQ",
-                    LocationCode = "MAIN",
-                    active = true,
-                    CanViewPrice = true
-                });
+                db.UserLogins.Add(User(id, "DEMO"));
+            }
+        }
+
+        foreach (var id in new[] { OtherUser, Admin, Manager1, Manager2 })
+        {
+            if (!await db.UserLogins.AnyAsync(x => x.CompanyCode == OtherCompany && x.id == id))
+            {
+                db.UserLogins.Add(User(id, OtherCompany));
             }
         }
 
         if (!await db.SaTaxGroups.AnyAsync(x => x.CompanyCode == "DEMO" && x.TaxGrCode == "SR"))
         {
-            db.SaTaxGroups.Add(new SaTaxGroup
-            {
-                CompanyCode = "DEMO",
-                TaxGrCode = "SR",
-                TaxGrDesc = "Standard",
-                Percentage = 6m,
-                TaxGlCode = "GLTAX"
-            });
+            db.SaTaxGroups.Add(TaxGroup("DEMO"));
         }
 
+        if (!await db.SaTaxGroups.AnyAsync(x => x.CompanyCode == OtherCompany && x.TaxGrCode == "SR"))
+        {
+            db.SaTaxGroups.Add(TaxGroup(OtherCompany));
+        }
+
+        await EnsureSupplierAndWarehouseAsync(db, "DEMO");
+        await EnsureSupplierAndWarehouseAsync(db, OtherCompany);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<PrFixture> SeedFixtureAsync(IDbContextFactory<AppDbContext> factory)
+    {
+        await SeedMastersAsync(factory);
+        await using var db = factory.CreateDbContext();
+        var iCode = "A" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        db.IvStockMasters.Add(Stock(iCode, "DEMO"));
+        var prNo = "APR" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        db.PoPrs.Add(Pr(prNo, iCode, "DEMO", Submitter));
+        await db.SaveChangesAsync();
+        return new PrFixture(iCode, prNo);
+    }
+
+    private static async Task<string> SeedPrAsync(
+        IDbContextFactory<AppDbContext> factory, string company, string requester)
+    {
+        await using var db = factory.CreateDbContext();
+        var iCode = "B" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        db.IvStockMasters.Add(Stock(iCode, company));
+        var prNo = "BPR" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        db.PoPrs.Add(Pr(prNo, iCode, company, requester));
+        await db.SaveChangesAsync();
+        return prNo;
+    }
+
+    private static async Task EnsureSupplierAndWarehouseAsync(AppDbContext db, string company)
+    {
         if (!await db.PoSuppliers.AnyAsync(x =>
-                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.SuppCode == "SUP01"))
+                x.CompanyCode == company && x.BranchCode == "HQ" && x.SuppCode == "SUP01"))
         {
             db.PoSuppliers.Add(new PoSupplier
             {
-                CompanyCode = "DEMO",
+                CompanyCode = company,
                 BranchCode = "HQ",
                 SuppCode = "SUP01",
                 SuppName = "Alpha Supplier",
                 Currency = "MYR",
                 GlCode = "AP001",
+                Country = "MY",
                 IsActive = true
             });
         }
 
         if (!await db.IvWarehouses.AnyAsync(x =>
-                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.WarehouseCode == "MAIN"))
+                x.CompanyCode == company && x.BranchCode == "HQ" && x.WarehouseCode == "MAIN"))
         {
             db.IvWarehouses.Add(new IvWarehouse
             {
-                CompanyCode = "DEMO",
+                CompanyCode = company,
                 BranchCode = "HQ",
                 WarehouseCode = "MAIN",
                 IsActive = true
             });
         }
+    }
 
-        var iCode = "A" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
-        db.IvStockMasters.Add(new IvStockMaster
+    private static UserLogin User(string id, string company) =>
+        new()
         {
-            CompanyCode = "DEMO",
+            id = id,
+            name = id,
+            password = "x",
+            CompanyCode = company,
+            BranchCode = "HQ",
+            LocationCode = "MAIN",
+            active = true,
+            CanViewPrice = true
+        };
+
+    private static SaTaxGroup TaxGroup(string company) =>
+        new()
+        {
+            CompanyCode = company,
+            TaxGrCode = "SR",
+            TaxGrDesc = "Standard",
+            Percentage = 6m,
+            TaxGlCode = "GLTAX"
+        };
+
+    private static IvStockMaster Stock(string iCode, string company) =>
+        new()
+        {
+            CompanyCode = company,
             ICode = iCode,
             IDesc = "Approval concurrency item",
+            IClassCode = "RAW",
             StdUom = "EA",
             PurUom = "EA",
             PurStdPackSize = 1m,
             PurchasePrice = 25m,
             PurchaseTaxGroup = "SR",
             IsActive = true,
-            DefWarehouse = "MAIN",
-            StockControl = false
-        });
+            DefWarehouse = "MAIN"
+        };
 
-        if (!await db.AdSmNumDates.AnyAsync(x =>
-                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.NumCd == "PO"
-                && x.Year == 2026 && x.Month == 9))
+    private static PoPr Pr(string prNo, string iCode, string company, string requester) =>
+        new()
         {
-            db.AdSmNumDates.Add(new AdSmNumDate
-            {
-                CompanyCode = "DEMO",
-                BranchCode = "HQ",
-                LocationCode = "MAIN",
-                Year = 2026,
-                Month = 9,
-                NumCd = "PO",
-                NumDes = "Purchase Order",
-                Prefix = "PO",
-                TotLength = 4,
-                NumberingDelimeter = "-",
-                Seq = 1
-            });
-        }
-
-        if (!await db.AdSmNums.AnyAsync(x =>
-                x.CompanyCode == "DEMO" && x.BranchCode == "HQ" && x.NumCd == "PO"))
-        {
-            db.AdSmNums.Add(new AdSmNum
-            {
-                CompanyCode = "DEMO",
-                BranchCode = "HQ",
-                LocationCode = "MAIN",
-                NumCd = "PO",
-                NumDes = "Purchase Order",
-                Prefix = "PO",
-                TotLength = 10,
-                Seq = 1
-            });
-        }
-
-        var prNo = "APR" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
-        db.PoPrs.Add(new PoPr
-        {
-            CompanyCode = "DEMO",
+            CompanyCode = company,
             BranchCode = "HQ",
             PrNo = prNo,
             CreateDt = FixedToday,
-            Requester = Submitter,
+            Requester = requester,
             Status = PoPrStatuses.New,
             PrType = PoPrTypes.Purchasing,
             CreatedDate = FixedToday,
-            CreatedBy = Submitter,
+            CreatedBy = requester,
             Details =
             [
                 new PoPrDetail
                 {
-                    CompanyCode = "DEMO",
+                    CompanyCode = company,
                     BranchCode = "HQ",
                     PrNo = prNo,
                     Line = 1,
@@ -413,19 +425,7 @@ public class ProcurementApprovalSqlServerConcurrencyTests
                     Status = PoPrStatuses.New
                 }
             ]
-        });
-
-        try
-        {
-            await db.SaveChangesAsync();
-        }
-        catch
-        {
-            return null;
-        }
-
-        return new PrFixture(iCode, prNo);
-    }
+        };
 
     private static ProcurementApprovalPolicyDto EnabledPolicy() =>
         new()
@@ -465,31 +465,6 @@ public class ProcurementApprovalSqlServerConcurrencyTests
             ]
         };
 
-    private static ProcurementApprovalPolicyDto ClonePolicy(ProcurementApprovalPolicyDto source) =>
-        new()
-        {
-            DocType = string.IsNullOrWhiteSpace(source.DocType) ? ProcurementApprovalDocTypes.Pr : source.DocType,
-            Enabled = source.Enabled,
-            LegacyDraftMode = source.LegacyDraftMode,
-            Bands = source.Bands.Select(band => new ProcurementApprovalBandDto
-            {
-                Currency = band.Currency,
-                MinInclusive = band.MinInclusive,
-                MaxExclusive = band.MaxExclusive,
-                NotRequired = band.NotRequired,
-                Levels = band.Levels.Select(level => new ProcurementApprovalLevelDto
-                {
-                    Sequence = level.Sequence,
-                    MatchMode = level.MatchMode,
-                    Assignees = level.Assignees.Select(assignee => new ProcurementApprovalLevelAssigneeDto
-                    {
-                        Kind = assignee.Kind,
-                        RefCode = assignee.RefCode
-                    }).ToList()
-                }).ToList()
-            }).ToList()
-        };
-
     private static PoOrderSaveRequest PoRequest(PrFixture fixture, decimal qty) =>
         new()
         {
@@ -506,9 +481,10 @@ public class ProcurementApprovalSqlServerConcurrencyTests
                     PoQty = qty,
                     PurchaseUom = "EA",
                     StdUom = "EA",
-                    PackSz = 1m,
-                    CurCode = "MYR",
-                    TaxGroup = "SR",
+            PackSz = 1m,
+            CurCode = "MYR",
+            PoUnitPrice = 25m,
+            TaxGroup = "SR",
                     ToWarehouse = "MAIN",
                     PrNo = fixture.PrNo,
                     PrLineNo = 1
@@ -527,10 +503,11 @@ public class ProcurementApprovalSqlServerConcurrencyTests
         return access;
     }
 
-    private static ProcurementApprovalService CreateApproval(IDbContextFactory<AppDbContext> factory, string userId) =>
+    private static ProcurementApprovalService CreateApproval(
+        IDbContextFactory<AppDbContext> factory, string userId, string company = "DEMO") =>
         new(
             factory,
-            InventoryTenantTestHelper.CreateTenantContext("DEMO", "HQ", "MAIN", userId),
+            InventoryTenantTestHelper.CreateTenantContext(company, "HQ", "MAIN", userId),
             Access().Object);
 
     private static PoOrderService CreatePo(
@@ -554,7 +531,7 @@ public class ProcurementApprovalSqlServerConcurrencyTests
             factory,
             tenant,
             Access().Object,
-            new DocumentNumberingService(tenant),
+            new FakePoOrderDocumentNumberingService(),
             new FixedCurrentDateService(FixedToday),
             new PoOrderRepository(),
             Options.Create(new PoOrderOptions()),
