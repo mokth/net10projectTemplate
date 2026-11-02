@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
@@ -117,7 +118,13 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     if (await SourceReadinessAsync(db, pool, ct) is { } error) throw new FgException(error);
                     if (pool.LastStockEventEffectiveAt > date || pool.LastMovementDate > date) throw new FgException("Receipt date precedes a source stock event.");
                 }
+                if (await (qaFg ?? DisabledQaFgAuthorization.Instance).ClaimFinishedGoodAsync(
+                        db, scope.CompanyCode, scope.BranchCode!, r, pools, ct) is string qaClaimError)
+                    throw new FgException(qaClaimError);
             }
+            else if (await (qaFg ?? DisabledQaFgAuthorization.Instance).RestoreFinishedGoodAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, r.BatchId, ct) is string qaRestoreError)
+                throw new FgException(qaRestoreError);
             var snapshot = StockPostingFingerprint.Create(new { request.Id, Version = Convert.ToBase64String(request.ExpectedVersion), Command = commandType, request.Reason },
                 new { r.BatchId, r.WorkOrderId, r.DocumentRevision, EffectiveAt = date, Lines = r.Sources.OrderBy(x => x.Id).Select(s => new {
                     s.Id, s.ProductionBalLotId, s.RequestedQty, s.BaseQty, s.SourceUom, s.DestinationUom, s.BaseUom, s.SourceFactor, s.DestinationFactor,

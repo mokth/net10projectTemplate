@@ -1,0 +1,35 @@
+.mr-footer {
+    position: sticky;
+    bottom: -20px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 16px;
+    padding: 12px 4px 4px;
+    background: linear-gradient(180deg, transparent, var(--bg, #edf0f3) 28%);
+}
+
+.mr-footer__hint {
+    margin: 0;
+    color: var(--muted, #667085);
+    font-size: 0.86rem;
+}
+
+.mr-footer__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.iv-guidance {
+    margin: 0 0 16px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--muted, #667085) 8%, var(--surface, #fff));
+    color: var(--muted, #667085);
+    font-size: 0.9rem;
+    line-height: 1.4;
+}

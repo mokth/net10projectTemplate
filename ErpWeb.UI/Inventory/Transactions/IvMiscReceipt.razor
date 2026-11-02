@@ -121,6 +121,7 @@
                         <p class="mr-eyebrow">Lines</p>
                         <h2 class="mr-lines__title">Receipt items</h2>
                     </div>
+                    <div class="mr-row-actions">
                     @if (CanEditDocument)
                     {
                         <DxButton RenderStyle="ButtonRenderStyle.Primary"
@@ -129,6 +130,15 @@
                                   Click="@OnNewLineClickAsync"
                                   Enabled="@(!IsSubmitting)" />
                     }
+                    @if (CanRequestQa)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Request QA"
+                                  IconCssClass="fa-solid fa-clipboard-check"
+                                  Click="@OnRequestQa"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                    </div>
                 </div>
 
                 <DxGrid Data="@Lines"

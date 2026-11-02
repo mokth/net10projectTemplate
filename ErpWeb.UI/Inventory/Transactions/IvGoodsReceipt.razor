@@ -107,6 +107,7 @@
                         <p class="mr-eyebrow">Lines</p>
                         <h2 class="mr-lines__title">PO receipt lines</h2>
                     </div>
+                    <div class="mr-row-actions">
                     @if (CanEditDocument)
                     {
                         <DxButton RenderStyle="ButtonRenderStyle.Primary"
@@ -115,6 +116,15 @@
                                   Click="@OpenPoPickerAsync"
                                   Enabled="@(!IsSubmitting)" />
                     }
+                    @if (IsStockGr && Lines.Count > 0)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Request QA"
+                                  IconCssClass="fa-solid fa-clipboard-check"
+                                  Click="@OnRequestQa"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                    </div>
                 </div>
 
                 <DxGrid Data="@Lines"

@@ -1,0 +1,17 @@
+.qa-lines {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.qa-lines th,
+.qa-lines td {
+    padding: 8px;
+    border-bottom: 1px solid var(--mr-line, #d0d5dd);
+    text-align: left;
+    vertical-align: top;
+}
+
+.qa-muted {
+    color: var(--mr-muted, #667085);
+    font-size: 0.85rem;
+}

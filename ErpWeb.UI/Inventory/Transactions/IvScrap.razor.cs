@@ -1,6 +1,7 @@
 using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
@@ -16,6 +17,8 @@ public partial class IvScrap : PageBase
     /// </summary>
     [Parameter] public string Mode { get; set; } = string.Empty;
     [Parameter] public int? BatchNo { get; set; }
+
+    [SupplyParameterFromQuery(Name = "qaCase")] public string? QueryQaCase { get; set; }
 
     [Inject] private IIvScrapService Scrap { get; set; } = default!;
     [Inject] private IIvInventoryLookupService Lookups { get; set; } = default!;
@@ -159,6 +162,11 @@ public partial class IvScrap : PageBase
         }
         finally
         {
+            if (IsNewMode && string.IsNullOrWhiteSpace(StatusMessage) && string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                StatusMessage = QaOpenedFromCase.Banner(QueryQaCase);
+            }
+
             IsLoading = false;
         }
     }

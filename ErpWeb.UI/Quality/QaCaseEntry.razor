@@ -1,0 +1,504 @@
+@page "/quality/cases/{Mode:regex(^(new|edit|view)$)}"
+@page "/quality/cases/{Mode:regex(^(new|edit|view)$)}/{CaseNo}"
+@inherits PageBase
+@using ErpWeb.Core.Quality
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.QualityWorkbench">
+    <div class="mr-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="mr-toast mr-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="mr-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="mr-toast mr-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="mr-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        @if (IsLoading)
+        {
+            <div class="mr-card">
+                <p class="mb-0">Loading quality case…</p>
+            </div>
+        }
+        else
+        {
+            <header class="mr-hero">
+                <div class="mr-hero__mark" aria-hidden="true">
+                    <i class="fa-solid fa-clipboard-check"></i>
+                </div>
+                <div class="mr-hero__copy">
+                    <p class="mr-eyebrow">Quality</p>
+                    <h1 class="mr-title">@PageHeading</h1>
+                    <div class="mr-chips">
+                        <span class="mr-chip">@ModeChip</span>
+                        <span class="mr-chip">@CaseNoDisplay</span>
+                        <span class="mr-chip">@Header.Status</span>
+                        <span class="mr-chip">@PhaseChip</span>
+                    </div>
+                </div>
+            </header>
+
+            <section class="mr-card">
+                <p class="mr-guidance">@Header.EligibilityNote</p>
+                <p class="mr-guidance">Attachments are not enabled in this phase.</p>
+                @if (IsIncoming)
+                {
+                    <div class="iv-chips" aria-label="Incoming quantities">
+                        <span class="iv-chip">Delivered @Header.DeliveredQty.ToString("0.####")</span>
+                        <span class="iv-chip">Accepted @Header.AcceptedQty.ToString("0.####")</span>
+                        <span class="iv-chip">GRN posted @Header.PostedQty.ToString("0.####")</span>
+                        <span class="iv-chip">Supplier unaccepted @Header.RejectedQty.ToString("0.####")</span>
+                        <span class="iv-chip">Remaining @Header.RemainingQty.ToString("0.####")</span>
+                    </div>
+                }
+                @if (IsFgStaging)
+                {
+                    <div class="iv-chips" aria-label="Finished-goods quantities">
+                        <span class="iv-chip">Inspected @Header.DeliveredQty.ToString("0.####")</span>
+                        <span class="iv-chip">Accepted @Header.AcceptedQty.ToString("0.####")</span>
+                        <span class="iv-chip">FG posted @Header.PostedQty.ToString("0.####")</span>
+                        <span class="iv-chip">Rejected @Header.RejectedQty.ToString("0.####")</span>
+                        <span class="iv-chip">Remaining @Header.RemainingQty.ToString("0.####")</span>
+                    </div>
+                }
+                @if (IsWipLot || Header.HeldQty > 0m || Header.PhysicalHeldQty > 0m)
+                {
+                    <div class="iv-chips" aria-label="Reserved quantities">
+                        @if (Header.HeldQty > 0m)
+                        {
+                            <span class="iv-chip">QA reserved @Header.HeldQty.ToString("0.####")</span>
+                        }
+                        @if (Header.PhysicalHeldQty > 0m)
+                        {
+                            <span class="iv-chip">Physical reserved @Header.PhysicalHeldQty.ToString("0.####")</span>
+                        }
+                    </div>
+                }
+                <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form">
+                    <DxFormLayoutItem Caption="Case date" ColSpanMd="4">
+                        <Template>
+                            <DxDateEdit @bind-Date="@Header.CaseDate"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        Enabled="@CanEditDocument" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="4">
+                        <Template>
+                            <DxTextBox Text="@Header.Status" ReadOnly="true" ValidationEnabled="false" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Source type" ColSpanMd="4">
+                        <Template>
+                            <DxComboBox Data="@QaSourceTypes.All"
+                                        @bind-Value="@Header.SourceType"
+                                        Enabled="@CanChangeSourceType"
+                                        NullText="Select source" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Source document" ColSpanMd="6">
+                        <Template>
+                            <div class="qa-source-row">
+                                <DxTextBox Text="@Header.SourceDocNo"
+                                           ReadOnly="true"
+                                           NullText="Use Lookup to pick the source document" />
+                                @if (CanEditDocument)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Lookup"
+                                              Click="@OpenSourceLookupAsync" />
+                                }
+                                @if (!string.IsNullOrWhiteSpace(Header.SourceHref))
+                                {
+                                    <a href="@Header.SourceHref">Open source</a>
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Delivery note" ColSpanMd="3">
+                        <Template>
+                            <DxTextBox @bind-Text="@Header.DeliveryNote"
+                                       maxlength="50"
+                                       ReadOnly="@(!CanEditDeliveryNote)"
+                                       NullText="Optional delivery note" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="PO / Rel" ColSpanMd="3">
+                        <Template>
+                            <DxTextBox @bind-Text="@Header.PoNo"
+                                       maxlength="30"
+                                       ReadOnly="true"
+                                       NullText="Filled from Lookup" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Supplier" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox Text="@SupplierDisplay" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Work order" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox @bind-Text="@Header.WorkOrderNo"
+                                       maxlength="30"
+                                       ReadOnly="true"
+                                       NullText="Filled from Lookup" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                        <Template>
+                            <DxMemo @bind-Text="@Header.Remarks"
+                                    Rows="2"
+                                    ReadOnly="@(!CanEditDocument)" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </section>
+
+            <section class="mr-card">
+                <div class="qa-line-head">
+                    <h2>Lines</h2>
+                    @if (CanEditDocument)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Add line"
+                                  IconCssClass="fa-solid fa-plus"
+                                  Click="@OpenNewLine" />
+                    }
+                </div>
+                @if (Lines.Count == 0)
+                {
+                    <div class="mr-empty">
+                        <h3>No lines yet</h3>
+                        <p>Use Lookup or Add line to pick items from the source document. Item, UOM, lot, PO and work order cannot be typed.</p>
+                    </div>
+                }
+                else
+                {
+                    <table class="qa-lines">
+                        <thead>
+                            <tr>
+                                <th>Line</th>
+                                <th>Item</th>
+                                <th>Qty</th>
+                                <th>Inspected</th>
+                                <th>Result</th>
+                                <th>Disposition</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var line in Lines)
+                            {
+                                <tr>
+                                    <td>@line.LineNo</td>
+                                    <td>@line.ItemCode<br /><span class="qa-muted">@line.ItemName</span></td>
+                                    <td>@line.Qty.ToString("n4") @line.Uom</td>
+                                    <td>@line.InspectedQty.ToString("n4")</td>
+                                    <td>@(line.Inspection?.Result ?? "—")</td>
+                                    <td>@DispositionSummary(line)</td>
+                                    <td>
+                                        @if (CanEditDocument)
+                                        {
+                                            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Remove" Click="@(() => RemoveLine(line))" />
+                                        }
+                                        else if (CanInspect)
+                                        {
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Inspect" Click="@(() => OpenInspectLine(line))" />
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            @if (Header.Destinations.Count > 0)
+            {
+                <section class="mr-card">
+                    <h2>Existing transactions</h2>
+                    <p class="mr-guidance">These buttons open existing documents. They never post inventory, vendor returns, scrap, or credit notes from quality.</p>
+                    <ul class="qa-destinations">
+                        @foreach (var destination in Header.Destinations)
+                        {
+                            <li>
+                                <div>
+                                    <strong>@destination.Caption</strong>
+                                    <span class="qa-muted"> · @destination.StatusLabel · @destination.Qty.ToString("0.####")</span>
+                                    <p class="qa-muted mb-0">@destination.Guidance</p>
+                                </div>
+                                @if (CanOpenDestination(destination))
+                                {
+                                    <a class="qa-destination-link" href="@destination.Href">@destination.Caption</a>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </section>
+            }
+
+            @if (Header.Audit.Count > 0)
+            {
+                <section class="mr-card">
+                    <h2>History</h2>
+                    <ul class="qa-audit">
+                        @foreach (var eventRow in Header.Audit)
+                        {
+                            <li>
+                                <strong>@eventRow.EventType</strong>
+                                · @eventRow.ByUser
+                                · @eventRow.AtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                                @if (!string.IsNullOrWhiteSpace(eventRow.Payload))
+                                {
+                                    <span class="qa-muted"> — @eventRow.Payload</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </section>
+            }
+
+            <footer class="mr-footer">
+                <p class="mr-footer__hint">
+                    @LineCountLabel. Approval never posts inventory, WIP, or costing.
+                </p>
+                <div class="mr-footer__actions">
+                    @if (IsViewMode)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Close"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCloseAsync" />
+                        @if (CanEditFromView)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Edit">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Edit"
+                                          IconCssClass="fa-solid fa-pen"
+                                          Click="@OnEditFromView" />
+                            </PermissionAuthorize>
+                        }
+                        @if (CanSubmit)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Submit">
+                                <DxButton RenderStyle="ButtonRenderStyle.Success" Text="Submit" Click="@OnSubmitAsync" Enabled="@(!IsSubmitting)" />
+                            </PermissionAuthorize>
+                        }
+                        @if (CanStartInspection)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Start inspection" Click="@OnStartInspectionAsync" Enabled="@(!IsSubmitting)" />
+                        }
+                        @if (CanSubmitReview)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Submit">
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Submit for review" Click="@OnSubmitReviewAsync" Enabled="@(!IsSubmitting)" />
+                            </PermissionAuthorize>
+                        }
+                        @if (CanApprove)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Reject">
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Reject" Click="@OnRejectAsync" Enabled="@(!IsSubmitting)" />
+                            </PermissionAuthorize>
+                            <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Approve">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Approve" Click="@OnApproveAsync" Enabled="@(!IsSubmitting)" />
+                            </PermissionAuthorize>
+                        }
+                        @if (CanReleaseHold)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Approve">
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Release hold" Click="@OnReleaseHoldAsync" Enabled="@(!IsSubmitting)" />
+                            </PermissionAuthorize>
+                        }
+                        @if (CanCloseCase)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close case" Click="@OnCloseCaseAsync" Enabled="@(!IsSubmitting)" />
+                        }
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Cancel"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCancelAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                        <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@(IsNewMode ? PermissionCodes.Add : PermissionCodes.Edit)">
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                      IconCssClass="fa-solid fa-floppy-disk"
+                                      Click="@OnSaveAsync"
+                                      Enabled="@CanSave" />
+                        </PermissionAuthorize>
+                    }
+                </div>
+            </footer>
+        }
+    </div>
+
+    <DxPopup HeaderText="@LinePopupTitle"
+             CloseOnOutsideClick="false"
+             Width="720px"
+             CssClass="mr-popup common-popup"
+             @bind-Visible="@LinePopupVisible">
+        <Content>
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                    <Template>
+                        <DxTextBox @bind-Text="@PopupLine.ItemCode" maxlength="30" ReadOnly="true" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Description" ColSpanMd="6">
+                    <Template>
+                        <DxTextBox @bind-Text="@PopupLine.ItemName" maxlength="100" ReadOnly="true" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Quantity" ColSpanMd="4">
+                    <Template>
+                        <DxSpinEdit @bind-Value="@PopupLine.Qty" MinValue="0m" DisplayFormat="n4" Enabled="false" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
+                    <Template>
+                        <DxTextBox @bind-Text="@PopupLine.Uom" maxlength="10" ReadOnly="true" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Lot" ColSpanMd="4">
+                    <Template>
+                        <DxTextBox @bind-Text="@PopupLine.LotNo" maxlength="50" ReadOnly="true" />
+                    </Template>
+                </DxFormLayoutItem>
+                @if (CanInspect)
+                {
+                    <DxFormLayoutItem Caption="Inspected qty" ColSpanMd="4">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@PopupLine.InspectedQty" MinValue="0m" DisplayFormat="n4" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Result" ColSpanMd="4">
+                        <Template>
+                            <DxComboBox Data="@QaInspectionResults.All" @bind-Value="@PopupLine.Result" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Accept" ColSpanMd="3">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@PopupLine.AcceptQty" MinValue="0m" DisplayFormat="n4" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Reject" ColSpanMd="3">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@PopupLine.RejectQty" MinValue="0m" DisplayFormat="n4" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Rework" ColSpanMd="3">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@PopupLine.ReworkQty" MinValue="0m" DisplayFormat="n4" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Hold" ColSpanMd="3">
+                        <Template>
+                            <DxSpinEdit @bind-Value="@PopupLine.HoldQty" MinValue="0m" DisplayFormat="n4" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Inspection notes" ColSpanMd="12">
+                        <Template>
+                            <DxMemo @bind-Text="@PopupLine.Notes" Rows="2" />
+                        </Template>
+                    </DxFormLayoutItem>
+                }
+            </DxFormLayout>
+            <div class="mr-popup-footer">
+                @if (!string.IsNullOrWhiteSpace(PopupError))
+                {
+                    <p class="mr-popup-error">@PopupError</p>
+                }
+                <div class="mr-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => LinePopupVisible = false)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Save" Click="@CommitLineAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Source lookup"
+             CloseOnOutsideClick="false"
+             Width="860px"
+             CssClass="mr-popup common-popup"
+             @bind-Visible="@SourcePopupVisible">
+        <Content>
+            <div class="erp-inline-search erp-inline-search--popup">
+                <label class="erp-inline-search__caption" for="qa-source-search">Search</label>
+                <div class="erp-inline-search__editor">
+                    <DxTextBox InputId="qa-source-search"
+                               Text="@SourceSearchText"
+                               TextChanged="OnSourceSearchTextChanged"
+                               TextExpression="@(() => SourceSearchText)"
+                               BindValueMode="BindValueMode.OnInput"
+                               NullText="Search posted source, PO, item, lot…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          IconCssClass="fa-solid fa-magnifying-glass"
+                          CssClass="erp-inline-search__button"
+                          Click="@ApplySourceSearchAsync"
+                          aria-label="Search quality sources"
+                          title="Search quality sources" />
+            </div>
+            @if (SourceRows.Count == 0)
+            {
+                <p class="qa-muted">No sources match. Item identity cannot be typed — change the search or pick a different source type.</p>
+            }
+            else
+            {
+                <table class="qa-lines">
+                    <thead>
+                        <tr>
+                            <th>Document</th>
+                            <th>Item</th>
+                            <th>Qty</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in SourceRows)
+                        {
+                            <tr>
+                                <td>@row.DisplayText</td>
+                                <td>@row.ItemCode</td>
+                                <td>@row.Qty.ToString("n4")</td>
+                                <td>
+                                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Select" Click="@(() => SelectSource(row))" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            <div class="mr-popup-footer">
+                <div class="mr-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => SourcePopupVisible = false)" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <DxPopup HeaderText="Discard this case?"
+             CloseOnOutsideClick="false"
+             Width="440px"
+             CssClass="mr-confirm common-popup"
+             @bind-Visible="@ConfirmDiscardVisible">
+        <Content>
+            <p class="mr-confirm__copy">Unsaved changes will be lost. This cannot be undone.</p>
+            <div class="mr-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

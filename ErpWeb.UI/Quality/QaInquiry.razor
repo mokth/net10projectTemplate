@@ -1,0 +1,166 @@
+@page "/quality/inquiry"
+@inherits PageBase
+@using ErpWeb.Core.Quality
+
+<PageTitle>Quality Inquiry</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.QualityInquiry">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-magnifying-glass-chart"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Quality</p>
+                <h1 class="iv-title">Quality Inquiry</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@CaseCountLabel</span>
+                    <span class="iv-chip">@PendingReviewLabel</span>
+                    <span class="iv-chip">@OpenDestinationLabel</span>
+                    <span class="iv-chip">FPY @FirstPassYieldDisplay</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <p class="iv-guidance">@FirstPassYieldNote Destination links never post stock. EXECUTED is only a sealed goods-receipt or finished-good allocation. Vendor return, scrap, and purchase credit note stay linked but unverified.</p>
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption" for="qa-inquiry-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="qa-inquiry-search"
+                                   Text="@SearchText"
+                                   TextChanged="OnSearchTextChanged"
+                                   NullText="Search case no, source, supplier, work order…"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   CssClass="w-100"
+                                   TextExpression="@(() => SearchText)"
+                                   BindValueMode="BindValueMode.OnInput" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
+                              Click="@ApplySearchAsync"
+                              aria-label="Search quality inquiry"
+                              title="Search quality inquiry" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (Rows.Count == 0)
+            {
+                <p class="text-muted mb-0">No quality cases match the current filters.</p>
+            }
+            else
+            {
+                <table class="qa-lines">
+                    <thead>
+                        <tr>
+                            <th>Case</th>
+                            <th>Source</th>
+                            <th>Disposition</th>
+                            <th>Destination</th>
+                            <th>Age</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Rows)
+                        {
+                            <tr>
+                                <td>
+                                    <a href="@CaseHref(row.CaseNo)">@row.CaseNo</a>
+                                    <div class="qa-muted">@row.Status · @row.CaseDate.ToString("dd/MM/yyyy")</div>
+                                </td>
+                                <td>
+                                    @row.SourceType
+                                    <div class="qa-muted">@(row.SourceDocNo ?? row.WorkOrderNo ?? row.SupplierName)</div>
+                                </td>
+                                <td>
+                                    Acc @row.AcceptedQty.ToString("0.####")
+                                    · Rej @row.RejectedQty.ToString("0.####")
+                                    · Posted @row.PostedQty.ToString("0.####")
+                                </td>
+                                <td>@row.DestinationSummary</td>
+                                <td>@AgingLabel(row.AgingDays)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Filter inquiry"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@StatusFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatusKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Source" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@SourceFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftSourceKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+</MenuAuthorize>

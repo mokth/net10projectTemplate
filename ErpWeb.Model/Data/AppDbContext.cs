@@ -4,6 +4,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
@@ -345,6 +346,22 @@ public class AppDbContext : DbContext
     public DbSet<ProductionOutputMaterial> ProductionOutputMaterials => Set<ProductionOutputMaterial>();
     public DbSet<WipItemBalLoc> WipItemBalLocs => Set<WipItemBalLoc>();
     public DbSet<PrSchDailyProd> PrSchDailyProds => Set<PrSchDailyProd>();
+
+    public DbSet<QaPolicy> QaPolicies => Set<QaPolicy>();
+    public DbSet<QaCase> QaCases => Set<QaCase>();
+    public DbSet<QaCaseLine> QaCaseLines => Set<QaCaseLine>();
+    public DbSet<QaInspection> QaInspections => Set<QaInspection>();
+    public DbSet<QaDispositionLine> QaDispositionLines => Set<QaDispositionLine>();
+    public DbSet<QaAuditEvent> QaAuditEvents => Set<QaAuditEvent>();
+    public DbSet<QaReceiptGrant> QaReceiptGrants => Set<QaReceiptGrant>();
+    public DbSet<QaReceiptAllocation> QaReceiptAllocations => Set<QaReceiptAllocation>();
+    public DbSet<QaFgGrant> QaFgGrants => Set<QaFgGrant>();
+    public DbSet<QaFgAllocation> QaFgAllocations => Set<QaFgAllocation>();
+    public DbSet<QaLogicalHold> QaLogicalHolds => Set<QaLogicalHold>();
+    public DbSet<QaPhysicalHold> QaPhysicalHolds => Set<QaPhysicalHold>();
+    public DbSet<QaPhysicalAllocation> QaPhysicalAllocations => Set<QaPhysicalAllocation>();
+    public DbSet<QaNonGoodGrant> QaNonGoodGrants => Set<QaNonGoodGrant>();
+    public DbSet<QaNonGoodAllocation> QaNonGoodAllocations => Set<QaNonGoodAllocation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

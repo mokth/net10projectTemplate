@@ -352,8 +352,18 @@
     </Menu>
   </Menu>
 
+  <!-- ─── Quality ───────────────────────────────────────────────── -->
+  <Menu Code="QUALITY" Name="Quality" SortOrder="6" Icon="fa-solid fa-clipboard-check">
+    <Menu Code="QA_WORKBENCH" Name="Quality Workbench" Route="/quality/cases" SortOrder="1"
+          Icon="fa-solid fa-list-check" />
+    <Menu Code="QA_INQUIRY" Name="Quality Inquiry" Route="/quality/inquiry" SortOrder="2"
+          Icon="fa-solid fa-magnifying-glass-chart" />
+    <Menu Code="QA_SETTINGS" Name="Quality Settings" Route="/quality/settings" SortOrder="3"
+          Icon="fa-solid fa-sliders" />
+  </Menu>
+
   <!-- ─── Security / Administration ─────────────────────────────── -->
-  <Menu Code="SECURITY" Name="Administration" SortOrder="6" Icon="fa-solid fa-shield-halved">
+  <Menu Code="SECURITY" Name="Administration" SortOrder="7" Icon="fa-solid fa-shield-halved">
     <Menu Code="ADMIN" Name="Administration" SortOrder="1" Icon="fa-solid fa-gears">
       <!-- Demos kept in XML for dev/test; gated out of production navigation elsewhere -->
       <Menu Code="ADMIN_DEMO" Name="Admin Demo" Route="/admin-demo" SortOrder="0"

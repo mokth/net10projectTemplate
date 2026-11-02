@@ -116,6 +116,16 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, lockedClosed);
         }
+        var writeDetails = await write.IvTrxBatchDetails
+            .Where(d => d.BatchId == batch.Id)
+            .ToListAsync(cancellationToken);
+        var qaError = await AssertQaPhysicalFromDetailsAsync(
+            write, companyCode, branchCode, IvTrxTypes.StockTransfer, batchNo, writeDetails, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,
             source, cancellationToken);
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,

@@ -2,6 +2,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Security;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Pages;
@@ -32,6 +33,9 @@ public partial class PoCdn : PageBase, IDisposable
     /// </summary>
     [SupplyParameterFromQuery(Name = "invNo")]
     public string? InvoiceFromQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "qaCase")]
+    public string? QueryQaCase { get; set; }
 
     [Inject] private IPoCdnService Cdns { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
@@ -298,6 +302,11 @@ public partial class PoCdn : PageBase, IDisposable
         }
         finally
         {
+            if (IsNewMode && string.IsNullOrWhiteSpace(StatusMessage) && string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                StatusMessage = QaOpenedFromCase.Banner(QueryQaCase);
+            }
+
             IsLoading = false;
         }
     }

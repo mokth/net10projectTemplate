@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Core.StockLedger;
@@ -67,6 +68,10 @@ public sealed partial class ProductionOutputService
                 return Fail(TransactionLifecycleGuard.ArchivedError(output.DeletedAtUtc, "This production output")!);
             if (output.Status != ProductionOutputStatuses.Posted)
                 return Fail("Only POSTED Daily Production documents can be rolled back.");
+            var qaRestore = await _qaNonGood.RestoreDailyProductionAsync(
+                db, scope.CompanyCode, scope.BranchCode!, output.Uid, cancellationToken);
+            if (qaRestore is not null)
+                return Fail(qaRestore);
             if (output.PostingId is not long originalPostingId)
                 return Fail("The current PRIMARY posting pointer is missing.");
 
@@ -412,6 +417,10 @@ public sealed partial class ProductionOutputService
                 var nextCost = StockLedgerPrecision.Money(lot.TotalCost - effective.TotalCost);
                 if (nextQty < 0m || nextBaseQty < 0m || nextCost < 0m)
                     return Fail($"Reversing output would make production balance lot {lot.Uid} negative.");
+                var holdError = await AssertHoldAllowsRemainingAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, lot.Uid, nextBaseQty, cancellationToken);
+                if (holdError is not null)
+                    return Fail(holdError);
                 lot.Qty = nextQty;
                 lot.BaseQty = nextBaseQty;
                 lot.TotalCost = nextCost;

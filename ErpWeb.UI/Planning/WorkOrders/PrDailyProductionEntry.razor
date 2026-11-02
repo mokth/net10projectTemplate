@@ -89,6 +89,22 @@
                               Click="@OpenPostConfirm"
                               Enabled="@(!IsSubmitting)" />
                 }
+                @if (CanRequestQa)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Request QA"
+                              IconCssClass="fa-solid fa-clipboard-check"
+                              Click="@OnRequestQa"
+                              Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanRequestQaNonGood)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Request QA (non-good)"
+                              IconCssClass="fa-solid fa-clipboard-check"
+                              Click="@OnRequestQaNonGood"
+                              Enabled="@(!IsSubmitting)" />
+                }
                 @if (CanRollback)
                 {
                     <DxButton RenderStyle="ButtonRenderStyle.Warning"

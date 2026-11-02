@@ -238,6 +238,14 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, poError);
         }
+        var qaClaim = await _qaReceipt.ClaimGoodsReceiptAsync(
+            write, companyCode, branchCode, IvTrxTypes.GoodsReceive,
+            snapshot.Batch!, snapshot.Details!, cancellationToken);
+        if (qaClaim is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaClaim);
+        }
         var currentInvoice = await LoadSingleGrReplayInvoiceAsync(write,
             companyCode, branchCode, snapshot.Details![0].PoNo,
             snapshot.Details[0].PoRelNo, snapshot.Details[0].PoLineNo,
@@ -390,6 +398,16 @@ public sealed partial class IvInventoryPostingService
                     StockLedgerErrorCodes.LedgerMismatch,
                     "The Vendor Return PO line changed after replay planning."));
         }
+        var writeDetails = await write.IvTrxBatchDetails
+            .Where(d => d.BatchId == batch.Id)
+            .ToListAsync(cancellationToken);
+        var qaError = await AssertQaPhysicalFromDetailsAsync(
+            write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         var required = await StockReplayWacMiRootWriter.InsertAsync(
             ledger.Context, financial, batchNo, cancellationToken);
         if (expectedTrxType == IvTrxTypes.VendorReturn)
@@ -521,6 +539,13 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        var qaPhysicalRestore = await _qaPhysical.RestoreStockOutAsync(
+            write, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaPhysicalRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaPhysicalRestore);
+        }
         if (isReceipt)
             await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
                 financial.Tail.LaterEvents, financial.Projection.LaterSteps, original.TrxDtTime,
@@ -717,6 +742,13 @@ public sealed partial class IvInventoryPostingService
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     grError ?? "Historical GR rollback needs procurement replay while the purchase order is invoiced.");
+            }
+            var qaRestore = await _qaReceipt.RestoreGoodsReceiptAsync(
+                write, companyCode, branchCode, batchNo, details, cancellationToken);
+            if (qaRestore is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
             }
         }
 

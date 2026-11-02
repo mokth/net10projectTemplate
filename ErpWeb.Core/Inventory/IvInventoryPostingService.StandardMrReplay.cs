@@ -116,6 +116,10 @@ public sealed partial class IvInventoryPostingService
                 grOrders, grDetails, +1, receiptType, cancellationToken);
             if (poError is not null)
                 return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+            var qaClaim = await _qaReceipt.ClaimGoodsReceiptAsync(
+                write, companyCode, branchCode, receiptType, snapshot.Batch!, grDetails, cancellationToken);
+            if (qaClaim is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, qaClaim);
             var currentInvoice = await LoadSingleGrReplayInvoiceAsync(write,
                 companyCode, branchCode, grDetails[0].PoNo,
                 grDetails[0].PoRelNo, grDetails[0].PoLineNo,
@@ -795,6 +799,10 @@ public sealed partial class IvInventoryPostingService
                     && replayInvoice is null)
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     poError ?? "Historical GR rollback needs procurement replay while the purchase order is invoiced.");
+            var qaRestore = await _qaReceipt.RestoreGoodsReceiptAsync(
+                write, companyCode, branchCode, batchNo, grDetails, cancellationToken);
+            if (qaRestore is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         }
         var result = await RollBackInventoryMRCoreAsync(write,
             companyCode, branchCode, userId, batchNo,

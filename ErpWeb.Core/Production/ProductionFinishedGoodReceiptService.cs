@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.Sales;
@@ -24,6 +25,7 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     IStockPostingCoordinator coordinator, IIvStockPostingRepository stock, IProductionStockWriter production,
     IIvInventoryHistoryWriter historyWriter,
     ISaDeliveryRequestFulfilmentService? deliveryRequestFulfilment = null,
+    IQaFgAuthorization? qaFg = null,
     ILogger<ProductionFinishedGoodReceiptService>? logger = null) : IProductionFinishedGoodReceiptService
 {
     private const string Menu = MenuCodes.PlanningFinishedGoodReceipt;

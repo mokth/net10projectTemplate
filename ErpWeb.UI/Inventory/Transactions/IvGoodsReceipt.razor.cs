@@ -2,6 +2,7 @@ using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Pages;
@@ -14,6 +15,8 @@ public partial class IvGoodsReceipt : PageBase
 {
     [Parameter] public string Mode { get; set; } = "new";
     [Parameter] public int? BatchNo { get; set; }
+
+    [SupplyParameterFromQuery(Name = "qaCase")] public string? QueryQaCase { get; set; }
 
     [Inject] private IIvGoodsReceiptService GoodsReceipt { get; set; } = default!;
     [Inject] private IIvInventoryLookupService Lookups { get; set; } = default!;
@@ -166,6 +169,11 @@ public partial class IvGoodsReceipt : PageBase
         }
         finally
         {
+            if (string.IsNullOrWhiteSpace(StatusMessage) && string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                StatusMessage = QaOpenedFromCase.Banner(QueryQaCase);
+            }
+
             IsLoading = false;
         }
     }
@@ -736,6 +744,30 @@ public partial class IvGoodsReceipt : PageBase
 
         DocumentReturnNavigation.NavigateBack(Navigation, "/inventory/goods-receipts");
         return Task.CompletedTask;
+    }
+
+    protected void OnRequestQa()
+    {
+        var line = Lines.FirstOrDefault();
+        var poNo = line?.PoNo ?? string.Empty;
+        var rel = line?.PoRelNo;
+        var returnUrl = IsNewMode
+            ? "/inventory/goods-receipts/new"
+            : $"/inventory/goods-receipts/{Mode}/{BatchNo}";
+        var posted = string.Equals(BatchStatusDisplay, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase);
+        var source = posted ? QaSourceTypes.PostedGrn : QaSourceTypes.IncomingPreGrn;
+        var href =
+            $"/quality/cases/new?source={Uri.EscapeDataString(source)}"
+            + $"&poNo={Uri.EscapeDataString(poNo)}"
+            + (rel is null ? string.Empty : $"&poRelNo={rel.Value}")
+            + $"&deliveryNote={Uri.EscapeDataString(Header.RefNo ?? string.Empty)}"
+            + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        if (posted && BatchNo is > 0)
+        {
+            href += $"&sourceHeaderId={BatchNo.Value}";
+        }
+
+        Navigation.NavigateTo(href);
     }
 
     protected Task OnCloseAsync()

@@ -4,6 +4,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
@@ -599,7 +600,8 @@ public sealed class FinishedGoodReceiptSqlServerTests
         bool lotControlled = false, string? existingCompany = null, string branch = "HQ",
         bool valueInventory = false, bool singleContribution = false,
         decimal singleContributionQty = 10m,
-        decimal singleContributionValue = 120m)
+        decimal singleContributionValue = 120m,
+        IQaFgAuthorization? qaFg = null)
     {
         await using var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
         var company = existingCompany ?? "F" + Guid.NewGuid().ToString("N")[..4].ToUpperInvariant();
@@ -638,7 +640,7 @@ public sealed class FinishedGoodReceiptSqlServerTests
         });
         await db.SaveChangesAsync();
         var fixture = new Fixture(factory, company, order.Uid, pool.Uid, route.Uid,
-            operation.Uid, branch, valueInventory);
+            operation.Uid, branch, valueInventory, qaFg);
         // The third contributor remains unused by FIFO for a six-unit receipt, but it must
         // still be retained as a pooled-value dependency.
         if (singleContribution)
@@ -1291,7 +1293,8 @@ public sealed class FinishedGoodReceiptSqlServerTests
         public ProductionFinishedGoodReceiptService Service { get; }
         private readonly StockPostingCoordinator _coordinator;
         public Fixture(TestDbContextFactory factory, string company, long order, long pool,
-            long route, long operation, string branch = "HQ", bool valueInventory = false)
+            long route, long operation, string branch = "HQ", bool valueInventory = false,
+            IQaFgAuthorization? qaFg = null)
         {
             _branch = branch;
             Factory = factory; Company = company; OrderId = order; PoolId = pool; _route = route; _operation = operation;
@@ -1309,7 +1312,8 @@ public sealed class FinishedGoodReceiptSqlServerTests
                 new NoActiveStockFreezeGuard(),
                 valueInventory ? new InventoryValuationService() : null);
             Service = new(factory, tenant, access.Object, clock.Object, numbers.Object, new BranchStockTransactionLock(), _coordinator,
-                new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter());
+                new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter(),
+                null, qaFg);
         }
         public FinishedGoodReceiptSaveRequest Draft(decimal qty) => new() { WorkOrderId = OrderId, EffectiveDate = BusinessDate,
             Lines = [new() { ProductionBalLotId = PoolId, Quantity = qty, Warehouse = "WH" }] };
