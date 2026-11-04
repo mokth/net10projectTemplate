@@ -15,70 +15,86 @@ public sealed class QaLogicalHoldAuthorizationService : IQaLogicalHoldAuthorizat
         QaPolicy? policy,
         CancellationToken cancellationToken = default)
     {
+        var logical = await PrepareLogicalAsync(db, cancellationToken);
+        if (logical.Skip)
+        {
+            return null;
+        }
+
+        if (logical.Error is not null)
+        {
+            return logical.Error;
+        }
+
         if (policy is null || !policy.LogicalHoldEnabled)
         {
             return null;
         }
 
-        if (!IsHoldableSource(entity.SourceType))
+        if (!IsHoldableSource(entity.SourceType)
+            || entity.ProductionBalLotId is not long lotId)
         {
             return null;
         }
 
-        var holdQty = HoldQty(entity);
-        if (holdQty <= 0m)
+        var pool = await LockPoolAsync(db, lotId, cancellationToken);
+        if (pool is null
+            || !string.Equals(pool.CompanyCode, scope.CompanyCode, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(pool.BranchCode, scope.BranchCode, StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            return "The production lot is no longer available for this quality hold.";
         }
 
-        if (entity.ProductionBalLotId is not > 0)
-        {
-            return "Select a production lot before approving a hold.";
-        }
-
-        if (entity.LogicalHolds.Any(x =>
-                string.Equals(x.Status, QaLogicalHoldStatuses.Active, StringComparison.OrdinalIgnoreCase)))
-        {
-            return null;
-        }
-
-        var lot = await LockPoolAsync(db, entity.ProductionBalLotId.Value, cancellationToken);
-        if (lot is null
-            || !string.Equals(lot.CompanyCode, entity.CompanyCode, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(lot.BranchCode, entity.BranchCode, StringComparison.OrdinalIgnoreCase))
-        {
-            return "The production lot for this quality hold was not found.";
-        }
-
-        var alreadyReserved = await ActiveReservedAsync(
-            db, entity.CompanyCode, entity.BranchCode, lot.Uid, excludeCaseId: entity.Uid, cancellationToken);
-        var available = IvQty.Round(lot.BaseQty - alreadyReserved);
-        if (holdQty > available)
-        {
-            return FriendlyShortage(lot.Uid, holdQty, available);
-        }
-
+        var requested = new List<(QaCaseLine Line, decimal BaseQty)>();
         foreach (var line in entity.Lines.OrderBy(x => x.LineNo))
         {
-            var lineHold = IvQty.Round(line.Dispositions
-                .Where(x => string.Equals(x.Kind, QaDispositionKinds.Hold, StringComparison.OrdinalIgnoreCase))
-                .Sum(x => x.Qty));
-            if (lineHold <= 0m)
+            if (entity.LogicalHolds.Any(x => x.CaseLineId == line.Uid || ReferenceEquals(x.CaseLine, line)))
             {
                 continue;
             }
 
+            var qty = HoldQty(line);
+            if (qty <= 0m)
+            {
+                continue;
+            }
+
+            var baseQty = ToBaseQty(line, pool, qty);
+            if (baseQty is null)
+            {
+                return $"Quality hold UOM on line {line.LineNo} does not match production lot {pool.Uid}.";
+            }
+
+            requested.Add((line, baseQty.Value));
+        }
+
+        if (requested.Count == 0)
+        {
+            return null;
+        }
+
+        var existing = await ActiveReservedAsync(
+            db, scope.CompanyCode, scope.BranchCode!, pool.Uid, entity.Uid, cancellationToken);
+        var total = IvQty.Round(existing + requested.Sum(x => x.BaseQty));
+        if (total > IvQty.Round(pool.BaseQty))
+        {
+            return FriendlyShortage(pool.Uid, total, IvQty.Round(pool.BaseQty));
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var (line, baseQty) in requested)
+        {
             entity.LogicalHolds.Add(new QaLogicalHold
             {
-                CompanyCode = entity.CompanyCode,
-                BranchCode = entity.BranchCode,
+                CompanyCode = scope.CompanyCode,
+                BranchCode = scope.BranchCode!,
                 Case = entity,
                 CaseLine = line,
-                ProductionBalLotId = lot.Uid,
-                ReservedBaseQty = lineHold,
+                ProductionBalLotId = pool.Uid,
+                ReservedBaseQty = baseQty,
                 Status = QaLogicalHoldStatuses.Active,
                 Cause = QaLogicalHoldCauses.KeepHold,
-                CreatedAtUtc = DateTime.UtcNow
+                CreatedAtUtc = now
             });
         }
 
@@ -123,10 +139,15 @@ public sealed class QaLogicalHoldAuthorizationService : IQaLogicalHoldAuthorizat
         decimal remainingBaseQty,
         CancellationToken cancellationToken = default)
     {
-        var policy = await QaPolicyService.LoadPublishedAsync(db, companyCode, cancellationToken);
-        if (policy is null || !policy.LogicalHoldEnabled)
+        var logical = await PrepareLogicalAsync(db, cancellationToken);
+        if (logical.Skip)
         {
             return null;
+        }
+
+        if (logical.Error is not null)
+        {
+            return logical.Error;
         }
 
         var reserved = await ActiveReservedAsync(
@@ -143,6 +164,14 @@ public sealed class QaLogicalHoldAuthorizationService : IQaLogicalHoldAuthorizat
         }
 
         return FriendlyShortage(productionBalLotId, reserved, IvQty.Round(remaining));
+    }
+
+    private static async Task<QaFeatureDecision> PrepareLogicalAsync(
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var ready = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        return ready.ForFeature(ready.Logical);
     }
 
     private static async Task<decimal> ActiveReservedAsync(
@@ -181,11 +210,26 @@ public sealed class QaLogicalHoldAuthorizationService : IQaLogicalHoldAuthorizat
         string.Equals(sourceType, QaSourceTypes.ProductionWipLot, StringComparison.OrdinalIgnoreCase)
         || string.Equals(sourceType, QaSourceTypes.FgStagingLot, StringComparison.OrdinalIgnoreCase);
 
-    private static decimal HoldQty(QaCase entity) =>
-        IvQty.Round(entity.Lines
-            .SelectMany(x => x.Dispositions)
+    private static decimal HoldQty(QaCaseLine line) =>
+        IvQty.Round(line.Dispositions
             .Where(x => string.Equals(x.Kind, QaDispositionKinds.Hold, StringComparison.OrdinalIgnoreCase))
             .Sum(x => x.Qty));
+
+    private static decimal? ToBaseQty(QaCaseLine line, ProductionBalLot pool, decimal qty)
+    {
+        if (string.Equals(line.Uom, pool.BaseUom, StringComparison.OrdinalIgnoreCase))
+        {
+            return IvQty.Round(qty);
+        }
+
+        if (string.Equals(line.Uom, pool.Uom, StringComparison.OrdinalIgnoreCase)
+            && pool.ConversionFactorToBase > 0m)
+        {
+            return IvQty.Round(qty * pool.ConversionFactorToBase);
+        }
+
+        return null;
+    }
 
     internal static string FriendlyShortage(long lotId, decimal reserved, decimal available) =>
         $"Quality hold reserves {reserved:0.####} of production lot {lotId}. Only {available:0.####} is available. This is a reservation, not a warehouse transfer.";

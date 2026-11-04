@@ -26,11 +26,13 @@
                     <span class="iv-chip">@PendingReviewLabel</span>
                     <span class="iv-chip">@OpenDestinationLabel</span>
                     <span class="iv-chip">FPY @FirstPassYieldDisplay</span>
+                    <span class="iv-chip">Record-only</span>
                 </div>
             </div>
         </header>
 
         <section class="iv-card">
+            <QaRecordOnlyBanner />
             <p class="iv-guidance">@FirstPassYieldNote Destination links never post stock. EXECUTED is only a sealed goods-receipt or finished-good allocation. Vendor return, scrap, and purchase credit note stay linked but unverified.</p>
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search erp-inline-search">
@@ -56,6 +58,10 @@
                           Text="FILTER"
                           IconCssClass="fa-solid fa-filter"
                           Click="@OpenFilterPopup" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="How to use"
+                          IconCssClass="fa-solid fa-circle-info"
+                          Click="@(() => HelpVisible = true)" />
             </div>
 
             @if (IsBootstrapping)
@@ -72,39 +78,71 @@
             }
             else
             {
-                <table class="qa-lines">
-                    <thead>
-                        <tr>
-                            <th>Case</th>
-                            <th>Source</th>
-                            <th>Disposition</th>
-                            <th>Destination</th>
-                            <th>Age</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var row in Rows)
-                        {
-                            <tr>
-                                <td>
+                <div class="iv-list-desktop">
+                    <DxGrid Data="@Rows"
+                            KeyFieldName="@nameof(QaInquiryRow.CaseNo)"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            TextWrapEnabled="false"
+                            PageSize="20"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                            CssClass="qa-inquiry-grid">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.CaseNo)" Caption="Case" MinWidth="120">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (QaInquiryRow)context.DataItem;
+                                    }
                                     <a href="@CaseHref(row.CaseNo)">@row.CaseNo</a>
                                     <div class="qa-muted">@row.Status · @row.CaseDate.ToString("dd/MM/yyyy")</div>
-                                </td>
-                                <td>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.SourceType)" Caption="Source" MinWidth="140">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (QaInquiryRow)context.DataItem;
+                                    }
                                     @row.SourceType
                                     <div class="qa-muted">@(row.SourceDocNo ?? row.WorkOrderNo ?? row.SupplierName)</div>
-                                </td>
-                                <td>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.AcceptedQty)" Caption="Disposition" MinWidth="160">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (QaInquiryRow)context.DataItem;
+                                    }
                                     Acc @row.AcceptedQty.ToString("0.####")
                                     · Rej @row.RejectedQty.ToString("0.####")
                                     · Posted @row.PostedQty.ToString("0.####")
-                                </td>
-                                <td>@row.DestinationSummary</td>
-                                <td>@AgingLabel(row.AgingDays)</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.DestinationSummary)" Caption="Destination" MinWidth="180" />
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.AgingDays)" Caption="Age" Width="72px" MinWidth="64">
+                                <CellDisplayTemplate>
+                                    @AgingLabel(((QaInquiryRow)context.DataItem).AgingDays)
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                        </Columns>
+                    </DxGrid>
+                </div>
+
+                <div class="iv-list-compact">
+                    @foreach (var row in Rows)
+                    {
+                        <a class="iv-list-compact__item" href="@CaseHref(row.CaseNo)">
+                            <span class="iv-list-compact__code">@row.CaseNo</span>
+                            <span class="iv-list-compact__desc">
+                                @row.SourceType
+                                · @row.CaseDate.ToString("dd/MM/yyyy")
+                            </span>
+                            <div class="iv-list-compact__meta">
+                                <span class="iv-status">@row.Status</span>
+                                <span class="iv-chip">@AgingLabel(row.AgingDays)</span>
+                            </div>
+                        </a>
+                    }
+                </div>
             }
         </section>
     </div>
@@ -163,4 +201,6 @@
             </div>
         </Content>
     </DxPopup>
+
+    <QaHowToUsePopup @bind-Visible="@HelpVisible" />
 </MenuAuthorize>

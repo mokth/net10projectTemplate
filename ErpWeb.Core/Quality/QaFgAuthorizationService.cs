@@ -18,54 +18,27 @@ public sealed class QaFgAuthorizationService : IQaFgAuthorization
         IReadOnlyDictionary<long, ProductionBalLot> pools,
         CancellationToken cancellationToken = default)
     {
+        var fg = await PrepareFgAsync(db, cancellationToken);
+        if (fg.Skip)
+        {
+            return null;
+        }
+
+        if (fg.Error is not null)
+        {
+            return fg.Error;
+        }
+
         var policy = await QaPolicyService.LoadPublishedAsync(db, companyCode, cancellationToken);
         if (policy is null || !policy.FinalFgInspectionEnabled)
         {
             return null;
         }
 
-        var required = receipt.Sources
-            .OrderBy(x => x.Id)
-            .Select(source => new FgNeed(source, pools[source.ProductionBalLotId], IvQty.Round(source.BaseQty)))
-            .Where(x => x.Qty > 0m)
-            .ToList();
-        if (required.Count == 0)
-        {
-            return null;
-        }
-
-        var existing = await db.QaFgAllocations
-            .Where(x => x.CompanyCode == companyCode
-                        && x.BranchCode == branchCode
-                        && x.BatchId == receipt.BatchId
-                        && x.Status == QaReceiptAllocationStatuses.Posted)
-            .ToListAsync(cancellationToken);
-        if (existing.Count > 0)
-        {
-            var existingBySource = existing.GroupBy(x => x.SourceId)
-                .ToDictionary(g => g.Key, g => IvQty.Round(g.Sum(x => x.Qty)));
-            foreach (var need in required)
-            {
-                if (!existingBySource.TryGetValue(need.Source.Id, out var posted)
-                    || posted != need.Qty)
-                {
-                    return "This finished-good receipt already has a quality allocation that does not match the current lines. Reload and try again.";
-                }
-            }
-
-            return null;
-        }
-
-        foreach (var need in required)
-        {
-            var claimed = await ClaimLineAsync(db, companyCode, branchCode, receipt, need, cancellationToken);
-            if (claimed is not null)
-            {
-                return claimed;
-            }
-        }
-
-        return null;
+        _ = branchCode;
+        _ = receipt;
+        _ = pools;
+        return QaReadinessMessages.FinalFgFrozen;
     }
 
     public async Task<string?> RestoreFinishedGoodAsync(
@@ -75,6 +48,17 @@ public sealed class QaFgAuthorizationService : IQaFgAuthorization
         int batchId,
         CancellationToken cancellationToken = default)
     {
+        var fg = await PrepareFgAsync(db, cancellationToken);
+        if (fg.Skip)
+        {
+            return null;
+        }
+
+        if (fg.Error is not null)
+        {
+            return fg.Error;
+        }
+
         var posted = await db.QaFgAllocations
             .Include(x => x.Grant)
             .ThenInclude(x => x.Case)
@@ -129,6 +113,17 @@ public sealed class QaFgAuthorizationService : IQaFgAuthorization
         IEnumerable<ProductionBalLot> pools,
         CancellationToken cancellationToken = default)
     {
+        var fg = await PrepareFgAsync(db, cancellationToken);
+        if (fg.Skip)
+        {
+            return null;
+        }
+
+        if (fg.Error is not null)
+        {
+            return fg.Error;
+        }
+
         var policy = await QaPolicyService.LoadPublishedAsync(db, companyCode, cancellationToken);
         if (policy is null || !policy.FinalFgInspectionEnabled)
         {
@@ -144,8 +139,15 @@ public sealed class QaFgAuthorizationService : IQaFgAuthorization
             return null;
         }
 
-        return "Finished-goods inspection is on. Production stock adjustment cannot consume FG staging. "
-            + "Inspect and approve the lot, then post a finished-good receipt for the accepted quantity.";
+        return QaReadinessMessages.FinalFgFrozen;
+    }
+
+    private static async Task<QaFeatureDecision> PrepareFgAsync(
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var ready = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        return ready.ForFeature(ready.FinalFg);
     }
 
     private async Task<string?> ClaimLineAsync(

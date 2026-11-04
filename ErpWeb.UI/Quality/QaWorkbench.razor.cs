@@ -26,6 +26,7 @@ public partial class QaWorkbench : PageBase, IDisposable
     protected bool IsSubmitting;
     protected bool FilterPopupVisible;
     protected bool ConfirmVisible;
+    protected bool HelpVisible;
     protected string? StatusMessage;
     protected string SearchText = string.Empty;
     protected int TotalCount;

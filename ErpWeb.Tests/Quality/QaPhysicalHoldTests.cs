@@ -59,22 +59,18 @@ public class QaPhysicalHoldTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Approve_reserves_20_of_100_without_changing_qty_cost_or_status()
+    public async Task Approve_places_physical_hold_without_mutating_stock()
     {
         await EnableHoldAsync();
         var pileId = await SeedPileAsync(100m, cost: 250m);
         var approved = await ApproveStockHoldAsync(pileId, holdQty: 20m, inspected: 100m);
         Assert.True(approved.Succeeded, approved.ErrorMessage);
         Assert.Equal(20m, approved.Case!.PhysicalHeldQty);
-        Assert.Contains(approved.Case.Audit, x => x.EventType == QaAuditEvents.HoldPlaced);
-        Assert.Contains("reserved", approved.Case.EligibilityNote, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("does not convert IStatus to QCHOLD", approved.Case.EligibilityNote, StringComparison.OrdinalIgnoreCase);
 
         await using var db = await _factory.CreateDbContextAsync();
         var hold = Assert.Single(await db.QaPhysicalHolds.ToListAsync());
-        Assert.Equal(20m, hold.ReservedBaseQty);
         Assert.Equal(pileId, hold.BalLocId);
-        Assert.Equal(QaLogicalHoldStatuses.Active, hold.Status);
+        Assert.Equal(20m, hold.ReservedBaseQty);
         var pile = await db.IvBalLocs.SingleAsync(x => x.Id == pileId);
         Assert.Equal(100m, pile.StdQty);
         Assert.Equal(250m, pile.Cost);
@@ -82,11 +78,27 @@ public class QaPhysicalHoldTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Outflow_of_80_is_allowed_and_81_is_blocked_while_20_is_reserved()
+    public async Task Same_pile_lines_are_aggregated_before_hold_placement()
     {
         await EnableHoldAsync();
         var pileId = await SeedPileAsync(100m);
-        Assert.True((await ApproveStockHoldAsync(pileId, 20m, 100m)).Succeeded);
+        var approved = await ApproveStockHoldLinesAsync(pileId, 60m, 50m);
+        Assert.False(approved.Succeeded);
+        Assert.Contains("Only 100", approved.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(0, await db.QaPhysicalHolds.CountAsync());
+        Assert.Equal(100m, await db.IvBalLocs
+            .Where(x => x.Id == pileId).Select(x => x.StdQty).SingleAsync());
+    }
+
+    [Fact]
+    public async Task Outflow_of_80_is_allowed_and_81_is_blocked_while_20_is_reserved()
+    {
+        var pileId = await SeedPileAsync(100m);
+        var approved = await ApproveStockHoldAsync(pileId, 20m, 100m);
+        Assert.True(approved.Succeeded, approved.ErrorMessage);
+        await SeedPhysicalHoldAsync(approved.Case!.CaseNo, pileId, 20m);
 
         await using var db = await _factory.CreateDbContextAsync();
         var holds = new QaPhysicalHoldAuthorizationService();
@@ -103,6 +115,45 @@ public class QaPhysicalHoldTests : IAsyncLifetime
         var pile = await db.IvBalLocs.SingleAsync(x => x.Id == pileId);
         Assert.Equal(100m, pile.StdQty);
         Assert.Equal(IvItemStatuses.Active, pile.IStatus);
+    }
+
+    [Fact]
+    public async Task Only_posted_allocations_reduce_outstanding_hold()
+    {
+        var pileId = await SeedPileAsync(100m);
+        var approved = await ApproveStockHoldAsync(pileId, 20m, 100m);
+        await SeedPhysicalHoldAsync(approved.Case!.CaseNo, pileId, 20m);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var hold = await db.QaPhysicalHolds.SingleAsync();
+        var allocation = new QaPhysicalAllocation
+        {
+            HoldId = hold.Uid,
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Qty = 5m,
+            Status = QaReceiptAllocationStatuses.Posted,
+            TrxType = IvTrxTypes.Scrap,
+            BatchNo = 15,
+            BatchDetailId = 151,
+            PostedAtUtc = DateTime.UtcNow
+        };
+        db.QaPhysicalAllocations.Add(allocation);
+        await db.SaveChangesAsync();
+
+        var holds = new QaPhysicalHoldAuthorizationService();
+        Assert.Null(await holds.AssertAndClaimStockOutAsync(
+            db, "DEMO", "HQ", IvTrxTypes.Scrap, 16,
+            [Need(pileId, IvItemStatuses.Active, 100m, 85m, 152)]));
+        Assert.NotNull(await holds.AssertAndClaimStockOutAsync(
+            db, "DEMO", "HQ", IvTrxTypes.Scrap, 17,
+            [Need(pileId, IvItemStatuses.Active, 100m, 86m, 153)]));
+
+        allocation.Status = QaReceiptAllocationStatuses.Reversed;
+        await db.SaveChangesAsync();
+        Assert.NotNull(await holds.AssertAndClaimStockOutAsync(
+            db, "DEMO", "HQ", IvTrxTypes.Scrap, 18,
+            [Need(pileId, IvItemStatuses.Active, 100m, 81m, 154)]));
     }
 
     [Fact]
@@ -132,26 +183,70 @@ public class QaPhysicalHoldTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Scrap_claims_the_reservation_and_restore_reverses_it()
+    public async Task Scrap_without_lineage_uses_only_unreserved_stock_and_restore_reverses_seeded_allocation()
     {
         await EnableHoldAsync();
         var pileId = await SeedPileAsync(100m);
-        Assert.True((await ApproveStockHoldAsync(pileId, 20m, 100m)).Succeeded);
-
         await using var db = await _factory.CreateDbContextAsync();
         var holds = new QaPhysicalHoldAuthorizationService();
-        Assert.Null(await holds.AssertAndClaimStockOutAsync(
+        var allowed = await holds.AssertAndClaimStockOutAsync(
             db, "DEMO", "HQ", IvTrxTypes.Scrap, 9,
-            [Need(pileId, IvItemStatuses.Active, 100m, 20m, 21)]));
-        await db.SaveChangesAsync();
+            [Need(pileId, IvItemStatuses.Active, 100m, 20m, 21)]);
+        Assert.Null(allowed);
+        Assert.Equal(0, await db.QaPhysicalAllocations.CountAsync());
 
-        var allocation = Assert.Single(await db.QaPhysicalAllocations.ToListAsync());
-        Assert.Equal(20m, allocation.Qty);
-        Assert.Equal(QaReceiptAllocationStatuses.Posted, allocation.Status);
-        Assert.Equal(IvTrxTypes.Scrap, allocation.TrxType);
+        var caseRow = new QaCase
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            CaseNo = "QCSEED01",
+            CaseDate = DateTime.Today,
+            Status = QaCaseStatuses.Approved,
+            SourceType = QaSourceTypes.InventoryStock,
+            EligibilityNote = QaEligibilityNotes.PostedStock,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "tester"
+        };
+        var line = new QaCaseLine { LineNo = 1, ItemCode = "A100", Uom = "EA", Qty = 20m };
+        caseRow.Lines.Add(line);
+        db.QaCases.Add(caseRow);
+        await db.SaveChangesAsync();
+        var hold = new QaPhysicalHold
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            CaseId = caseRow.Uid,
+            CaseLineId = line.Uid,
+            BalLocId = pileId,
+            ItemCode = "A100",
+            WarehouseCode = "MAIN",
+            LocationCode = "BIN1",
+            LotNo = "LOT-1",
+            ItemStatus = IvItemStatuses.Active,
+            ReservedBaseQty = 20m,
+            Status = QaLogicalHoldStatuses.Active,
+            Cause = QaLogicalHoldCauses.KeepHold,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        db.QaPhysicalHolds.Add(hold);
+        await db.SaveChangesAsync();
+        db.QaPhysicalAllocations.Add(new QaPhysicalAllocation
+        {
+            HoldId = hold.Uid,
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Qty = 20m,
+            Status = QaReceiptAllocationStatuses.Posted,
+            TrxType = IvTrxTypes.Scrap,
+            BatchNo = 9,
+            BatchDetailId = 21,
+            PostedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
 
         Assert.Null(await holds.RestoreStockOutAsync(db, "DEMO", "HQ", 9));
         await db.SaveChangesAsync();
+        var allocation = Assert.Single(await db.QaPhysicalAllocations.ToListAsync());
         Assert.Equal(QaReceiptAllocationStatuses.Reversed, allocation.Status);
         Assert.Equal(100m, await db.IvBalLocs.Where(x => x.Id == pileId).Select(x => x.StdQty).SingleAsync());
     }
@@ -159,9 +254,10 @@ public class QaPhysicalHoldTests : IAsyncLifetime
     [Fact]
     public async Task Transfer_of_a_reserved_pile_is_blocked()
     {
-        await EnableHoldAsync();
         var pileId = await SeedPileAsync(100m);
-        Assert.True((await ApproveStockHoldAsync(pileId, 20m, 100m)).Succeeded);
+        var approved = await ApproveStockHoldAsync(pileId, 20m, 100m);
+        Assert.True(approved.Succeeded, approved.ErrorMessage);
+        await SeedPhysicalHoldAsync(approved.Case!.CaseNo, pileId, 20m);
 
         await using var db = await _factory.CreateDbContextAsync();
         var blocked = await new QaPhysicalHoldAuthorizationService().AssertAndClaimStockOutAsync(
@@ -174,15 +270,17 @@ public class QaPhysicalHoldTests : IAsyncLifetime
     [Fact]
     public async Task Close_is_blocked_while_a_physical_hold_is_active()
     {
-        await EnableHoldAsync();
         var pileId = await SeedPileAsync(100m);
         var approved = await ApproveStockHoldAsync(pileId, 20m, 100m);
+        Assert.True(approved.Succeeded, approved.ErrorMessage);
+        await SeedPhysicalHoldAsync(approved.Case!.CaseNo, pileId, 20m);
         var cases = CreateCaseService();
-        var closed = await cases.CloseAsync(Review(approved.Case!));
+        var current = await cases.GetAsync(approved.Case.CaseNo);
+        var closed = await cases.CloseAsync(Review(current.Case!));
         Assert.False(closed.Succeeded);
         Assert.Contains("Release the quality hold", closed.ErrorMessage, StringComparison.OrdinalIgnoreCase);
 
-        var released = await cases.ReleaseHoldAsync(Review(approved.Case!));
+        var released = await cases.ReleaseHoldAsync(Review(current.Case!));
         Assert.True(released.Succeeded, released.ErrorMessage);
         Assert.Equal(0m, released.Case!.PhysicalHeldQty);
         var afterRelease = await cases.CloseAsync(Review(released.Case!));
@@ -197,12 +295,43 @@ public class QaPhysicalHoldTests : IAsyncLifetime
 
     private async Task EnableHoldAsync()
     {
-        var result = await CreatePolicyService().SaveAsync(new QaPolicySaveCommand
+        await using var db = await _factory.CreateDbContextAsync();
+        db.QaPolicies.Add(new QaPolicy
         {
-            InspectorApproverSeparation = true,
-            PhysicalHoldEnabled = true
+            CompanyCode = "DEMO",
+            Version = 1,
+            Enabled = true,
+            PhysicalHoldEnabled = true,
+            IsPublished = true,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "tester"
         });
-        Assert.True(result.Succeeded, result.ErrorMessage);
+        await db.SaveChangesAsync();
+    }
+
+    private async Task SeedPhysicalHoldAsync(string caseNo, int pileId, decimal qty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var entity = await db.QaCases.Include(x => x.Lines).SingleAsync(x => x.CaseNo == caseNo);
+        var line = entity.Lines.OrderBy(x => x.LineNo).First();
+        db.QaPhysicalHolds.Add(new QaPhysicalHold
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            CaseId = entity.Uid,
+            CaseLineId = line.Uid,
+            BalLocId = pileId,
+            ItemCode = "A100",
+            WarehouseCode = "MAIN",
+            LocationCode = "BIN1",
+            LotNo = "LOT-1",
+            ItemStatus = IvItemStatuses.Active,
+            ReservedBaseQty = qty,
+            Status = QaLogicalHoldStatuses.Active,
+            Cause = QaLogicalHoldCauses.KeepHold,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
     }
 
     private async Task<int> SeedPileAsync(decimal qty, decimal cost = 0m, string status = IvItemStatuses.Active)
@@ -281,6 +410,54 @@ public class QaPhysicalHoldTests : IAsyncLifetime
         });
         Assert.True(inspectedResult.Succeeded, inspectedResult.ErrorMessage);
         var review = await cases.SubmitForReviewAsync(Review(inspectedResult.Case!));
+        _scope = Scope("approver");
+        BindTenant();
+        return await cases.ApproveAsync(Review(review.Case!));
+    }
+
+    private async Task<QaResult> ApproveStockHoldLinesAsync(int pileId, params decimal[] holdQtys)
+    {
+        _scope = Scope("tester");
+        BindTenant();
+        var cases = CreateCaseService();
+        var saved = await cases.SaveDraftAsync(new QaCaseSaveCommand
+        {
+            CaseDate = DateTime.Today,
+            SourceType = QaSourceTypes.InventoryStock,
+            SourceDocNo = pileId.ToString(),
+            Lines = holdQtys.Select((qty, index) => new QaCaseLineSaveCommand
+            {
+                LineNo = index + 1,
+                ItemCode = "A100",
+                Uom = "EA",
+                Qty = qty,
+                LotNo = "LOT-1",
+                WarehouseCode = "MAIN",
+                LocationCode = "BIN1",
+                ItemStatus = IvItemStatuses.Active
+            }).ToArray()
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        var submitted = await cases.SubmitAsync(Review(saved.Case!));
+        var started = await cases.StartInspectionAsync(Review(submitted.Case!));
+        var inspected = await cases.SaveInspectionAsync(new QaInspectionSaveCommand
+        {
+            CaseNo = started.Case!.CaseNo,
+            RowVersion = started.Case.RowVersion,
+            Lines = holdQtys.Select((qty, index) => new QaInspectionLineCommand
+            {
+                LineNo = index + 1,
+                Result = QaInspectionResults.Fail,
+                InspectedQty = qty,
+                Dispositions = [new QaDispositionDto
+                {
+                    Kind = QaDispositionKinds.Hold,
+                    Qty = qty
+                }]
+            }).ToArray()
+        });
+        Assert.True(inspected.Succeeded, inspected.ErrorMessage);
+        var review = await cases.SubmitForReviewAsync(Review(inspected.Case!));
         _scope = Scope("approver");
         BindTenant();
         return await cases.ApproveAsync(Review(review.Case!));

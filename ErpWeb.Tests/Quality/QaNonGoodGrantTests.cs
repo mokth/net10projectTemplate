@@ -55,68 +55,48 @@ public class QaNonGoodGrantTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Claim_fails_closed_when_gate_is_on_and_no_grant_exists()
+    public async Task Claim_fails_closed_when_gate_is_on()
     {
         await EnableNonGoodAsync();
         var output = Output(qty: 4m);
         await using var db = await _factory.CreateDbContextAsync();
         var error = await new QaNonGoodAuthorizationService().ClaimDailyProductionAsync(
             db, "DEMO", "HQ", output);
-        Assert.NotNull(error);
-        Assert.Contains("approved quality inspection", error, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("counter", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(QaReadinessMessages.NonGoodFrozen, error);
         Assert.Equal(0, await db.QaNonGoodAllocations.CountAsync());
     }
 
     [Fact]
-    public async Task Claim_consumes_accepted_qty_and_rejects_over_post()
-    {
-        await EnableNonGoodAsync();
-        await SeedGrantAsync(accepted: 4m);
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            var error = await new QaNonGoodAuthorizationService().ClaimDailyProductionAsync(
-                db, "DEMO", "HQ", Output(qty: 4m));
-            Assert.Null(error);
-            await db.SaveChangesAsync();
-            Assert.Equal(4m, await db.QaNonGoodAllocations
-                .Where(x => x.Status == QaReceiptAllocationStatuses.Posted)
-                .SumAsync(x => x.Qty));
-            Assert.Equal(0, await db.ProductionBalLots.CountAsync());
-        }
-
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            var error = await new QaNonGoodAuthorizationService().ClaimDailyProductionAsync(
-                db, "DEMO", "HQ", Output(qty: 5m));
-            Assert.NotNull(error);
-            Assert.Contains("does not match", error, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Fact]
-    public async Task Claim_blocks_when_grant_is_short_of_nongood_qty()
+    public async Task Claim_does_not_consume_grant_while_nongood_is_frozen()
     {
         await EnableNonGoodAsync();
         await SeedGrantAsync(accepted: 4m);
         await using var db = await _factory.CreateDbContextAsync();
         var error = await new QaNonGoodAuthorizationService().ClaimDailyProductionAsync(
-            db, "DEMO", "HQ", Output(qty: 5m));
-        Assert.NotNull(error);
-        Assert.Contains("Only", error, StringComparison.OrdinalIgnoreCase);
+            db, "DEMO", "HQ", Output(qty: 4m));
+        Assert.Equal(QaReadinessMessages.NonGoodFrozen, error);
         Assert.Equal(0, await db.QaNonGoodAllocations.CountAsync());
     }
 
     [Fact]
-    public async Task Restore_reverses_posted_allocation()
+    public async Task Restore_reverses_posted_allocation_even_when_gate_is_off()
     {
-        await EnableNonGoodAsync();
         await SeedGrantAsync(accepted: 4m);
         await using var db = await _factory.CreateDbContextAsync();
-        var auth = new QaNonGoodAuthorizationService();
-        Assert.Null(await auth.ClaimDailyProductionAsync(db, "DEMO", "HQ", Output(qty: 4m)));
+        var grant = await db.QaNonGoodGrants.SingleAsync();
+        db.QaNonGoodAllocations.Add(new QaNonGoodAllocation
+        {
+            GrantId = grant.Uid,
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Qty = 4m,
+            Status = QaReceiptAllocationStatuses.Posted,
+            ProductionOutputId = 99,
+            PostedAtUtc = DateTime.UtcNow
+        });
         await db.SaveChangesAsync();
 
+        var auth = new QaNonGoodAuthorizationService();
         Assert.Null(await auth.RestoreDailyProductionAsync(db, "DEMO", "HQ", 99));
         await db.SaveChangesAsync();
 
@@ -127,7 +107,7 @@ public class QaNonGoodGrantTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Approve_issues_grant_without_valued_lots_or_cost()
+    public async Task Approve_is_record_only_without_grant_valued_lots_or_cost()
     {
         var cases = new QaCaseService(_factory, _tenant.Object, _access.Object, new RunningNumberService());
         var saved = await cases.SaveDraftAsync(new QaCaseSaveCommand
@@ -136,7 +116,6 @@ public class QaNonGoodGrantTests : IAsyncLifetime
             SourceType = QaSourceTypes.ProductionOutputNonGood,
             SourceDocType = "WI",
             SourceDocNo = "DP00000099",
-            SourceHeaderId = 99,
             WorkOrderNo = "WO1",
             Lines =
             [
@@ -176,13 +155,11 @@ public class QaNonGoodGrantTests : IAsyncLifetime
         BindTenant();
         var approved = await cases.ApproveAsync(Review(review.Case!));
         Assert.True(approved.Succeeded, approved.ErrorMessage);
-        Assert.Contains(approved.Case!.Audit, x => x.EventType == QaAuditEvents.GrantIssued);
-        Assert.Contains("valued lot", approved.Case.EligibilityNote, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(approved.Case!.Audit, x => x.EventType == QaAuditEvents.GrantIssued);
+        Assert.Equal(QaEligibilityNotes.NonGoodOutput, approved.Case.EligibilityNote);
 
         await using var db = await _factory.CreateDbContextAsync();
-        var grant = Assert.Single(await db.QaNonGoodGrants.ToListAsync());
-        Assert.Equal(4m, grant.AcceptedQty);
-        Assert.Equal(99, grant.ProductionOutputId);
+        Assert.Equal(0, await db.QaNonGoodGrants.CountAsync());
         Assert.Equal(0, await db.QaNonGoodAllocations.CountAsync());
         Assert.Equal(0, await db.ProductionBalLots.CountAsync());
         Assert.Equal(0, await db.IvBalLocs.CountAsync());

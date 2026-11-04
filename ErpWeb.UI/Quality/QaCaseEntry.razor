@@ -42,12 +42,21 @@
                         <span class="mr-chip">@CaseNoDisplay</span>
                         <span class="mr-chip">@Header.Status</span>
                         <span class="mr-chip">@PhaseChip</span>
+                        <span class="mr-chip">Record-only</span>
                     </div>
                 </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="How to use"
+                          IconCssClass="fa-solid fa-circle-info"
+                          Click="@(() => HelpVisible = true)" />
             </header>
 
             <section class="mr-card">
-                <p class="mr-guidance">@Header.EligibilityNote</p>
+                <QaRecordOnlyBanner />
+                @if (!string.IsNullOrWhiteSpace(Header.EligibilityNote))
+                {
+                    <p class="mr-guidance">@Header.EligibilityNote</p>
+                }
                 <p class="mr-guidance">Attachments are not enabled in this phase.</p>
                 @if (IsIncoming)
                 {
@@ -181,42 +190,65 @@
                 }
                 else
                 {
-                    <table class="qa-lines">
-                        <thead>
-                            <tr>
-                                <th>Line</th>
-                                <th>Item</th>
-                                <th>Qty</th>
-                                <th>Inspected</th>
-                                <th>Result</th>
-                                <th>Disposition</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var line in Lines)
-                            {
+                    <div class="qa-lines-desktop">
+                        <table class="qa-lines">
+                            <thead>
                                 <tr>
-                                    <td>@line.LineNo</td>
-                                    <td>@line.ItemCode<br /><span class="qa-muted">@line.ItemName</span></td>
-                                    <td>@line.Qty.ToString("n4") @line.Uom</td>
-                                    <td>@line.InspectedQty.ToString("n4")</td>
-                                    <td>@(line.Inspection?.Result ?? "—")</td>
-                                    <td>@DispositionSummary(line)</td>
-                                    <td>
-                                        @if (CanEditDocument)
-                                        {
-                                            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Remove" Click="@(() => RemoveLine(line))" />
-                                        }
-                                        else if (CanInspect)
-                                        {
-                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Inspect" Click="@(() => OpenInspectLine(line))" />
-                                        }
-                                    </td>
+                                    <th>Line</th>
+                                    <th>Item</th>
+                                    <th>Qty</th>
+                                    <th>Inspected</th>
+                                    <th>Result</th>
+                                    <th>Disposition</th>
+                                    <th></th>
                                 </tr>
-                            }
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                @foreach (var line in Lines)
+                                {
+                                    <tr>
+                                        <td>@line.LineNo</td>
+                                        <td>@line.ItemCode<br /><span class="qa-muted">@line.ItemName</span></td>
+                                        <td>@line.Qty.ToString("n4") @line.Uom</td>
+                                        <td>@line.InspectedQty.ToString("n4")</td>
+                                        <td>@(line.Inspection?.Result ?? "—")</td>
+                                        <td>@DispositionSummary(line)</td>
+                                        <td>
+                                            @if (CanEditDocument)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Remove" Click="@(() => RemoveLine(line))" />
+                                            }
+                                            else if (CanInspect)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Inspect" Click="@(() => OpenInspectLine(line))" />
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="qa-lines-compact">
+                        @foreach (var line in Lines)
+                        {
+                            <div class="qa-line-card">
+                                <div>
+                                    <strong>@line.ItemCode</strong>
+                                    <span class="qa-muted"> · Line @line.LineNo</span>
+                                    <p class="qa-muted mb-0">@line.Qty.ToString("n4") @line.Uom · Inspected @line.InspectedQty.ToString("n4")</p>
+                                    <p class="qa-muted mb-0">@(line.Inspection?.Result ?? "—") · @DispositionSummary(line)</p>
+                                </div>
+                                @if (CanEditDocument)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Remove" Click="@(() => RemoveLine(line))" />
+                                }
+                                else if (CanInspect)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Inspect" Click="@(() => OpenInspectLine(line))" />
+                                }
+                            </div>
+                        }
+                    </div>
                 }
             </section>
 
@@ -266,8 +298,8 @@
             }
 
             <footer class="mr-footer">
-                <p class="mr-footer__hint">
-                    @LineCountLabel. Approval never posts inventory, WIP, or costing.
+                    <p class="mr-footer__hint">
+                    @LineCountLabel. Inspection record only — posting approval not active.
                 </p>
                 <div class="mr-footer__actions">
                     @if (IsViewMode)
@@ -501,4 +533,6 @@
             </div>
         </Content>
     </DxPopup>
+
+    <QaHowToUsePopup @bind-Visible="@HelpVisible" />
 </MenuAuthorize>

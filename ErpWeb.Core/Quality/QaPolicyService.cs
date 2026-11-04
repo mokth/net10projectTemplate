@@ -37,6 +37,17 @@ public sealed class QaPolicyService : IQaPolicyService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var ready = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        if (ready.ShouldSkipAllQaQueries)
+        {
+            return QaResult.OkPolicy(DefaultPolicy(), QaReadinessMessages.NotInstalled);
+        }
+
+        if (ready.ProbeFailed || !ready.CanQueryPolicy)
+        {
+            return QaResult.Fail(ready.UserMessage ?? QaReadinessMessages.Incomplete);
+        }
+
         var policy = await LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
         return QaResult.OkPolicy(policy is null ? DefaultPolicy() : Map(policy));
     }
@@ -55,7 +66,30 @@ public sealed class QaPolicyService : IQaPolicyService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var ready = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        if (ready.ShouldSkipAllQaQueries)
+        {
+            return QaResult.Fail(QaReadinessMessages.NotInstalled);
+        }
+
+        if (ready.ProbeFailed || !ready.CanQueryPolicy)
+        {
+            return QaResult.Fail(ready.UserMessage ?? QaReadinessMessages.Incomplete);
+        }
+
         var published = await LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
+        var enableError = RejectNewEnablement(published, command);
+        if (enableError is not null)
+        {
+            return QaResult.Fail(enableError);
+        }
+
+        if (WouldTurnOffGate(published, command)
+            && await HasStockObligationsAsync(db, scope.CompanyCode, ready, cancellationToken))
+        {
+            return QaResult.Fail(QaReadinessMessages.CannotTurnOffWithObligations);
+        }
+
         if (published is null)
         {
             published = new QaPolicy
@@ -75,16 +109,16 @@ public sealed class QaPolicyService : IQaPolicyService
             return QaResult.Fail("This policy was changed by someone else. Reload and try again.");
         }
 
-        published.Enabled = command.IncomingInspectionEnabled
-            || command.FinalFgInspectionEnabled
-            || command.LogicalHoldEnabled
-            || command.PhysicalHoldEnabled
-            || command.NonGoodEnabled;
-        published.IncomingInspectionEnabled = command.IncomingInspectionEnabled;
-        published.FinalFgInspectionEnabled = command.FinalFgInspectionEnabled;
-        published.LogicalHoldEnabled = command.LogicalHoldEnabled;
-        published.PhysicalHoldEnabled = command.PhysicalHoldEnabled;
-        published.NonGoodEnabled = command.NonGoodEnabled;
+        published.IncomingInspectionEnabled = KeepExistingOnly(published.IncomingInspectionEnabled, command.IncomingInspectionEnabled);
+        published.FinalFgInspectionEnabled = KeepExistingOnly(published.FinalFgInspectionEnabled, command.FinalFgInspectionEnabled);
+        published.LogicalHoldEnabled = KeepExistingOnly(published.LogicalHoldEnabled, command.LogicalHoldEnabled);
+        published.PhysicalHoldEnabled = KeepExistingOnly(published.PhysicalHoldEnabled, command.PhysicalHoldEnabled);
+        published.NonGoodEnabled = KeepExistingOnly(published.NonGoodEnabled, command.NonGoodEnabled);
+        published.Enabled = published.IncomingInspectionEnabled
+            || published.FinalFgInspectionEnabled
+            || published.LogicalHoldEnabled
+            || published.PhysicalHoldEnabled
+            || published.NonGoodEnabled;
         published.InspectorApproverSeparation = command.InspectorApproverSeparation;
         published.IsPublished = true;
         published.ModifiedDate = DateTime.UtcNow;
@@ -97,11 +131,24 @@ public sealed class QaPolicyService : IQaPolicyService
     internal static async Task<QaPolicy?> LoadPublishedAsync(
         AppDbContext db,
         string companyCode,
-        CancellationToken cancellationToken) =>
-        await db.QaPolicies
+        CancellationToken cancellationToken)
+    {
+        var ready = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        if (ready.ShouldSkipAllQaQueries)
+        {
+            return null;
+        }
+
+        if (ready.ProbeFailed || !ready.CanQueryPolicy)
+        {
+            throw new InvalidOperationException(ready.UserMessage ?? QaReadinessMessages.Incomplete);
+        }
+
+        return await db.QaPolicies
             .Where(x => x.CompanyCode == companyCode && x.IsPublished)
             .OrderByDescending(x => x.Version)
             .FirstOrDefaultAsync(cancellationToken);
+    }
 
     public static QaPolicyDto DefaultPolicy() => new()
     {
@@ -133,6 +180,98 @@ public sealed class QaPolicyService : IQaPolicyService
         IsPublished = policy.IsPublished,
         RowVersion = policy.RowVersion
     };
+
+    internal static string? RejectNewEnablement(QaPolicy? published, QaPolicySaveCommand command)
+    {
+        if (command.IncomingInspectionEnabled && published?.IncomingInspectionEnabled != true)
+        {
+            return QaReadinessMessages.FrozenEnablement("incoming inspection");
+        }
+
+        if (command.FinalFgInspectionEnabled && published?.FinalFgInspectionEnabled != true)
+        {
+            return QaReadinessMessages.FrozenEnablement("finished-goods inspection");
+        }
+
+        if (command.LogicalHoldEnabled && published?.LogicalHoldEnabled != true)
+        {
+            return QaReadinessMessages.FrozenEnablement("logical hold");
+        }
+
+        if (command.PhysicalHoldEnabled && published?.PhysicalHoldEnabled != true)
+        {
+            return QaReadinessMessages.FrozenEnablement("physical hold");
+        }
+
+        if (command.NonGoodEnabled && published?.NonGoodEnabled != true)
+        {
+            return QaReadinessMessages.FrozenEnablement("non-good Daily Production");
+        }
+
+        return null;
+    }
+
+    private static bool WouldTurnOffGate(QaPolicy? published, QaPolicySaveCommand command) =>
+        published is not null
+        && ((published.IncomingInspectionEnabled && !command.IncomingInspectionEnabled)
+            || (published.FinalFgInspectionEnabled && !command.FinalFgInspectionEnabled)
+            || (published.LogicalHoldEnabled && !command.LogicalHoldEnabled)
+            || (published.PhysicalHoldEnabled && !command.PhysicalHoldEnabled)
+            || (published.NonGoodEnabled && !command.NonGoodEnabled));
+
+    private static bool KeepExistingOnly(bool current, bool requested) => current && requested;
+
+    private static async Task<bool> HasStockObligationsAsync(
+        AppDbContext db,
+        string companyCode,
+        QaSchemaReadinessResult ready,
+        CancellationToken cancellationToken)
+    {
+        if (ready.Incoming.IsReady
+            && await db.QaReceiptAllocations.AnyAsync(
+                x => x.CompanyCode == companyCode && x.Status == QaReceiptAllocationStatuses.Posted,
+                cancellationToken))
+        {
+            return true;
+        }
+
+        if (ready.FinalFg.IsReady
+            && await db.QaFgAllocations.AnyAsync(
+                x => x.CompanyCode == companyCode && x.Status == QaReceiptAllocationStatuses.Posted,
+                cancellationToken))
+        {
+            return true;
+        }
+
+        if (ready.NonGood.IsReady
+            && await db.QaNonGoodAllocations.AnyAsync(
+                x => x.CompanyCode == companyCode && x.Status == QaReceiptAllocationStatuses.Posted,
+                cancellationToken))
+        {
+            return true;
+        }
+
+        if (ready.Logical.IsReady
+            && await db.QaLogicalHolds.AnyAsync(
+                x => x.CompanyCode == companyCode && x.Status == QaLogicalHoldStatuses.Active,
+                cancellationToken))
+        {
+            return true;
+        }
+
+        if (ready.Physical.IsReady
+            && (await db.QaPhysicalHolds.AnyAsync(
+                    x => x.CompanyCode == companyCode && x.Status == QaLogicalHoldStatuses.Active,
+                    cancellationToken)
+                || await db.QaPhysicalAllocations.AnyAsync(
+                    x => x.CompanyCode == companyCode && x.Status == QaReceiptAllocationStatuses.Posted,
+                    cancellationToken)))
+        {
+            return true;
+        }
+
+        return false;
+    }
 
     private static string TruncateUser(string userId) =>
         userId.Length <= 20 ? userId : userId[..20];

@@ -830,6 +830,14 @@ public sealed partial class IvInventoryPostingService
             || state.InventoryValue != tail.CurrentValue)
             throw InvalidStandardTransfer("The Standard item state changed before rollback.");
 
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            db, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
+        }
+
         var now = DateTime.UtcNow;
         var user = root.UserId.Length > 10 ? root.UserId[..10] : root.UserId;
         source.StdQty = sourcePlan.Projection.FinalQuantity;

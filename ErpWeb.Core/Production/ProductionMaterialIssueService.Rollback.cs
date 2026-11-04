@@ -154,6 +154,14 @@ public sealed partial class ProductionMaterialIssueService
                     return RollbackFail(IvMasterErrorCode.InUse,
                         $"Production balance lot for {original.ItemCode} no longer holds the full issued quantity.");
                 }
+                if (pile is not null
+                    && await new ErpWeb.Core.Quality.QaLogicalHoldAuthorizationService()
+                        .AssertRemainingCoversHoldsAsync(
+                            db, scope.CompanyCode, scope.BranchCode!, pile.Uid, 0m,
+                            cancellationToken) is string holdError)
+                {
+                    return RollbackFail(IvMasterErrorCode.InUse, holdError);
+                }
                 if (pile is not null && original.ProductionBalLotMovementId is long movementId
                     && effectiveCosts.TryGetValue(movementId, out var cost)
                     && cost.RestatementFactId is not null)

@@ -29,35 +29,22 @@
             <p class="iv-eyebrow">Quality</p>
             <h1 class="iv-title">Quality Settings</h1>
             <div class="iv-chips">
-                <span class="iv-status @(IncomingInspectionEnabled ? "is-on" : "is-off")">
-                    Incoming inspection @(IncomingInspectionEnabled ? "ON" : "OFF")
-                </span>
-                <span class="iv-status @(FinalFgInspectionEnabled ? "is-on" : "is-off")">
-                    Finished-goods inspection @(FinalFgInspectionEnabled ? "ON" : "OFF")
-                </span>
-                <span class="iv-status @(LogicalHoldEnabled ? "is-on" : "is-off")">
-                    Logical WIP hold @(LogicalHoldEnabled ? "ON" : "OFF")
-                </span>
-                <span class="iv-status @(PhysicalHoldEnabled ? "is-on" : "is-off")">
-                    Physical warehouse hold @(PhysicalHoldEnabled ? "ON" : "OFF")
-                </span>
-                <span class="iv-status @(NonGoodEnabled ? "is-on" : "is-off")">
-                    Non-good Daily Production @(NonGoodEnabled ? "ON" : "OFF")
-                </span>
                 <span class="iv-chip">@(Policy.Version == 0 ? "No saved policy yet" : $"Saved policy · version {Policy.Version}")</span>
+                <span class="iv-chip">Record-only</span>
             </div>
         </div>
+        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                  Text="How to use"
+                  IconCssClass="fa-solid fa-circle-info"
+                  Click="@(() => HelpVisible = true)" />
     </header>
 
     <section class="iv-card">
-        <p class="iv-guidance">
-            Incoming: receive delivery → Inspect → Save → Submit → Approve → Create a goods receipt for accepted qty → Post.
-            Finished goods: inspect FG staging → Approve → Post a finished-good receipt for accepted qty.
-            Logical WIP hold reserves Hold qty on the production lot. It does not move stock to a QA warehouse.
-            Physical warehouse hold reserves Hold and Reject qty on the source pile. It does not convert IStatus to QCHOLD.
-            Non-good Daily Production: inspect scrap/reject/hold counters before POST when that gate is on. Quality does not create a valued lot.
-            Rejected quantity is not inventory until an approved scrap or vendor return claims it.
-        </p>
+        <QaRecordOnlyBanner />
+        @if (!string.IsNullOrWhiteSpace(InfoMessage))
+        {
+            <p class="qa-settings-info" role="status">@InfoMessage</p>
+        }
 
         @if (IsLoading)
         {
@@ -68,57 +55,48 @@
         }
         else
         {
-            <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem Caption="Check supplier deliveries before stock receipt?" ColSpanMd="6">
-                    <Template>
-                        <DxCheckBox @bind-Checked="@IncomingInspectionEnabled"
-                                    Enabled="@CanEdit">
-                            Off until you turn this on. Default is off.
-                        </DxCheckBox>
-                    </Template>
-                </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Check FG staging before finished-good receipt?" ColSpanMd="6">
-                    <Template>
-                        <DxCheckBox @bind-Checked="@FinalFgInspectionEnabled"
-                                    Enabled="@CanEdit">
-                            Off until you turn this on. Default is off.
-                        </DxCheckBox>
-                    </Template>
-                </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Reserve Hold qty on the production lot?" ColSpanMd="6">
-                    <Template>
-                        <DxCheckBox @bind-Checked="@LogicalHoldEnabled"
-                                    Enabled="@CanEdit">
-                            Off until you turn this on. Default is off. This is a reservation, not a warehouse transfer.
-                        </DxCheckBox>
-                    </Template>
-                </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Reserve Hold/Reject qty on the warehouse pile?" ColSpanMd="6">
-                    <Template>
-                        <DxCheckBox @bind-Checked="@PhysicalHoldEnabled"
-                                    Enabled="@CanEdit">
-                            Off until you turn this on. Default is off. This is a reservation, not a QCHOLD conversion.
-                        </DxCheckBox>
-                    </Template>
-                </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Inspect scrap/reject/hold before Daily Production POST?" ColSpanMd="6">
-                    <Template>
-                        <DxCheckBox @bind-Checked="@NonGoodEnabled"
-                                    Enabled="@CanEdit">
-                            Off until you turn this on. Default is off. Counters stay counters — no valued lot.
-                        </DxCheckBox>
-                    </Template>
-                </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Inspector cannot approve own case" ColSpanMd="6">
-                    <Template>
-                        <DxCheckBox @bind-Checked="@InspectorApproverSeparation"
-                                    Enabled="@CanEdit" />
-                    </Template>
-                </DxFormLayoutItem>
-            </DxFormLayout>
+            <section class="qa-settings-group" aria-labelledby="qa-settings-inspection">
+                <h2 id="qa-settings-inspection" class="iv-card__title">Posting gates</h2>
+                <p class="qa-settings-group__hint">Not available yet. These switches cannot authorize posting from Settings.</p>
+                <div class="qa-settings-list">
+                    @foreach (var gate in FrozenGates)
+                    {
+                        <div class="qa-setting qa-setting--frozen">
+                            <div class="qa-setting__copy">
+                                <p class="qa-setting__title">@gate.Title</p>
+                                <p class="qa-setting__help">@gate.Help</p>
+                            </div>
+                            <div class="qa-setting__control">
+                                <span class="qa-setting__state @(gate.Enabled ? "is-on" : "is-off")">@(gate.Enabled ? "On" : "Off")</span>
+                                <span class="qa-setting__frozen">@(gate.Enabled ? "Persisted outside Settings" : "Not available yet")</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="qa-settings-group" aria-labelledby="qa-settings-approvals">
+                <h2 id="qa-settings-approvals" class="iv-card__title">Approvals</h2>
+                <p class="qa-settings-group__hint">This rule applies to inspection records. It does not turn posting approval on.</p>
+                <div class="qa-settings-list">
+                    <div class="qa-setting">
+                        <div class="qa-setting__copy">
+                            <label class="qa-setting__title" for="qa-separation">Inspector cannot approve own case</label>
+                            <p class="qa-setting__help">The person who inspected a case cannot approve it.</p>
+                        </div>
+                        <div class="qa-setting__control">
+                            <span class="qa-setting__state @(InspectorApproverSeparation ? "is-on" : "is-off")">@(InspectorApproverSeparation ? "On" : "Off")</span>
+                            <DxCheckBox InputId="qa-separation"
+                                        @bind-Checked="@InspectorApproverSeparation"
+                                        AllowIndeterminateState="false"
+                                        Enabled="@CanEdit" />
+                        </div>
+                    </div>
+                </div>
+            </section>
 
             <footer class="mr-footer">
-                <p class="mr-footer__hint">Catalogue flag Require inspection on receipt stays unused. This page is the posting authority.</p>
+                <p class="mr-footer__hint">Save updates inspector-approval rules. Posting gates stay frozen.</p>
                 <div class="mr-footer__actions">
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                               Text="Close"
@@ -136,4 +114,6 @@
         }
     </section>
 </div>
+
+<QaHowToUsePopup @bind-Visible="@HelpVisible" />
 </MenuAuthorize>

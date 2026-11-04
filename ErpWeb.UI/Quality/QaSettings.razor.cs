@@ -14,16 +14,32 @@ public partial class QaSettings : PageBase
     protected bool IsLoading = true;
     protected bool IsSubmitting;
     protected bool CanEdit;
+    protected bool HelpVisible;
     protected bool InspectorApproverSeparation = true;
-    protected bool IncomingInspectionEnabled;
-    protected bool FinalFgInspectionEnabled;
-    protected bool LogicalHoldEnabled;
-    protected bool PhysicalHoldEnabled;
-    protected bool NonGoodEnabled;
     protected string? StatusMessage;
+    protected string? InfoMessage;
     protected QaPolicyDto Policy { get; set; } = QaPolicyService.DefaultPolicy();
 
     protected bool CanSave => CanEdit && !IsSubmitting && !IsLoading;
+
+    protected IReadOnlyList<FrozenGate> FrozenGates =>
+    [
+        new("Incoming inspection",
+            "Supplier deliveries can be inspected as a record. This gate cannot authorize goods receipt.",
+            Policy.IncomingInspectionEnabled),
+        new("Finished-goods inspection",
+            "FG staging can be inspected as a record. This gate cannot authorize finished-good receipt.",
+            Policy.FinalFgInspectionEnabled),
+        new("Non-good Daily Production",
+            "Scrap, reject and hold counters can be recorded. This gate cannot authorize Daily Production POST.",
+            Policy.NonGoodEnabled),
+        new("Logical WIP hold",
+            "Hold qty can be recorded on a production lot. Settings cannot turn this posting gate on.",
+            Policy.LogicalHoldEnabled),
+        new("Physical warehouse hold",
+            "Hold and reject qty can be recorded on a warehouse pile. This is not a QCHOLD conversion.",
+            Policy.PhysicalHoldEnabled)
+    ];
 
     protected override async Task OnPageInitializedAsync()
     {
@@ -38,11 +54,7 @@ public partial class QaSettings : PageBase
 
         Policy = result.Policy;
         InspectorApproverSeparation = Policy.InspectorApproverSeparation;
-        IncomingInspectionEnabled = Policy.IncomingInspectionEnabled;
-        FinalFgInspectionEnabled = Policy.FinalFgInspectionEnabled;
-        LogicalHoldEnabled = Policy.LogicalHoldEnabled;
-        PhysicalHoldEnabled = Policy.PhysicalHoldEnabled;
-        NonGoodEnabled = Policy.NonGoodEnabled;
+        InfoMessage = result.InfoMessage;
         IsLoading = false;
     }
 
@@ -57,12 +69,12 @@ public partial class QaSettings : PageBase
         var result = await Policies.SaveAsync(new QaPolicySaveCommand
         {
             InspectorApproverSeparation = InspectorApproverSeparation,
-            Enabled = IncomingInspectionEnabled,
-            IncomingInspectionEnabled = IncomingInspectionEnabled,
-            FinalFgInspectionEnabled = FinalFgInspectionEnabled,
-            LogicalHoldEnabled = LogicalHoldEnabled,
-            PhysicalHoldEnabled = PhysicalHoldEnabled,
-            NonGoodEnabled = NonGoodEnabled,
+            Enabled = Policy.IncomingInspectionEnabled,
+            IncomingInspectionEnabled = Policy.IncomingInspectionEnabled,
+            FinalFgInspectionEnabled = Policy.FinalFgInspectionEnabled,
+            LogicalHoldEnabled = Policy.LogicalHoldEnabled,
+            PhysicalHoldEnabled = Policy.PhysicalHoldEnabled,
+            NonGoodEnabled = Policy.NonGoodEnabled,
             RowVersion = Policy.RowVersion
         });
         IsSubmitting = false;
@@ -74,56 +86,13 @@ public partial class QaSettings : PageBase
 
         Policy = result.Policy;
         InspectorApproverSeparation = Policy.InspectorApproverSeparation;
-        IncomingInspectionEnabled = Policy.IncomingInspectionEnabled;
-        FinalFgInspectionEnabled = Policy.FinalFgInspectionEnabled;
-        LogicalHoldEnabled = Policy.LogicalHoldEnabled;
-        PhysicalHoldEnabled = Policy.PhysicalHoldEnabled;
-        NonGoodEnabled = Policy.NonGoodEnabled;
-        StatusMessage = StatusFor(
-            IncomingInspectionEnabled, FinalFgInspectionEnabled, LogicalHoldEnabled, PhysicalHoldEnabled, NonGoodEnabled);
+        InfoMessage = result.InfoMessage;
+        StatusMessage = "Quality settings saved. Inspector-approval rules were updated. Posting gates stay frozen.";
     }
 
     protected void OnClose() => Navigation.NavigateTo("/quality/cases");
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
 
-    private static string StatusFor(bool incoming, bool finalFg, bool logicalHold, bool physicalHold, bool nonGood)
-    {
-        if (nonGood)
-        {
-            return "Quality settings saved. Posting scrap/reject/hold on Daily Production now needs an approved inspection. It does not create a valued lot.";
-        }
-
-        if (physicalHold)
-        {
-            return "Quality settings saved. Approving a posted-stock hold now reserves that qty on the warehouse pile. It does not convert IStatus to QCHOLD.";
-        }
-
-        if (incoming && finalFg && logicalHold)
-        {
-            return "Quality settings saved. Incoming receipts, finished-good receipts, and WIP holds now need an approved inspection.";
-        }
-
-        if (incoming && finalFg)
-        {
-            return "Quality settings saved. Incoming receipts and finished-good receipts now need an approved inspection.";
-        }
-
-        if (incoming)
-        {
-            return "Quality settings saved. Incoming goods receipts now need an approved inspection.";
-        }
-
-        if (finalFg)
-        {
-            return "Quality settings saved. Finished-good receipts now need an approved inspection.";
-        }
-
-        if (logicalHold)
-        {
-            return "Quality settings saved. Approving a WIP hold now reserves that qty on the production lot. It does not move stock to a QA warehouse.";
-        }
-
-        return "Quality settings saved. Incoming, finished-goods, WIP-hold, physical-hold, and non-good Daily Production inspection stay off — posting is unchanged.";
-    }
+    protected sealed record FrozenGate(string Title, string Help, bool Enabled);
 }

@@ -52,6 +52,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         var rows = db.QaCases.AsNoTracking()
             .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
 
@@ -141,6 +146,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         var rows = db.QaCases.AsNoTracking()
             .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
 
@@ -277,6 +287,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         var entity = await LoadCaseAsync(db, scope, caseNo, cancellationToken);
         return entity is null ? QaResult.Fail("Quality case was not found.") : QaResult.OkCase(Map(entity));
     }
@@ -295,13 +310,24 @@ public sealed class QaCaseService : IQaCaseService
             return QaResult.Fail("Not authorized.");
         }
 
-        var validation = ValidateDraft(command);
+        var validation = ValidateDraft(command) ?? QaSourceResolver.FreezeGeneration(command);
         if (validation is not null)
         {
             return QaResult.Fail(validation);
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
+        var sourceError = await QaSourceResolver.RevalidateDraftAsync(db, scope, command, cancellationToken);
+        if (sourceError is not null)
+        {
+            return QaResult.Fail(sourceError);
+        }
+
         QaCase entity;
         if (isNew)
         {
@@ -377,6 +403,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
         if (entity is null)
         {
@@ -392,6 +423,12 @@ public sealed class QaCaseService : IQaCaseService
         if (Stale(entity, command.RowVersion))
         {
             return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+        }
+
+        var sourceError = await QaSourceResolver.RevalidateInspectionAsync(db, entity, command.Lines, cancellationToken);
+        if (sourceError is not null)
+        {
+            return QaResult.Fail(sourceError);
         }
 
         if (command.Lines.Count == 0)
@@ -466,6 +503,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
         if (entity is null)
         {
@@ -509,6 +551,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
         if (entity is null)
@@ -539,6 +586,12 @@ public sealed class QaCaseService : IQaCaseService
             await _branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode, cancellationToken);
         }
 
+        var sourceError = await QaSourceResolver.RevalidateCaseAsync(db, entity, cancellationToken);
+        if (sourceError is not null)
+        {
+            return QaResult.Fail(sourceError);
+        }
+
         entity.Status = QaCaseStatuses.Approved;
         entity.ReviewedBy = TruncateUser(scope.UserId);
         entity.ReviewedAtUtc = DateTime.UtcNow;
@@ -549,22 +602,9 @@ public sealed class QaCaseService : IQaCaseService
         if (string.Equals(entity.SourceType, QaSourceTypes.IncomingPreGrn, StringComparison.OrdinalIgnoreCase))
         {
             entity.DeliveryInstanceId ??= Guid.NewGuid();
-            entity.EligibilityNote = QaEligibilityNotes.IncomingGrant;
-            IssueIncomingGrants(entity, policy?.Version ?? 0);
-            AddAudit(entity, QaAuditEvents.GrantIssued, scope.UserId, QaEligibilityNotes.IncomingGrant);
         }
-        else if (string.Equals(entity.SourceType, QaSourceTypes.FgStagingLot, StringComparison.OrdinalIgnoreCase))
-        {
-            entity.EligibilityNote = QaEligibilityNotes.FgGrant;
-            IssueFgGrants(entity, policy?.Version ?? 0);
-            AddAudit(entity, QaAuditEvents.GrantIssued, scope.UserId, QaEligibilityNotes.FgGrant);
-        }
-        else if (string.Equals(entity.SourceType, QaSourceTypes.ProductionOutputNonGood, StringComparison.OrdinalIgnoreCase))
-        {
-            entity.EligibilityNote = QaEligibilityNotes.NonGoodGrant;
-            IssueNonGoodGrants(entity, policy?.Version ?? 0);
-            AddAudit(entity, QaAuditEvents.GrantIssued, scope.UserId, QaEligibilityNotes.NonGoodGrant);
-        }
+
+        entity.EligibilityNote = QaEligibilityNotes.ForSource(entity.SourceType);
 
         if (_logicalHolds is not null)
         {
@@ -623,6 +663,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
         if (entity is null)
@@ -700,6 +745,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
         if (entity is null)
         {
@@ -761,6 +811,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
         if (entity is null)
         {
@@ -852,6 +907,11 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
         var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
         if (entity is null)
         {
@@ -1152,6 +1212,12 @@ public sealed class QaCaseService : IQaCaseService
 
     private Task<bool> CanAsync(string permission, CancellationToken cancellationToken) =>
         _accessRights.CanAsync(MenuCodes.QualityWorkbench, permission, cancellationToken);
+
+    private static async Task<QaResult?> SchemaErrorAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        var error = await QaSchemaReadiness.RequireCaseGraphAsync(db, cancellationToken);
+        return error is null ? null : QaResult.Fail(error);
+    }
 
     private static async Task<QaCase?> LoadCaseAsync(
         AppDbContext db,

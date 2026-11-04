@@ -4,6 +4,7 @@ public sealed class QaResult
 {
     public bool Succeeded { get; init; }
     public string? ErrorMessage { get; init; }
+    public string? InfoMessage { get; init; }
     public QaPolicyDto? Policy { get; init; }
     public QaCaseDto? Case { get; init; }
     public QaListPage? ListPage { get; init; }
@@ -12,7 +13,8 @@ public sealed class QaResult
 
     public static QaResult Fail(string message) => new() { Succeeded = false, ErrorMessage = message };
 
-    public static QaResult OkPolicy(QaPolicyDto policy) => new() { Succeeded = true, Policy = policy };
+    public static QaResult OkPolicy(QaPolicyDto policy, string? infoMessage = null) =>
+        new() { Succeeded = true, Policy = policy, InfoMessage = infoMessage };
 
     public static QaResult OkCase(QaCaseDto value) => new() { Succeeded = true, Case = value };
 

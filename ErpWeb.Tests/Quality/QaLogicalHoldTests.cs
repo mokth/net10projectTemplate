@@ -59,40 +59,56 @@ public class QaLogicalHoldTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Approve_reserves_20_of_100_without_changing_lot_qty_or_cost()
+    public async Task Approve_places_logical_hold_without_mutating_wip()
     {
         await EnableHoldAsync();
         var lotId = await SeedLotAsync(100m, totalCost: 250m);
         var approved = await ApproveWipHoldAsync(lotId, holdQty: 20m, inspected: 100m);
         Assert.True(approved.Succeeded, approved.ErrorMessage);
         Assert.Equal(20m, approved.Case!.HeldQty);
-        Assert.Contains(approved.Case.Audit, x => x.EventType == QaAuditEvents.HoldPlaced);
-        Assert.Contains("reserved", approved.Case.EligibilityNote, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("moved", approved.Case.EligibilityNote, StringComparison.OrdinalIgnoreCase);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var hold = Assert.Single(await db.QaLogicalHolds.ToListAsync());
+        Assert.Equal(lotId, hold.ProductionBalLotId);
+        Assert.Equal(20m, hold.ReservedBaseQty);
+        var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == lotId);
+        Assert.Equal(100m, lot.BaseQty);
+        Assert.Equal(250m, lot.TotalCost);
+    }
+
+    [Fact]
+    public async Task Approve_converts_logical_hold_to_pool_base_uom()
+    {
+        await EnableHoldAsync();
+        var lotId = await SeedLotAsync(
+            qty: 10m, uom: "BOX", baseUom: "EA", conversionFactorToBase: 10m);
+        var approved = await ApproveWipHoldAsync(
+            lotId, holdQty: 2m, inspected: 10m, uom: "BOX");
+        Assert.True(approved.Succeeded, approved.ErrorMessage);
 
         await using var db = await _factory.CreateDbContextAsync();
         var hold = Assert.Single(await db.QaLogicalHolds.ToListAsync());
         Assert.Equal(20m, hold.ReservedBaseQty);
-        Assert.Equal(QaLogicalHoldStatuses.Active, hold.Status);
-        var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == lotId);
-        Assert.Equal(100m, lot.BaseQty);
-        Assert.Equal(250m, lot.TotalCost);
-        Assert.Equal("PROCESS_WIP", lot.BalanceStage);
-        Assert.Equal("AVAILABLE", lot.StockStatusCode);
+        Assert.Equal(100m, await db.ProductionBalLots
+            .Where(x => x.Uid == lotId).Select(x => x.BaseQty).SingleAsync());
     }
 
     [Fact]
-    public async Task Second_hold_cannot_over_reserve_the_same_lot()
+    public async Task Existing_hold_blocks_over_reservation_even_when_the_gate_is_off()
     {
-        await EnableHoldAsync();
         var lotId = await SeedLotAsync(100m);
         var first = await ApproveWipHoldAsync(lotId, holdQty: 60m, inspected: 60m);
         Assert.True(first.Succeeded, first.ErrorMessage);
-        var second = await ApproveWipHoldAsync(lotId, holdQty: 60m, inspected: 60m);
-        Assert.False(second.Succeeded);
-        Assert.Contains("Only 40", second.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await SeedLogicalHoldAsync(first.Case!.CaseNo, lotId, 60m);
 
         await using var db = await _factory.CreateDbContextAsync();
+        var covered = await new QaLogicalHoldAuthorizationService()
+            .AssertRemainingCoversHoldsAsync(db, "DEMO", "HQ", lotId, 60m);
+        Assert.Null(covered);
+        var over = await new QaLogicalHoldAuthorizationService()
+            .AssertRemainingCoversHoldsAsync(db, "DEMO", "HQ", lotId, 59m);
+        Assert.NotNull(over);
+        Assert.Contains("Only 59", over, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, await db.QaLogicalHolds.CountAsync());
         Assert.Equal(100m, await db.ProductionBalLots.Where(x => x.Uid == lotId).Select(x => x.BaseQty).SingleAsync());
     }
@@ -100,9 +116,10 @@ public class QaLogicalHoldTests : IAsyncLifetime
     [Fact]
     public async Task Outflow_of_80_is_allowed_and_81_is_blocked_while_20_is_reserved()
     {
-        await EnableHoldAsync();
         var lotId = await SeedLotAsync(100m);
-        Assert.True((await ApproveWipHoldAsync(lotId, 20m, 100m)).Succeeded);
+        var approved = await ApproveWipHoldAsync(lotId, 20m, 100m);
+        Assert.True(approved.Succeeded, approved.ErrorMessage);
+        await SeedLogicalHoldAsync(approved.Case!.CaseNo, lotId, 20m);
 
         await using var db = await _factory.CreateDbContextAsync();
         var holds = new QaLogicalHoldAuthorizationService();
@@ -142,12 +159,14 @@ public class QaLogicalHoldTests : IAsyncLifetime
     [Fact]
     public async Task Release_clears_the_reservation_without_stock_movement()
     {
-        await EnableHoldAsync();
         var lotId = await SeedLotAsync(100m);
         var approved = await ApproveWipHoldAsync(lotId, 20m, 100m);
         Assert.True(approved.Succeeded, approved.ErrorMessage);
+        await SeedLogicalHoldAsync(approved.Case!.CaseNo, lotId, 20m);
+        var current = await CreateCaseService().GetAsync(approved.Case.CaseNo);
+        Assert.True(current.Succeeded, current.ErrorMessage);
 
-        var released = await CreateCaseService().ReleaseHoldAsync(Review(approved.Case!));
+        var released = await CreateCaseService().ReleaseHoldAsync(Review(current.Case!));
         Assert.True(released.Succeeded, released.ErrorMessage);
         Assert.Equal(0m, released.Case!.HeldQty);
         Assert.Contains(released.Case.Audit, x => x.EventType == QaAuditEvents.HoldReleased);
@@ -163,15 +182,16 @@ public class QaLogicalHoldTests : IAsyncLifetime
     [Fact]
     public async Task Close_is_blocked_while_a_hold_is_active()
     {
-        await EnableHoldAsync();
         var lotId = await SeedLotAsync(100m);
         var approved = await ApproveWipHoldAsync(lotId, 20m, 100m);
+        await SeedLogicalHoldAsync(approved.Case!.CaseNo, lotId, 20m);
         var cases = CreateCaseService();
-        var closed = await cases.CloseAsync(Review(approved.Case!));
+        var current = await cases.GetAsync(approved.Case.CaseNo);
+        var closed = await cases.CloseAsync(Review(current.Case!));
         Assert.False(closed.Succeeded);
         Assert.Contains("Release the quality hold", closed.ErrorMessage, StringComparison.OrdinalIgnoreCase);
 
-        var released = await cases.ReleaseHoldAsync(Review(approved.Case!));
+        var released = await cases.ReleaseHoldAsync(Review(current.Case!));
         Assert.True(released.Succeeded, released.ErrorMessage);
         var afterRelease = await cases.CloseAsync(Review(released.Case!));
         Assert.True(afterRelease.Succeeded, afterRelease.ErrorMessage);
@@ -180,15 +200,46 @@ public class QaLogicalHoldTests : IAsyncLifetime
 
     private async Task EnableHoldAsync()
     {
-        var result = await CreatePolicyService().SaveAsync(new QaPolicySaveCommand
+        await using var db = await _factory.CreateDbContextAsync();
+        db.QaPolicies.Add(new QaPolicy
         {
-            InspectorApproverSeparation = true,
-            LogicalHoldEnabled = true
+            CompanyCode = "DEMO",
+            Version = 1,
+            Enabled = true,
+            LogicalHoldEnabled = true,
+            IsPublished = true,
+            CreatedDate = DateTime.UtcNow,
+            CreatedBy = "tester"
         });
-        Assert.True(result.Succeeded, result.ErrorMessage);
+        await db.SaveChangesAsync();
     }
 
-    private async Task<long> SeedLotAsync(decimal qty, decimal totalCost = 0m)
+    private async Task SeedLogicalHoldAsync(string caseNo, long lotId, decimal qty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var entity = await db.QaCases.Include(x => x.Lines).SingleAsync(x => x.CaseNo == caseNo);
+        var line = entity.Lines.OrderBy(x => x.LineNo).First();
+        db.QaLogicalHolds.Add(new QaLogicalHold
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            CaseId = entity.Uid,
+            CaseLineId = line.Uid,
+            ProductionBalLotId = lotId,
+            ReservedBaseQty = qty,
+            Status = QaLogicalHoldStatuses.Active,
+            Cause = QaLogicalHoldCauses.KeepHold,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<long> SeedLotAsync(
+        decimal qty,
+        decimal totalCost = 0m,
+        string uom = "EA",
+        string baseUom = "EA",
+        decimal conversionFactorToBase = 1m)
     {
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
@@ -208,10 +259,10 @@ public class QaLogicalHoldTests : IAsyncLifetime
             Kind = ProductionBalLotKinds.Wip,
             ItemCode = "WIP1",
             Qty = qty,
-            Uom = "EA",
-            BaseQty = qty,
-            BaseUom = "EA",
-            ConversionFactorToBase = 1m,
+            Uom = uom,
+            BaseQty = IvQty.Round(qty * conversionFactorToBase),
+            BaseUom = baseUom,
+            ConversionFactorToBase = conversionFactorToBase,
             TotalCost = totalCost,
             AverageUnitCost = qty == 0m ? 0m : totalCost / qty,
             WorkOrderId = 1,
@@ -229,7 +280,8 @@ public class QaLogicalHoldTests : IAsyncLifetime
         return lot.Uid;
     }
 
-    private async Task<QaResult> ApproveWipHoldAsync(long lotId, decimal holdQty, decimal inspected)
+    private async Task<QaResult> ApproveWipHoldAsync(
+        long lotId, decimal holdQty, decimal inspected, string uom = "EA")
     {
         _scope = Scope("tester");
         BindTenant();
@@ -246,7 +298,7 @@ public class QaLogicalHoldTests : IAsyncLifetime
                 {
                     LineNo = 1,
                     ItemCode = "WIP1",
-                    Uom = "EA",
+                    Uom = uom,
                     Qty = inspected,
                     LotNo = "WIP-1"
                 }

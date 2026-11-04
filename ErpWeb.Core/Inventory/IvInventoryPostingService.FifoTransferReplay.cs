@@ -252,6 +252,13 @@ public sealed partial class IvInventoryPostingService
                 cancellationToken) is string changedTail)
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.LedgerMismatch, changedTail));
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            write, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
+        }
         var written = await StockReplayFifoTransferRemovalRootWriter.RemoveAsync(
             context, plan, batchNo, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(

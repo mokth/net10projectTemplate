@@ -22,70 +22,27 @@ public sealed class QaReceiptAuthorizationService : IQaReceiptAuthorization
             return null;
         }
 
+        var incoming = await PrepareIncomingAsync(db, cancellationToken);
+        if (incoming.Skip)
+        {
+            return null;
+        }
+
+        if (incoming.Error is not null)
+        {
+            return incoming.Error;
+        }
+
         var policy = await QaPolicyService.LoadPublishedAsync(db, companyCode, cancellationToken);
         if (policy is null || !policy.IncomingInspectionEnabled)
         {
             return null;
         }
 
-        var stockCodes = details
-            .Select(x => (x.ICode ?? string.Empty).Trim())
-            .Where(x => x.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var stockFlags = await db.IvStockMasters.AsNoTracking()
-            .Where(x => x.CompanyCode == companyCode && stockCodes.Contains(x.ICode))
-            .Select(x => new { x.ICode, x.StockControl })
-            .ToListAsync(cancellationToken);
-        var stockByCode = stockFlags.ToDictionary(x => x.ICode, x => x.StockControl, StringComparer.OrdinalIgnoreCase);
-
-        var required = details
-            .OrderBy(x => x.PoNo)
-            .ThenBy(x => x.PoRelNo)
-            .ThenBy(x => x.PoLineNo)
-            .ThenBy(x => x.Id)
-            .Select(d => new ReceiptNeed(d, QtyOf(d), stockByCode.GetValueOrDefault((d.ICode ?? string.Empty).Trim(), true)))
-            .Where(x => x.StockControlled && x.Qty > 0m)
-            .ToList();
-        if (required.Count == 0)
-        {
-            return null;
-        }
-
-        var existing = await db.QaReceiptAllocations
-            .Where(x => x.CompanyCode == companyCode
-                        && x.BranchCode == branchCode
-                        && x.BatchNo == batch.BatchNo
-                        && x.Status == QaReceiptAllocationStatuses.Posted)
-            .ToListAsync(cancellationToken);
-        if (existing.Count > 0)
-        {
-            var existingByDetail = existing.GroupBy(x => x.BatchDetailId)
-                .ToDictionary(g => g.Key, g => IvQty.Round(g.Sum(x => x.Qty)));
-            foreach (var need in required)
-            {
-                if (!existingByDetail.TryGetValue(need.Detail.Id, out var posted)
-                    || posted != need.Qty)
-                {
-                    return "This goods receipt already has a quality allocation that does not match the current lines. Reload and try again.";
-                }
-            }
-
-            return null;
-        }
-
-        var deliveryNote = (batch.RefNo ?? string.Empty).Trim();
-        foreach (var need in required)
-        {
-            var claimed = await ClaimLineAsync(
-                db, companyCode, branchCode, deliveryNote, need, cancellationToken);
-            if (claimed is not null)
-            {
-                return claimed;
-            }
-        }
-
-        return null;
+        _ = branchCode;
+        _ = batch;
+        _ = details;
+        return QaReadinessMessages.IncomingFrozen;
     }
 
     public async Task<string?> RestoreGoodsReceiptAsync(
@@ -96,6 +53,17 @@ public sealed class QaReceiptAuthorizationService : IQaReceiptAuthorization
         IReadOnlyList<IvTrxBatchDetail> details,
         CancellationToken cancellationToken = default)
     {
+        var incoming = await PrepareIncomingAsync(db, cancellationToken);
+        if (incoming.Skip)
+        {
+            return null;
+        }
+
+        if (incoming.Error is not null)
+        {
+            return incoming.Error;
+        }
+
         var posted = await db.QaReceiptAllocations
             .Include(x => x.Grant)
             .ThenInclude(x => x.Case)
@@ -143,6 +111,14 @@ public sealed class QaReceiptAuthorizationService : IQaReceiptAuthorization
 
         _ = details;
         return null;
+    }
+
+    private static async Task<QaFeatureDecision> PrepareIncomingAsync(
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var ready = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        return ready.ForFeature(ready.Incoming);
     }
 
     private async Task<string?> ClaimLineAsync(

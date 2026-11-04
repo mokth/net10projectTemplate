@@ -32,6 +32,7 @@ public partial class QaCaseEntry : PageBase
     protected bool LinePopupVisible;
     protected bool SourcePopupVisible;
     protected bool ConfirmDiscardVisible;
+    protected bool HelpVisible;
     protected bool CanAdd;
     protected bool CanEdit;
     protected bool CanSubmitPermission;

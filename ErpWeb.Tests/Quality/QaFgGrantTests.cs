@@ -47,77 +47,61 @@ public class QaFgGrantTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Claim_fails_closed_when_gate_is_on_and_no_grant_exists()
+    public async Task Claim_fails_closed_when_gate_is_on()
     {
         await EnableFgAsync();
         var (receipt, pools) = SeedReceipt(qty: 4m);
         await using var db = await _factory.CreateDbContextAsync();
         var error = await new QaFgAuthorizationService().ClaimFinishedGoodAsync(
             db, "DEMO", "HQ", receipt, pools);
-        Assert.NotNull(error);
-        Assert.Contains("approved quality inspection", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(QaReadinessMessages.FinalFgFrozen, error);
         Assert.Equal(0, await db.QaFgAllocations.CountAsync());
     }
 
     [Fact]
-    public async Task Claim_consumes_accepted_qty_and_rejects_over_receipt()
+    public async Task Claim_does_not_consume_grant_while_fg_is_frozen()
     {
         await EnableFgAsync();
         await SeedGrantAsync(accepted: 6m, rejected: 2m);
         var first = SeedReceipt(qty: 6m, sourceId: 11, batchId: 10);
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            var error = await new QaFgAuthorizationService().ClaimFinishedGoodAsync(
-                db, "DEMO", "HQ", first.Receipt, first.Pools);
-            Assert.Null(error);
-            await db.SaveChangesAsync();
-            Assert.Equal(6m, await db.QaFgAllocations.Where(x => x.Status == QaReceiptAllocationStatuses.Posted).SumAsync(x => x.Qty));
-        }
-
-        var over = SeedReceipt(qty: 1m, sourceId: 12, batchId: 11);
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            var error = await new QaFgAuthorizationService().ClaimFinishedGoodAsync(
-                db, "DEMO", "HQ", over.Receipt, over.Pools);
-            Assert.NotNull(error);
-            Assert.Contains("short", error, StringComparison.OrdinalIgnoreCase);
-        }
+        await using var db = await _factory.CreateDbContextAsync();
+        var error = await new QaFgAuthorizationService().ClaimFinishedGoodAsync(
+            db, "DEMO", "HQ", first.Receipt, first.Pools);
+        Assert.Equal(QaReadinessMessages.FinalFgFrozen, error);
+        Assert.Equal(0, await db.QaFgAllocations.CountAsync());
     }
 
     [Fact]
-    public async Task Restore_reverses_allocation_and_new_generation_can_reclaim()
+    public async Task Restore_reverses_allocation_even_when_gate_is_off()
     {
-        await EnableFgAsync();
         await SeedGrantAsync(accepted: 6m, rejected: 0m);
-        var first = SeedReceipt(qty: 6m, sourceId: 11, batchId: 10, revision: 1);
-        await using (var db = await _factory.CreateDbContextAsync())
+        await using var db = await _factory.CreateDbContextAsync();
+        var grant = await db.QaFgGrants.SingleAsync();
+        var qaCase = await db.QaCases.SingleAsync();
+        qaCase.Status = QaCaseStatuses.Closed;
+        db.QaFgAllocations.Add(new QaFgAllocation
         {
-            Assert.Null(await new QaFgAuthorizationService().ClaimFinishedGoodAsync(
-                db, "DEMO", "HQ", first.Receipt, first.Pools));
-            await db.SaveChangesAsync();
-            var qaCase = await db.QaCases.SingleAsync();
-            qaCase.Status = QaCaseStatuses.Closed;
-            await db.SaveChangesAsync();
-        }
+            GrantId = grant.Uid,
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Qty = 6m,
+            Status = QaReceiptAllocationStatuses.Posted,
+            BatchId = 10,
+            SourceId = 11,
+            PostedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
 
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            Assert.Null(await new QaFgAuthorizationService().RestoreFinishedGoodAsync(db, "DEMO", "HQ", 10));
-            await db.SaveChangesAsync();
-            Assert.Equal(QaCaseStatuses.Approved, await db.QaCases.Select(x => x.Status).SingleAsync());
-            Assert.Equal(0, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Posted));
-            Assert.Equal(1, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Reversed));
-        }
+        Assert.Null(await new QaFgAuthorizationService().RestoreFinishedGoodAsync(db, "DEMO", "HQ", 10));
+        await db.SaveChangesAsync();
+        Assert.Equal(QaCaseStatuses.Approved, await db.QaCases.Select(x => x.Status).SingleAsync());
+        Assert.Equal(0, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Posted));
+        Assert.Equal(1, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Reversed));
 
         var next = SeedReceipt(qty: 6m, sourceId: 22, batchId: 10, revision: 2);
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            Assert.Null(await new QaFgAuthorizationService().ClaimFinishedGoodAsync(
-                db, "DEMO", "HQ", next.Receipt, next.Pools));
-            await db.SaveChangesAsync();
-            Assert.Equal(1, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Posted && x.SourceId == 22));
-            Assert.Equal(1, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Reversed && x.SourceId == 11));
-        }
+        Assert.Null(await new QaFgAuthorizationService().ClaimFinishedGoodAsync(
+            db, "DEMO", "HQ", next.Receipt, next.Pools));
+        Assert.Equal(0, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Posted));
     }
 
     [Fact]
@@ -129,8 +113,7 @@ public class QaFgGrantTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         var auth = new QaFgAuthorizationService();
         var blocked = await auth.AssertWipAdjustmentAllowedAsync(db, "DEMO", [staging]);
-        Assert.NotNull(blocked);
-        Assert.Contains("cannot consume FG staging", blocked, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(QaReadinessMessages.FinalFgFrozen, blocked);
         Assert.Null(await auth.AssertWipAdjustmentAllowedAsync(db, "DEMO", [wip]));
     }
 
@@ -167,21 +150,20 @@ public class QaFgGrantTests : IAsyncLifetime
         var draft = await fixture.Service.GetAsync(saved.Data.Id);
         var posted = await fixture.Service.PostAsync(new(saved.Data.Id, draft.Data!.RowVersion, Guid.NewGuid()));
         Assert.False(posted.Succeeded);
-        Assert.Contains("approved quality inspection", posted.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("record-only", posted.Message, StringComparison.OrdinalIgnoreCase);
         await using var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync();
         Assert.Equal(0, await db.QaFgAllocations.CountAsync());
         Assert.Equal("NEW", (await fixture.Service.GetAsync(saved.Data.Id)).Data!.Status);
     }
 
     [Fact]
-    public async Task Fg_rollback_reverses_grant_and_new_generation_can_repost()
+    public async Task Fg_rollback_reverses_seeded_allocation_and_repost_does_not_claim_while_frozen_off()
     {
         await using var connection = new SqliteConnection("DataSource=:memory:");
         await connection.OpenAsync();
         var factory = SqliteFactory(connection);
         var fixture = await FinishedGoodReceiptSqlServerTests.CreateFixtureAsync(
             factory, valueInventory: true, qaFg: new QaFgAuthorizationService());
-        await EnableFgAsync(factory, fixture.Company);
         await SeedGrantAsync(factory, fixture.Company, fixture.PoolId, accepted: 6m);
         var saved = await fixture.Service.SaveAsync(fixture.Draft(6m));
         Assert.True(saved.Succeeded, saved.Message);
@@ -192,9 +174,24 @@ public class QaFgGrantTests : IAsyncLifetime
         long originalSourceId;
         await using (var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync())
         {
-            var allocation = Assert.Single(await db.QaFgAllocations.Where(x => x.Status == QaReceiptAllocationStatuses.Posted).ToListAsync());
-            originalSourceId = allocation.SourceId;
-            Assert.Equal(6m, allocation.Qty);
+            var grant = await db.QaFgGrants.SingleAsync();
+            var sourceId = await db.ProductionFinishedGoodSourceRows
+                .Where(x => x.BatchId == saved.Data.Id)
+                .Select(x => x.Id)
+                .SingleAsync();
+            originalSourceId = sourceId;
+            db.QaFgAllocations.Add(new QaFgAllocation
+            {
+                GrantId = grant.Uid,
+                CompanyCode = fixture.Company,
+                BranchCode = "HQ",
+                Qty = 6m,
+                Status = QaReceiptAllocationStatuses.Posted,
+                BatchId = saved.Data.Id,
+                SourceId = sourceId,
+                PostedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
         }
 
         var rolled = await fixture.Service.RollbackAsync(new(posted.Data!.Id, posted.Data.RowVersion, Guid.NewGuid(), "QA reissue"));
@@ -212,8 +209,7 @@ public class QaFgGrantTests : IAsyncLifetime
         Assert.True(reposted.Succeeded, reposted.Message);
         await using (var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync())
         {
-            var postedAlloc = Assert.Single(await db.QaFgAllocations.Where(x => x.Status == QaReceiptAllocationStatuses.Posted).ToListAsync());
-            Assert.NotEqual(originalSourceId, postedAlloc.SourceId);
+            Assert.Equal(0, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Posted));
             Assert.Equal(1, await db.QaFgAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Reversed && x.SourceId == originalSourceId));
         }
     }

@@ -57,57 +57,51 @@ public class QaIncomingGrantTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Claim_fails_closed_when_gate_is_on_and_no_grant_exists()
+    public async Task Claim_fails_closed_when_gate_is_on()
     {
         await EnableIncomingAsync();
         var (batch, details) = await SeedReceiptAsync(qty: 4m);
         await using var db = await _factory.CreateDbContextAsync();
         var error = await new QaReceiptAuthorizationService().ClaimGoodsReceiptAsync(
             db, "DEMO", "HQ", IvTrxTypes.GoodsReceive, batch, details);
-        Assert.NotNull(error);
-        Assert.Contains("approved incoming quality inspection", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(QaReadinessMessages.IncomingFrozen, error);
         Assert.Equal(0, await db.QaReceiptAllocations.CountAsync());
     }
 
     [Fact]
-    public async Task Claim_consumes_accepted_qty_and_rejects_over_receipt()
+    public async Task Claim_does_not_consume_grant_while_incoming_is_frozen()
     {
         await EnableIncomingAsync();
         await SeedGrantAsync(accepted: 85m, rejected: 15m);
         var first = await SeedReceiptAsync(qty: 85m, batchNo: 10, deliveryNote: "DN-1");
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            var error = await new QaReceiptAuthorizationService().ClaimGoodsReceiptAsync(
-                db, "DEMO", "HQ", IvTrxTypes.GoodsReceive, first.Batch, first.Details);
-            Assert.Null(error);
-            await db.SaveChangesAsync();
-            Assert.Equal(85m, await db.QaReceiptAllocations
-                .Where(x => x.Status == QaReceiptAllocationStatuses.Posted)
-                .SumAsync(x => x.Qty));
-        }
-
-        var second = await SeedReceiptAsync(qty: 15m, batchNo: 11, deliveryNote: "DN-1");
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            var error = await new QaReceiptAuthorizationService().ClaimGoodsReceiptAsync(
-                db, "DEMO", "HQ", IvTrxTypes.GoodsReceive, second.Batch, second.Details);
-            Assert.NotNull(error);
-            Assert.Contains("short", error, StringComparison.OrdinalIgnoreCase);
-        }
+        await using var db = await _factory.CreateDbContextAsync();
+        var error = await new QaReceiptAuthorizationService().ClaimGoodsReceiptAsync(
+            db, "DEMO", "HQ", IvTrxTypes.GoodsReceive, first.Batch, first.Details);
+        Assert.Equal(QaReadinessMessages.IncomingFrozen, error);
+        Assert.Equal(0, await db.QaReceiptAllocations.CountAsync());
     }
 
     [Fact]
-    public async Task Restore_reverses_posted_allocation()
+    public async Task Restore_reverses_posted_allocation_even_when_gate_is_off()
     {
-        await EnableIncomingAsync();
         await SeedGrantAsync(accepted: 85m, rejected: 15m);
         var receipt = await SeedReceiptAsync(qty: 85m, deliveryNote: "DN-1");
         await using var db = await _factory.CreateDbContextAsync();
-        var auth = new QaReceiptAuthorizationService();
-        Assert.Null(await auth.ClaimGoodsReceiptAsync(
-            db, "DEMO", "HQ", IvTrxTypes.GoodsReceive, receipt.Batch, receipt.Details));
+        var grant = await db.QaReceiptGrants.SingleAsync();
+        db.QaReceiptAllocations.Add(new QaReceiptAllocation
+        {
+            GrantId = grant.Uid,
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Qty = 85m,
+            Status = QaReceiptAllocationStatuses.Posted,
+            BatchNo = receipt.Batch.BatchNo,
+            BatchDetailId = receipt.Details[0].Id,
+            PostedAtUtc = DateTime.UtcNow
+        });
         await db.SaveChangesAsync();
 
+        var auth = new QaReceiptAuthorizationService();
         Assert.Null(await auth.RestoreGoodsReceiptAsync(
             db, "DEMO", "HQ", receipt.Batch.BatchNo, receipt.Details));
         await db.SaveChangesAsync();
@@ -130,19 +124,18 @@ public class QaIncomingGrantTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Claim_is_idempotent_for_the_same_posted_batch()
+    public async Task Claim_stays_frozen_for_a_repeat_post_while_the_gate_is_on()
     {
         await EnableIncomingAsync();
         await SeedGrantAsync(accepted: 85m, rejected: 15m);
         var receipt = await SeedReceiptAsync(qty: 85m, deliveryNote: "DN-1");
         await using var db = await _factory.CreateDbContextAsync();
         var auth = new QaReceiptAuthorizationService();
-        Assert.Null(await auth.ClaimGoodsReceiptAsync(
+        Assert.Equal(QaReadinessMessages.IncomingFrozen, await auth.ClaimGoodsReceiptAsync(
             db, "DEMO", "HQ", IvTrxTypes.GoodsReceive, receipt.Batch, receipt.Details));
-        await db.SaveChangesAsync();
-        Assert.Null(await auth.ClaimGoodsReceiptAsync(
+        Assert.Equal(QaReadinessMessages.IncomingFrozen, await auth.ClaimGoodsReceiptAsync(
             db, "DEMO", "HQ", IvTrxTypes.GoodsReceive, receipt.Batch, receipt.Details));
-        Assert.Equal(1, await db.QaReceiptAllocations.CountAsync(x => x.Status == QaReceiptAllocationStatuses.Posted));
+        Assert.Equal(0, await db.QaReceiptAllocations.CountAsync());
     }
 
     private async Task EnableIncomingAsync()

@@ -17,6 +17,7 @@ public partial class QaInquiry : PageBase, IDisposable
 
     protected bool IsBootstrapping = true;
     protected bool FilterPopupVisible;
+    protected bool HelpVisible;
     protected string SearchText = string.Empty;
     protected string? AppliedStatus;
     protected string? AppliedSource;

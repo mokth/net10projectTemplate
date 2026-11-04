@@ -4,6 +4,8 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Quality;
 using ErpWeb.Core.Settings;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Tests.Infrastructure.Helpers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -68,88 +70,68 @@ public class QaFoundationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Policy_can_enable_physical_warehouse_hold()
+    public async Task Policy_refuses_to_enable_physical_warehouse_hold()
     {
         var result = await CreatePolicyService().SaveAsync(new QaPolicySaveCommand
         {
             InspectorApproverSeparation = true,
             PhysicalHoldEnabled = true
         });
-        Assert.True(result.Succeeded, result.ErrorMessage);
-        Assert.True(result.Policy!.PhysicalHoldEnabled);
-        Assert.True(result.Policy.Enabled);
-        Assert.False(result.Policy.IncomingInspectionEnabled);
-        Assert.False(result.Policy.FinalFgInspectionEnabled);
-        Assert.False(result.Policy.LogicalHoldEnabled);
-        Assert.False(result.Policy.NonGoodEnabled);
+        Assert.False(result.Succeeded);
+        Assert.Contains("frozen", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("physical hold", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Policy_can_enable_nongood_daily_production_gate()
+    public async Task Policy_refuses_to_enable_nongood_daily_production_gate()
     {
         var result = await CreatePolicyService().SaveAsync(new QaPolicySaveCommand
         {
             InspectorApproverSeparation = true,
             NonGoodEnabled = true
         });
-        Assert.True(result.Succeeded, result.ErrorMessage);
-        Assert.True(result.Policy!.NonGoodEnabled);
-        Assert.True(result.Policy.Enabled);
-        Assert.False(result.Policy.IncomingInspectionEnabled);
-        Assert.False(result.Policy.FinalFgInspectionEnabled);
-        Assert.False(result.Policy.LogicalHoldEnabled);
-        Assert.False(result.Policy.PhysicalHoldEnabled);
+        Assert.False(result.Succeeded);
+        Assert.Contains("frozen", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("non-good", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Policy_can_enable_finished_goods_inspection_gate()
+    public async Task Policy_refuses_to_enable_finished_goods_inspection_gate()
     {
         var result = await CreatePolicyService().SaveAsync(new QaPolicySaveCommand
         {
             InspectorApproverSeparation = true,
             FinalFgInspectionEnabled = true
         });
-        Assert.True(result.Succeeded, result.ErrorMessage);
-        Assert.True(result.Policy!.FinalFgInspectionEnabled);
-        Assert.True(result.Policy.Enabled);
-        Assert.False(result.Policy.IncomingInspectionEnabled);
-        Assert.False(result.Policy.LogicalHoldEnabled);
-        Assert.False(result.Policy.PhysicalHoldEnabled);
-        Assert.False(result.Policy.NonGoodEnabled);
+        Assert.False(result.Succeeded);
+        Assert.Contains("frozen", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("finished-goods", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Policy_can_enable_incoming_inspection_gate()
+    public async Task Policy_refuses_to_enable_incoming_inspection_gate()
     {
         var result = await CreatePolicyService().SaveAsync(new QaPolicySaveCommand
         {
             InspectorApproverSeparation = true,
             IncomingInspectionEnabled = true
         });
-        Assert.True(result.Succeeded, result.ErrorMessage);
-        Assert.True(result.Policy!.IncomingInspectionEnabled);
-        Assert.True(result.Policy.Enabled);
-        Assert.False(result.Policy.FinalFgInspectionEnabled);
-        Assert.False(result.Policy.LogicalHoldEnabled);
-        Assert.False(result.Policy.PhysicalHoldEnabled);
-        Assert.False(result.Policy.NonGoodEnabled);
+        Assert.False(result.Succeeded);
+        Assert.Contains("frozen", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("incoming", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Policy_can_enable_logical_wip_hold()
+    public async Task Policy_refuses_to_enable_logical_wip_hold()
     {
         var result = await CreatePolicyService().SaveAsync(new QaPolicySaveCommand
         {
             InspectorApproverSeparation = true,
             LogicalHoldEnabled = true
         });
-        Assert.True(result.Succeeded, result.ErrorMessage);
-        Assert.True(result.Policy!.LogicalHoldEnabled);
-        Assert.True(result.Policy.Enabled);
-        Assert.False(result.Policy.IncomingInspectionEnabled);
-        Assert.False(result.Policy.FinalFgInspectionEnabled);
-        Assert.False(result.Policy.PhysicalHoldEnabled);
-        Assert.False(result.Policy.NonGoodEnabled);
+        Assert.False(result.Succeeded);
+        Assert.Contains("frozen", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("logical hold", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -197,8 +179,9 @@ public class QaFoundationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Incoming_approve_issues_grant_without_stock_or_vendor_return()
+    public async Task Incoming_approve_is_record_only_without_grant_stock_or_vendor_return()
     {
+        await SeedPoAsync("PO1", rel: 0, line: 1, item: "A100", qty: 100m);
         var cases = CreateCaseService();
         var saved = await cases.SaveDraftAsync(new QaCaseSaveCommand
         {
@@ -253,12 +236,11 @@ public class QaFoundationTests : IAsyncLifetime
         Assert.Equal(15m, approved.Case.RejectedQty);
         Assert.Equal(85m, approved.Case.RemainingQty);
         Assert.Equal(0m, approved.Case.PostedQty);
-        Assert.Contains(approved.Case.Audit, x => x.EventType == QaAuditEvents.GrantIssued);
+        Assert.DoesNotContain(approved.Case.Audit, x => x.EventType == QaAuditEvents.GrantIssued);
+        Assert.Equal(QaEligibilityNotes.IncomingPreGrn, approved.Case.EligibilityNote);
 
         await using var db = await _factory.CreateDbContextAsync();
-        var grant = Assert.Single(await db.QaReceiptGrants.ToListAsync());
-        Assert.Equal(85m, grant.AcceptedQty);
-        Assert.Equal(15m, grant.RejectedQty);
+        Assert.Equal(0, await db.QaReceiptGrants.CountAsync());
         Assert.Equal(0, await db.QaReceiptAllocations.CountAsync());
         Assert.Equal(0, await db.IvBalLocs.CountAsync());
         Assert.Equal(0, await db.IvTrxBatches.CountAsync());
@@ -266,15 +248,16 @@ public class QaFoundationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Fg_staging_approve_issues_grant_without_stock_or_padj()
+    public async Task Fg_staging_approve_is_record_only_without_grant_stock_or_padj()
     {
+        var lotId = await SeedFgLotAsync(10m);
         var cases = CreateCaseService();
         var saved = await cases.SaveDraftAsync(new QaCaseSaveCommand
         {
             CaseDate = DateTime.Today,
             SourceType = QaSourceTypes.FgStagingLot,
             WorkOrderNo = "WO-FG",
-            ProductionBalLotId = 44,
+            ProductionBalLotId = lotId,
             Lines =
             [
                 new QaCaseLineSaveCommand
@@ -319,15 +302,13 @@ public class QaFoundationTests : IAsyncLifetime
         Assert.Equal(2m, approved.Case.RejectedQty);
         Assert.Equal(8m, approved.Case.RemainingQty);
         Assert.Equal(0m, approved.Case.PostedQty);
-        Assert.Contains(approved.Case.Audit, x => x.EventType == QaAuditEvents.GrantIssued);
+        Assert.DoesNotContain(approved.Case.Audit, x => x.EventType == QaAuditEvents.GrantIssued);
 
         await using var db = await _factory.CreateDbContextAsync();
-        var grant = Assert.Single(await db.QaFgGrants.ToListAsync());
-        Assert.Equal(44, grant.ProductionBalLotId);
-        Assert.Equal(8m, grant.AcceptedQty);
-        Assert.Equal(2m, grant.RejectedQty);
+        Assert.Equal(0, await db.QaFgGrants.CountAsync());
         Assert.Equal(0, await db.QaFgAllocations.CountAsync());
-        Assert.Equal(0, await db.ProductionBalLots.CountAsync());
+        var lot = await db.ProductionBalLots.SingleAsync();
+        Assert.Equal(10m, lot.BaseQty);
         Assert.Equal(0, await db.IvBalLocs.CountAsync());
     }
 
@@ -419,6 +400,75 @@ public class QaFoundationTests : IAsyncLifetime
         BranchCode = "HQ",
         UserId = user
     };
+
+    private async Task SeedPoAsync(string poNo, short rel, short line, string item, decimal qty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        db.PoOrders.Add(new PoOrder
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            PoNo = poNo,
+            PoRelNo = rel,
+            Status = "OPEN",
+            VendCode = "SUP01",
+            Details =
+            [
+                new PoOrderDetail
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    PoNo = poNo,
+                    PoRelNo = rel,
+                    Line = line,
+                    ICode = item,
+                    PoQty = qty,
+                    PurchaseUom = "EA",
+                    StdUom = "EA"
+                }
+            ]
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<long> SeedFgLotAsync(decimal qty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+        var location = new ProductionLocation
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Code = "FG",
+            Description = "FG staging"
+        };
+        db.ProductionLocations.Add(location);
+        await db.SaveChangesAsync();
+        var lot = new ProductionBalLot
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            Kind = ProductionBalLotKinds.Wip,
+            ItemCode = "FG1",
+            Qty = qty,
+            Uom = "EA",
+            BaseQty = qty,
+            BaseUom = "EA",
+            ConversionFactorToBase = 1m,
+            WorkOrderId = 1,
+            WorkOrderNo = "WO-FG",
+            WarehouseCode = "MAIN",
+            LocationCode = "SITE",
+            LotNo = "PROD-1",
+            BalanceStage = "FG_STAGING",
+            ProductionLocationId = location.Id,
+            StockStatusCode = "AVAILABLE",
+            OriginType = "PRODUCED"
+        };
+        db.ProductionBalLots.Add(lot);
+        await db.SaveChangesAsync();
+        return lot.Uid;
+    }
 
     private static QaCaseSaveCommand GoodDraft() => new()
     {

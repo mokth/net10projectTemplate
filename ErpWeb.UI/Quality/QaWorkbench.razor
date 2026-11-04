@@ -44,7 +44,7 @@
         </header>
 
         <section class="iv-card">
-            <p class="iv-guidance">Inspection and approval record quality decisions. They do not move stock, change WIP, or authorize goods-receipt or finished-goods posting.</p>
+            <QaRecordOnlyBanner />
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search erp-inline-search">
                     <label class="erp-inline-search__caption" for="qa-workbench-search">Search</label>
@@ -69,6 +69,10 @@
                           Text="FILTER"
                           IconCssClass="fa-solid fa-filter"
                           Click="@OpenFilterPopup" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="How to use"
+                          IconCssClass="fa-solid fa-circle-info"
+                          Click="@(() => HelpVisible = true)" />
             </div>
 
             @if (IsBootstrapping)
@@ -208,4 +212,6 @@
             </div>
         </Content>
     </DxPopup>
+
+    <QaHowToUsePopup @bind-Visible="@HelpVisible" />
 </MenuAuthorize>

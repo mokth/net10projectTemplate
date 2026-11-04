@@ -326,9 +326,15 @@ public sealed class ProductionStockAdjustmentService(
                 return IvMasterOperationResult<ProductionStockAdjustmentSourcePage>.Ok(new([], 0));
             var pools = db.ProductionBalLots.AsNoTracking().Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
                 && x.WorkOrderId == order.Uid && (x.Kind == ProductionBalLotKinds.MaterialIn || x.Kind == ProductionBalLotKinds.Wip));
-            var policy = await QaPolicyService.LoadPublishedAsync(db, scope.CompanyCode, ct);
-            if (policy is { FinalFgInspectionEnabled: true })
-                pools = pools.Where(x => x.BalanceStage != QaFgAuthorizationService.FgStagingStage);
+            var qaReady = await QaSchemaReadiness.EvaluateAsync(db, ct);
+            if (qaReady.ProbeFailed || (!qaReady.ShouldSkipAllQaQueries && !qaReady.CanQueryPolicy))
+                throw new AdjustmentException(qaReady.UserMessage ?? QaReadinessMessages.Incomplete);
+            if (!qaReady.ShouldSkipAllQaQueries)
+            {
+                var policy = await QaPolicyService.LoadPublishedAsync(db, scope.CompanyCode, ct);
+                if (policy is { FinalFgInspectionEnabled: true })
+                    pools = pools.Where(x => x.BalanceStage != QaFgAuthorizationService.FgStagingStage);
+            }
             if (!string.IsNullOrWhiteSpace(query.SearchText)) { var term = query.SearchText.Trim(); pools = pools.Where(x => x.ItemCode.Contains(term)
                 || x.LotNo.Contains(term) || (x.Description != null && x.Description.Contains(term))); }
             var count = await pools.CountAsync(ct); var take = Math.Clamp(query.Take <= 0 ? 30 : query.Take, 1, 100);

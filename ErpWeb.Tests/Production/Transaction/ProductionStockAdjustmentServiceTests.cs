@@ -474,7 +474,7 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
             }],
         });
         Assert.False(saved.Succeeded);
-        Assert.Contains("cannot consume FG staging", saved.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(QaReadinessMessages.FinalFgFrozen, saved.Message);
     }
 
     private ProductionStockAdjustmentService CreateService(

@@ -1879,6 +1879,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, integrityError);
         }
 
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            db, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
+        }
+
         var inverseByBalLoc = new Dictionary<int, decimal>();
         foreach (var h in history)
         {
@@ -3521,6 +3529,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     "This stock transfer has a replay-corrected valuation and needs replay-aware rollback.");
             }
+        }
+
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            db, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         }
 
         var netByBalLocId = new Dictionary<int, decimal>();
