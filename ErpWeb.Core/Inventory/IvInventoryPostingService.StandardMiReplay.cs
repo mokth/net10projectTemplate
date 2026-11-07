@@ -258,6 +258,16 @@ public sealed partial class IvInventoryPostingService
         if (currentAuthority != authority || current.Plan is null
             || current.Plan.Fingerprint != prepared.Plan!.Fingerprint)
             throw InvalidStandardTransfer("The Standard MI tail changed before posting.");
+        var writeDetails = await write.IvTrxBatchDetails
+            .Where(d => d.BatchId == authority.BatchId)
+            .ToListAsync(cancellationToken);
+        var qaError = await AssertQaPhysicalFromDetailsAsync(
+            write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         var historyId = await AppendStandardMiPhysicalAsync(root,
             physical, authority, cancellationToken);
         await AppendStandardMiValueAsync(root, authority,
@@ -496,6 +506,13 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            write, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
+        }
         var ledger = await BeginStandaloneLedgerAsync(write, companyCode,
             branchCode, batchNo, reversal: true, cancellationToken);
         await using var postingScope = new StockPostingAbortScope(

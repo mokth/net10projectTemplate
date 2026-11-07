@@ -25,7 +25,32 @@ public static class StockLedgerErrorCodes
     public const string CostMethodNotImplemented = "COST_METHOD_NOT_IMPLEMENTED";
 }
 
-public sealed record StockLedgerError(string Code, string Message, bool Retryable = false);
+public sealed record StockLedgerError(string Code, string Message, bool Retryable = false)
+{
+    /// <summary>
+    /// Which replay step refused the write. Supplied only by producers that already know it from their
+    /// own structured input; it never changes <see cref="Code"/>, <see cref="Message"/> or the decision
+    /// to throw, and it exists so the operator message can distinguish "this document" from
+    /// "a later transaction".
+    /// </summary>
+    public StockLedgerErrorPhase Phase { get; init; } = StockLedgerErrorPhase.Unspecified;
+
+    /// <summary>
+    /// The replay event that would have gone negative, for server-log correlation only. Never shown to
+    /// an operator and never used to infer a document by string parsing.
+    /// </summary>
+    public long? EventId { get; init; }
+}
+
+/// <summary>Narrow replay-step classification carried as optional metadata. No arithmetic effect.</summary>
+public enum StockLedgerErrorPhase
+{
+    Unspecified,
+    Removing,
+    Rewinding,
+    Replaying
+}
+
 
 public sealed class StockLedgerException : Exception
 {

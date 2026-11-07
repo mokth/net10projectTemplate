@@ -21,6 +21,7 @@ public partial class PoOrder : PageBase, IAsyncDisposable
 
     [Inject] private IPoOrderService Orders { get; set; } = default!;
     [Inject] private IPoOrderAttachmentService Attachments { get; set; } = default!;
+    [Inject] private IProcurementApprovalService Approval { get; set; } = default!;
     [Inject] private ICurrentDateService Dates { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
     [Inject] private IJSRuntime JsRuntime { get; set; } = default!;
@@ -39,6 +40,24 @@ public partial class PoOrder : PageBase, IAsyncDisposable
     protected string? PopupError;
     protected string? PrPickerError;
     protected bool CanEditPermission;
+    protected bool CanSubmitPermission;
+    protected ProcurementApprovalInstanceDto? ApprovalInstance { get; set; }
+    protected string? ApprovalBadge => ApprovalInstance is null ? null : $"Approval: {ApprovalInstance.Status}";
+    protected bool ApprovalLocksEdits =>
+        ApprovalInstance is not null
+        && (string.Equals(ApprovalInstance.Status, ErpWeb.Model.Entities.Purchase.ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ApprovalInstance.Status, ErpWeb.Model.Entities.Purchase.ProcurementApprovalStatuses.Approved, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ApprovalInstance.Status, ErpWeb.Model.Entities.Purchase.ProcurementApprovalStatuses.NotRequired, StringComparison.OrdinalIgnoreCase));
+    protected bool CanSubmitApproval =>
+        !IsNewMode
+        && !IsCopyMode
+        && !IsCancelledStatus
+        && !string.IsNullOrWhiteSpace(PoNo)
+        && !ApprovalLocksEdits
+        && CanSubmitPermission;
+    protected bool CanWithdrawApproval =>
+        ApprovalInstance is not null
+        && string.Equals(ApprovalInstance.Status, ErpWeb.Model.Entities.Purchase.ProcurementApprovalStatuses.Pending, StringComparison.OrdinalIgnoreCase);
     protected bool CanViewCost;
     protected string PoNoDisplay = "AUTO";
     protected short PoRelNoDisplay = 1;
@@ -151,7 +170,8 @@ public partial class PoOrder : PageBase, IAsyncDisposable
         && !IsViewMode
         && !IsClosedStatus
         && !IsCancelledStatus
-        && !IsHistoricalRevision;
+        && !IsHistoricalRevision
+        && !ApprovalLocksEdits;
     protected bool CanEditSupplier => CanEditDocument && !Lines.Any(x => x.IsReceived);
     protected bool CanEditFromView =>
         IsViewMode
@@ -247,6 +267,7 @@ public partial class PoOrder : PageBase, IAsyncDisposable
         AttachmentRows = [];
 
         CanEditPermission = await AccessRights.CanAsync(MenuCodes.PurchaseOrder, PermissionCodes.Edit);
+        CanSubmitPermission = await AccessRights.CanAsync(MenuCodes.PurchaseOrder, PermissionCodes.Submit);
         var lookups = await Orders.GetLookupsAsync(_cts.Token);
         if (_disposed)
         {
@@ -302,6 +323,7 @@ public partial class PoOrder : PageBase, IAsyncDisposable
 
         ApplyDocument(result.Document);
         TempDocId = null;
+        await LoadApprovalAsync();
         await LoadAttachmentsAsync();
         IsLoading = false;
     }
@@ -927,6 +949,85 @@ public partial class PoOrder : PageBase, IAsyncDisposable
     protected void OnClose() => DocumentReturnNavigation.NavigateBack(Navigation, "/purchase/orders");
     protected void OnEditFromView() => Navigation.NavigateTo(
         DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/purchase/orders/edit/{PoNo}"));
+
+    private async Task LoadApprovalAsync()
+    {
+        ApprovalInstance = null;
+        if (string.IsNullOrWhiteSpace(PoNo))
+        {
+            return;
+        }
+
+        ApprovalInstance = await Approval.GetActiveAsync(
+            ErpWeb.Model.Entities.Purchase.ProcurementApprovalDocTypes.Po,
+            PoNo,
+            (short)PoRelNoDisplay,
+            _cts.Token);
+    }
+
+    protected async Task OnSubmitApprovalAsync()
+    {
+        if (!CanSubmitApproval || string.IsNullOrWhiteSpace(PoNo))
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await Approval.SubmitAsync(new ProcurementApprovalSubmitRequest
+            {
+                DocType = ErpWeb.Model.Entities.Purchase.ProcurementApprovalDocTypes.Po,
+                DocNo = PoNo,
+                DocRev = (short)PoRelNoDisplay
+            }, _cts.Token);
+            if (!result.Succeeded)
+            {
+                ErrorMessage = result.ErrorMessage;
+                return;
+            }
+
+            ApprovalInstance = result.Instance;
+            StatusMessage = "Submitted for approval.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    protected async Task OnWithdrawApprovalAsync()
+    {
+        if (ApprovalInstance is null)
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await Approval.WithdrawAsync(new ProcurementApprovalDecisionRequest
+            {
+                InstanceId = ApprovalInstance.Uid,
+                RowVersion = ApprovalInstance.RowVersion,
+                Reason = "Withdrawn by submitter."
+            }, _cts.Token);
+            if (!result.Succeeded)
+            {
+                ErrorMessage = result.ErrorMessage;
+                return;
+            }
+
+            ApprovalInstance = result.Instance;
+            StatusMessage = "Approval withdrawn.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
     protected void NavigateRevisionView(short poRelNo) =>
         Navigation.NavigateTo($"/purchase/orders/view/{PoNoDisplay}/{poRelNo}");
 
@@ -959,6 +1060,7 @@ public partial class PoOrder : PageBase, IAsyncDisposable
         }
 
         ApplyDocument(result.Document);
+        await LoadApprovalAsync();
         await LoadAttachmentsAsync();
         _isDirty = false;
         ValidationErrors.Clear();

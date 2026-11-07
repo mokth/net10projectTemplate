@@ -4,6 +4,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
@@ -46,8 +47,10 @@ public class AppDbContext : DbContext
                     or ProductionStandardCostVariance
                     or ProductionConversionCostFact
                     or StockCountCostBasis or StockCountReplayGeneration
-                    or StockReplayRun or StockReplayEffect or ProductionCostRestatementFact))
-                throw new InvalidOperationException("Valuation facts, financial snapshots, and costing evidence are immutable; append a linked reversal or a new revision.");
+                    or StockReplayRun or StockReplayEffect or ProductionCostRestatementFact
+                    or ProcurementApprovalEvent or ProcurementApprovalDecision
+                    or ProcurementApprovalCutoverExemption))
+                throw new InvalidOperationException("Valuation facts, financial snapshots, costing evidence, and approval audit rows are immutable; append a linked reversal or a new revision.");
             if (entry.State != EntityState.Added && entry.Entity is ProductionFinishedGoodFact or ProductionFinishedGoodLotOrigin
                 or ProductionFinishedGoodPriceSnapshot or ProductionValuationEvidence or ProductionPoolDependency)
                 throw new InvalidOperationException("Posted evidence and FG lot origin are immutable; append a linked reversal instead.");
@@ -268,6 +271,15 @@ public class AppDbContext : DbContext
     public DbSet<PoAuthorised> PoAuthoriseds => Set<PoAuthorised>();
     public DbSet<PoAttachFile> PoAttachFiles => Set<PoAttachFile>();
     public DbSet<PoPrAttachFile> PoPrAttachFiles => Set<PoPrAttachFile>();
+    public DbSet<ProcurementApprovalPolicy> ProcurementApprovalPolicies => Set<ProcurementApprovalPolicy>();
+    public DbSet<ProcurementApprovalBand> ProcurementApprovalBands => Set<ProcurementApprovalBand>();
+    public DbSet<ProcurementApprovalLevel> ProcurementApprovalLevels => Set<ProcurementApprovalLevel>();
+    public DbSet<ProcurementApprovalLevelAssignee> ProcurementApprovalLevelAssignees => Set<ProcurementApprovalLevelAssignee>();
+    public DbSet<ProcurementApprovalInstance> ProcurementApprovalInstances => Set<ProcurementApprovalInstance>();
+    public DbSet<ProcurementApprovalAssignee> ProcurementApprovalAssignees => Set<ProcurementApprovalAssignee>();
+    public DbSet<ProcurementApprovalDecision> ProcurementApprovalDecisions => Set<ProcurementApprovalDecision>();
+    public DbSet<ProcurementApprovalEvent> ProcurementApprovalEvents => Set<ProcurementApprovalEvent>();
+    public DbSet<ProcurementApprovalCutoverExemption> ProcurementApprovalCutoverExemptions => Set<ProcurementApprovalCutoverExemption>();
     public DbSet<PoDesc> PoDescs => Set<PoDesc>();
 
     public DbSet<PrBomHdr> PrBomHdrs => Set<PrBomHdr>();
@@ -334,6 +346,22 @@ public class AppDbContext : DbContext
     public DbSet<ProductionOutputMaterial> ProductionOutputMaterials => Set<ProductionOutputMaterial>();
     public DbSet<WipItemBalLoc> WipItemBalLocs => Set<WipItemBalLoc>();
     public DbSet<PrSchDailyProd> PrSchDailyProds => Set<PrSchDailyProd>();
+
+    public DbSet<QaPolicy> QaPolicies => Set<QaPolicy>();
+    public DbSet<QaCase> QaCases => Set<QaCase>();
+    public DbSet<QaCaseLine> QaCaseLines => Set<QaCaseLine>();
+    public DbSet<QaInspection> QaInspections => Set<QaInspection>();
+    public DbSet<QaDispositionLine> QaDispositionLines => Set<QaDispositionLine>();
+    public DbSet<QaAuditEvent> QaAuditEvents => Set<QaAuditEvent>();
+    public DbSet<QaReceiptGrant> QaReceiptGrants => Set<QaReceiptGrant>();
+    public DbSet<QaReceiptAllocation> QaReceiptAllocations => Set<QaReceiptAllocation>();
+    public DbSet<QaFgGrant> QaFgGrants => Set<QaFgGrant>();
+    public DbSet<QaFgAllocation> QaFgAllocations => Set<QaFgAllocation>();
+    public DbSet<QaLogicalHold> QaLogicalHolds => Set<QaLogicalHold>();
+    public DbSet<QaPhysicalHold> QaPhysicalHolds => Set<QaPhysicalHold>();
+    public DbSet<QaPhysicalAllocation> QaPhysicalAllocations => Set<QaPhysicalAllocation>();
+    public DbSet<QaNonGoodGrant> QaNonGoodGrants => Set<QaNonGoodGrant>();
+    public DbSet<QaNonGoodAllocation> QaNonGoodAllocations => Set<QaNonGoodAllocation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

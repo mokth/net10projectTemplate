@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 [Trait(TestCategories.Name, TestCategories.InventoryMiscIssue)]
@@ -488,7 +489,8 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance,
-            currentDate: new FixedCurrentDateService(postingBusinessDate ?? DateTime.MaxValue.Date));
+            currentDate: new FixedCurrentDateService(postingBusinessDate ?? DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
         return new IvMiscIssueService(
             _factory, tenant, access.Object, new RunningNumberService(),
@@ -508,7 +510,8 @@ public class IvMiscIssuePostingServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
     private IIvInventoryLookupService CreateLookups()
     {

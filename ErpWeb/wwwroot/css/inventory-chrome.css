@@ -66,6 +66,61 @@
     opacity: 1;
 }
 
+/* Operator failure banner (shared component): headline, reason, per-record facts.
+   Scoped page CSS cannot reach a shared component, so these live with the shared chrome. */
+.iv-toast--stack {
+    align-items: flex-start;
+}
+
+.iv-toast__body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.iv-toast__more > summary {
+    cursor: pointer;
+    font-weight: 600;
+    width: fit-content;
+}
+
+.iv-toast__list {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.iv-toast__list li {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.iv-toast__ref {
+    font-size: 0.85em;
+    opacity: 0.75;
+}
+
+.iv-toast__facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin: 4px 0 0;
+    font-size: 0.9em;
+}
+
+.iv-toast__facts dt {
+    opacity: 0.7;
+}
+
+.iv-toast__facts dd {
+    margin: 0;
+    font-weight: 600;
+}
+
 .iv-hero,
 .iv-card {
     background: var(--iv-surface);

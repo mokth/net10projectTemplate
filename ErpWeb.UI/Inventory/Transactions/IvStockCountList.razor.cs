@@ -5,6 +5,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Security;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Timer = System.Timers.Timer;
@@ -48,6 +49,10 @@ public partial class IvStockCountList : PageBase, IDisposable
 
     protected string ConfirmMessage { get; set; } = string.Empty;
     protected string ConfirmAction { get; set; } = "DELETE";
+
+    /// <summary>Operator-language view of the current failed action, or null when the failure carried
+    /// no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected string ConfirmReason { get; set; } = string.Empty;
     protected bool ConfirmNeedsReason => string.Equals(ConfirmAction, "ROLLBACK", StringComparison.Ordinal);
 
@@ -327,11 +332,13 @@ public partial class IvStockCountList : PageBase, IDisposable
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
+        OperatorFailure = null;
 
         try
         {
             string? message;
             bool succeeded;
+            ErpOperatorFailureView? failure = null;
             var row = _selectedRows[0];
 
             switch (ConfirmAction)
@@ -340,6 +347,7 @@ public partial class IvStockCountList : PageBase, IDisposable
                 {
                     var result = await StockCount.PostAsync(row.Id);
                     succeeded = result.Succeeded;
+                    failure = ErpOperatorFailureView.FromError(result.OperatorError);
                     message = result.Succeeded
                         ? result.PostedBatchNo is int batchNo
                             ? $"Posted {row.CountNo} to batch {batchNo}."
@@ -353,6 +361,7 @@ public partial class IvStockCountList : PageBase, IDisposable
                 {
                     var result = await StockCount.RollbackAsync(row.Id, ConfirmReason);
                     succeeded = result.Succeeded;
+                    failure = ErpOperatorFailureView.FromError(result.OperatorError);
                     message = result.Succeeded
                         ? $"Rolled back {row.CountNo}. Stock restored."
                         : result.ErrorMessage ?? $"Unable to roll back {row.CountNo}.";
@@ -364,6 +373,7 @@ public partial class IvStockCountList : PageBase, IDisposable
                     var ids = _selectedRows.Select(x => x.Id).ToList();
                     var result = await StockCount.CancelAsync(ids, ConfirmReason);
                     succeeded = result.Succeeded;
+                    failure = ErpOperatorFailureView.FromError(result.OperatorError);
                     message = result.Succeeded
                         ? $"Cancelled {ids.Count} stock count(s)."
                         : result.ErrorMessage ?? "Unable to cancel the selected stock counts.";
@@ -375,6 +385,7 @@ public partial class IvStockCountList : PageBase, IDisposable
                     var ids = _selectedRows.Select(x => x.Id).ToList();
                     var result = await StockCount.DeleteAsync(ids);
                     succeeded = result.Succeeded;
+                    failure = ErpOperatorFailureView.FromError(result.OperatorError);
                     message = result.Succeeded
                         ? $"Deleted {ids.Count} stock count(s)."
                         : result.ErrorMessage ?? "Unable to delete the selected stock counts.";
@@ -392,6 +403,7 @@ public partial class IvStockCountList : PageBase, IDisposable
             else
             {
                 ErrorMessage = message;
+                OperatorFailure = failure;
                 ConfirmVisible = false;
             }
         }
@@ -402,7 +414,12 @@ public partial class IvStockCountList : PageBase, IDisposable
     }
 
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     public void Dispose()
     {

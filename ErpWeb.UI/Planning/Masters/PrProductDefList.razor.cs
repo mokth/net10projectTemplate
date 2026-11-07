@@ -84,7 +84,7 @@ public partial class PrProductDefList : PageBase, IDisposable
         new() { Caption = "Default", FieldName = nameof(PrProductDefListRow.IsDefaultDefinition), DataType = "bool", Width = "90px", VisibleIndex = 5 },
         new() { Caption = "Active", FieldName = nameof(PrProductDefListRow.ActiveVersion), DataType = "number", Width = "90px", VisibleIndex = 6 },
         new() { Caption = "Latest", FieldName = nameof(PrProductDefListRow.LatestVersion), DataType = "number", Width = "90px", VisibleIndex = 7 },
-        new() { Caption = "Status", FieldName = nameof(PrProductDefListRow.BomStatus), Width = "110px", VisibleIndex = 8 },
+        new() { Caption = "Latest status", FieldName = nameof(PrProductDefListRow.LatestStatus), Width = "120px", VisibleIndex = 8 },
         new() { Caption = "Mfg Type", FieldName = nameof(PrProductDefListRow.MfgType), Width = "90px", VisibleIndex = 9 },
         new() { Caption = "BOM Item Count", FieldName = nameof(PrProductDefListRow.BomItemCount), DataType = "number", Width = "120px", VisibleIndex = 10 },
         ..AuditColumns.For(startVisibleIndex: 11)
@@ -177,30 +177,7 @@ public partial class PrProductDefList : PageBase, IDisposable
                 OpenDefinition("view", row.ProdCode, row.DefinitionCode);
                 break;
             case "EDIT / REVISE":
-                if (string.Equals(row.BomStatus, PrBomStatuses.Draft, StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!CanEdit)
-                    {
-                        StatusMessage = "Access Denied!!";
-                        break;
-                    }
-                    OpenDefinition("edit", row.ProdCode, row.DefinitionCode);
-                    break;
-                }
-
-                if (!CanAdd)
-                {
-                    StatusMessage = "Add permission is required to create a new version.";
-                    break;
-                }
-                var revision = await ProductDefs.CreateNewVersionAsync(
-                    row.ProdCode, row.DefinitionCode, row.LatestVersion);
-                if (!revision.Succeeded)
-                {
-                    ErrorMessage = revision.Message ?? "Unable to create a new Product Definition version.";
-                    break;
-                }
-                OpenDefinition("edit", row.ProdCode, row.DefinitionCode);
+                await OpenCompactEditAsync(row);
                 break;
             case "EXPLODE":
                 Navigation.NavigateTo(
@@ -216,6 +193,39 @@ public partial class PrProductDefList : PageBase, IDisposable
 
     protected void OpenView(PrProductDefListRow row) =>
         OpenDefinition("view", row.ProdCode, row.DefinitionCode);
+
+    protected async Task OpenCompactEditAsync(PrProductDefListRow row)
+    {
+        if (string.Equals(row.LatestStatus, PrBomStatuses.Draft, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!CanEdit)
+            {
+                StatusMessage = "Access Denied!!";
+                return;
+            }
+
+            OpenDefinition("edit", row.ProdCode, row.DefinitionCode);
+            return;
+        }
+
+        if (!CanAdd)
+        {
+            StatusMessage = "Add permission is required to create a new version.";
+            return;
+        }
+
+        var fromVersion = row.LatestVersion;
+        var revision = await ProductDefs.CreateNewVersionAsync(
+            row.ProdCode, row.DefinitionCode, fromVersion);
+        if (!revision.Succeeded || revision.Data is null)
+        {
+            ErrorMessage = revision.Message ?? "Unable to create a new Product Definition version.";
+            return;
+        }
+
+        StatusMessage = $"Created Draft V{revision.Data.Version} from V{fromVersion}.";
+        OpenDefinition("edit", row.ProdCode, row.DefinitionCode);
+    }
 
     protected void OpenFilterPopup()
     {

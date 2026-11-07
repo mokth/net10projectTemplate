@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
@@ -19,6 +20,7 @@ public sealed partial class ProductionWorkOrderTransferService
     private async Task<IvMasterOperationResult<ProductionWorkOrderTransferDocument>> ExecuteRollbackAsync(
         ProductionWorkOrderTransferCommand request, CancellationToken ct)
     {
+        string? documentNo = null;
         try
         {
             var scope = await ScopeAsync(PermissionCodes.Rollback, true, ct);
@@ -63,6 +65,7 @@ public sealed partial class ProductionWorkOrderTransferService
 
             var transfer = await LoadTransferAsync(db, scope, request.Id, true, ct);
             CheckVersion(transfer, request.ExpectedVersion);
+            documentNo = transfer.TransferNo;
             if (transfer.Status != ProductionWorkOrderTransferStatuses.Posted || transfer.DeletedAtUtc is not null)
                 throw new TransferException("Only a POSTED Work Order Transfer can be rolled back.");
             if (transfer.SourceWorkOrderId != observed.SourceWorkOrderId || transfer.TargetWorkOrderId != observed.TargetWorkOrderId)
@@ -210,7 +213,10 @@ public sealed partial class ProductionWorkOrderTransferService
                 ReversesPostingId = primaryId, ReasonText = reason, ProductionPostingLinkId = postingLink.Uid
             };
             var begin = await coordinator.BeginInTransactionAsync(db, postCommand, ct);
-            if (begin.Error is not null) throw new TransferException(begin.Error.Message);
+            if (begin.Error is not null)
+                throw new TransferException(begin.Error.Message, IvMasterErrorCode.Validation,
+                    ProductionOperatorErrorLog.Ledger(logger, null, begin.Error, ErpDocumentKind.WorkOrderTransfer,
+                        documentNo, ErpErrorAction.Rollback, "Work Order Transfer rollback begin"));
             if (!begin.LedgerEnabled || begin.Context is null)
                 throw new TransferException("An active V2 stock ledger is required. No legacy Work Order Transfer rollback is permitted.");
             if (begin.WasReplay)
@@ -343,8 +349,13 @@ public sealed partial class ProductionWorkOrderTransferService
             await tx.CommitAsync(ct);
             return IvMasterOperationResult<ProductionWorkOrderTransferDocument>.Ok(document);
         }
-        catch (TransferException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Message, ex.Code); }
-        catch (StockLedgerException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Error.Message); }
+        catch (TransferException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Message, ex.Code, ex.OperatorError); }
+        catch (StockLedgerException ex)
+        {
+            return Fail<ProductionWorkOrderTransferDocument>(ex.Error.Message, IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Ledger(logger, ex, ex.Error, ErpDocumentKind.WorkOrderTransfer,
+                    documentNo, ErpErrorAction.Rollback, "Work Order Transfer rollback"));
+        }
         catch (ProductionWorkOrderExecutionLockException ex) { return Fail<ProductionWorkOrderTransferDocument>(ex.Message, IvMasterErrorCode.Concurrency); }
         catch (DbUpdateConcurrencyException) { return Fail<ProductionWorkOrderTransferDocument>("Stock or Work Order Transfer changed. Reload and retry.", IvMasterErrorCode.Concurrency); }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex)) { return Fail<ProductionWorkOrderTransferDocument>("This Work Order Transfer generation already has a rollback or posting. Reload the document.", IvMasterErrorCode.Concurrency); }

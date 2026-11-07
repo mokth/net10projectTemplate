@@ -116,6 +116,16 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, lockedClosed);
         }
+        var writeDetails = await write.IvTrxBatchDetails
+            .Where(d => d.BatchId == batch.Id)
+            .ToListAsync(cancellationToken);
+        var qaError = await AssertQaPhysicalFromDetailsAsync(
+            write, companyCode, branchCode, IvTrxTypes.StockTransfer, batchNo, writeDetails, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,
             source, cancellationToken);
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,
@@ -227,7 +237,8 @@ public sealed partial class IvInventoryPostingService
         IReadOnlyList<StockReplayStandardEvent> events,
         CancellationToken cancellationToken,
         PoInvoice? replayInvoice = null,
-        bool allowBoundedSales = false)
+        bool allowBoundedSales = false,
+        StandardProductionReplayPlan? productionPlan = null)
     {
         if (events.Count is 0 or > 100 || events.Any(e =>
                 e.Kind is not (StockReplayStandardEventKinds.Movement
@@ -261,11 +272,18 @@ public sealed partial class IvInventoryPostingService
                     or IvTrxTypes.MiscellaneousIssue
                     or IvTrxTypes.Scrap)
                     && !(allowBoundedSales && h.TrxType is
-                        (IvTrxTypes.SalesOut or IvTrxTypes.CustomerReturn)))))
+                        (IvTrxTypes.SalesOut or IvTrxTypes.CustomerReturn))
+                    && !(productionPlan is not null
+                        && h.TrxType == IvTrxTypes.IssueToProduction
+                        && h.Id == productionPlan.HistoryId))))
             return "A later Standard movement has no original Inventory history.";
         var salesIds = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut)
             .Select(h => h.Id).ToArray();
         var returns = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn).ToArray();
+        if (productionPlan is not null
+            && (histories.Count(h => h.TrxType == IvTrxTypes.IssueToProduction) != 1
+                || salesIds.Length > 0 || returns.Length > 0 || replayInvoice is not null))
+            return "Backdated Standard receipt cannot yet replay Production together with Sales or invoice settlement.";
         SalesReturnPermit? permittedReturn = null;
         if (returns.Length > 0)
         {
@@ -811,6 +829,14 @@ public sealed partial class IvInventoryPostingService
             || state.OnHandBaseQty != tail.CurrentQuantity
             || state.InventoryValue != tail.CurrentValue)
             throw InvalidStandardTransfer("The Standard item state changed before rollback.");
+
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            db, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
+        }
 
         var now = DateTime.UtcNow;
         var user = root.UserId.Length > 10 ? root.UserId[..10] : root.UserId;

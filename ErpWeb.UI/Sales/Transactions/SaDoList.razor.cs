@@ -5,6 +5,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Security;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Timer = System.Timers.Timer;
@@ -259,6 +260,10 @@ public partial class SaDoList : PageBase, IDisposable
         await ReloadGridAsync();
     }
 
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
+
     protected async Task ConfirmActionAsync()
     {
         if (IsSubmitting || _selectedRows.Count == 0)
@@ -271,6 +276,7 @@ public partial class SaDoList : PageBase, IDisposable
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
+        OperatorFailure = null;
         try
         {
             var keyed = _selectedRows
@@ -299,6 +305,12 @@ public partial class SaDoList : PageBase, IDisposable
                 else
                 {
                     ErrorMessage = summary;
+                    OperatorFailure = ErpOperatorFailureView.FromRecords(
+                        result.Posting
+                            .Where(x => !x.Succeeded)
+                            .Select(x => new ErpOperatorFailureRecord(
+                                x.DoNo, x.ErrorMessage, x.OperatorError)),
+                        result.Posting.Count);
                     ConfirmVisible = false;
                     await ReloadGridAsync();
                 }
@@ -323,7 +335,12 @@ public partial class SaDoList : PageBase, IDisposable
     }
 
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     public void Dispose()
     {

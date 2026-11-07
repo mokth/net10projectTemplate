@@ -1,3 +1,4 @@
+using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Core.StockLedger;
 
@@ -10,6 +11,18 @@ public sealed class IvInventoryPostingResult
     public int SucceededCount { get; init; }
     public int FailedCount { get; init; }
     public IReadOnlyList<IvInventoryPostingBatchResult> Batches { get; init; } = [];
+
+    /// <summary>
+    /// Operator-facing failures, one per failed batch, in batch order. Empty when the failure had no
+    /// structured ledger error. Purely presentational: <see cref="Succeeded"/>,
+    /// <see cref="FailedCount"/> and <see cref="ErrorMessage"/> remain authoritative.
+    /// </summary>
+    public IReadOnlyList<ErpOperatorError> OperatorErrors =>
+        Batches.Where(x => !x.Succeeded && x.OperatorError is not null)
+            .Select(x => x.OperatorError!)
+            .ToArray();
+
+    public bool HasOperatorErrors => Batches.Any(x => !x.Succeeded && x.OperatorError is not null);
 
     public static IvInventoryPostingResult Fail(string message) =>
         new() { Succeeded = false, ErrorMessage = message, FailedCount = 1 };
@@ -39,11 +52,27 @@ public sealed class IvInventoryPostingBatchResult
     public string? ErrorMessage { get; init; }
     public Guid? OperationId { get; init; }
 
+    /// <summary>
+    /// Friendly text for this batch's failure, or null when the failure is not a structured ledger
+    /// error. <see cref="ErrorMessage"/> is still populated and still used for logs and internal
+    /// diagnostics.
+    /// </summary>
+    public ErpOperatorError? OperatorError { get; init; }
+
     public static IvInventoryPostingBatchResult Ok(int batchNo, Guid operationId) =>
         new() { BatchNo = batchNo, Succeeded = true, OperationId = operationId };
 
-    public static IvInventoryPostingBatchResult Fail(int batchNo, string message) =>
-        new() { BatchNo = batchNo, Succeeded = false, ErrorMessage = message };
+    public static IvInventoryPostingBatchResult Fail(
+        int batchNo,
+        string message,
+        ErpOperatorError? operatorError = null) =>
+        new()
+        {
+            BatchNo = batchNo,
+            Succeeded = false,
+            ErrorMessage = message,
+            OperatorError = operatorError
+        };
 }
 
 public interface IIvInventoryPostingService

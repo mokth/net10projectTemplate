@@ -5,6 +5,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Security;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Timer = System.Timers.Timer;
@@ -286,6 +287,10 @@ public partial class PoInvoiceList : PageBase, IDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
+
     protected async Task ConfirmActionAsync()
     {
         if (IsSubmitting || _selectedRows.Count == 0)
@@ -297,6 +302,7 @@ public partial class PoInvoiceList : PageBase, IDisposable
         IsSubmitting = true;
         ErrorMessage = null;
         StatusMessage = null;
+        OperatorFailure = null;
         try
         {
             var keys = _selectedRows.Select(x => new PoInvoiceKeyedRequest
@@ -315,6 +321,12 @@ public partial class PoInvoiceList : PageBase, IDisposable
             if (!string.IsNullOrWhiteSpace(result.ErrorMessage) && !result.Succeeded)
             {
                 ErrorMessage = result.ErrorMessage;
+                OperatorFailure = ErpOperatorFailureView.FromRecords(
+                    result.Posting
+                        .Where(x => !x.Succeeded)
+                        .Select(x => new ErpOperatorFailureRecord(
+                            x.DocNo, x.ErrorMessage, x.OperatorError)),
+                    result.Posting.Count);
             }
             else
             {
@@ -331,7 +343,11 @@ public partial class PoInvoiceList : PageBase, IDisposable
     }
 
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     private void SyncDataSourceFilters()
     {

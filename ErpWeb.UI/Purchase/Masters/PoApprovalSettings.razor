@@ -1,0 +1,578 @@
+@page "/purchase/approval/settings"
+@inherits PageBase
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Purchase
+@using ErpWeb.Model.Entities.Purchase
+@using ErpWeb.UI.Components.Security
+
+<PageTitle>Purchase Approval Settings</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseApprovalSettings">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !DiscardVisible && !PolicyConfirmVisible && !RemoveConfirmVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            @if (!string.IsNullOrWhiteSpace(ServerErrorDetail))
+            {
+                <details class="po-approval-error-detail">
+                    <summary>Details</summary>
+                    <span>@ServerErrorDetail</span>
+                </details>
+            }
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="po-approval-head">
+        <div class="po-approval-head__row">
+            <div>
+                <h1 class="iv-title">Purchase Approval Settings</h1>
+                <p class="po-approval-sub">Set who must approve purchase requests and orders.</p>
+                <p class="po-approval-sub po-approval-sub--muted">Applies to all branches. These rules are shared by every branch in this company.</p>
+            </div>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="How to set up approvals"
+                      IconCssClass="fa-solid fa-circle-info"
+                      CssClass="po-approval-help-btn"
+                      Click="OpenHelp"
+                      aria-label="How to set up approvals" />
+        </div>
+    </header>
+
+    <section class="iv-card">
+        <div class="po-approval-toolbar">
+            <div class="po-approval-tabs">
+                <DxTabs ActiveTabIndex="@ActiveTabIndex" ActiveTabIndexChanged="@OnTabIndexChangedAsync">
+                    <DxTabPage Text="Purchase Request (PR)" />
+                    <DxTabPage Text="Purchase Order (PO)" />
+                </DxTabs>
+            </div>
+            <div class="po-approval-badge-group">
+                <span class="iv-status @(PublishedEnabled ? "is-on" : "is-off")">
+                    @(PublishedEnabled ? "Currently ON" : "Currently OFF")
+                </span>
+                <span class="po-approval-version"
+                      title="Each time saved rules change, a new version is kept for history.">
+                    @(PublishedVersion == 0 ? "No saved rules yet" : $"Saved rules · version {PublishedVersion}")
+                </span>
+            </div>
+        </div>
+        @if (HasUnsavedEnabledChange)
+        {
+            <p class="po-approval-unsaved" role="status">@UnsavedEnabledHint</p>
+        }
+
+        @if (IsLoading || Editor is null)
+        {
+            <div class="iv-skeleton mt-3" aria-busy="true">
+                <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                <div class="iv-skeleton__line"></div>
+            </div>
+        }
+        else
+        {
+            @if (!CanEdit)
+            {
+                <p class="po-approval-readonly" role="status">You can view these settings. Ask an administrator for permission to change them.</p>
+            }
+
+            @if (ClientIssues.Count > 0)
+            {
+                <div class="po-approval-summary" role="alert">
+                    <strong>Fix these items before saving</strong>
+                    <ul>
+                        @foreach (var issue in ClientIssues)
+                        {
+                            <li>@issue.Message</li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <section class="po-approval-section" aria-labelledby="po-approval-general-title">
+                <h2 id="po-approval-general-title" class="iv-card__title">General</h2>
+                <div class="po-approval-general">
+                    <div class="po-approval-field">
+                        <label class="po-approval-label" for="po-approval-enabled">Use approval for this document type</label>
+                        <DxCheckBox @bind-Checked="@Editor.Enabled"
+                                    InputId="po-approval-enabled"
+                                    AllowIndeterminateState="false"
+                                    Enabled="@CanMutate" />
+                        <p class="po-approval-hint">Changes take effect after you save.</p>
+                    </div>
+                    <div class="po-approval-field po-approval-field--wide">
+                        <label class="po-approval-label" for="po-approval-legacy">
+                            Should older, unfinished documents need approval too?
+                            <button type="button"
+                                    class="po-approval-info"
+                                    title="This matters when approval is turned on. Open How to set up approvals for the full explanation."
+                                    aria-label="Help: older unfinished documents"
+                                    @onclick="OpenHelp">
+                                <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                            </button>
+                        </label>
+                        <DxComboBox Data="@LegacyModeOptions"
+                                    TextFieldName="@nameof(LegacyModeOption.Name)"
+                                    ValueFieldName="@nameof(LegacyModeOption.Key)"
+                                    @bind-Value="@Editor.LegacyDraftMode"
+                                    InputId="po-approval-legacy"
+                                    Enabled="@CanMutate" />
+                        <p class="po-approval-hint">@LegacyModeHint</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="po-approval-section" aria-labelledby="po-approval-rules-title">
+                <div class="po-approval-section__head">
+                    <h2 id="po-approval-rules-title" class="iv-card__title">Approval rules by amount</h2>
+                    @if (CanEdit)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Add approval rule"
+                                  IconCssClass="fa-solid fa-plus"
+                                  Click="AddBand"
+                                  Enabled="@CanMutate" />
+                    }
+                </div>
+                <p class="po-approval-hint">
+                    Different order amounts can require different approvers. Amount from is included. Amount below is not.
+                </p>
+
+                @if (CurrencyLookupFailed)
+                {
+                    <div class="po-approval-lookup-fail" role="alert">
+                        <p>We couldn't load the currency list. Try again.</p>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Retry"
+                                  Click="RetryCurrenciesAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    </div>
+                }
+                else if (CurrencyLookupEmpty)
+                {
+                    <p class="po-approval-hint" role="status">
+                        No active currencies were found. Add currencies in Currency Master. Saved currency codes on existing rules are kept.
+                    </p>
+                }
+
+                @if (Editor.Bands.Count == 0)
+                {
+                    <div class="po-approval-empty" role="status">
+                        <p>No approval rules yet. Select ‘Add approval rule’ to begin.</p>
+                        @if (Editor.Enabled)
+                        {
+                            <p class="po-approval-hint">Add a rule before approval can be switched on.</p>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="po-approval-rules" role="table" aria-label="Approval rules by amount">
+                        <div class="po-approval-rule po-approval-rule--head" role="row">
+                            <span role="columnheader">Actions</span>
+                            <span role="columnheader">Currency</span>
+                            <span role="columnheader">Amount range</span>
+                            <span role="columnheader">Approval</span>
+                            <span role="columnheader">Approver steps</span>
+                        </div>
+                        @foreach (var band in Editor.Bands)
+                        {
+                            var currentBand = band;
+                            var expanded = ReferenceEquals(ExpandedBand, currentBand);
+                            var editorId = $"po-approval-editor-{currentBand.UiKey:N}";
+                            var ruleId = $"po-approval-rule-{currentBand.UiKey:N}";
+                            <div @key="currentBand.UiKey"
+                                 class="po-approval-rule-block @(IsRuleInvalid(currentBand) ? "is-invalid" : null) @(expanded ? "is-open" : null)"
+                                 id="@ruleId">
+                                <div class="po-approval-rule" role="row">
+                                    <div class="po-approval-rule__actions" role="cell">
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="@(expanded ? "fa-solid fa-chevron-up" : "fa-solid fa-pen")"
+                                                  CssClass="po-approval-icon-btn"
+                                                  title="@(expanded ? "Collapse rule" : (CanEdit ? "Edit rule" : "View rule"))"
+                                                  aria-label="@(expanded ? "Collapse rule" : (CanEdit ? "Edit rule" : "View rule"))"
+                                                  aria-expanded="@expanded"
+                                                  aria-controls="@editorId"
+                                                  Click="@(() => ToggleExpand(currentBand))"
+                                                  Enabled="@(!IsSubmitting)" />
+                                        @if (CanEdit)
+                                        {
+                                            <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                      RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                      IconCssClass="fa-solid fa-trash"
+                                                      CssClass="po-approval-icon-btn"
+                                                      title="Delete rule"
+                                                      aria-label="Delete rule"
+                                                      Click="@(() => RequestRemoveBand(currentBand))"
+                                                      Enabled="@CanMutate" />
+                                        }
+                                    </div>
+                                    <div class="po-approval-rule__currency" role="cell">
+                                        <span class="po-approval-mobile-label">Currency</span>
+                                        @(string.IsNullOrWhiteSpace(currentBand.Currency) ? "—" : currentBand.Currency.Trim().ToUpperInvariant())
+                                    </div>
+                                    <div class="po-approval-rule__range" role="cell">
+                                        <span class="po-approval-mobile-label">Amount range</span>
+                                        @FormatBandRange(currentBand.Currency, currentBand.MinInclusive, currentBand.MaxExclusive)
+                                    </div>
+                                    <div class="po-approval-rule__action" role="cell">
+                                        <span class="po-approval-mobile-label">Approval</span>
+                                        @if (currentBand.NotRequired)
+                                        {
+                                            <span class="iv-chip po-approval-not-required">No approval needed</span>
+                                        }
+                                        else
+                                        {
+                                            <span>Approval needed</span>
+                                        }
+                                    </div>
+                                    <div class="po-approval-rule__levels" role="cell">
+                                        <span class="po-approval-mobile-label">Approver steps</span>
+                                        @LevelCountLabel(currentBand)
+                                    </div>
+                                </div>
+
+                                @if (expanded)
+                                {
+                                    <div class="po-approval-editor" role="region" id="@editorId" aria-label="Rule details">
+                                        <div class="po-approval-editor__fields">
+                                            <div class="po-approval-field po-approval-field--currency">
+                                                <label class="po-approval-label" for="@($"po-approval-currency-{currentBand.UiKey:N}")">Currency</label>
+                                                @if (CanShowCurrencyCombo)
+                                                {
+                                                    <IvCodeComboBox Data="@CurrencyOptionsFor(currentBand)"
+                                                                    Value="@currentBand.Currency"
+                                                                    ValueChanged="@((string? value) => OnCurrencyChanged(currentBand, value))"
+                                                                    ValueExpression="@(() => currentBand.Currency)"
+                                                                    Enabled="@CanMutate"
+                                                                    NullText="Select currency"
+                                                                    InputId="@($"po-approval-currency-{currentBand.UiKey:N}")"
+                                                                    InputCssClass="po-approval-currency" />
+                                                }
+                                                else
+                                                {
+                                                    <p class="po-approval-saved-code" id="@($"po-approval-currency-{currentBand.UiKey:N}")">
+                                                        @(string.IsNullOrWhiteSpace(currentBand.Currency) ? "No currency saved" : currentBand.Currency.Trim().ToUpperInvariant())
+                                                    </p>
+                                                }
+                                            </div>
+                                            <div class="po-approval-field po-approval-field--amount">
+                                                <label class="po-approval-label" for="@($"po-approval-from-{currentBand.UiKey:N}")">Amount from</label>
+                                                <DxSpinEdit @bind-Value="@currentBand.MinInclusive"
+                                                            InputId="@($"po-approval-from-{currentBand.UiKey:N}")"
+                                                            CssClass="po-approval-amount"
+                                                            DecimalPlaces="6"
+                                                            Enabled="@CanMutate" />
+                                                <p class="po-approval-hint">This amount is included.</p>
+                                            </div>
+                                            <div class="po-approval-field po-approval-field--amount">
+                                                <label class="po-approval-label" for="@($"po-approval-below-{currentBand.UiKey:N}")">
+                                                    Amount below
+                                                    <button type="button"
+                                                            class="po-approval-info"
+                                                            title="This amount is not included. Leave blank for no upper limit."
+                                                            aria-label="Help: amount below"
+                                                            @onclick="OpenHelp">
+                                                        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                    </button>
+                                                </label>
+                                                <DxSpinEdit @bind-Value="@currentBand.MaxExclusive"
+                                                            InputId="@($"po-approval-below-{currentBand.UiKey:N}")"
+                                                            CssClass="po-approval-amount"
+                                                            DecimalPlaces="6"
+                                                            NullText="No upper limit"
+                                                            Enabled="@CanMutate" />
+                                                <p class="po-approval-hint">This amount is not included. Leave blank for no upper limit.</p>
+                                            </div>
+                                            <div class="po-approval-field">
+                                                <span class="po-approval-label">
+                                                    Approval requirement
+                                                    <button type="button"
+                                                            class="po-approval-info"
+                                                            title="No approval needed applies to this amount range only. It is not the same as turning approval OFF."
+                                                            aria-label="Help: no approval needed"
+                                                            @onclick="OpenHelp">
+                                                        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                    </button>
+                                                </span>
+                                                <DxComboBox Data="@RequirementOptions"
+                                                            TextFieldName="@nameof(RequirementOption.Name)"
+                                                            ValueFieldName="@nameof(RequirementOption.NotRequired)"
+                                                            Value="@currentBand.NotRequired"
+                                                            ValueChanged="@((bool value) => ApplyRequirement(currentBand, value))"
+                                                            ValueExpression="@(() => currentBand.NotRequired)"
+                                                            Enabled="@CanMutate" />
+                                            </div>
+                                        </div>
+
+                                        @if (!currentBand.NotRequired)
+                                        {
+                                            <ol class="po-approval-levels">
+                                                @foreach (var level in currentBand.Levels)
+                                                {
+                                                    var currentLevel = level;
+                                                    var levelIndex = currentBand.Levels.IndexOf(currentLevel);
+                                                    <li @key="currentLevel.UiKey" class="po-approval-level">
+                                                        <div class="po-approval-level__head">
+                                                            <strong>@LevelTitle(levelIndex)</strong>
+                                                            @if (CanEdit)
+                                                            {
+                                                                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                                          RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                                          IconCssClass="fa-solid fa-trash"
+                                                                          CssClass="po-approval-icon-btn"
+                                                                          title="Delete step"
+                                                                          aria-label="@($"Delete {LevelTitle(levelIndex)}")"
+                                                                          Click="@(() => RequestRemoveLevel(currentBand, currentLevel))"
+                                                                          Enabled="@CanMutate" />
+                                                            }
+                                                        </div>
+                                                        <div class="po-approval-level__fields">
+                                                            <div class="po-approval-field po-approval-field--match">
+                                                                <label class="po-approval-label">
+                                                                    Who must approve this step?
+                                                                    <button type="button"
+                                                                            class="po-approval-info"
+                                                                            title="Any one: only one listed person needs to approve. Everyone: all people assigned to this step must approve."
+                                                                            aria-label="Help: any one or everyone"
+                                                                            @onclick="OpenHelp">
+                                                                        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                                    </button>
+                                                                </label>
+                                                                <DxComboBox Data="@MatchModeOptions"
+                                                                            TextFieldName="@nameof(MatchModeOption.Name)"
+                                                                            ValueFieldName="@nameof(MatchModeOption.Key)"
+                                                                            @bind-Value="@currentLevel.MatchMode"
+                                                                            Enabled="@CanMutate" />
+                                                            </div>
+                                                            <div class="po-approval-field">
+                                                                <label class="po-approval-label">Choose an approver</label>
+                                                                <DxComboBox Data="@AssigneeKindOptions"
+                                                                            TextFieldName="@nameof(AssigneeKindOption.Name)"
+                                                                            ValueFieldName="@nameof(AssigneeKindOption.Key)"
+                                                                            Value="@currentLevel.PendingKind"
+                                                                            ValueChanged="@((string value) => OnAssigneeKindChanged(currentLevel, value))"
+                                                                            ValueExpression="@(() => currentLevel.PendingKind)"
+                                                                            Enabled="@CanMutate" />
+                                                            </div>
+                                                            <div class="po-approval-field po-approval-field--lookup">
+                                                                <label class="po-approval-label">@(IsRoleKind(currentLevel) ? "Role" : "Person")</label>
+                                                                <DxComboBox Data="@AvailableAssignees(currentLevel)"
+                                                                            TextFieldName="@nameof(ProcurementApprovalLookupRow.DisplayText)"
+                                                                            ValueFieldName="@nameof(ProcurementApprovalLookupRow.Code)"
+                                                                            Value="@currentLevel.PendingRefCode"
+                                                                            ValueChanged="@((string? value) => OnPendingAssigneeChanged(currentLevel, value))"
+                                                                            ValueExpression="@(() => currentLevel.PendingRefCode)"
+                                                                            SearchMode="ListSearchMode.AutoSearch"
+                                                                            SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                                            NullText="@(IsRoleKind(currentLevel) ? "Search and select a role" : "Search and select a person")"
+                                                                            Enabled="@CanMutate" />
+                                                            </div>
+                                                        </div>
+                                                        <div class="po-approval-assignees">
+                                                            <span class="po-approval-mobile-label">Who can approve this step?</span>
+                                                            @if (currentLevel.Assignees.Count == 0)
+                                                            {
+                                                                <p class="po-approval-assignees__empty">Select a person or role to add them.</p>
+                                                            }
+                                                            else
+                                                            {
+                                                                @foreach (var assignee in currentLevel.Assignees)
+                                                                {
+                                                                    var captured = assignee;
+                                                                    @if (CanEdit)
+                                                                    {
+                                                                        <button type="button"
+                                                                                class="iv-chip"
+                                                                                @onclick="() => RemoveAssignee(currentLevel, captured)"
+                                                                                disabled="@(!CanMutate)"
+                                                                                title="@($"Remove {AssigneeLabel(captured)}")"
+                                                                                aria-label="@($"Remove {AssigneeLabel(captured)}")">
+                                                                            @AssigneeLabel(captured)
+                                                                            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                                                                        </button>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <span class="iv-chip">@AssigneeLabel(captured)</span>
+                                                                    }
+                                                                }
+                                                            }
+                                                        </div>
+                                                    </li>
+                                                }
+                                            </ol>
+                                            @if (CanEdit && currentBand.Levels.Count < 3)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                          Text="@(currentBand.Levels.Count == 0 ? "Add first approval step" : "Add approval step")"
+                                                          Click="@(() => AddLevel(currentBand))"
+                                                          Enabled="@CanMutate" />
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(PreviewText))
+                {
+                    <p class="po-approval-preview" role="note">@PreviewText</p>
+                }
+            </section>
+        }
+    </section>
+
+    @if (CanEdit && Editor is not null)
+    {
+        <footer class="iv-footer">
+            <p class="iv-footer__hint">
+                @(IsSubmitting ? "Saving your changes…" : IsDirty ? "Unsaved changes" : "Ready")
+            </p>
+            <div class="iv-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          IconCssClass="fa-solid fa-xmark"
+                          Click="@OnCancelAsync"
+                          Enabled="@(!IsSubmitting && !PolicyConfirmVisible && !RemoveConfirmVisible)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsSubmitting ? "Saving your changes…" : "Save")"
+                          IconCssClass="fa-solid fa-floppy-disk"
+                          Click="SaveAsync"
+                          Enabled="@CanSave" />
+            </div>
+        </footer>
+    }
+</div>
+
+<DxPopup HeaderText="Discard unsaved changes?"
+         CloseOnOutsideClick="false"
+         Width="480px"
+         CssClass="common-popup"
+         @bind-Visible="@DiscardVisible">
+    <Content>
+        <p class="iv-confirm__copy">Leave this document type without saving the current approval rules?</p>
+        <div class="iv-popup-footer">
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="KeepEditing" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
+            </div>
+        </div>
+    </Content>
+</DxPopup>
+
+<DxPopup HeaderText="Confirm approval setting"
+         CloseOnOutsideClick="false"
+         Width="520px"
+         CssClass="common-popup"
+         @bind-Visible="@PolicyConfirmVisible">
+    <Content>
+        <p class="iv-confirm__copy">@PolicyConfirmCopy</p>
+        <div class="iv-popup-footer">
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="KeepEditing" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Save" Click="@ConfirmPolicySaveAsync" />
+            </div>
+        </div>
+    </Content>
+</DxPopup>
+
+<DxPopup HeaderText="Delete this item?"
+         CloseOnOutsideClick="false"
+         Width="480px"
+         CssClass="common-popup"
+         @bind-Visible="@RemoveConfirmVisible">
+    <Content>
+        <p class="iv-confirm__copy">@RemoveConfirmCopy</p>
+        <div class="iv-popup-footer">
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="KeepEditing" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Delete" Click="ConfirmRemove" />
+            </div>
+        </div>
+    </Content>
+</DxPopup>
+
+<DxPopup HeaderText="How to set up PR and PO approval"
+         CloseOnOutsideClick="true"
+         Width="720px"
+         MaxWidth="95vw"
+         CssClass="common-popup po-approval-help-popup"
+         @bind-Visible="@HelpVisible">
+    <Content>
+        <div class="po-approval-help">
+            <ol>
+                <li>
+                    <strong>Choose PR or PO.</strong>
+                    A Purchase Request (PR) asks to buy something. A Purchase Order (PO) is an order sent to a supplier. You can set up each one separately.
+                </li>
+                <li>
+                    <strong>Turn on approval.</strong>
+                    Choose Use approval for this document type. Decide whether older, unfinished documents must also be approved.
+                </li>
+                <li>
+                    <strong>Set amount rules.</strong>
+                    Choose a currency, an Amount from and an Amount below. Example: Below RM1,000 → No approval needed; RM1,000 and above → Approval needed. Every amount in each configured currency must fit exactly one rule. A different currency needs its own rules.
+                </li>
+                <li>
+                    <strong>Choose who approves.</strong>
+                    Add Step 1, then pick a Person or Role. Choose Any one or Everyone. Add Steps 2 and 3 only when needed. Each step is completed in order; approval is not one combined pool across steps.
+                </li>
+                <li>
+                    <strong>Save your settings.</strong>
+                    Select Save. Changes take effect after saving. You can change the rules later, and earlier submitted requests keep their original approval rules.
+                </li>
+            </ol>
+
+            <section>
+                <h3>Simple example</h3>
+                <p>PO below RM1,000: no approval. PO from RM1,000 to below RM10,000: Manager approves. PO RM10,000 and above: Manager approves, then Director approves. Example only; choose your own company amounts and roles.</p>
+            </section>
+
+            <section>
+                <h3>What happens next?</h3>
+                <ul>
+                    <li>PR approval is checked when an approved PR is used to create a PO. PO approval controls the downstream actions protected by the approval engine.</li>
+                    <li>An existing pending approval is not automatically cleared when you turn approval off.</li>
+                    <li>Changing rules does not rewrite requests already submitted.</li>
+                </ul>
+                <p>Purchase Orders with an overall discount currently cannot be submitted for approval. Check the PO before submitting.</p>
+            </section>
+
+            <section>
+                <h3>What do the choices mean?</h3>
+                <dl class="po-approval-help__faq">
+                    <dt>Include older unfinished documents?</dt>
+                    <dd>Yes = old and new eligible drafts follow the rule. No = documents created before approval was turned on can continue without a new approval. Already processed documents follow existing transaction restrictions; some in-flight requests remain pending.</dd>
+                    <dt>Any one / Everyone?</dt>
+                    <dd>This applies to the people resolved for that approval step when the document is submitted. Role assignees are the people who currently belong to that role at submission time.</dd>
+                    <dt>No approval needed vs Approval OFF?</dt>
+                    <dd>No approval needed applies to one amount range. Approval OFF switches off the saved policy for this document type. Existing requests waiting for approval may still need to be completed.</dd>
+                    <dt>What’s “version”?</dt>
+                    <dd>An audit/history number. Save automatically keeps a new version; you do not need a separate Publish button.</dd>
+                    <dt>I cannot save / choose a currency?</dt>
+                    <dd>Look for errors beside the rule, check for gaps or overlapping amount limits, select an existing currency, and ensure approval steps contain approvers. Users without Edit permission can view only.</dd>
+                </dl>
+            </section>
+        </div>
+        <div class="iv-popup-footer">
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="CloseHelp" />
+            </div>
+        </div>
+    </Content>
+</DxPopup>
+</MenuAuthorize>

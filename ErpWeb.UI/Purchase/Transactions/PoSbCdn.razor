@@ -196,7 +196,7 @@
                         <DxGridDataColumn FieldName="@nameof(LineEdit.Classification)" Caption="Class." Width="80px" />
                         @if (CanMutateLines)
                         {
-                            <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var row = (LineEdit)context.DataItem;
@@ -243,7 +243,14 @@
             <footer class="sdoc-footer">
                 <p class="sdoc-footer__hint">@LineCountLabel</p>
                 <div class="sdoc-footer__actions">
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" IconCssClass="fa-solid fa-xmark" Click="@GoBack" />
+                    @if (IsView)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" IconCssClass="fa-solid fa-xmark" Click="@GoBack" />
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" IconCssClass="fa-solid fa-xmark" Click="@GoBack" />
+                    }
                     @if (IsView && CanEdit && IsEditable)
                     {
                         <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Edit" IconCssClass="fa-solid fa-pen" Click="@OnEditFromView" />
@@ -381,7 +388,7 @@
                                 PageSize="10"
                                 CssClass="sdoc-line-grid">
                             <Columns>
-                                <DxGridCommandColumn Width="88px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <DxGridCommandColumn Width="88px" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                     <CellDisplayTemplate>
                                         @{
                                             var row = (PoSbLineDto)context.DataItem;

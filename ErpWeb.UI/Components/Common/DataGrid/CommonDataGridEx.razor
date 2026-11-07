@@ -116,7 +116,12 @@
             <Columns>
                 @if (allowSelect)
                 {
-                    <DxGridSelectionColumn Width="60px" MinWidth="48" VisibleIndex="0" />
+                    <DxGridSelectionColumn Width="60px"
+                                           MinWidth="48"
+                                           VisibleIndex="@(ActionButtons.Count > 0 ? 1 : 0)"
+                                           FixedPosition="GridColumnFixedPosition.Left"
+                                           AllowReorder="false"
+                                           ShowInColumnChooser="false" />
                 }
 
                 @if (ActionButtons.Count > 0)
@@ -126,6 +131,9 @@
                                          EditButtonVisible="false"
                                          DeleteButtonVisible="false"
                                          VisibleIndex="0"
+                                         FixedPosition="GridColumnFixedPosition.Left"
+                                         AllowReorder="false"
+                                         ShowInColumnChooser="false"
                                          Width="@GetGridActionColWidth()"
                                          MinWidth="@GetGridActionColMinWidth()">
                         <CellDisplayTemplate>
@@ -135,7 +143,16 @@
                                     @foreach (var but in ActionButtons)
                                     {
                                         <DxToolbarItem IconCssClass="@but.IConClass"
-                                                       RenderStyle="ButtonRenderStyle.Info"
+                                                       RenderStyle="@(but.Style?.Trim().ToLowerInvariant() switch
+                                                       {
+                                                           "primary" => ButtonRenderStyle.Primary,
+                                                           "secondary" => ButtonRenderStyle.Secondary,
+                                                           "success" => ButtonRenderStyle.Success,
+                                                           "warning" => ButtonRenderStyle.Warning,
+                                                           "danger" => ButtonRenderStyle.Danger,
+                                                           "info" => ButtonRenderStyle.Info,
+                                                           _ => ButtonRenderStyle.Info
+                                                       })"
                                                        Tooltip="@(but.ToolTip ?? but.Text)"
                                                        Enabled="@but.Enabled"
                                                        Alignment="ToolbarItemAlignment.Left"

@@ -1,0 +1,21 @@
+.qa-help {
+    display: grid;
+    gap: 12px;
+    color: var(--text, #1c2430);
+    font-size: 0.92rem;
+    line-height: 1.45;
+}
+
+.qa-help p,
+.qa-help ol {
+    margin: 0;
+}
+
+.qa-help ol {
+    padding-left: 1.2rem;
+    color: var(--muted, #667085);
+}
+
+.qa-help li + li {
+    margin-top: 6px;
+}

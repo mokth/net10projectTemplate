@@ -1,6 +1,7 @@
 using DevExpress.Blazor;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.UI.Components.Pages;
@@ -13,6 +14,7 @@ public partial class IvMiscReceipt : PageBase
 {
     [Parameter] public string Mode { get; set; } = "new";
     [Parameter] public int? BatchNo { get; set; }
+    [SupplyParameterFromQuery(Name = "qaCase")] public string? QueryQaCase { get; set; }
 
     [Inject] private IIvMiscReceiptService MiscReceipt { get; set; } = default!;
     [Inject] private IIvInventoryLookupService Lookups { get; set; } = default!;
@@ -75,6 +77,10 @@ public partial class IvMiscReceipt : PageBase
     protected decimal DocumentTotal => Lines.Sum(x => x.Amount);
     protected decimal PopupAmount => decimal.Round(Popup.Quantity * Popup.UnitPrice, 2);
     protected bool CanSave => CanEditDocument && !IsSubmitting && Lines.Count > 0;
+    protected bool CanRequestQa =>
+        BatchNo is > 0
+        && Lines.Count > 0
+        && string.Equals(BatchStatusDisplay, IvBatchStatuses.Posted, StringComparison.OrdinalIgnoreCase);
     protected bool IsEditingLine => _editingLine is not null;
     protected string PopupTitle => IsEditingLine ? "Edit receipt line" : "Add receipt line";
     protected string PopupPrimaryText => IsEditingLine ? "Update item" : "Add item";
@@ -149,6 +155,11 @@ public partial class IvMiscReceipt : PageBase
         }
         finally
         {
+            if (string.IsNullOrWhiteSpace(StatusMessage) && string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                StatusMessage = QaOpenedFromCase.Banner(QueryQaCase);
+            }
+
             IsLoading = false;
         }
     }
@@ -541,6 +552,18 @@ public partial class IvMiscReceipt : PageBase
         {
             IsSubmitting = false;
         }
+    }
+
+    protected void OnRequestQa()
+    {
+        var returnUrl = BatchNo is > 0
+            ? $"/inventory/misc-receipt/{(IsViewMode ? "view" : IsEditMode ? "edit" : "view")}/{BatchNo.Value}"
+            : "/inventory/misc-receipt/new";
+        var href =
+            $"/quality/cases/new?source={Uri.EscapeDataString(QaSourceTypes.InventoryStock)}"
+            + $"&sourceHeaderId={BatchNo}"
+            + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        Navigation.NavigateTo(href);
     }
 
     protected Task OnCancelAsync()

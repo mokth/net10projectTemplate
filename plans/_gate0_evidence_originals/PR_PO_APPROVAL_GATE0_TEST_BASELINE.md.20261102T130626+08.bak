@@ -1,0 +1,176 @@
+# PR/PO Approval — Gate 0 Test and Deployment Baseline
+
+**Status:** PARTIAL / NOT VERIFIED for Gate 3. Investigation only. **No Gate 1–3 tests were executed as a release suite.**  
+**Local HEAD:** `03a142cc186efe25918523537c844b14e232971a` (`fix/dataprotection-key-ring`)  
+**xUnit:** `ErpWeb.Tests.csproj` package `xunit` **2.9.3** (runner 3.1.4). **Do not use `Assert.Skip` (v3).** **Do not upgrade xUnit** as part of this ERP fix.
+
+---
+
+## 1. Clean / dirty tree evidence
+
+Recorded 2026-11-02:
+
+```
+git rev-parse HEAD
+03a142cc186efe25918523537c844b14e232971a
+
+git branch --show-current
+fix/dataprotection-key-ring
+
+git log -3 --oneline
+03a142c check in Approval
+ce651c3 checked in approval draft
+f8edf0d checked in skill
+```
+
+`ce651c3..HEAD` = three Approval Settings UI files only (+1588/−233). Backend approval/posting at HEAD matches `ce651c3`.
+
+Dirty (must preserve / isolate — see PATH_LOCK_MATRIX):
+
+- Modified: inventory GR/posting (unsafe shared-lock WIP), Product Definition, deploy docs
+- Untracked: Product Def tests/CSS, data-protection runbook, `.replay-wac-fg-origin-20261030/`
+
+`PR_PO_APPROVAL_TEST_SQL_CONNECTION` environment variable: **unset** on this machine.
+
+---
+
+## 2. Tenant database inventory (redacted)
+
+**Reachable from this agent:** one SQL Server.
+
+| Item | Value |
+|------|--------|
+| Server | `LAPTOP-N3NQSB16\SQLEXPRESS` |
+| Database | `ERPWeb` |
+| Auth | Windows Trusted_Connection (local appsettings `DefaultConnection`; **password from Production json not used and not copied here**) |
+| Role | **Shared developer DEMO tenant — FORBIDDEN for destructive concurrency / policy save-restore** |
+
+Approval schema **present** (`PoApprovalPolicy`, Band, Level, LevelAssignee, Instance, Assignee, Decision, Event, CutoverExemption).  
+Filtered unique index `UX_PoApprovalInstance_Active`: **present**.
+
+**Published policies (DEMO company):**
+
+| DocType | Version | Enabled | IsPublished | LegacyDraftMode | CutoverAtUtc |
+|---------|---------|---------|-------------|-----------------|--------------|
+| PO | 1 | true | true | REQUIRE_GOING_FORWARD | 2026-11-02 00:56 UTC |
+| PR | 34 | true | true | REQUIRE_GOING_FORWARD | 2026-11-02 02:33 UTC |
+
+Unpublished PR policy versions 1–33 exist (evidence that prior tests **already mutated this shared DB**).
+
+**Instances:** PR APPROVED **3**, PR PENDING **7**, PO instances **0**. Fingerprint length 64. Exemptions **0**.
+
+**Documents:** POPR 27 rows, `Created` null **0**; POOrder 14 rows, `Created` null **0**. Column is `Created` (not `CreatedDate`).
+
+**Menus present:** `PO_APPROVAL`, `PO_APPROVAL_SETTINGS`, `PO_APPROVAL_INBOX`, `PO_APPROVAL_ALL`.
+
+**Implication for D9:** instances exist → **cannot** change `ForPr`/`ForPo` in place.  
+**Implication for H8/R7:** [`ProcurementApprovalSqlServerConcurrencyTests`](../ErpWeb.Tests/Procurement/Transaction/ProcurementApprovalSqlServerConcurrencyTests.cs) uses `DefaultConnection` and comments “DEMO”; `RunWithPolicyAsync` 192–224 **returns silently** if SQL/schema/policy/fixture missing — **false green**. It also **saves and restores policy on this shared DB**. **Forbidden.**
+
+Other live tenant servers (production `WINCOM-server4` etc.): **NOT QUERIED.** Do not assume schema parity. Gate 1 rollout requires an operator-supplied tenant list.
+
+App model: single `DefaultConnection` in [`Program.cs`](../ErpWeb/Program.cs) (~60). Company/branch isolation is claim-scoped (`IInventoryTenantContext`), not separate catalogs in this checkout.
+
+---
+
+## 3. Current test harness defects (must fix in Gate 3, not here)
+
+| Defect | Location | Required replacement |
+|--------|----------|----------------------|
+| Silent `return` | `RunWithPolicyAsync` 194–223 | Required integration job **fails** with explicit missing connection/schema/identity reason. No bare return. |
+| `DefaultConnection` fallback | `GetSqlServerConnectionString` 35–57 | **Only** `PR_PO_APPROVAL_TEST_SQL_CONNECTION`. Never appsettings DefaultConnection. Never production json. |
+| Hardcoded DEMO catalog assumption | class comment 21–23; fixture company DEMO | Fixture **company code** DEMO is OK on an **isolated disposable database**. Shared/production database named ERPWeb/DEMO is **not**. Preflight must assert a test-identity marker (e.g. database name prefix `erpweb_poapr_test_` or a `PoApprovalTestHarness` row). |
+| Policy save/restore on live DEMO | `RunWithPolicyAsync` finally | Isolated DB seed; drop/rebuild or transaction-per-class with unique company — **not** this SQLEXPRESS ERPWeb |
+| `Assert.Skip` | n/a (must not add) | xUnit 2.9.3: failed preflight or a separately invoked required job whose failure blocks the gate |
+| EF vs SQL index | `ProcurementApprovalInstanceConfiguration` 109–113 vs script 136–139 | Script has filtered unique active-cycle index; **EF does not map it**. Runtime uniqueness depends on script deploy. Gate 3 preflight must `SELECT` the index |
+
+`EnsureCreated` must **not** run against live tenants.
+
+---
+
+## 4. Protected regression list (Gate 3 — not run)
+
+Policy **OFF** (or real guard with no published policy and no Pending):
+
+- `PoPrServiceTests`
+- `PoOrderServiceTests`
+- `IvGoodsReceiptServiceTests`
+- `IvInventoryPostingServiceTests` (stock/FIFO/rollback)
+- PR consumption / remaining-qty tests (formula unchanged)
+- Invoice net-received (`ValidateMatchOnPostAsync`)
+- CDN / VR / GR rollback
+
+Policy **ON** (isolated DB only):
+
+- Submit/approve/NotRequired; Pending blocks disable; self-approval denied; material edit blocked
+- Direct `IIvInventoryPostingService.PostAsync` GR and NG: Pending/Absent/Rejected blocked; Approved/NotRequired/OFF permitted per D3
+- Multi-PO all-or-nothing
+- Revise vs GR (barrier)
+- NEW WAC/Standard/FIFO backdated GR gated; rollback/VR not gated
+- Repair `PostAsync` treated as NEW post (D5)
+- Picker &gt;100 with first window unapproved; no cutover row from search
+- File staging / DB rollback orphan cleanup
+- DI resolves real guard
+
+SQL concurrency (isolated DB, barriers): two policy publishers; enable vs GR; disable vs Pending; submit vs submit; approve vs edit/revise; approve vs reject; PR convert vs Return/Withdraw; grandfathered partial RecvQty; TZ/Created vs CutoverAtUtc; cross-company isolation.
+
+**Required SQL tests cannot be skipped.** Unit SQLite tests do **not** satisfy Gate 3.
+
+---
+
+## 5. Commands (not executed as Gate 3)
+
+Solution: [`ErpWeb.slnx`](../ErpWeb.slnx)
+
+Intended later (do **not** treat as run evidence):
+
+```
+dotnet build ErpWeb.slnx
+dotnet test ErpWeb.slnx --filter "FullyQualifiedName~PoPrServiceTests|FullyQualifiedName~PoOrderServiceTests|FullyQualifiedName~IvGoodsReceiptServiceTests|FullyQualifiedName~IvInventoryPostingServiceTests|FullyQualifiedName~ProcurementApprovalServiceTests"
+```
+
+Isolated SQL (after disposable DB exists):
+
+```
+set PR_PO_APPROVAL_TEST_SQL_CONNECTION=Server=...;Database=erpweb_poapr_test_...;...
+dotnet test ErpWeb.slnx --filter "FullyQualifiedName~ProcurementApprovalSqlServerConcurrencyTests"
+```
+
+**This Gate 0 run:** no `dotnet build` / `dotnet test` exit codes captured. **Do not claim green.**
+
+SQL used for inventory only (read-only counts on local ERPWeb) — **not** a test pass.
+
+---
+
+## 6. Schema / EF readiness notes
+
+| Object | Script | EF | Local ERPWeb |
+|--------|--------|----|--------------|
+| Tables | `create-po-approval.sql` idempotent | mapped | present |
+| `UX_PoApprovalInstance_Active` filtered unique | script 136–139 | **not in EF** | present |
+| `UX_PoApprovalInstance_Doc_Cycle` | script 131–133 | unique index mapped | present |
+| Menu + SUBMIT/APPROVE/REJECT on PO_PR / PO_ORDER | `init-po-approval-menu.sql` | `MenuCodes` + `menus.xml` | menus present |
+| Fingerprint version column | none | none | n/a (V1 only) |
+
+Missing schema at runtime after mandatory-guard deploy must **block post** with operator alert (D13), not behave as policy OFF (queries would throw).
+
+---
+
+## 7. Gate 0 STOP / return-for-review checklist
+
+| Criterion | Result |
+|-----------|--------|
+| Local HEAD recorded; dirty files dispositioned | **PASS** — HEAD `03a142c`; inventory WIP isolated; UI/Product Def preserved |
+| Relevant backend vs `ce651c3` | **PASS** — committed backend identical; WT posting gate unsafe |
+| Path table complete | **PASS** with `ApplyCjConsumption` empty (**non-functional**, documented) |
+| Latest-revision race designed | **PROPOSED** — not implemented; must be reviewed |
+| Policy serialization designed | **PROPOSED** — not implemented |
+| Progressed/cutover semantics | **PROPOSED** preserve grandfathering; timestamp mixing **UNTRUSTED** until O2 signed |
+| Repair exemption | **UNSAFE if bypassed** — default no exemption (D5); owner O3 |
+| Attachment/fingerprint | **A + preserve V1** because instances exist |
+| SQL test DB isolated | **FAIL / NOT READY** — only shared `ERPWeb` DEMO with policy ON; env var unset |
+| Other tenants inventoried | **NOT VERIFIED** |
+
+**Gate 0 investigation is complete as evidence.**  
+**Gate 1–3 remain BLOCKED** until: owner signs O1–O3 in DECISIONS.md; a disposable SQL database is provisioned; a further repository review of these three files.
+
+**Verdict:** NOT APPROVED FOR BACKEND IMPLEMENTATION OR PRODUCTION. NOT 10/10.

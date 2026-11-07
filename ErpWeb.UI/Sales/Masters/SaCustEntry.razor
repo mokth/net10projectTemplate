@@ -537,7 +537,7 @@
                                         CssClass="sa-cust-grid"
                                         RowDoubleClick="@OnAddressRowDoubleClick">
                                     <Columns>
-                                        <DxGridCommandColumn Width="96px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                        <DxGridCommandColumn Width="96px" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                             <CellDisplayTemplate Context="cellContext">
                                                 @{
                                                     var address = (SaCustAddressVm)cellContext.DataItem;
@@ -591,7 +591,7 @@
                                         CssClass="sa-cust-grid"
                                         RowDoubleClick="@OnContactRowDoubleClick">
                                     <Columns>
-                                        <DxGridCommandColumn Width="96px" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                        <DxGridCommandColumn Width="96px" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                             <CellDisplayTemplate Context="cellContext">
                                                 @{
                                                     var contact = (SaCustContactVm)cellContext.DataItem;

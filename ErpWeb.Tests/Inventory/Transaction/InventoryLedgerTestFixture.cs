@@ -3,6 +3,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Tests.Procurement.Transaction;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.StockLedger;
@@ -351,6 +352,7 @@ internal static class InventoryLedgerTestFixture
             new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance,
             currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance,
             historyWriter: new IvInventoryHistoryWriter(),
             coordinator: CreateCoordinator(factory, company, branch, valuation),
             configuration: enableBackdatedReplay

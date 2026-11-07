@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Inventory.Transaction;
 /// <summary>
 /// SQL Server REQUIRED concurrency/integrity tests for the stock-count document.
@@ -321,7 +322,8 @@ public class IvStockCountSqlServerConcurrencyTests
             var common = new IvStockCommonRepository(factory);
             var posting = new IvInventoryPostingService(
                 factory, tenant, access.Object, postingRepo, common,
-                new PoOrderRepository(), NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+                new PoOrderRepository(), NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
             var service = new IvStockCountService(
                 factory, tenant, access.Object, new RunningNumberService(), clock,

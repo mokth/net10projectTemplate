@@ -1,9 +1,11 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
@@ -18,6 +20,7 @@ public partial class PrDailyProductionEntry : PageBase
     [Parameter] public string Mode { get; set; } = "new";
     [Parameter] public long? OutputId { get; set; }
     [Parameter] public long? WorkOrderOperationId { get; set; }
+    [SupplyParameterFromQuery(Name = "qaCase")] public string? QueryQaCase { get; set; }
 
     protected bool IsBootstrapping = true;
     protected bool IsSubmitting;
@@ -29,6 +32,10 @@ public partial class PrDailyProductionEntry : PageBase
     protected string? StatusMessage;
     protected string? SharedWipSourceError;
     protected ProductionSharedWipSourceInquiry? SharedWipSourceInquiry;
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase)
         || (string.IsNullOrWhiteSpace(Mode) && OutputId is null);
@@ -98,6 +105,9 @@ public partial class PrDailyProductionEntry : PageBase
     protected bool CanPost => CurrentOutputId is > 0
         && HeaderStatus == ProductionOutputStatuses.New
         && CanAccessPost;
+    protected bool CanRequestQa => !string.IsNullOrWhiteSpace(WorkOrderNo);
+    protected bool CanRequestQaNonGood => CurrentOutputId is > 0
+        && ScrapQty + RejectQty + HoldQty > 0m;
     protected bool CanRollback => CurrentOutputId is > 0
         && HeaderStatus == ProductionOutputStatuses.Posted
         && CanAccessRollback;
@@ -177,6 +187,11 @@ public partial class PrDailyProductionEntry : PageBase
         {
             await LoadFilterOptionsAsync();
             await SearchEligibleAsync();
+        }
+
+        if (string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            StatusMessage = QaOpenedFromCase.Banner(QueryQaCase);
         }
 
         IsBootstrapping = false;
@@ -497,12 +512,14 @@ public partial class PrDailyProductionEntry : PageBase
 
         IsSubmitting = true;
         ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             var result = await Outputs.PostAsync(CurrentOutputId!.Value);
             if (!result.Succeeded || result.Data is null)
             {
                 ErrorMessage = result.Message ?? "Unable to post Daily Production.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                 return;
             }
 
@@ -567,6 +584,7 @@ public partial class PrDailyProductionEntry : PageBase
 
         IsSubmitting = true;
         ErrorMessage = null;
+        OperatorFailure = null;
         try
         {
             var result = await Outputs.RollbackAsync(new ProductionOutputRollbackRequest
@@ -578,6 +596,7 @@ public partial class PrDailyProductionEntry : PageBase
             if (!result.Succeeded || result.Data is null)
             {
                 ErrorMessage = result.Message ?? "Unable to roll back Daily Production.";
+                OperatorFailure = ErpOperatorFailureView.FromError(result.OperatorError);
                 return;
             }
 
@@ -606,11 +625,41 @@ public partial class PrDailyProductionEntry : PageBase
         await SearchEligibleAsync();
     }
 
+    protected void OnRequestQa()
+    {
+        var returnUrl = CurrentOutputId is > 0
+            ? $"/planning/daily-production/{(IsViewMode ? "view" : IsEditMode ? "edit" : "view")}/{CurrentOutputId.Value}"
+            : "/planning/daily-production/new";
+        var href =
+            $"/quality/cases/new?source={Uri.EscapeDataString(QaSourceTypes.ProductionOutputGood)}"
+            + $"&workOrderNo={Uri.EscapeDataString(WorkOrderNo ?? string.Empty)}"
+            + (CurrentOutputId is > 0 ? $"&outputId={CurrentOutputId.Value}" : string.Empty)
+            + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        Navigation.NavigateTo(href);
+    }
+
+    protected void OnRequestQaNonGood()
+    {
+        var returnUrl = CurrentOutputId is > 0
+            ? $"/planning/daily-production/{(IsViewMode ? "view" : IsEditMode ? "edit" : "view")}/{CurrentOutputId.Value}"
+            : "/planning/daily-production/new";
+        var href =
+            $"/quality/cases/new?source={Uri.EscapeDataString(QaSourceTypes.ProductionOutputNonGood)}"
+            + $"&workOrderNo={Uri.EscapeDataString(WorkOrderNo ?? string.Empty)}"
+            + $"&outputId={CurrentOutputId}"
+            + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        Navigation.NavigateTo(href);
+    }
+
     protected void BackToList() => DocumentReturnNavigation.NavigateBack(Navigation, "/planning/daily-production");
     protected void OpenEdit() => Navigation.NavigateTo(
         DocumentReturnNavigation.PreserveReturnUrl(Navigation.Uri, $"/planning/daily-production/edit/{CurrentOutputId}"));
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     private void ResetFormFields()
     {

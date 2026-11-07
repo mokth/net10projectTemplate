@@ -1,0 +1,206 @@
+@page "/quality/inquiry"
+@inherits PageBase
+@using ErpWeb.Core.Quality
+
+<PageTitle>Quality Inquiry</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.QualityInquiry">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-magnifying-glass-chart"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Quality</p>
+                <h1 class="iv-title">Quality Inquiry</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@CaseCountLabel</span>
+                    <span class="iv-chip">@PendingReviewLabel</span>
+                    <span class="iv-chip">@OpenDestinationLabel</span>
+                    <span class="iv-chip">FPY @FirstPassYieldDisplay</span>
+                    <span class="iv-chip">Record-only</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <QaRecordOnlyBanner />
+            <p class="iv-guidance">@FirstPassYieldNote Destination links never post stock. EXECUTED is only a sealed goods-receipt or finished-good allocation. Vendor return, scrap, and purchase credit note stay linked but unverified.</p>
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption" for="qa-inquiry-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="qa-inquiry-search"
+                                   Text="@SearchText"
+                                   TextChanged="OnSearchTextChanged"
+                                   NullText="Search case no, source, supplier, work order…"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   CssClass="w-100"
+                                   TextExpression="@(() => SearchText)"
+                                   BindValueMode="BindValueMode.OnInput" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
+                              Click="@ApplySearchAsync"
+                              aria-label="Search quality inquiry"
+                              title="Search quality inquiry" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="How to use"
+                          IconCssClass="fa-solid fa-circle-info"
+                          Click="@(() => HelpVisible = true)" />
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                    <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (Rows.Count == 0)
+            {
+                <p class="text-muted mb-0">No quality cases match the current filters.</p>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <DxGrid Data="@Rows"
+                            KeyFieldName="@nameof(QaInquiryRow.CaseNo)"
+                            ShowFilterRow="false"
+                            ShowGroupPanel="false"
+                            ShowSearchBox="false"
+                            TextWrapEnabled="false"
+                            PageSize="20"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                            CssClass="qa-inquiry-grid">
+                        <Columns>
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.CaseNo)" Caption="Case" MinWidth="120">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (QaInquiryRow)context.DataItem;
+                                    }
+                                    <a href="@CaseHref(row.CaseNo)">@row.CaseNo</a>
+                                    <div class="qa-muted">@row.Status · @row.CaseDate.ToString("dd/MM/yyyy")</div>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.SourceType)" Caption="Source" MinWidth="140">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (QaInquiryRow)context.DataItem;
+                                    }
+                                    @row.SourceType
+                                    <div class="qa-muted">@(row.SourceDocNo ?? row.WorkOrderNo ?? row.SupplierName)</div>
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.AcceptedQty)" Caption="Disposition" MinWidth="160">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (QaInquiryRow)context.DataItem;
+                                    }
+                                    Acc @row.AcceptedQty.ToString("0.####")
+                                    · Rej @row.RejectedQty.ToString("0.####")
+                                    · Posted @row.PostedQty.ToString("0.####")
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.DestinationSummary)" Caption="Destination" MinWidth="180" />
+                            <DxGridDataColumn FieldName="@nameof(QaInquiryRow.AgingDays)" Caption="Age" Width="72px" MinWidth="64">
+                                <CellDisplayTemplate>
+                                    @AgingLabel(((QaInquiryRow)context.DataItem).AgingDays)
+                                </CellDisplayTemplate>
+                            </DxGridDataColumn>
+                        </Columns>
+                    </DxGrid>
+                </div>
+
+                <div class="iv-list-compact">
+                    @foreach (var row in Rows)
+                    {
+                        <a class="iv-list-compact__item" href="@CaseHref(row.CaseNo)">
+                            <span class="iv-list-compact__code">@row.CaseNo</span>
+                            <span class="iv-list-compact__desc">
+                                @row.SourceType
+                                · @row.CaseDate.ToString("dd/MM/yyyy")
+                            </span>
+                            <div class="iv-list-compact__meta">
+                                <span class="iv-status">@row.Status</span>
+                                <span class="iv-chip">@AgingLabel(row.AgingDays)</span>
+                            </div>
+                        </a>
+                    }
+                </div>
+            }
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Filter inquiry"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <Content>
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@StatusFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftStatusKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Source" ColSpanMd="12">
+                        <Template>
+                            <DxComboBox Data="@SourceFilterOptions"
+                                        TextFieldName="@nameof(StatusFilterOption.Name)"
+                                        ValueFieldName="@nameof(StatusFilterOption.Key)"
+                                        @bind-Value="@DraftSourceKey"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template>
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </Content>
+    </DxPopup>
+
+    <QaHowToUsePopup @bind-Visible="@HelpVisible" />
+</MenuAuthorize>

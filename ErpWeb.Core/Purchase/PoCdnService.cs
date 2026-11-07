@@ -2010,6 +2010,8 @@ public sealed class PoCdnService : IPoCdnService
                     return PoCdnPostingItemResult.Failed(no, $"Invoice {cdn.InvNo} was not found.");
                 }
 
+                await db.Entry(referencedInvoice).Collection(x => x.Details).LoadAsync(cancellationToken);
+
                 if (string.Equals(cdn.Type, PoCdnTypes.CreditNote, StringComparison.OrdinalIgnoreCase))
                 {
                     var others = await _cdns.ListOtherCreditNotesAsync(
@@ -2146,21 +2148,23 @@ public sealed class PoCdnService : IPoCdnService
             }
 
         FinancialCosting:
-            string? costingError;
+            (string? Error, ErpOperatorError? OperatorError) costing;
             if (vendorReturnLedgerContext is not null)
             {
-                costingError = await AppendCdnCostingAsync(
+                costing = await AppendCdnCostingAsync(
                     db, write, cdn, referencedInvoice, vendorReturnLedgerContext, cancellationToken);
             }
             else
             {
-                costingError = await PostCdnCostingAsync(
+                costing = await PostCdnCostingAsync(
                     db, write, cdn, referencedInvoice, cancellationToken);
             }
-            if (costingError is not null)
+            if (costing.Error is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return PoCdnPostingItemResult.Failed(no, costingError);
+                return costing.OperatorError is null
+                    ? PoCdnPostingItemResult.Failed(no, costing.Error)
+                    : PoCdnPostingItemResult.Failed(no, costing.Error, costing.OperatorError);
             }
 
             if (vendorReturnLedgerContext is not null)
@@ -2201,7 +2205,7 @@ public sealed class PoCdnService : IPoCdnService
         }
     }
 
-    private async Task<string?> AppendCdnCostingAsync(
+    private async Task<(string? Error, ErpOperatorError? OperatorError)> AppendCdnCostingAsync(
         AppDbContext db,
         UserContext write,
         PoCdn cdn,
@@ -2210,7 +2214,7 @@ public sealed class PoCdnService : IPoCdnService
         CancellationToken cancellationToken)
     {
         if (_cdnCostAdjustments is null || _costAdjustments is null)
-            return null;
+            return (null, null);
 
         try
         {
@@ -2223,19 +2227,25 @@ public sealed class PoCdnService : IPoCdnService
             var result = await _cdnCostAdjustments.BuildAsync(
                 db, cdn, referencedInvoice, context.CostMethod, cancellationToken);
             if (!result.Succeeded)
-                return result.Error ?? "Purchase CN/DN costing failed.";
+                return (result.Error ?? "Purchase CN/DN costing failed.", null);
 
             await _costAdjustments.AppendInTransactionAsync(
                 context, result.Adjustments, cancellationToken);
-            return null;
+            return (null, null);
         }
         catch (StockLedgerException ex)
         {
-            return ex.Error.Message;
+            var reference = ErpOperatorErrors.NewReferenceId();
+            _logger.LogWarning(ex,
+                "Purchase CN/DN {DocNo} costing rejected: {Code} (ref {Reference})",
+                cdn.DocNo, ex.Error.Code, reference);
+            return (ex.Error.Message,
+                ErpOperatorErrors.FromLedgerError(ex.Error, ErpErrorOrigin.Purchase,
+                    ErpDocumentKind.PurchaseCreditDebitNote, cdn.DocNo, ErpErrorAction.Post, reference));
         }
     }
 
-    private async Task<string?> PostCdnCostingAsync(
+    private async Task<(string? Error, ErpOperatorError? OperatorError)> PostCdnCostingAsync(
         AppDbContext db,
         UserContext write,
         PoCdn cdn,
@@ -2247,7 +2257,7 @@ public sealed class PoCdnService : IPoCdnService
             || _costAdjustments is null
             || _cdnCostAdjustments is null)
         {
-            return null;
+            return (null, null);
         }
 
         var snapshot = new
@@ -2285,24 +2295,30 @@ public sealed class PoCdnService : IPoCdnService
             SourceSnapshot: snapshot));
         var begin = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
         if (begin.Error is not null)
-            return begin.Error.Message;
+            return (begin.Error.Message, null);
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
-            return null;
+            return (null, null);
 
         var completed = false;
         try
         {
-            var error = await AppendCdnCostingAsync(
+            var append = await AppendCdnCostingAsync(
                 db, write, cdn, referencedInvoice, begin.Context, cancellationToken);
-            if (error is not null)
-                return error;
+            if (append.Error is not null)
+                return append;
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
             completed = true;
-            return null;
+            return (null, null);
         }
         catch (StockLedgerException ex)
         {
-            return ex.Error.Message;
+            var reference = ErpOperatorErrors.NewReferenceId();
+            _logger.LogWarning(ex,
+                "Purchase CN/DN {DocNo} costing rejected: {Code} (ref {Reference})",
+                cdn.DocNo, ex.Error.Code, reference);
+            return (ex.Error.Message,
+                ErpOperatorErrors.FromLedgerError(ex.Error, ErpErrorOrigin.Purchase,
+                    ErpDocumentKind.PurchaseCreditDebitNote, cdn.DocNo, ErpErrorAction.Post, reference));
         }
         finally
         {
@@ -2311,7 +2327,7 @@ public sealed class PoCdnService : IPoCdnService
         }
     }
 
-    private async Task<string?> RollbackCdnCostingAsync(
+    private async Task<(string? Error, ErpOperatorError? OperatorError)> RollbackCdnCostingAsync(
         AppDbContext db,
         UserContext write,
         PoCdn cdn,
@@ -2322,7 +2338,7 @@ public sealed class PoCdnService : IPoCdnService
             || _costAdjustments is null
             || _cdnCostAdjustments is null)
         {
-            return null;
+            return (null, null);
         }
 
         var original = await db.StockPostings.AsNoTracking()
@@ -2337,7 +2353,7 @@ public sealed class PoCdnService : IPoCdnService
             .OrderByDescending(x => x.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (original is null)
-            return $"No sealed Purchase CN/DN costing posting was found for {cdn.DocNo} revision {cdn.CostingRevision}.";
+            return ($"No sealed Purchase CN/DN costing posting was found for {cdn.DocNo} revision {cdn.CostingRevision}.", null);
 
         var snapshot = new
         {
@@ -2376,9 +2392,9 @@ public sealed class PoCdnService : IPoCdnService
             ReversesPostingId: original.Id));
         var begin = await _stockCoordinator.BeginInTransactionAsync(db, command, cancellationToken);
         if (begin.Error is not null)
-            return begin.Error.Message;
+            return (begin.Error.Message, null);
         if (!begin.LedgerEnabled || begin.WasReplay || begin.Context is null)
-            return null;
+            return (null, null);
 
         var completed = false;
         try
@@ -2388,16 +2404,22 @@ public sealed class PoCdnService : IPoCdnService
             var reversal = await _cdnCostAdjustments.ReverseAsync(
                 db, cdn, original.Id, write.UserId!, cancellationToken);
             if (!reversal.Succeeded)
-                return reversal.Error ?? "Purchase CN/DN costing rollback failed.";
+                return (reversal.Error ?? "Purchase CN/DN costing rollback failed.", null);
             await _costAdjustments.AppendInTransactionAsync(
                 begin.Context, reversal.Adjustments, cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
             completed = true;
-            return null;
+            return (null, null);
         }
         catch (StockLedgerException ex)
         {
-            return ex.Error.Message;
+            var reference = ErpOperatorErrors.NewReferenceId();
+            _logger.LogWarning(ex,
+                "Purchase CN/DN {DocNo} costing rollback rejected: {Code} (ref {Reference})",
+                cdn.DocNo, ex.Error.Code, reference);
+            return (ex.Error.Message,
+                ErpOperatorErrors.FromLedgerError(ex.Error, ErpErrorOrigin.Purchase,
+                    ErpDocumentKind.PurchaseCreditDebitNote, cdn.DocNo, ErpErrorAction.Rollback, reference));
         }
         finally
         {
@@ -2578,12 +2600,14 @@ public sealed class PoCdnService : IPoCdnService
                              && x.PostingRole == "PRIMARY"
                              && x.SealedAtUtc != null,
                         cancellationToken);
-                var costingError = await RollbackCdnCostingAsync(
+                var costing = await RollbackCdnCostingAsync(
                     db, write, cdn, cancellationToken);
-                if (costingError is not null)
+                if (costing.Error is not null)
                 {
                     await tx.RollbackAsync(cancellationToken);
-                    return PoCdnPostingItemResult.Failed(no, costingError);
+                    return costing.OperatorError is null
+                        ? PoCdnPostingItemResult.Failed(no, costing.Error)
+                        : PoCdnPostingItemResult.Failed(no, costing.Error, costing.OperatorError);
                 }
 
                 costingHandled |= hasFinancialPosting;
@@ -2815,6 +2839,304 @@ public sealed class PoCdnService : IPoCdnService
         };
 
         return PoCdnOperationResult.OkDocument(document);
+    }
+
+    public async Task<PoCdnOperationResult> SearchPostedInvoicesAsync(
+        string type,
+        string vendorCode,
+        string? searchText,
+        CancellationToken cancellationToken = default)
+    {
+        var family = TryNormalizeCdnFamily(type, out var familyError);
+        if (familyError is not null)
+        {
+            return familyError;
+        }
+
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return PoCdnOperationResult.Fail(context.Error);
+        }
+
+        if (!await CanAsync(family, PermissionCodes.Access, cancellationToken))
+        {
+            return PoCdnOperationResult.Fail("Not authorized.", PoCdnErrorKind.Authorization);
+        }
+
+        var vendor = (vendorCode ?? string.Empty).Trim();
+        if (vendor.Length == 0)
+        {
+            return PoCdnOperationResult.FailValidation("Vendor is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var term = (searchText ?? string.Empty).Trim();
+
+        var query = db.PoInvoices.AsNoTracking()
+            .Where(x => x.CompanyCode == context.CompanyCode
+                        && x.BranchCode == context.BranchCode
+                        && x.Type == PoInvoiceTypes.Invoice
+                        && x.Status == PoInvoiceStatuses.Posted
+                        && x.VendorCode == vendor);
+
+        if (term.Length > 0)
+        {
+            query = query.Where(x =>
+                x.DocNo.Contains(term)
+                || (x.InvNo != null && x.InvNo.Contains(term)));
+        }
+
+        var rows = await query
+            .OrderByDescending(x => x.DocDate)
+            .ThenByDescending(x => x.DocNo)
+            .Take(50)
+            .Select(x => new PoCdnInvoicePickerRow
+            {
+                InvNo = x.DocNo,
+                InvDate = x.DocDate,
+                VendorCode = x.VendorCode,
+                VendorName = x.VendorName,
+                TotAmnt = x.TotAmnt,
+                SupplierInvNo = x.InvNo,
+                Currency = x.Currency
+            })
+            .ToListAsync(cancellationToken);
+
+        return PoCdnOperationResult.OkInvoicePicker(rows);
+    }
+
+    public async Task<PoCdnOperationResult> GetPostedInvoiceSourceAsync(
+        string type,
+        string internalPiDocNo,
+        string? expectedVendorCode,
+        CancellationToken cancellationToken = default)
+    {
+        var family = TryNormalizeCdnFamily(type, out var familyError);
+        if (familyError is not null)
+        {
+            return familyError;
+        }
+
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return PoCdnOperationResult.Fail(context.Error);
+        }
+
+        if (!await CanAsync(family, PermissionCodes.Access, cancellationToken))
+        {
+            return PoCdnOperationResult.Fail("Not authorized.", PoCdnErrorKind.Authorization);
+        }
+
+        var no = (internalPiDocNo ?? string.Empty).Trim();
+        if (no.Length == 0)
+        {
+            return PoCdnOperationResult.FailValidation("Invoice number is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var invoice = await db.PoInvoices.AsNoTracking()
+            .FirstOrDefaultAsync(
+                x => x.CompanyCode == context.CompanyCode
+                     && x.BranchCode == context.BranchCode
+                     && x.DocNo == no,
+                cancellationToken);
+
+        if (invoice is null
+            || !string.Equals(invoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(invoice.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+        {
+            return PoCdnOperationResult.Fail("A posted purchase invoice is required.", PoCdnErrorKind.NotFound);
+        }
+
+        var expectedVendor = (expectedVendorCode ?? string.Empty).Trim();
+        if (expectedVendor.Length > 0
+            && !string.Equals(invoice.VendorCode, expectedVendor, StringComparison.OrdinalIgnoreCase))
+        {
+            return PoCdnOperationResult.Fail("The invoice does not belong to the selected vendor.", PoCdnErrorKind.NotFound);
+        }
+
+        return PoCdnOperationResult.OkPostedInvoiceSource(new PoCdnInvoicePickerRow
+        {
+            InvNo = invoice.DocNo,
+            InvDate = invoice.DocDate,
+            VendorCode = invoice.VendorCode,
+            VendorName = invoice.VendorName,
+            TotAmnt = invoice.TotAmnt,
+            SupplierInvNo = invoice.InvNo,
+            Currency = invoice.Currency
+        });
+    }
+
+    public async Task<PoCdnOperationResult> GetInvoiceLinesAsync(
+        string type,
+        string internalPiDocNo,
+        string? excludeDocNo,
+        string expectedVendorCode,
+        CancellationToken cancellationToken = default)
+    {
+        var family = TryNormalizeCdnFamily(type, out var familyError);
+        if (familyError is not null)
+        {
+            return familyError;
+        }
+
+        var context = ValidateUserContext();
+        if (context.Error is not null)
+        {
+            return PoCdnOperationResult.Fail(context.Error);
+        }
+
+        if (!await CanAsync(family, PermissionCodes.Access, cancellationToken))
+        {
+            return PoCdnOperationResult.Fail("Not authorized.", PoCdnErrorKind.Authorization);
+        }
+
+        var no = (internalPiDocNo ?? string.Empty).Trim();
+        if (no.Length == 0)
+        {
+            return PoCdnOperationResult.FailValidation("Invoice number is required.");
+        }
+
+        var vendor = (expectedVendorCode ?? string.Empty).Trim();
+        if (vendor.Length == 0)
+        {
+            return PoCdnOperationResult.FailValidation("Vendor is required.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var invoice = await _invoices.GetWithDetailsAsync(
+            db, context.CompanyCode!, context.BranchCode!, no, cancellationToken);
+        if (invoice is null
+            || !string.Equals(invoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(invoice.Status, PoInvoiceStatuses.Posted, StringComparison.OrdinalIgnoreCase))
+        {
+            return PoCdnOperationResult.Fail("A posted purchase invoice is required.", PoCdnErrorKind.NotFound);
+        }
+
+        if (!string.Equals(invoice.VendorCode, vendor, StringComparison.OrdinalIgnoreCase))
+        {
+            return PoCdnOperationResult.Fail("The invoice does not belong to the selected vendor.", PoCdnErrorKind.NotFound);
+        }
+
+        string? usageExclude = null;
+        var exclude = (excludeDocNo ?? string.Empty).Trim();
+        if (exclude.Length > 0)
+        {
+            if (!string.Equals(family, PoCdnTypes.CreditNote, StringComparison.OrdinalIgnoreCase))
+            {
+                return PoCdnOperationResult.FailValidation(
+                    "Debit notes cannot exclude other credit-note consumption.");
+            }
+
+            if (!await CanAsync(family, PermissionCodes.Edit, cancellationToken))
+            {
+                return PoCdnOperationResult.Fail("Not authorized.", PoCdnErrorKind.Authorization);
+            }
+
+            var host = await db.PoCdns.AsNoTracking()
+                .FirstOrDefaultAsync(
+                    x => x.CompanyCode == context.CompanyCode
+                         && x.BranchCode == context.BranchCode
+                         && x.DocNo == exclude,
+                    cancellationToken);
+
+            if (host is null
+                || !string.Equals(host.Type, PoCdnTypes.CreditNote, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(host.Status, PoCdnStatuses.New, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(host.InvNo, no, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(host.VendorCode, vendor, StringComparison.OrdinalIgnoreCase))
+            {
+                return PoCdnOperationResult.FailValidation(
+                    "The excluded document is not an editable credit note for this invoice.");
+            }
+
+            usageExclude = exclude;
+        }
+
+        var consumption = await _cdns.ListSourceLineUsageAsync(
+            db, context.CompanyCode!, context.BranchCode!, no, usageExclude, cancellationToken);
+
+        var rows = invoice.Details
+            .OrderBy(d => d.Line)
+            .Select(d => MapInvoiceLinePickerRow(d, consumption))
+            .ToList();
+
+        return PoCdnOperationResult.OkInvoiceLines(rows);
+    }
+
+    private static string TryNormalizeCdnFamily(string? type, out PoCdnOperationResult? error)
+    {
+        var family = PoCdnCalc.NormalizeType(type);
+        if (family is not (PoCdnTypes.CreditNote or PoCdnTypes.DebitNote))
+        {
+            error = PoCdnOperationResult.FailValidation("Document type must be CN or DN.");
+            return string.Empty;
+        }
+
+        error = null;
+        return family;
+    }
+
+    private static PoCdnInvoiceLinePickerRow MapInvoiceLinePickerRow(
+        PoInvoiceDetail d,
+        IReadOnlyList<PoCdnSourceLineUsageRow> consumption)
+    {
+        var usedQty = consumption.Where(x => x.InvLineNo == d.Line).Sum(x => x.StdQty);
+        var usedAmount = consumption.Where(x => x.InvLineNo == d.Line).Sum(x => x.Amount);
+        var unsupported = DescribeUnsupportedInvoiceLineFields(d);
+        return new PoCdnInvoiceLinePickerRow
+        {
+            Line = d.Line,
+            ICode = d.ICode,
+            IDesc = d.IDesc,
+            Qty = d.Qty,
+            StdQty = d.StdQty,
+            StdCustPSize = d.StdCustPsize,
+            UnitPrice = d.UnitPrice,
+            Amount = d.Amount,
+            NetAmount = d.NetAmount,
+            TaxGroup = d.TaxGroup,
+            IsInclusive = d.IsInclusive,
+            ItemGlCode = d.ItemGlCode,
+            PoNo = d.PoNo,
+            PoRelNo = d.PoRelNo,
+            PoLineNo = d.PoLineNo,
+            ItemDiscount = d.ItemDiscount,
+            ItemDiscount1 = d.ItemDiscount1,
+            IDiscountType = d.IDiscountType,
+            IDiscountType1 = d.IDiscountType1,
+            StdUom = d.StdUom,
+            SellingUom = d.SellingUom,
+            ItemDiscount2 = d.ItemDiscount2,
+            ItemDiscount3 = d.ItemDiscount3,
+            Discount = d.Discount,
+            UnsupportedSourceFields = unsupported,
+            RemainingStdQty = PoCdnCalc.Qty(d.StdQty - usedQty),
+            RemainingAmount = PoCdnCalc.Money(d.Amount - usedAmount)
+        };
+    }
+
+    private static string? DescribeUnsupportedInvoiceLineFields(PoInvoiceDetail d)
+    {
+        var parts = new List<string>();
+        if (d.ItemDiscount2 != 0m)
+        {
+            parts.Add("ItemDiscount2");
+        }
+
+        if (d.ItemDiscount3 != 0m)
+        {
+            parts.Add("ItemDiscount3");
+        }
+
+        if (d.StdCustPsize <= 0m)
+        {
+            parts.Add("pack size");
+        }
+
+        return parts.Count == 0 ? null : string.Join(", ", parts);
     }
 
     // ─────────────────────────── Reservation reporting ───────────────────────────

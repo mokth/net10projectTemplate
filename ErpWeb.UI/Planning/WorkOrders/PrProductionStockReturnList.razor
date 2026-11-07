@@ -5,7 +5,11 @@
 <MenuAuthorize MenuCode="@MenuCodes.PlanningStockReturn">
     <div class="iv-page">
         @if (!string.IsNullOrWhiteSpace(StatusMessage)) { <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div> }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div> }
+        @if (OperatorFailure is not null)
+        {
+            <ErpOperatorFailureBanner Failure="OperatorFailure" OnDismiss="DismissError" />
+        }
+        else if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div> }
         <header class="iv-hero">
             <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-arrow-rotate-left"></i></div>
             <div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">Production Stock Return</h1>

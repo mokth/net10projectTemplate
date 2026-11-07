@@ -74,7 +74,8 @@ public sealed partial class IvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC MR has a later physical movement without valuation.");
         var productionPlan = await PlanWacProductionLeafAsync(read, companyCode, branchCode,
-            financial.Tail.LaterEvents, cancellationToken);
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, cancellationToken,
+            insertingReceiptBatchId: batch.Id);
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
                 batch.TrxDtTime, cancellationToken,
@@ -86,7 +87,8 @@ public sealed partial class IvInventoryPostingService
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
         await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
-            financial.Tail.LaterEvents, productionPlan, cancellationToken);
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, productionPlan, cancellationToken,
+            insertingReceiptBatchId: batch.Id);
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
                 batch.TrxDtTime, cancellationToken,
@@ -179,7 +181,8 @@ public sealed partial class IvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC GR has a later physical movement without valuation.");
         var productionPlan = await PlanWacProductionLeafAsync(read, companyCode, branchCode,
-            financial.Tail.LaterEvents, cancellationToken);
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, cancellationToken,
+            insertingReceiptBatchId: batch.Id);
         if (productionPlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated GR cannot yet replay both a Production issue and an invoice settlement.");
@@ -195,7 +198,8 @@ public sealed partial class IvInventoryPostingService
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
         await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
-            financial.Tail.LaterEvents, productionPlan, cancellationToken);
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, productionPlan, cancellationToken,
+            insertingReceiptBatchId: batch.Id);
         var snapshot = await LoadGoodsReceiptSnapshotAsync(write, companyCode,
             branchCode, batchNo, IvTrxTypes.GoodsReceive, cancellationToken);
         if (snapshot.Error is not null)
@@ -209,6 +213,13 @@ public sealed partial class IvInventoryPostingService
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, locked.Error);
+        }
+        var approvalError = await AssertNewGoodsReceiptPoApprovalAsync(
+            write, companyCode, branchCode, locked.Orders!.Values, cancellationToken);
+        if (approvalError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, approvalError);
         }
         var lockedPoNo = snapshot.Details![0].PoNo?.Trim();
         var lockedPoLine = locked.Orders!.GetValueOrDefault(lockedPoNo ?? string.Empty)?
@@ -226,6 +237,14 @@ public sealed partial class IvInventoryPostingService
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, poError);
+        }
+        var qaClaim = await _qaReceipt.ClaimGoodsReceiptAsync(
+            write, companyCode, branchCode, IvTrxTypes.GoodsReceive,
+            snapshot.Batch!, snapshot.Details!, cancellationToken);
+        if (qaClaim is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaClaim);
         }
         var currentInvoice = await LoadSingleGrReplayInvoiceAsync(write,
             companyCode, branchCode, snapshot.Details![0].PoNo,
@@ -379,6 +398,16 @@ public sealed partial class IvInventoryPostingService
                     StockLedgerErrorCodes.LedgerMismatch,
                     "The Vendor Return PO line changed after replay planning."));
         }
+        var writeDetails = await write.IvTrxBatchDetails
+            .Where(d => d.BatchId == batch.Id)
+            .ToListAsync(cancellationToken);
+        var qaError = await AssertQaPhysicalFromDetailsAsync(
+            write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         var required = await StockReplayWacMiRootWriter.InsertAsync(
             ledger.Context, financial, batchNo, cancellationToken);
         if (expectedTrxType == IvTrxTypes.VendorReturn)
@@ -494,7 +523,8 @@ public sealed partial class IvInventoryPostingService
         }
         var productionPlan = isReceipt
             ? await PlanWacProductionLeafAsync(read, companyCode, branchCode,
-                financial.Tail.LaterEvents, cancellationToken)
+                financial.Tail.LaterEvents, financial.Projection.LaterSteps, original.TrxDtTime,
+                cancellationToken, owner.Id)
             : null;
         if (productionPlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
@@ -509,9 +539,17 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        var qaPhysicalRestore = await _qaPhysical.RestoreStockOutAsync(
+            write, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaPhysicalRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaPhysicalRestore);
+        }
         if (isReceipt)
             await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
-                financial.Tail.LaterEvents, productionPlan, cancellationToken);
+                financial.Tail.LaterEvents, financial.Projection.LaterSteps, original.TrxDtTime,
+                productionPlan, cancellationToken, owner.Id);
         if (await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
                 original.TrxDtTime, cancellationToken, replayInvoice,
                 allowBoundedSales: isReceipt,
@@ -704,6 +742,13 @@ public sealed partial class IvInventoryPostingService
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     grError ?? "Historical GR rollback needs procurement replay while the purchase order is invoiced.");
+            }
+            var qaRestore = await _qaReceipt.RestoreGoodsReceiptAsync(
+                write, companyCode, branchCode, batchNo, details, cancellationToken);
+            if (qaRestore is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
             }
         }
 

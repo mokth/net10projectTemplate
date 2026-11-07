@@ -57,6 +57,9 @@ public static class TestCategories
     /// <summary>Shop-floor production execution after a work order is planned/released.</summary>
     public const string Production = "Production";
 
+    /// <summary>Quality Assurance record-only cases, inspection, and policy. No stock posting.</summary>
+    public const string Quality = "Quality";
+
     /// <summary>Menu definition, deployment parity and navigation chrome.</summary>
     public const string Menus = "Menus";
 

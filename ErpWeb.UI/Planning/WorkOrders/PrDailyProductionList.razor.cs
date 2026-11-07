@@ -6,6 +6,7 @@ using ErpWeb.Core.Production;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.UI.Components.Common.DataGrid;
+using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Timer = System.Timers.Timer;
@@ -30,6 +31,10 @@ public partial class PrDailyProductionList : PageBase, IDisposable
     protected string ConfirmAction = string.Empty;
     protected string ConfirmMessage = string.Empty;
     protected string ConfirmReason = string.Empty;
+
+    /// <summary>Operator-language view of the current failed post/rollback, or null when the failure
+    /// carried no structured error (then the existing message is shown unchanged).</summary>
+    protected ErpOperatorFailureView? OperatorFailure { get; private set; }
     protected bool ConfirmNeedsReason =>
         string.Equals(ConfirmAction, "ROLLBACK", StringComparison.Ordinal);
     protected string ConfirmButtonText => ConfirmAction switch
@@ -208,11 +213,13 @@ public partial class PrDailyProductionList : PageBase, IDisposable
         IsApplyingAction = true;
         ErrorMessage = null;
         StatusMessage = null;
+        OperatorFailure = null;
 
         try
         {
             var succeeded = 0;
             string? firstError = null;
+            var failures = new List<ErpOperatorFailureRecord>();
 
             foreach (var row in _selectedRows)
             {
@@ -222,7 +229,11 @@ public partial class PrDailyProductionList : PageBase, IDisposable
                     if (result.Succeeded)
                         succeeded++;
                     else
+                    {
                         firstError ??= result.Message ?? $"Unable to post {row.DocumentNo}.";
+                        failures.Add(new ErpOperatorFailureRecord(
+                            row.DocumentNo, result.Message, result.OperatorError));
+                    }
                 }
                 else if (action == "ROLLBACK")
                 {
@@ -235,7 +246,11 @@ public partial class PrDailyProductionList : PageBase, IDisposable
                     if (result.Succeeded)
                         succeeded++;
                     else
+                    {
                         firstError ??= result.Message ?? $"Unable to roll back {row.DocumentNo}.";
+                        failures.Add(new ErpOperatorFailureRecord(
+                            row.DocumentNo, result.Message, result.OperatorError));
+                    }
                 }
             }
 
@@ -252,6 +267,7 @@ public partial class PrDailyProductionList : PageBase, IDisposable
             else
             {
                 ErrorMessage = firstError ?? $"Unable to {action.ToLowerInvariant()} document(s).";
+                OperatorFailure = ErpOperatorFailureView.FromRecords(failures, _selectedRows.Count);
                 ConfirmVisible = false;
                 if (succeeded > 0)
                     await ReloadAsync();
@@ -343,7 +359,11 @@ public partial class PrDailyProductionList : PageBase, IDisposable
     }
 
     protected void DismissStatus() => StatusMessage = null;
-    protected void DismissError() => ErrorMessage = null;
+    protected void DismissError()
+    {
+        ErrorMessage = null;
+        OperatorFailure = null;
+    }
 
     private Task BeginPostAsync()
     {

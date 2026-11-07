@@ -5,6 +5,7 @@ using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
@@ -1406,8 +1407,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Invoice POST failed for {InvNo}", no);
-                results.Add(SaInvoicePostingItemResult.Failed(no, ex.Message));
+                results.Add(FailedInvoice(no, ex, ErpErrorAction.Post, "POST"));
                 stop = true;
             }
         }
@@ -1463,8 +1463,7 @@ public sealed class SaInvoiceService : ISaInvoiceService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Invoice ROLLBACK failed for {InvNo}", no);
-                results.Add(SaInvoicePostingItemResult.Failed(no, ex.Message));
+                results.Add(FailedInvoice(no, ex, ErpErrorAction.Rollback, "ROLLBACK"));
                 stop = true;
             }
         }
@@ -3616,6 +3615,22 @@ public sealed class SaInvoiceService : ISaInvoiceService
 
     private static bool RowVersionsEqual(byte[]? left, byte[]? right) =>
         left is not null && right is not null && left.SequenceEqual(right);
+
+    /// <summary>
+    /// One failed invoice: original technical message kept for logs, operator text added for the screen.
+    /// </summary>
+    private SaInvoicePostingItemResult FailedInvoice(
+        string invNo, Exception ex, ErpErrorAction action, string step)
+    {
+        var reference = ErpOperatorErrors.NewReferenceId();
+        _logger.LogError(ex, "Invoice {Step} failed for {InvNo} (ref {Reference})", step, invNo, reference);
+        var operatorError = ex is StockLedgerException ledger
+            ? ErpOperatorErrors.FromLedgerError(ledger.Error, ErpErrorOrigin.Sales,
+                ErpDocumentKind.SalesInvoice, invNo, action, reference)
+            : ErpOperatorErrors.Unexpected(ErpErrorOrigin.Sales,
+                ErpDocumentKind.SalesInvoice, invNo, action, reference);
+        return SaInvoicePostingItemResult.Failed(invNo, ex.Message, operatorError);
+    }
 
     private static bool IsUniqueViolation(DbUpdateException ex)
     {

@@ -17,6 +17,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Sales.Transaction;
 // ─────────────────────────── Decorator for test #4 ───────────────────────────
 
@@ -318,7 +319,8 @@ public class SaCdnSqlServerConcurrencyTests
             postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
         return new SaCdnService(
             factory,
             tenant,
@@ -349,7 +351,8 @@ public class SaCdnSqlServerConcurrencyTests
             postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
         return new SaInvoiceService(
             factory,
             tenant,
@@ -657,7 +660,8 @@ public class SaCdnSqlServerConcurrencyTests
                 new IvStockPostingRepository(),
                 new IvStockCommonRepository(factory),
                 new PoOrderRepository(),
-                NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)));
+                NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance));
 
         var failSut = CreateCdnSut(factory, failPosting);
         var curr = await failSut.GetAsync(save.DocNo!);

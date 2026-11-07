@@ -36,6 +36,7 @@ public sealed class PoPrService : IPoPrService
     private readonly IPoPrAttachmentService _attachments;
     private readonly ILogger<PoPrService> _logger;
     private readonly IProductionMaterialStockAvailabilityReader? _materialAvailability;
+    private readonly IProcurementApprovalGuard _approval;
 
     public PoPrService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -47,6 +48,7 @@ public sealed class PoPrService : IPoPrService
         IOptions<PoPrOptions> options,
         IPoPrAttachmentService attachments,
         ILogger<PoPrService> logger,
+        IProcurementApprovalGuard approval,
         IPoOrderRepository? poOrders = null,
         IProductionMaterialStockAvailabilityReader? materialAvailability = null)
     {
@@ -61,6 +63,7 @@ public sealed class PoPrService : IPoPrService
         _attachments = attachments;
         _logger = logger;
         _materialAvailability = materialAvailability;
+        _approval = approval ?? throw new ArgumentNullException(nameof(approval));
     }
 
     public async Task<PoPrOperationResult> CreateTempDocIdAsync(CancellationToken cancellationToken = default)
@@ -324,15 +327,29 @@ public sealed class PoPrService : IPoPrService
             return PoPrOperationResult.Fail("Purchase Requisition was not found.", PoPrErrorKind.NotFound);
         }
 
+        var approvalReadOnly = false;
         if (_options.SelfViewEdit
             && !string.Equals(header.CreatedBy, Truncate(context.UserId!, 20), StringComparison.OrdinalIgnoreCase))
         {
-            return PoPrOperationResult.Fail("Purchase Requisition was not found.", PoPrErrorKind.NotFound);
+            approvalReadOnly = _approval is not null
+                && await _approval.CanReadDocumentAsync(
+                    db,
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    ProcurementApprovalDocTypes.Pr,
+                    header.PrNo,
+                    0,
+                    context.UserId!,
+                    cancellationToken);
+            if (!approvalReadOnly)
+            {
+                return PoPrOperationResult.Fail("Purchase Requisition was not found.", PoPrErrorKind.NotFound);
+            }
         }
 
-        var canEdit = await CanAsync(PermissionCodes.Edit, cancellationToken);
-        var canDelete = await CanAsync(PermissionCodes.Delete, cancellationToken);
-        var canCancel = await CanAsync(PermissionCodes.Cancel, cancellationToken);
+        var canEdit = !approvalReadOnly && await CanAsync(PermissionCodes.Edit, cancellationToken);
+        var canDelete = !approvalReadOnly && await CanAsync(PermissionCodes.Delete, cancellationToken);
+        var canCancel = !approvalReadOnly && await CanAsync(PermissionCodes.Cancel, cancellationToken);
         return PoPrOperationResult.OkDocument(MapDocument(header, canEdit, canDelete, canCancel));
     }
 
@@ -956,6 +973,17 @@ public sealed class PoPrService : IPoPrService
                 return PoPrOperationResult.Fail("Purchase Requisition was not found.", PoPrErrorKind.NotFound);
             }
 
+            if (_approval is not null)
+            {
+                await _approval.LockInstancesAsync(
+                    db,
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    ProcurementApprovalDocTypes.Pr,
+                    [(header.PrNo, (short)0)],
+                    cancellationToken);
+            }
+
             if (!IsEditableStatus(header.Status))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1013,6 +1041,24 @@ public sealed class PoPrService : IPoPrService
             header.Status = PoPrStatuses.New;
             header.ModifiedDate = DateTime.UtcNow;
             header.ModifiedBy = Truncate(context.UserId!, 20);
+
+            if (_approval is not null)
+            {
+                var approvalError = await _approval.AssertDocumentMaterialEditAsync(
+                    db,
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    ProcurementApprovalDocTypes.Pr,
+                    header.PrNo,
+                    0,
+                    ProcurementApprovalFingerprint.ForPr(header),
+                    cancellationToken);
+                if (approvalError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoPrOperationResult.Fail(approvalError);
+                }
+            }
 
             if (tempDocId is not null)
             {
@@ -1275,6 +1321,17 @@ public sealed class PoPrService : IPoPrService
                 return PoPrOperationResult.Fail("Purchase Requisition was not found.", PoPrErrorKind.NotFound);
             }
 
+            if (_approval is not null)
+            {
+                await _approval.LockInstancesAsync(
+                    db,
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    ProcurementApprovalDocTypes.Pr,
+                    [(header.PrNo, (short)0)],
+                    cancellationToken);
+            }
+
             if (!IsEditableStatus(header.Status))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1308,6 +1365,19 @@ public sealed class PoPrService : IPoPrService
                 detail.Status = PoPrStatuses.Cancelled;
             }
             TouchRowVersion(db, header);
+
+            if (_approval is not null)
+            {
+                await _approval.ClosePendingOnDocumentCancelAsync(
+                    db,
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    ProcurementApprovalDocTypes.Pr,
+                    header.PrNo,
+                    0,
+                    context.UserId ?? string.Empty,
+                    cancellationToken);
+            }
 
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -1404,6 +1474,17 @@ public sealed class PoPrService : IPoPrService
                 return PoPrOperationResult.Fail("Purchase Requisition was not found.", PoPrErrorKind.NotFound);
             }
 
+            if (_approval is not null)
+            {
+                await _approval.LockInstancesAsync(
+                    db,
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    ProcurementApprovalDocTypes.Pr,
+                    [(header.PrNo, (short)0)],
+                    cancellationToken);
+            }
+
             if (!IsEditableStatus(header.Status))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1440,6 +1521,19 @@ public sealed class PoPrService : IPoPrService
             if (attachRows.Count > 0)
             {
                 db.PoPrAttachFiles.RemoveRange(attachRows);
+            }
+
+            if (_approval is not null)
+            {
+                await _approval.ClosePendingOnDocumentCancelAsync(
+                    db,
+                    context.CompanyCode!,
+                    context.BranchCode!,
+                    ProcurementApprovalDocTypes.Pr,
+                    header.PrNo,
+                    0,
+                    context.UserId ?? string.Empty,
+                    cancellationToken);
             }
 
             db.PoPrs.Remove(header);

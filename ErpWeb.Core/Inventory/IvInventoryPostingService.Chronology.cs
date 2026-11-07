@@ -5,20 +5,27 @@ using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
     /// <summary>INV-03: locked BalLoc must have TransDate on or before the document date.</summary>
-    private static string? ValidateBalanceStockDate(
+    private string? ValidateBalanceStockDate(
         int balLocId,
         DateTime? stockDate,
         DateTime documentDate,
         string? lotNo)
     {
         if (!stockDate.HasValue)
-            return IvStockDateRules.NullStockDateMessage(balLocId);
+        {
+            // The database id stays in the log; the operator only needs to know the balance is unusable.
+            _logger.LogWarning(
+                "Stock balance {BalLocId} has no stock date; posting refused until it is repaired.",
+                balLocId);
+            return IvStockDateRules.NullStockDateMessage();
+        }
 
         if (!IvStockDateRules.IsAvailableOn(stockDate, documentDate))
             return IvStockDateRules.FutureStockMessage(lotNo, stockDate.Value, documentDate);
@@ -341,7 +348,11 @@ public sealed partial class IvInventoryPostingService
             return null;
 
         var hit = hits[0];
-        return IvStockMovementRules.RollbackLaterMovementMessage(batchNo, hit.BalLocId, hit.TrxDtTime);
+        // The balance id stays in the log; the operator sees "this stock balance" instead.
+        _logger.LogDebug(
+            "Rollback of batch {BatchNo} blocked by later movement on stock balance {BalLocId} dated {LaterDate:O}.",
+            batchNo, hit.BalLocId, hit.TrxDtTime);
+        return IvStockMovementRules.RollbackLaterMovementMessage(batchNo, hit.TrxDtTime);
     }
 
     /// <summary>

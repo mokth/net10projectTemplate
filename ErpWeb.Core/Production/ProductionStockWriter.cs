@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Production;
@@ -33,9 +34,11 @@ public interface IProductionStockWriter
 }
 
 /// <summary>Only V2 production quantity mutator. It appends facts and updates projections without committing.</summary>
-public sealed class ProductionStockWriter(IStockMovementRegistry registry) : IProductionStockWriter
+public sealed class ProductionStockWriter(
+    IStockMovementRegistry registry,
+    IQaLogicalHoldAuthorization? qaHold = null) : IProductionStockWriter
 {
-    public Task<IReadOnlyList<ProductionBalLotMovement>> ApplyAsync(
+    public async Task<IReadOnlyList<ProductionBalLotMovement>> ApplyAsync(
         StockPostingContext context,
         IReadOnlyCollection<ProductionStockLeg> legs,
         CancellationToken cancellationToken = default)
@@ -60,6 +63,22 @@ public sealed class ProductionStockWriter(IStockMovementRegistry registry) : IPr
                 throw new StockLedgerException(new(
                     StockLedgerErrorCodes.InsufficientBaseQty,
                     $"Production balance {leg.Balance.Uid} would become negative."));
+            if (definition.Direction < 0 && qaHold is not null)
+            {
+                var holdError = await qaHold.AssertRemainingCoversHoldsAsync(
+                    context.Db,
+                    context.CompanyCode,
+                    context.BranchCode,
+                    leg.Balance.Uid,
+                    nextBase,
+                    cancellationToken);
+                if (holdError is not null)
+                {
+                    throw new StockLedgerException(new(
+                        StockLedgerErrorCodes.InsufficientBaseQty,
+                        holdError));
+                }
+            }
 
             var factor = leg.Balance.ConversionFactorToBase;
             var nextQty = IvQty.Round(nextBase / factor);
@@ -125,7 +144,7 @@ public sealed class ProductionStockWriter(IStockMovementRegistry registry) : IPr
             movements.Add(movement);
         }
 
-        return Task.FromResult<IReadOnlyList<ProductionBalLotMovement>>(movements);
+        return movements;
     }
 
     private static void Validate(StockPostingContext context, ProductionStockLeg leg)

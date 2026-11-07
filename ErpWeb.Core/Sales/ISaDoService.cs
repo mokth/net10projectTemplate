@@ -154,6 +154,9 @@ public sealed class SaDoPostingItemResult
     public string? ErrorMessage { get; init; }
     public string? ReasonCode { get; init; }
 
+    /// <summary>Operator-facing explanation when the boundary could prove one. Null keeps the old text.</summary>
+    public ErpWeb.Core.Services.ErpOperatorError? OperatorError { get; init; }
+
     public static SaDoPostingItemResult Posted(string doNo) =>
         new() { DoNo = doNo, Succeeded = true, Outcome = "Posted" };
 
@@ -174,6 +177,21 @@ public sealed class SaDoPostingItemResult
             Outcome = "Failed: " + userMessage,
             ErrorMessage = userMessage,
             ReasonCode = reasonCode
+        };
+
+    /// <summary>
+    /// Same failure, plus the operator-language explanation. The technical <paramref name="reason"/>
+    /// stays in <see cref="ErrorMessage"/> for logs and for pages that have not adopted the banner.
+    /// </summary>
+    public static SaDoPostingItemResult Failed(string doNo, string reason,
+        ErpWeb.Core.Services.ErpOperatorError operatorError) =>
+        new()
+        {
+            DoNo = doNo,
+            Succeeded = false,
+            Outcome = "Failed: " + operatorError.Title,
+            ErrorMessage = reason,
+            OperatorError = operatorError
         };
 
     public static SaDoPostingItemResult NotAttempted(string doNo) =>

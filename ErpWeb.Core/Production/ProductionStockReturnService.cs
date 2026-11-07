@@ -13,6 +13,7 @@ using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Production;
 
@@ -20,13 +21,24 @@ public sealed partial class ProductionStockReturnService(
     IDbContextFactory<AppDbContext> factory, IInventoryTenantContext tenant, IAccessRightService access,
     ICurrentDateService clock, IRunningNumberService numbers, IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator, IIvStockPostingRepository stock, IProductionStockWriter production,
-    IIvInventoryHistoryWriter historyWriter, IIvInventoryPostingService inventoryPosting) : IProductionStockReturnService
+    IIvInventoryHistoryWriter historyWriter, IIvInventoryPostingService inventoryPosting,
+    ILogger<ProductionStockReturnService>? logger = null) : IProductionStockReturnService
 {
     private const string Menu = MenuCodes.PlanningStockReturn;
-    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) => IvMasterOperationResult<T>.Fail(code, message);
+    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) =>
+        IvMasterOperationResult<T>.Fail(code, message, operatorError: operatorError);
 
-    private sealed class ReturnException(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) : Exception(message)
-    { public IvMasterErrorCode Code { get; } = code; }
+    private sealed class ReturnException(
+        string message,
+        IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) : Exception(message)
+    {
+        public IvMasterErrorCode Code { get; } = code;
+
+        /// <summary>Operator-language explanation carried out of the transaction boundary, if proven.</summary>
+        public ErpWeb.Core.Services.ErpOperatorError? OperatorError { get; } = operatorError;
+    }
 
     private static string User(InventoryTenantScope scope) => scope.UserId.Length > 10 ? scope.UserId[..10] : scope.UserId;
 

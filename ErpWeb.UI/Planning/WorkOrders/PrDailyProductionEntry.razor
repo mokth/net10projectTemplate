@@ -14,7 +14,11 @@
                 <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
             </div>
         }
-        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        @if (OperatorFailure is not null)
+        {
+            <ErpOperatorFailureBanner Failure="OperatorFailure" OnDismiss="DismissError" />
+        }
+        else if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
             <div class="iv-toast iv-toast--err" role="alert">
                 <span>@ErrorMessage</span>
@@ -83,6 +87,24 @@
                               Text="POST"
                               IconCssClass="fa-solid fa-check"
                               Click="@OpenPostConfirm"
+                              Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanRequestQa)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Request QA"
+                              IconCssClass="fa-solid fa-clipboard-check"
+                              title="Inspection record only — posting approval not active"
+                              Click="@OnRequestQa"
+                              Enabled="@(!IsSubmitting)" />
+                }
+                @if (CanRequestQaNonGood)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Request QA (non-good)"
+                              IconCssClass="fa-solid fa-clipboard-check"
+                              title="Inspection record only — posting approval not active"
+                              Click="@OnRequestQaNonGood"
                               Enabled="@(!IsSubmitting)" />
                 }
                 @if (CanRollback)
@@ -219,6 +241,16 @@
                     </Columns>
                 </DxGrid>
             </section>
+
+            <footer class="pr-dp-footer">
+                <div class="pr-dp-footer__actions" style="margin-inline-start: auto;">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="CLOSE"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@BackToList"
+                              Enabled="@(!IsSubmitting)" />
+                </div>
+            </footer>
         }
         else if (IsSelectingOperation)
         {

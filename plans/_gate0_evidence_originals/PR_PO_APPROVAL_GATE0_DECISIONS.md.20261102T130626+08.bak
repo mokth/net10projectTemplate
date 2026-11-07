@@ -1,0 +1,258 @@
+# PR/PO Approval — Gate 0 Decisions
+
+**Status:** DESIGN PROPOSALS FOR REVIEW. **Unresolved owner items are listed explicitly.**  
+**Local HEAD:** `03a142cc186efe25918523537c844b14e232971a`  
+**Not implemented.** No posting, stock, approval engine, or database source was changed for Gate 0.
+
+These decisions **supersede** conflicting v2/v3 wording. They do **not** authorize Gate 1–3.
+
+---
+
+## D1. Policy publication linearization (V4-C2) — PROPOSED
+
+**Evidence:** [`SavePolicyAsync`](../ErpWeb.Core/Purchase/ProcurementApprovalService.cs) 109–217 begins a transaction, reads published policy with ordinary `LoadPublishedPolicyAsync` (1315–1321), unpublishes, inserts `Version+1`, commits. [`AssertGateAsync`](../ErpWeb.Core/Purchase/ProcurementApprovalService.cs) 1087–1114 reads the same published row **without** that lock. GR/NG holds a PO row lock, which does **not** serialize against settings.
+
+**Mechanism:** copy the proven [`BranchStockTransactionLock`](../ErpWeb.Core/StockLedger/BranchStockTransactionLock.cs) pattern (`sys.sp_getapplock`, Exclusive, Transaction, 15s timeout, fail closed).
+
+- Resource: `PO_APPR_POLICY|{COMPANY}|{DOCTYPE}` (uppercase trimmed). Company in the name prevents cross-tenant collision on a shared SQL instance.
+- **Publisher:** acquire lock **before** `LoadPublishedPolicyAsync`; hold until commit. First-enable (no row) is still serialized because the resource exists without a table row.
+- **Authoritative gates** (Submit, PR convert `AssertPrConvertibleAsync` under PO save, GR/NG `AssertPoReceivableAsync`, Force Close `AssertPoCloseableAsync`): acquire **after** document header locks, **before** reading published policy / asserting the gate.
+- **Publisher must not acquire PR/PO headers.** That avoids policy→header inversion vs guards that take headers first.
+- Timeout (`sp_getapplock` result &lt; 0): fail closed, retryable: `Approval settings are being updated. Retry the command.`
+- Ordinary READ COMMITTED is **not** sufficient.
+
+**Expected races:**
+
+| Scenario | Outcome |
+|----------|---------|
+| Two `SavePolicyAsync` | One waits; exactly one new published version; no two `IsPublished=1` for same company+docType |
+| Enable vs fresh GR of NEW unapproved PO | Enable wins lock first → GR sees ON and must have a valid gate; or GR wins first and completes under previous OFF **only if** it already held policy lock before enable — serialized so no stale OFF after enable commits |
+| Disable vs Pending | Pending still blocks (`AssertGateAsync` 1093–1096). Disable must not unlock in-flight cycles |
+| Submit vs new policy version | Submit snapshots `PolicyId`/`PolicyVersion` (1003–1012); in-flight instance unchanged |
+| OFF regression | Real guard returns permit when no published enabled policy **and** no Pending instance |
+
+**Schema:** none required if applock is used. Unique `(CompanyCode, DocType, Version)` already exists ([`create-po-approval.sql`](../scripts/create-po-approval.sql) 32–34). Consider a filtered unique published index later (separate schema approval) — not required to start if applock is proven.
+
+**Owner sign-off:** accept applock resource names and timeout message. **STOP if** a shared lock cannot be proven against existing branch-stock + document lock graphs (see PATH_LOCK_MATRIX global order).
+
+---
+
+## D2. Latest PO revision (V4-C1) — PROPOSED
+
+**Evidence:** [`LockLatestForUpdateAsync`](../ErpWeb.Model/Repositories/Purchase/PoOrderRepository.cs) 136–149 = unlocked `GetMaxRelNoAsync` then `LockForUpdateAsync`. Callers: PO save/revise ~1023, `LockRequestedPoAsync` ~1416, GR PO lock ~4210.
+
+**Do not** claim the current PO row lock serializes revise vs GR.
+
+**Minimal strategy (prefer not rewriting every `LockLatestForUpdateAsync` caller blindly):**
+
+1. New helper used by **GR/NG NEW-post** and **PO Revise** (audit all three callers before widening): acquire `PO_REV|{COMPANY}|{BRANCH}|{PONO}` Exclusive Transaction **before** reading max RelNo.
+2. `LockForUpdateAsync` on that RelNo.
+3. **Recheck** `Max(PoRelNo)` inside the same transaction; if it differs, fail closed with `Purchase Order was revised. Reload and select the latest approved revision.`
+4. Then policy lock + instance lock + `AssertPoReceivableAsync` on the **locked** RelNo.
+5. Existing qty validator still rejects draft lines whose `PoRelNo` ≠ locked latest.
+
+Cancelled old revisions may help but are **secondary**. SQL barrier tests in PATH_LOCK_MATRIX R1–R6 are mandatory before claiming correctness.
+
+**Owner sign-off:** apply the applock to revise + GR/NG post in Gate 1; other `LockLatest` callers in the same Gate 1 PR after the three-site audit.
+
+---
+
+## D3. Progressed-document grandfathering (V4-H1) — PRESERVE (explicit)
+
+**Evidence:** `AssertGateAsync` 1155–1162 permits documents with `RecvQty > 0` or PO Received/Closed, or PR derived ordered / PO-link consumption.
+
+**Product decision proposed:** **keep current grandfathering.** A PO that already had a physical receipt **before** enablement may post **remaining** quantity after enablement without a new approval. A **truly NEW** unapproved PO (`RecvQty = 0`, not Received/Closed) **must not** receive its first GR when policy is ON.
+
+This is **not** a silent tightening of v3 “no new commitment after enable.” Remaining-qty and status formulas stay unchanged.
+
+**PENDING still blocks when policy is OFF** (1093–1096). Do not change.
+
+**APPROVED / NOT_REQUIRED** remain snapshot-based (`PolicyId`, `PolicyVersion`, fingerprint, assignees). Policy edits do not recompute them.
+
+**Owner sign-off required:** confirm remaining GR after enablement on a partially received PO is intended. If business wants to freeze remaining qty behind approval, that is a **separate** signed rule change.
+
+---
+
+## D4. Trusted cutover timestamps (V4-H2) — FAIL CLOSED ON UNTRUSTED FALLBACK
+
+**Evidence:**
+
+- Policy `CutoverAtUtc` assigned `DateTime.UtcNow` (`SavePolicyAsync` 135, 157–159).
+- PR/PO `CreatedDate` assigned `_dates.Now` which is **company-local** ([`CurrentDateService`](../ErpWeb.Core/Services/CurrentDateService.cs) 13–35, never blind UtcNow). EF maps to column `Created` ([`PoPrConfiguration`](../ErpWeb.Model/Configurations/Purchase/PoPrConfiguration.cs) 35, [`PoOrderConfiguration`](../ErpWeb.Model/Configurations/Purchase/PoOrderConfiguration.cs) 88).
+- Gate fallback: `CreatedDate ?? CreateDt` (PR) or `CreatedDate ?? PoDate` (PO) at 1135 / 1148. `CreateDt` / `PoDate` (`PODt`) are **editable business dates**.
+
+**Local DEMO sample (redacted):** 0 null `Created` on 27 PR / 14 PO rows. That does **not** prove other tenants.
+
+**Decision:**
+
+1. Cutover / LegacyExempt may use **`Created` (CreatedDate) converted to UTC using the document company timezone**, compared to `CutoverAtUtc`.
+2. If `Created` is null: **fail closed** (require submit/approval) — do **not** treat `PoDate`/`CreateDt` as proof of pre-enablement.
+3. Current published DEMO mode is `REQUIRE_GOING_FORWARD` (LegacyExempt path inactive unless switched). Timestamp mixing still must be fixed before enabling LegacyExempt.
+4. Kind-unaware `createdAt < cutover` (local 10:00 vs UTC 02:33) is **untrusted**.
+
+**Owner sign-off:** UTC conversion helper vs requiring a backfill migration of `Created`. **Unresolved** until signed. Gate 1 GR guard can ship **without** changing LegacyExempt if mode remains RequireGoingForward, but must not expand the untrusted fallback.
+
+---
+
+## D5. NEW backdated post vs historical replay vs repair (V4-H3) — CLASSIFIED
+
+| Root | Approval |
+|------|----------|
+| Fast `PostGoodsReceiptAsync` stock GR and NG, RecvQty +1 | **Gate NEW-post** |
+| WAC/Standard/FIFO **NEW** backdated methods that lock PO and apply RecvQty +1 on a NEW batch | **Gate NEW-post** (do not exempt because the class name contains Replay) |
+| GR rollback, VR, historical revaluation/removal of **already posted** descendants | **No first-time approval gate** |
+| `PurchaseGoodsReceiptRepairAdapter.RepostAsync` (CostingRepairAdapters.cs 293–299) | Calls public `_posting.PostAsync`. Context unused. **No tamper-resistant proof.** |
+
+**Repair decision:** **no public `skipApproval`**. **no caller-name exemption.** Until a signed internal repair-context design exists, repair repost is a **normal NEW post** and must pass `AssertPoReceivableAsync`. Costing repair of a fully rolled-back PO (RecvQty=0) will require a current approval if policy is ON; progressed grandfathering still applies if RecvQty&gt;0 remains.
+
+**Owner sign-off:** accept “repair is not exempt” **or** commission a separate repair-proof design. **STOP** for any bypass that a user can trigger with a batch number.
+
+---
+
+## D6. Decision / withdraw lock order (V4-H4) — PROPOSED
+
+Today: `DecideAsync` 325 instance-first then reads creator/consumption; `WithdrawAsync` 460 same; PR/PO save document-first; GR PO-header-first.
+
+**Required for Decide / Withdraw / Return** (any path that reads creator, fingerprint, or consumption):
+
+1. Nonlocking lookup instance by ID → `(Company, Branch, DocType, DocNo, DocRev)`
+2. Validate tenant
+3. Lock exact PR or PO header
+4. Lock instance by ID; re-fetch
+5. Revalidate company/branch/key/revision/rowversion/status
+6. Compare fingerprint / consumption from **locked** document
+7. Decision + event same commit
+
+Missing/stale document → fail closed. **Never** treat `CurrentFingerprintAsync == null` as approved (V4-M1) on a path that did not just lock the document.
+
+`ReassignAsync`: remain instance-only **if** Gate 1 code review confirms it still never touches PR/PO.
+
+PR Return/Withdraw consumption: use existing `IsPrConsumed` / `RecvQty` under the **PR** lock. Do not lock PO after PR unless the global matrix is shared by all writers. **No new remaining-qty engine.**
+
+---
+
+## D7. PR picker (V4-H5) — READ-ONLY EVALUATOR
+
+Today: Take(100) then `IsPrVisibleForPoAsync` → `AssertGateAsync`, which can `Add` cutover exemption/event (1168–1194). Picker DbContext does not `SaveChanges` (tracked entities, not proven persisted).
+
+**Decision:**
+
+- Extract a **side-effect-free** `EvaluatePrConvertibleReadOnly` sharing Pending / Approved / NotRequired / progressed / exemption **read** / cutover **compare** predicates — **zero** `DbContext.Add`.
+- Chunked stable sort (existing CreateDt/PrNo desc); fetch windows; batch-load instances/exemptions; filter; stop at 100 eligible.
+- Persist cutover evidence **only** in PO Save under `LockConsumptionAsync` + policy lock, once.
+- `GetPrRemainingLinesAsync` stays advisory; PO Save `AssertPrConvertibleAsync` stays authoritative.
+- Do not duplicate remaining-qty math.
+
+---
+
+## D8. Attachments (V4-H6) — CHOICE A (document-wide freeze)
+
+**Evidence:** `StampAttachRevNoAsync` 2594–2600 restamps **all** rows for `DocId=PoNo`. Upload uses unlocked max RelNo. Files outside SQL.
+
+**Choice A (selected for this plan; no schema):**
+
+- Document-wide attachment set. **Do not claim** per-revision historical snapshots.
+- After the **first submitted cycle** (Pending/Approved/NotRequired) on any revision of that PO, **prohibit delete/replace**. **Additions** on a later **draft** revision: **owner must confirm**. Conservative default: **no delete/replace**; **allow add** only while no Pending/Approved instance exists on **any** revision (i.e. returned/withdrawn/new draft after close of cycle).
+- UI must show the limitation (separate Settings/UI PR — do not implement here).
+- Temp promotion (`StampAttachDocIdsInDbAsync`, `MoveDraftSafeAsync`) must not bypass the freeze.
+- **Choice B** (immutable revision snapshots) needs additive schema and a **distinct** review — not this Gate.
+
+**File I/O (reconciled):**
+
+1. Stream + magic-byte validation to a unique temp file **before** any PR/PO `UPDLOCK`.
+2. Short SQL transaction: reauthorize; lock current PR or latest PO (after PO_REV applock); lock instance; duplicate/quota; insert/remove metadata.
+3. **Documented exception:** a **same-volume atomic `File.Move`/`Replace`** of an already-staged local file may occur immediately before `SaveChanges` (bounded, not a network stream).
+4. On DB rollback: delete the staged final file if it was moved in. Never delete the user’s only copy after a failed commit.
+5. Delete path: remove metadata, **commit**, then physical delete with retry + recorded orphan cleanup. Never delete file before successful DB commit.
+
+---
+
+## D9. Fingerprint (V4-H7) — PRESERVE V1 (instances exist)
+
+**Local DEMO inventory (2026-11-02, redacted):** `PoApprovalInstance` = **7 PENDING + 3 APPROVED** PR rows, fingerprint length 64 (SHA256 hex). **In-place algorithm change is forbidden.**
+
+**V1 hashed today** ([`ProcurementApprovalFingerprint`](../ErpWeb.Core/Purchase/ProcurementApprovalFingerprint.cs)):
+
+- PR: PrType, DeptCode, ProjId, LocationCode; line Line, ICode, PurchaseQty, UnitPrice, Amount, Currency, TaxGroup, TaxAmount, IsInclusive, VendorCd, PaymentTerm, BuyingTerm.
+- PO: VendCode, CurCode, TermCode, BuyingTerm, Discount, TaxGrpCode, ShipCode, ShipName; line Line, ICode, PoPurQty, PoUnitPrice, NetAmount, TaxAmount, ItemDiscount, DiscountType, ItemDiscount1, DiscountType1, PrNo, PrLineNo.
+
+**Material fields omitted (do not hash operational qty):** PurchaseUom/StdUom, ToWarehouse, Dept/Proj/Location on PO header, line TaxGroup/IsInclusive on PO, PoQty vs PoPurQty, service/stock IType, ETA, addresses, remarks, RecvQty/ReturnQty/InvoicedQty.
+
+**Decision:** Keep V1 for **all existing and new cycles** until a signed V2 (fingerprint version column = schema exception + rollout). Submit, Decide (after document lock), and downstream guards must call the **same** V1 `ForPr`/`ForPo`. Never silently rehash stored rows. Never hash RecvQty/ReturnQty/InvoicedQty or regenerate totals.
+
+**V4-M1:** If `CurrentFingerprintAsync` returns null (missing document), **fail closed** at gates that did not lock the document. Do not treat null as matching APPROVED.
+
+**Owner sign-off:** V2 field list and schema later; **not** Gate 1.
+
+---
+
+## D10. Mandatory DI (preview for Gate 2)
+
+Production constructors take non-null `IProcurementApprovalGuard`. DI already maps both interfaces ([`CoreServiceCollectionExtensions`](../ErpWeb.Core/CoreServiceCollectionExtensions.cs) 347–348). Missing registration → startup fail. Test-only disabled stub **only** in explicit policy-OFF unit harnesses. **Never** in production DI. Policy OFF behavior stays inside the **real** guard.
+
+Uncommitted nullable injection on posting/GR services is **not** the Gate 1 design.
+
+---
+
+## D11. Invoice / CDN
+
+**No new invoice/CDN approval gates.** `ValidateMatchOnPostAsync` 1633–1637 rejects non-CN invoice when net received ≤ 0. CDN does not write RecvQty. Self-billed has no PO lineage. Service-only first commitment is **NG post** (D5), not Force Close. Force Close remains stock-remainder + existing `AssertPoCloseableAsync`. Direct non-PO invoices stay out of this gate.
+
+---
+
+## D12. User-facing messages (preview)
+
+- Blocked GR/NG: `Purchase Order {PoNo} needs approval before this receipt can be posted.`
+- Stale revision: `Purchase Order was revised. Reload and select the latest approved revision.`
+- Policy lock timeout: `Approval settings are being updated. Retry the command.`
+- No hashes, SQL, CostLayer, or lock jargon.
+
+---
+
+## D13. Deploy sequence (preview — not executed)
+
+1. Idempotent `scripts/create-po-approval.sql` + `scripts/init-po-approval-menu.sql` on **each** tenant DB **before** mandatory-guard binaries.
+2. Verify filtered unique `UX_PoApprovalInstance_Active` (SQL script has it; **EF mapping does not** — uniqueness is SQL-enforced when script applied).
+3. Deploy code with policy **OFF**; smoke PR/PO/GR/NG/rollback/VR.
+4. Enable per tenant.
+5. Missing approval tables at runtime → **clear no-post + operator alert**, not silent OFF.
+6. Feature-off leaves Pending locked. Code rollback preserves audit and stock/cost.
+
+**This checkout:** single `DefaultConnection` (no multi-tenant catalog in `Program.cs`). Live tenant inventory is the local `ERPWeb` database only (see TEST_BASELINE). Other deployed servers were **not** reachable from this investigation.
+
+---
+
+## Owner decisions still UNRESOLVED
+
+| ID | Question | Proposed default |
+|----|----------|------------------|
+| O1 | Keep progressed-PO remaining GR after enablement? | Yes, preserve (D3) |
+| O2 | LegacyExempt UTC conversion vs Created backfill? | Fail closed if Created null; convert Created→UTC (D4) |
+| O3 | Repair exemption? | None; public PostAsync always gated (D5) |
+| O4 | Attachment adds after first cycle? | Conservative: no delete/replace; add only when no active Pending/Approved on any revision (D8) |
+| O5 | V2 fingerprint schema? | Deferred; preserve V1 (D9) |
+| O6 | Applock timeout seconds | 15s, match branch stock |
+
+Gate 1 must not start until O1–O3 are signed (O4–O6 may be confirmed in Gate 2 review).
+
+---
+
+## V4 / R-item status table (R10)
+
+| ID | Result | Evidence | Test |
+|----|--------|----------|------|
+| V4-C1 latest RelNo lock | **Verified gap.** Design D2. Not implemented. | `PoOrderRepository.cs` 136–149 | SQL races R1–R6 (not run) |
+| V4-C2 policy serialize | **Verified gap.** Design D1. Not implemented. | `SavePolicyAsync` 109–217; `AssertGateAsync` 1087–1114 | publisher vs GR (not run) |
+| V4-H1 grandfathering | **Verified current permit.** Decision D3 preserve. Owner O1. | `AssertGateAsync` 1150–1162 | partial RecvQty after enable (not run) |
+| V4-H2 timestamps | **Verified untrusted mix.** Decision D4. Owner O2. | `CutoverAtUtc` UTC vs `Created` company-local | TZ boundary (not run) |
+| V4-H3 NEW vs replay | **Classified.** D5. NEW backdated posts gated; rollback not. | Wac/Std/Fifo RecvQty +1 vs −1 | not run |
+| V4-H3 repair | **Unresolved / fail-closed.** D5 no bypass. Owner O3. | `CostingRepairAdapters.cs` 293–299 | not run |
+| V4-H4 Decide lock | **Verified inversion.** Design D6. | `DecideAsync` 325; `WithdrawAsync` 460 | approve vs edit (not run) |
+| V4-H5 picker | **Verified side-effecting evaluator.** Design D7. | `SearchPrForPoAsync` 493–516; `AssertGateAsync` 1168 | >100 unapproved first page (not run) |
+| V4-H6 attachments | **Choice A.** Design D8. | `StampAttachRevNoAsync` 2594–2600 | fault injection (not run) |
+| V4-H7 fingerprint | **V1 frozen.** 10 instances on DEMO. D9. | SQL instance counts | compatibility (not run) |
+| V4-H8 SQL tests | **FAIL current harness.** Silent return + shared DEMO. | Tests 192–224; local ERPWeb policy ON | Gate 3 blocked |
+| V4-M1 null fingerprint | **Verified pass-as-approved.** D6/D9 fail closed. | `AssertGateAsync` 1107–1113 | missing doc (not run) |
+| V4-M2 global lock order | **Proposed** in PATH_LOCK_MATRIX. Not implemented. | mixed existing orders | deadlock SQL (not run) |
+| Invoice/CDN extra gate | **Not required** after route trace. D11. | `ValidateMatchOnPostAsync` 1633–1637 | existing invoice tests |
+| WT shared-lock gate | **Rejected.** Isolate; do not ship. | uncommitted `IvInventoryPostingService` diff | — |

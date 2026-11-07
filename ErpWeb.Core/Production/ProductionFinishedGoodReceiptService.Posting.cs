@@ -1,5 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Quality;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
@@ -19,6 +21,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
 
     private async Task<IvMasterOperationResult<FinishedGoodReceiptDocument>> ExecuteAsync(FinishedGoodReceiptCommand request, bool reversal, CancellationToken ct)
     {
+        string? documentNo = null;
+        var action = reversal ? ErpErrorAction.Rollback : ErpErrorAction.Post;
         try
         {
             var scope = await ScopeAsync(reversal ? PermissionCodes.Rollback : PermissionCodes.Post, ct);
@@ -26,6 +30,13 @@ public sealed partial class ProductionFinishedGoodReceiptService
             var commandType = reversal ? ProductionPostingCommandTypes.FinishedGoodReceiptRollback : ProductionPostingCommandTypes.FinishedGoodReceiptPost;
             var fingerprint = StockPostingFingerprint.Create(new { request.Id, Version = Convert.ToBase64String(request.ExpectedVersion), Command = commandType, request.Reason }, new { });
             await using var db = await factory.CreateDbContextAsync(ct);
+            var rollbackAt = reversal ? clock.Now : default;
+            ProductionFinishedGoodCorrectedRollbackPlan? correctedPlan = null;
+            if (reversal && !await db.StockPostings.AsNoTracking().AnyAsync(x =>
+                    x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
+                    && x.CommandType == commandType && x.RequestId == request.RequestId, ct))
+                correctedPlan = await ProductionFinishedGoodCorrectedRollback.TryPrepareAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, request.Id, rollbackAt, ct);
             db.FinishedGoodReceiptWrite = true;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             await branchLock.AcquireAsync(db, scope.CompanyCode, scope.BranchCode!, ct);
@@ -41,6 +52,17 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(replayResult);
             }
             var r = await LoadAsync(db, scope, request.Id, true, ct); Version(r, request.ExpectedVersion);
+            if (reversal)
+            {
+                var checkedPlan = await ProductionFinishedGoodCorrectedRollback.TryPrepareAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, request.Id, rollbackAt, ct);
+                if (checkedPlan != correctedPlan)
+                    throw new FgException("Finished-good stock changed after rollback planning. Reload and retry.", IvMasterErrorCode.Concurrency);
+                if (checkedPlan is null && await ProductionFinishedGoodCorrectedRollback.MustRemoveActiveSourceBeforeRollbackAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, request.Id, ct))
+                    throw new FgException("Reverse the backdated source receipt before reversing these finished goods.");
+            }
+            documentNo = r.Batch.BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
                 throw new FgException(TransactionLifecycleGuard.ArchivedError(r.DeletedAtUtc ?? r.Batch.DeletedAtUtc, "This receipt")!);
             if (r.Batch.TrxType != IvTrxTypes.FinishedGoods || r.Batch.BatchStatus != (reversal ? IvBatchStatuses.Posted : IvBatchStatuses.New))
@@ -74,7 +96,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 await db.SaveChangesAsync(ct);
             }
             if (postLink is null) throw new FgException("The current FG posting generation link is missing.");
-            var date = reversal ? clock.Now : r.Batch.TrxDtTime;
+            var date = reversal ? rollbackAt : r.Batch.TrxDtTime;
             if (TransactionPostingDateGuard.FutureDateError(date, clock.Today) is string futureDateError)
                 throw new FgException(futureDateError);
             if (db.Database.IsSqlServer())
@@ -96,7 +118,13 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     if (await SourceReadinessAsync(db, pool, ct) is { } error) throw new FgException(error);
                     if (pool.LastStockEventEffectiveAt > date || pool.LastMovementDate > date) throw new FgException("Receipt date precedes a source stock event.");
                 }
+                if (await (qaFg ?? DisabledQaFgAuthorization.Instance).ClaimFinishedGoodAsync(
+                        db, scope.CompanyCode, scope.BranchCode!, r, pools, ct) is string qaClaimError)
+                    throw new FgException(qaClaimError);
             }
+            else if (await (qaFg ?? DisabledQaFgAuthorization.Instance).RestoreFinishedGoodAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, r.BatchId, ct) is string qaRestoreError)
+                throw new FgException(qaRestoreError);
             var snapshot = StockPostingFingerprint.Create(new { request.Id, Version = Convert.ToBase64String(request.ExpectedVersion), Command = commandType, request.Reason },
                 new { r.BatchId, r.WorkOrderId, r.DocumentRevision, EffectiveAt = date, Lines = r.Sources.OrderBy(x => x.Id).Select(s => new {
                     s.Id, s.ProductionBalLotId, s.RequestedQty, s.BaseQty, s.SourceUom, s.DestinationUom, s.BaseUom, s.SourceFactor, s.DestinationFactor,
@@ -127,7 +155,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             }
             context.Posting.ProductionPostingLinkId = link.Uid;
             await stock.LockStockMastersAsync(db, scope.CompanyCode, pools.Values.Select(x => x.ItemCode).Distinct().Order(StringComparer.Ordinal), ct);
-            if (reversal) await ReverseLegsAsync(context, r, pools, link, scope, ct);
+            if (reversal) await ReverseLegsAsync(context, r, pools, link, scope, correctedPlan, ct);
             else await PostLegsAsync(context, r, pools, link, scope, ct);
             link.Status = ProductionPostingLinkStatuses.Succeeded; link.CompletedDate = date;
             if (reversal)
@@ -173,6 +201,11 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 r.Batch.PostedBy = User(scope); r.Batch.PostedCount++; r.Batch.PostingOperationId = request.RequestId;
             }
             await db.SaveChangesAsync(ct);
+            if (correctedPlan is not null)
+            {
+                await coordinator.ValuePendingInTransactionAsync(context, ct);
+                await ProductionFinishedGoodCorrectedRollback.VerifyWithinRootAsync(context, correctedPlan, ct);
+            }
             await coordinator.CompleteInTransactionAsync(context, ct);
             postingScope.MarkCompleted();
             await tx.CommitAsync(ct);
@@ -184,7 +217,13 @@ public sealed partial class ProductionFinishedGoodReceiptService
             return IvMasterOperationResult<FinishedGoodReceiptDocument>.Ok(result);
         }
         catch (FgException e) { return Fail<FinishedGoodReceiptDocument>(e.Message, e.Code); }
-        catch (StockLedgerException e) { return Fail<FinishedGoodReceiptDocument>(e.Error.Message); }
+        catch (StockLedgerException e)
+        {
+            return Fail<FinishedGoodReceiptDocument>(e.Error.Message,
+                IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Ledger(logger, e, e.Error, ErpDocumentKind.FinishedGoodReceipt,
+                    documentNo, action, "Finished Good Receipt"));
+        }
         catch (DbUpdateConcurrencyException) { return Fail<FinishedGoodReceiptDocument>("Stock or document changed. Reload and retry.", IvMasterErrorCode.Concurrency); }
         catch (InvalidOperationException e) { return Fail<FinishedGoodReceiptDocument>(e.Message); }
     }
@@ -291,14 +330,14 @@ public sealed partial class ProductionFinishedGoodReceiptService
         IvStockSliceKey.Create(scope.CompanyCode, scope.BranchCode!, pool.ItemCode, s.Detail.ToWarehouse!, s.Detail.ToLocation, s.Detail.ToLotNo, "ACTIVE");
 
     private async Task ReverseLegsAsync(StockPostingContext context, ProductionFinishedGoodReceipt r, Dictionary<long, ProductionBalLot> pools,
-        ProductionPostingLink link, InventoryTenantScope scope, CancellationToken ct)
+        ProductionPostingLink link, InventoryTenantScope scope, ProductionFinishedGoodCorrectedRollbackPlan? correctedPlan, CancellationToken ct)
     {
         var db = context.Db;
         var facts = await db.ProductionFinishedGoodFactRows.Where(x => x.BatchId == r.BatchId && x.StockPostingId == r.PostingId && x.ReversesFactId == null).OrderBy(x => x.SourceId).ToListAsync(ct);
         if (facts.Count != r.Sources.Count) throw new FgException("The original FG posting facts are incomplete.");
         var effectiveCosts = await ProductionEffectiveCostResolver.ResolveAsync(db,
             scope.CompanyCode, scope.BranchCode!, facts.Select(x => x.ProductionMovementId).ToArray(), ct);
-        if (facts.Any(x => effectiveCosts[x.ProductionMovementId].TotalCost != x.TotalValue))
+        if (correctedPlan is null && facts.Any(x => effectiveCosts[x.ProductionMovementId].TotalCost != x.TotalValue))
             throw new FgException("The posted FG receipt has a corrected Production cost and requires replay-aware Inventory/Production rollback.");
         var originalPosting = await db.StockPostings.SingleAsync(x => x.Id == r.PostingId, ct);
         var poolIds = pools.Keys.ToArray();
@@ -320,11 +359,23 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 && historyIds.Contains(x.InventoryHistoryId.Value)
                 && x.StockPostingId == r.PostingId && x.ReversesValuationFactId == null)
             .Select(x => x.Id).ToArrayAsync(ct);
-        if (activeValuations.Values.SelectMany(x => x).Any(x => x.StockPostingId != r.PostingId)
-            || await db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
+        var hasInventoryCorrection = await db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
                 x.OriginalValuationFactId.HasValue
-                && originalValuationIds.Contains(x.OriginalValuationFactId.Value), ct))
+                && originalValuationIds.Contains(x.OriginalValuationFactId.Value), ct);
+        if (correctedPlan is null && (activeValuations.Values.SelectMany(x => x).Any(x => x.StockPostingId != r.PostingId)
+            || hasInventoryCorrection && (facts.Count != 1
+                || !await ProductionFinishedGoodCorrectedRollback.HasClearedCorrectionAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, facts[0].ProductionMovementId, ct))))
             throw new FgException("The posted FG receipt has corrected Inventory valuation and requires replay-aware Inventory/Production rollback.");
+        if (correctedPlan is not null)
+        {
+            if (facts.Count != 1 || facts[0].ProductionMovementId != correctedPlan.MovementId
+                || effectiveCosts[correctedPlan.MovementId].TotalCost != correctedPlan.CorrectedValue
+                || activeValuations[correctedPlan.HistoryId].Count != 1
+                || activeValuations[correctedPlan.HistoryId][0].Id != correctedPlan.ReceiptFactId)
+                throw new FgException("Finished-good cost changed after rollback planning.");
+            await ProductionFinishedGoodCorrectedRollback.ApplyWithinRootAsync(context, correctedPlan, ct);
+        }
         var maxOriginalHistoryId = histories.Max(h => h.Id);
         var snapshots = await db.ProductionFinishedGoodPriceSnapshotRows.Where(x => x.StockPostingId == r.PostingId).ToListAsync(ct);
         foreach (var group in r.Sources.GroupBy(x => Slice(scope, x, pools[x.ProductionBalLotId])).OrderBy(x => x.Key))
@@ -353,7 +404,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
             var original = originals.Single(x => x.Uid == f.ProductionMovementId);
             return new ProductionStockLeg(pools[original.ProductionBalLotId], ProductionBalLotMovementTypes.FgReceiptReversal,
                 original.Qty, f.BaseQty, r.WorkOrderId, null, original.WorkOrderOperationId, original.RouteStepId, link.Uid, "FG_RECEIPT", r.Batch.BatchNo.ToString(),
-                f.SourceId.ToString(), 0, original.Uid, reversedHistories.Single(x => x.ReversesHistoryId == f.InventoryHistoryId).Id, f.TotalValue, original.ValuationStatus ?? "UNVALUED");
+                f.SourceId.ToString(), 0, original.Uid, reversedHistories.Single(x => x.ReversesHistoryId == f.InventoryHistoryId).Id,
+                effectiveCosts[f.ProductionMovementId].TotalCost, original.ValuationStatus ?? "UNVALUED");
         }).ToArray();
         var movements = await production.ApplyAsync(context, legs, ct); await db.SaveChangesAsync(ct);
         await ProductionPoolValuationService.RecordAsync(context, movements, ct);
@@ -361,6 +413,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             db.ProductionFinishedGoodFactRows.Add(new() { BatchId = r.BatchId, SourceId = f.SourceId, StockPostingId = context.Posting.Id,
                 ProductionMovementId = movements.Single(x => x.SourceLineId == f.SourceId.ToString()).Uid,
                 InventoryHistoryId = reversedHistories.Single(x => x.ReversesHistoryId == f.InventoryHistoryId).Id,
-                DestinationBalanceId = f.DestinationBalanceId, BaseQty = f.BaseQty, TotalValue = f.TotalValue, ReversesFactId = f.Id });
+                DestinationBalanceId = f.DestinationBalanceId, BaseQty = f.BaseQty,
+                TotalValue = effectiveCosts[f.ProductionMovementId].TotalCost, ReversesFactId = f.Id });
     }
 }

@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Inventory.Inquiry;
 /// <summary>
 /// The stock-count variance report (Phase 3, item 14). Every case in the plan's mandatory fixture list
@@ -435,7 +436,8 @@ public class IvStockCountVarianceServiceTests : IAsyncLifetime
                 new IvStockCommonRepository(_factory),
                 new PoOrderRepository(),
                 NullLogger<IvInventoryPostingService>.Instance,
-                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date)),
+                currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance),
             NullLogger<IvStockCountService>.Instance);
     }
 

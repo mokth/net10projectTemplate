@@ -41,6 +41,7 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
     private readonly AttachmentStorageOptions _options;
     private readonly PoPrOptions _prOptions;
     private readonly ILogger<PoPrAttachmentService> _logger;
+    private readonly IProcurementApprovalGuard _approval;
 
     public PoPrAttachmentService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -49,7 +50,8 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
         ICurrentDateService dates,
         IOptions<AttachmentStorageOptions> options,
         IOptions<PoPrOptions> prOptions,
-        ILogger<PoPrAttachmentService> logger)
+        ILogger<PoPrAttachmentService> logger,
+        IProcurementApprovalGuard approval)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -58,6 +60,7 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
         _options = options.Value;
         _prOptions = prOptions.Value;
         _logger = logger;
+        _approval = approval ?? throw new ArgumentNullException(nameof(approval));
     }
 
     public async Task MoveDraftToPrAsync(
@@ -362,10 +365,36 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var access = await AuthorizeDocAccessAsync(db, context, id, requireOwnerForTemp: true, cancellationToken);
         if (access is not null)
         {
             return Fail<PoPrAttachmentRow>(access.Value.Code, access.Value.Message);
+        }
+
+        if (!IsTempDocId(id))
+        {
+            var pr = await LockPrForAttachmentAsync(db, context.CompanyCode!, context.BranchCode!, id, cancellationToken);
+            if (pr is null)
+            {
+                return Fail<PoPrAttachmentRow>(IvMasterErrorCode.NotFound, "Purchase Requisition was not found.");
+            }
+
+            await _approval.LockInstancesAsync(
+                db, context.CompanyCode!, context.BranchCode!, ProcurementApprovalDocTypes.Pr,
+                [(id, (short)0)], cancellationToken);
+            var approvalError = await _approval.AssertAttachmentMutationAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                ProcurementApprovalDocTypes.Pr,
+                id,
+                0,
+                cancellationToken);
+            if (approvalError is not null)
+            {
+                return Fail<PoPrAttachmentRow>(IvMasterErrorCode.Validation, approvalError);
+            }
         }
 
         var count = await db.PoPrAttachFiles.CountAsync(
@@ -468,6 +497,7 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
+                await tx.CommitAsync(cancellationToken);
             }
             catch (DbUpdateException ex) when (IsDuplicateKey(ex))
             {
@@ -581,10 +611,37 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var access = await AuthorizeDocAccessAsync(db, context, id, requireOwnerForTemp: true, cancellationToken);
         if (access is not null)
         {
             return Fail<object>(access.Value.Code, access.Value.Message);
+        }
+
+        if (!IsTempDocId(id))
+        {
+            var pr = await LockPrForAttachmentAsync(db, context.CompanyCode!, context.BranchCode!, id, cancellationToken);
+            if (pr is null)
+            {
+                return Fail<object>(IvMasterErrorCode.NotFound, "Purchase Requisition was not found.");
+            }
+
+            await _approval.LockInstancesAsync(
+                db, context.CompanyCode!, context.BranchCode!, ProcurementApprovalDocTypes.Pr,
+                [(id, (short)0)], cancellationToken);
+            var approvalError = await _approval.AssertAttachmentMutationAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                ProcurementApprovalDocTypes.Pr,
+                id,
+                0,
+                cancellationToken,
+                deleting: true);
+            if (approvalError is not null)
+            {
+                return Fail<object>(IvMasterErrorCode.Validation, approvalError);
+            }
         }
 
         var row = await db.PoPrAttachFiles.FirstOrDefaultAsync(
@@ -602,8 +659,25 @@ public sealed class PoPrAttachmentService : IPoPrAttachmentService
         var files = new List<(string DocName, string? DocName2)> { (row.DocName, row.DocName2) };
         db.PoPrAttachFiles.Remove(row);
         await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
         await DeletePhysicalForDocAsync(context.CompanyCode!, context.BranchCode!, id, files, cancellationToken);
         return IvMasterOperationResult<object>.Ok();
+    }
+
+    private static async Task<PoPr?> LockPrForAttachmentAsync(
+        AppDbContext db, string company, string branch, string prNo, CancellationToken cancellationToken)
+    {
+        if (db.Database.IsSqlServer())
+        {
+            return await db.PoPrs.FromSqlInterpolated($@"
+SELECT * FROM dbo.POPR WITH (UPDLOCK, HOLDLOCK)
+WHERE CompanyCode = {company} AND BranchCode = {branch} AND PRNo = {prNo}")
+                .AsTracking()
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        return await db.PoPrs.FirstOrDefaultAsync(
+            x => x.CompanyCode == company && x.BranchCode == branch && x.PrNo == prNo, cancellationToken);
     }
 
     private async Task<(IvMasterErrorCode Code, string Message)?> AuthorizeDocAccessAsync(

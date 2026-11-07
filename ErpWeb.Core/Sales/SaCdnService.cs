@@ -4,6 +4,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
@@ -1012,8 +1013,7 @@ public sealed class SaCdnService : ISaCdnService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CDN POST failed for {DocNo}", item.DocNo);
-                results.Add(SaCdnPostingItemResult.Failed(item.DocNo, ex.Message));
+                results.Add(FailedCdn(item.DocNo, ex, ErpErrorAction.Post, "POST"));
                 stop = true;
             }
         }
@@ -1065,8 +1065,7 @@ public sealed class SaCdnService : ISaCdnService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "CDN ROLLBACK failed for {DocNo}", item.DocNo);
-                results.Add(SaCdnPostingItemResult.Failed(item.DocNo, ex.Message));
+                results.Add(FailedCdn(item.DocNo, ex, ErpErrorAction.Rollback, "ROLLBACK"));
                 stop = true;
             }
         }
@@ -2652,6 +2651,22 @@ public sealed class SaCdnService : ISaCdnService
 
     private static bool RowVersionsEqual(byte[]? left, byte[]? right) =>
         left is not null && right is not null && left.SequenceEqual(right);
+
+    /// <summary>
+    /// One failed credit/debit note: original technical message kept for logs, operator text added.
+    /// </summary>
+    private SaCdnPostingItemResult FailedCdn(
+        string docNo, Exception ex, ErpErrorAction action, string step)
+    {
+        var reference = ErpOperatorErrors.NewReferenceId();
+        _logger.LogError(ex, "CDN {Step} failed for {DocNo} (ref {Reference})", step, docNo, reference);
+        var operatorError = ex is StockLedgerException ledger
+            ? ErpOperatorErrors.FromLedgerError(ledger.Error, ErpErrorOrigin.Sales,
+                ErpDocumentKind.SalesCreditDebitNote, docNo, action, reference)
+            : ErpOperatorErrors.Unexpected(ErpErrorOrigin.Sales,
+                ErpDocumentKind.SalesCreditDebitNote, docNo, action, reference);
+        return SaCdnPostingItemResult.Failed(docNo, ex.Message, operatorError);
+    }
 
     private static bool IsUniqueViolation(DbUpdateException ex)
     {

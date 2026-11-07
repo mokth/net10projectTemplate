@@ -1,5 +1,6 @@
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Purchase;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -28,6 +29,10 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     private readonly IStockPostingCoordinator? _coordinator;
     private readonly IPurchaseCostAdjustmentPostingService? _purchaseCostAdjustments;
     private readonly bool _openPeriodBackdatedReplayEnabled;
+    private readonly IIvFailureEvidenceReader? _failureEvidence;
+    private readonly IProcurementApprovalGuard _approval;
+    private readonly IQaReceiptAuthorization _qaReceipt;
+    private readonly IQaPhysicalHoldAuthorization _qaPhysical;
     private static readonly HashSet<string> NormalInventoryFutureDraftTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         IvTrxTypes.MiscellaneousReceipt,
@@ -53,7 +58,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         IIvInventoryHistoryWriter? historyWriter = null,
         IStockPostingCoordinator? coordinator = null,
         IConfiguration? configuration = null,
-        IPurchaseCostAdjustmentPostingService? purchaseCostAdjustments = null)
+        IPurchaseCostAdjustmentPostingService? purchaseCostAdjustments = null,
+        IIvFailureEvidenceReader? failureEvidence = null,
+        IProcurementApprovalGuard? approval = null,
+        IQaReceiptAuthorization? qaReceipt = null,
+        IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -65,7 +74,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         _currentDate = currentDate;
         _historyWriter = historyWriter;
         _coordinator = coordinator;
+        _approval = approval ?? throw new ArgumentNullException(nameof(approval));
+        _qaReceipt = qaReceipt ?? DisabledQaReceiptAuthorization.Instance;
+        _qaPhysical = qaPhysical ?? DisabledQaPhysicalHoldAuthorization.Instance;
         _purchaseCostAdjustments = purchaseCostAdjustments;
+        _failureEvidence = failureEvidence;
         _openPeriodBackdatedReplayEnabled =
             configuration?.GetValue<bool>("OpenPeriodBackdatedReplayEnabled") == true;
     }
@@ -294,6 +307,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         var results = new List<IvInventoryPostingBatchResult>();
+        // At most a few explanations per operation: a long multi-batch rollback must not turn one
+        // refusal into an unbounded number of lookups. Later failures keep the safe generic wording.
+        var explanationLookups = 0;
         foreach (var batchNo in batchNos.Distinct())
         {
             try
@@ -349,12 +365,51 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
             catch (StockLedgerException ex)
             {
-                results.Add(IvInventoryPostingBatchResult.Fail(batchNo, ex.Error.Message));
+                // Structured propagation only: the batch keeps the original technical message for
+                // logs/diagnostics and gains an operator-facing explanation for the screen. Status,
+                // counts and database effects are untouched.
+                var reference = IvInventoryOperatorErrors.NewReferenceId();
+                _logger.LogWarning(
+                    ex,
+                    "Inventory {Action} rejected for batch {BatchNo}: {Code} (phase {Phase}, event {EventId}, ref {Reference})",
+                    post ? "POST" : "ROLLBACK", batchNo, ex.Error.Code, ex.Error.Phase, ex.Error.EventId, reference);
+                // Read-only explanation lookup, outside the failed batch's transaction, after the
+                // decision to refuse. It cannot run on success, cannot fail the operation, and is
+                // capped per operation so a wide rollback cannot multiply the lookups.
+                IvFailureEvidence? evidence = null;
+                if (explanationLookups < MaxFailureEvidenceLookups
+                    && _failureEvidence is not null
+                    && ex.Error.EventId is not null)
+                {
+                    explanationLookups++;
+                    evidence = await TryReadFailureEvidenceAsync(
+                        scope.CompanyCode, scope.BranchCode!, ex.Error, cancellationToken);
+                }
+                results.Add(IvInventoryPostingBatchResult.Fail(
+                    batchNo,
+                    ex.Error.Message,
+                    IvInventoryOperatorErrors.FromLedgerError(
+                        ex.Error, type, post, batchNo, reference, evidence)));
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Inventory {Action} failed for batch {BatchNo}", post ? "POST" : "ROLLBACK", batchNo);
-                results.Add(IvInventoryPostingBatchResult.Fail(batchNo, ex.Message));
+                // Diagnostics stay exact: the same exception and message go to the log, now with a
+                // support reference. A business guard keeps its own wording on screen (no structured
+                // error is attached, so the page falls back to ex.Message); an unknown failure gains
+                // a generic operator explanation instead of leaking technical text.
+                var reference = ErpOperatorErrors.NewReferenceId();
+                _logger.LogError(ex,
+                    "Inventory {Action} failed for batch {BatchNo} (ref {Reference})",
+                    post ? "POST" : "ROLLBACK", batchNo, reference);
+                var operatorError = ex is InvalidOperationException or ArgumentException
+                    ? null
+                    : ErpOperatorErrors.Unexpected(
+                        ErpErrorOrigin.Inventory,
+                        IvInventoryOperatorErrors.ToDocumentKind(type),
+                        batchNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        post ? ErpErrorAction.Post : ErpErrorAction.Rollback,
+                        reference);
+                results.Add(IvInventoryPostingBatchResult.Fail(batchNo, ex.Message, operatorError));
             }
         }
 
@@ -387,6 +442,44 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         return aggregated;
+    }
+
+    /// <summary>Cap on the read-only explanation lookup so a slow database cannot delay the refusal.</summary>
+    private static readonly TimeSpan FailureEvidenceTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Cap on how many distinct refused batches in one operation get an explanation lookup. The
+    /// remaining failures still carry the code and next step; only the affected-document hint is omitted.
+    /// </summary>
+    private const int MaxFailureEvidenceLookups = 3;
+
+    /// <summary>
+    /// Bounded, best-effort evidence lookup for the refused batch. Returns null when no reader is
+    /// configured, the error carries no event id, the lookup exceeds its budget, or anything fails —
+    /// the operator then gets the safe generic wording. Never writes and never alters the result.
+    /// </summary>
+    private async Task<IvFailureEvidence?> TryReadFailureEvidenceAsync(
+        string companyCode,
+        string branchCode,
+        StockLedgerError error,
+        CancellationToken cancellationToken)
+    {
+        if (_failureEvidence is null || error.EventId is not long eventId)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(FailureEvidenceTimeout);
+            return await _failureEvidence.TryReadAsync(companyCode, branchCode, eventId, timeout.Token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failure evidence lookup failed for event {EventId}", eventId);
+            return null;
+        }
     }
 
     private async Task<IvInventoryPostingBatchResult> PostInventoryMRAsync(
@@ -1037,11 +1130,27 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, locked.Error);
         }
 
+        var approvalError = await AssertNewGoodsReceiptPoApprovalAsync(
+            db, companyCode, branchCode, locked.Orders!.Values, cancellationToken);
+        if (approvalError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, approvalError);
+        }
+
         var poValidation = await ValidateGoodsReceiptPoQtyAsync(db, locked.Orders!, snapshot.Details!, sign: +1, expectedTrxType, cancellationToken);
         if (poValidation is not null)
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, poValidation);
+        }
+
+        var qaClaim = await _qaReceipt.ClaimGoodsReceiptAsync(
+            db, companyCode, branchCode, expectedTrxType, snapshot.Batch!, snapshot.Details!, cancellationToken);
+        if (qaClaim is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaClaim);
         }
 
         var ledger = await BeginStandaloneLedgerAsync(
@@ -1154,6 +1263,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, poValidation);
+        }
+
+        var qaRestore = await _qaReceipt.RestoreGoodsReceiptAsync(
+            db, companyCode, branchCode, batchNo, snapshot.Details!, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         }
 
         var ledger = await BeginStandaloneLedgerAsync(
@@ -1526,6 +1643,29 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
         }
 
+        var qaNeeds = details
+            .Select(d =>
+            {
+                var id = IvStockAdjustmentLineInvariant.GetBalLocId(d);
+                var delta = IvStockAdjustmentLineInvariant.GetSignedDelta(d);
+                return new QaStockOutNeed
+                {
+                    BalLocId = id,
+                    ItemStatus = locked.TryGetValue(id, out var row) ? row.IStatus : string.Empty,
+                    OnHand = locked.TryGetValue(id, out var onHand) ? onHand.StdQty : 0m,
+                    Qty = delta < 0m ? IvQty.Round(Math.Abs(delta)) : 0m,
+                    BatchDetailId = d.Id
+                };
+            })
+            .Where(x => x.Qty > 0m)
+            .ToList();
+        var qaError = await _qaPhysical.AssertAndClaimStockOutAsync(
+            db, companyCode, branchCode, IvTrxTypes.StockAdjustment, batchNo, qaNeeds, cancellationToken);
+        if (qaError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
+
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
         foreach (var (balLocId, net) in netByBalLoc.OrderBy(kv => kv.Key))
@@ -1737,6 +1877,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, integrityError);
+        }
+
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            db, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         }
 
         var inverseByBalLoc = new Dictionary<int, decimal>();
@@ -2416,6 +2564,24 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
         }
 
+        var qaNeeds = details
+            .Where(d => d.FromBalLocId is > 0)
+            .Select(d => new QaStockOutNeed
+            {
+                BalLocId = d.FromBalLocId!.Value,
+                ItemStatus = locked[d.FromBalLocId.Value].IStatus,
+                OnHand = locked[d.FromBalLocId.Value].StdQty,
+                Qty = IvQty.Round(d.FrStdQty ?? 0m),
+                BatchDetailId = d.Id
+            })
+            .ToList();
+        var qaError = await _qaPhysical.AssertAndClaimStockOutAsync(
+            db, companyCode, branchCode, expectedTrxType, batchNo, qaNeeds, cancellationToken);
+        if (qaError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
+
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
         foreach (var balLocId in orderedIds)
@@ -2639,6 +2805,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (integrityError is not null)
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, integrityError);
+        }
+
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            db, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         }
 
         var restoreById = new Dictionary<int, decimal>();
@@ -2959,6 +3132,22 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                     batchNo,
                     $"Insufficient quantity on balance Id {balLocId} (on hand {sourceBalance.StdQty}, required {required}).");
             }
+        }
+
+        var qaNeeds = linePlans.Select(p => new QaStockOutNeed
+        {
+            BalLocId = p.FromBalLocId,
+            ItemStatus = sourceBalancesById[p.FromBalLocId].IStatus ?? string.Empty,
+            OnHand = sourceBalancesById[p.FromBalLocId].StdQty,
+            Qty = p.Quantity,
+            BatchDetailId = p.Detail.Id
+        }).ToList();
+        var qaError = await _qaPhysical.AssertAndClaimStockOutAsync(
+            db, companyCode, branchCode, IvTrxTypes.StockTransfer, batchNo, qaNeeds, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
         }
 
         var now = DateTime.UtcNow;
@@ -3340,6 +3529,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     "This stock transfer has a replay-corrected valuation and needs replay-aware rollback.");
             }
+        }
+
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            db, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         }
 
         var netByBalLocId = new Dictionary<int, decimal>();
@@ -4121,10 +4318,23 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         foreach (var poNo in poNos)
         {
+            var revisionLock = await PurchaseOrderRevisionSetLock.AcquireAsync(
+                db, companyCode, branchCode, poNo, cancellationToken);
+            if (revisionLock is not null)
+            {
+                return (revisionLock, null);
+            }
+
             var po = await _poOrders.LockLatestForUpdateAsync(db, companyCode, branchCode, poNo, cancellationToken);
             if (po is null)
             {
                 return ($"Purchase Order {poNo} was not found.", null);
+            }
+
+            var latestRel = await _poOrders.GetMaxRelNoAsync(db, companyCode, branchCode, poNo, cancellationToken);
+            if (latestRel is null || latestRel.Value != po.PoRelNo)
+            {
+                return (PurchaseOrderRevisionSetLock.MessageFor(poNo), null);
             }
 
             await db.Entry(po).Collection(x => x.Details).LoadAsync(cancellationToken);
@@ -4132,6 +4342,48 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         return (null, orders);
+    }
+
+    private async Task<string?> AssertNewGoodsReceiptPoApprovalAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IEnumerable<PoOrder> orders,
+        CancellationToken cancellationToken)
+    {
+        var policyLock = await _approval.LockPublishedPolicyAsync(
+            db, companyCode, ProcurementApprovalDocTypes.Po, cancellationToken);
+        if (policyLock is not null)
+        {
+            return policyLock;
+        }
+
+        var keys = orders
+            .Select(x => (x.PoNo, x.PoRelNo))
+            .OrderBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.PoRelNo)
+            .ToList();
+        await _approval.LockInstancesAsync(
+            db, companyCode, branchCode, ProcurementApprovalDocTypes.Po, keys, cancellationToken);
+
+        foreach (var po in orders.OrderBy(x => x.PoNo, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.PoRelNo))
+        {
+            var gate = await _approval.AssertPoReceivableAsync(
+                db, companyCode, branchCode, po.PoNo, po.PoRelNo, cancellationToken);
+            if (gate is not null)
+            {
+                if (gate.Contains("not found", StringComparison.OrdinalIgnoreCase)
+                    || gate.Contains("changed after approval", StringComparison.OrdinalIgnoreCase)
+                    || gate.Contains("revised", StringComparison.OrdinalIgnoreCase))
+                {
+                    return gate;
+                }
+
+                return $"Purchase Order {po.PoNo} needs approval before this receipt can be posted.";
+            }
+        }
+
+        return null;
     }
 
     private async Task<string?> ValidateGoodsReceiptPoQtyAsync(
@@ -4154,7 +4406,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
             if (detail.PoRelNo != po.PoRelNo)
             {
-                return $"Purchase Order {poNo}/{detail.PoRelNo} is no longer the latest revision.";
+                return sign > 0
+                    ? PurchaseOrderRevisionSetLock.MessageFor(poNo)
+                    : $"Purchase Order {poNo}/{detail.PoRelNo} is no longer the latest revision.";
             }
 
             if (sign > 0 && !PoStatusPolicy.IsGrPickable(po.Status))
@@ -4542,5 +4796,46 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         public required int FromBalLocId { get; init; }
         public required IvStockSliceKey FromSlice { get; init; }
         public required IvStockSliceKey ToSlice { get; init; }
+    }
+
+    private async Task<string?> AssertQaPhysicalFromDetailsAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string trxType,
+        int batchNo,
+        IReadOnlyList<IvTrxBatchDetail> details,
+        CancellationToken cancellationToken)
+    {
+        var ids = details
+            .Where(d => d.FromBalLocId is > 0)
+            .Select(d => d.FromBalLocId!.Value)
+            .Distinct()
+            .ToList();
+        if (ids.Count == 0)
+        {
+            return null;
+        }
+
+        var piles = await db.IvBalLocs
+            .Where(x => ids.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+        var needs = details
+            .Where(d => d.FromBalLocId is > 0)
+            .Select(d => new QaStockOutNeed
+            {
+                BalLocId = d.FromBalLocId!.Value,
+                ItemStatus = piles.TryGetValue(d.FromBalLocId.Value, out var pile)
+                    ? pile.IStatus ?? string.Empty
+                    : string.Empty,
+                OnHand = piles.TryGetValue(d.FromBalLocId.Value, out var onHand)
+                    ? onHand.StdQty
+                    : 0m,
+                Qty = IvQty.Round(d.FrStdQty ?? 0m),
+                BatchDetailId = d.Id
+            })
+            .ToList();
+        return await _qaPhysical.AssertAndClaimStockOutAsync(
+            db, companyCode, branchCode, trxType, batchNo, needs, cancellationToken);
     }
 }

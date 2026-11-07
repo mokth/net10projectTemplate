@@ -232,6 +232,9 @@ public static class ProductionPostingInvariant
                 || !original.Any(source => source.Uid == x.OriginalMovementId.Value)))
             throw new ProductionPostingInvariantException("Rollback contains an orphaned movement reversal.");
 
+        var effective = await ProductionReplayEffectiveCostReader.ReadAsync(context.Db,
+            context.CompanyCode, context.BranchCode, original.Select(m => m.Uid).ToArray(), ct);
+
         foreach (var source in original)
         {
             var matches = reversals.Where(x => x.OriginalMovementId == source.Uid).ToList();
@@ -251,8 +254,8 @@ public static class ProductionPostingInvariant
                 || reversal.Uom != source.Uom
                 || reversal.BaseQty != source.BaseQty
                 || reversal.BaseUom != source.BaseUom
-                || reversal.TotalCost != source.TotalCost
-                || reversal.UnitCost != source.UnitCost
+                || reversal.TotalCost != effective[source.Uid].TotalCost
+                || reversal.UnitCost != effective[source.Uid].UnitCost
                 || reversal.WorkOrderId != source.WorkOrderId
                 || reversal.WorkOrderOperationId != source.WorkOrderOperationId
                 || reversal.RouteStepId != source.RouteStepId

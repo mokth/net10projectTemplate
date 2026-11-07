@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.StockLedger.Costing;
@@ -127,8 +128,14 @@ public sealed partial class ProductionMaterialIssueService
         var results = new List<ProductionMaterialIssueBatchActionItem>();
         foreach (var batchNo in selected)
         {
-            var error = await PostDraftBatchAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, cancellationToken);
-            results.Add(new() { BatchNo = batchNo, Succeeded = error is null, Message = error });
+            var outcome = await PostDraftBatchAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, cancellationToken);
+            results.Add(new()
+            {
+                BatchNo = batchNo,
+                Succeeded = outcome.Message is null,
+                Message = outcome.Message,
+                OperatorError = outcome.OperatorError
+            });
         }
         return IvMasterOperationResult<ProductionMaterialIssueBatchActionResult>.Ok(new ProductionMaterialIssueBatchActionResult
         {
@@ -136,7 +143,7 @@ public sealed partial class ProductionMaterialIssueService
         });
     }
 
-    private async Task<string?> PostDraftBatchAsync(string company, string branch, string userId, int batchNo, CancellationToken ct)
+    private async Task<ProductionPostingFailure> PostDraftBatchAsync(string company, string branch, string userId, int batchNo, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -350,15 +357,25 @@ public sealed partial class ProductionMaterialIssueService
         }
         catch (ProductionPostingInvariantException ex)
         {
-            return ex.Message;
+            return new ProductionPostingFailure(ex.Message,
+                ProductionOperatorErrorLog.Reconciliation(_logger, ex, ErpDocumentKind.MaterialIssue,
+                    batchNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ErpErrorAction.Post, "Material Issue post"));
         }
         catch (ErpWeb.Core.StockLedger.StockLedgerException ex)
         {
-            return ex.Error.Message;
+            return new ProductionPostingFailure(ex.Error.Message,
+                ProductionOperatorErrorLog.Ledger(_logger, ex, ex.Error, ErpDocumentKind.MaterialIssue,
+                    batchNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ErpErrorAction.Post, "Material Issue post"));
         }
         catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
         {
-            return "Posting conflicted with another change; reload and retry.";
+            return new ProductionPostingFailure(
+                "Posting conflicted with another change; reload and retry.",
+                ProductionOperatorErrorLog.Unexpected(_logger, ex, ErpDocumentKind.MaterialIssue,
+                    batchNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ErpErrorAction.Post, "Material Issue post"));
         }
         finally
         {

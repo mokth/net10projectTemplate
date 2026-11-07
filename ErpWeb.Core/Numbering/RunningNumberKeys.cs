@@ -20,4 +20,7 @@ public static class RunningNumberKeys
 
     /// <summary>Production Work Order Transfer number. Formatted <c>WT00000001</c>.</summary>
     public const string ProductionWorkOrderTransfer = "PR_WO_TRANSFER";
+
+    /// <summary>Quality case number. Formatted <c>QC00000001</c>. Record-only; never a stock document.</summary>
+    public const string QualityCase = "QA_CASE";
 }

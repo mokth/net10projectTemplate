@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 [Trait(TestCategories.Name, TestCategories.InventoryTransfer)]
@@ -697,7 +698,8 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance,
-            currentDate: new FixedCurrentDateService(postingToday ?? DateTime.MaxValue.Date));
+            currentDate: new FixedCurrentDateService(postingToday ?? DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
         return new IvStockTransferService(
             _factory, tenant, access.Object, new RunningNumberService(),
@@ -717,7 +719,8 @@ public class IvStockTransferPostingServiceTests : IAsyncLifetime
             new IvStockPostingRepository(),
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
     private static Mock<IAccessRightService> Access()
     {

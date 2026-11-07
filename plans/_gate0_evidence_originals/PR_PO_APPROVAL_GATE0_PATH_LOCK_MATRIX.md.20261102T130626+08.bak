@@ -1,0 +1,154 @@
+# PR/PO Approval — Gate 0 Path and Lock Matrix
+
+**Status:** INVESTIGATION COMPLETE — NOT an implementation authorization.  
+**Local HEAD:** `03a142cc186efe25918523537c844b14e232971a` (`fix/dataprotection-key-ring`, “check in Approval”)  
+**Backend pin vs original review SHA:** `ce651c3cf21b8c12f2914c7661d6e81e2cf74729` … `03a142c` is **UI-only** (`PoApprovalSettings` razor/cs/css). Inventory/PR/PO/approval engine source at HEAD equals `ce651c3` except **uncommitted** posting/picker WIP (see disposition).  
+**Recorded:** 2026-11-02 local machine. Classification **B costing-adjacent**. No posting/stock/approval/database source was modified for this Gate 0.
+
+## Dirty-file disposition (do not auto-discard)
+
+| Path | Disposition |
+|------|-------------|
+| `ErpWeb.Core/Inventory/IvInventoryPostingService.cs` | **UNSAFE WIP — isolate.** Uncommitted `IProcurementApprovalGuard?` + `AssertPoReceivableAsync` **inside** `LockGoodsReceiptPurchaseOrdersAsync` (~4217–4237 WT). That helper is also used by GR rollback, replay rollback, and vendor return. **Do not keep as Gate 1.** |
+| `ErpWeb.Core/Inventory/IvGoodsReceiptService.cs` | **Picker-only WIP — isolate from posting.** Uncommitted `IsPoVisibleForGrAsync` filter in `SearchPoLinesAsync`. Save/Post bodies unchanged. Preserve intent for Gate 2 picker work; do not treat as authoritative gate. |
+| `ErpWeb.Core/Planning/**`, Product Def tests/CSS | **PRESERVE** unrelated Product Definition work. |
+| `ANTIFORGERY_FIX.md`, `DEPLOYMENT_GUIDE.md`, `FINAL_DEPLOYMENT_STEPS.md`, `deploy.ps1`, `.gitignore` | **PRESERVE** unrelated. |
+| Untracked Product Def tests, `DATA_PROTECTION_KEY_RING_RUNBOOK.md`, `.replay-wac-fg-origin-20261030/` | **PRESERVE.** |
+| Approval Settings UI | **Already committed** in `03a142c`. Out of this backend plan’s edit scope. |
+
+Working-tree SHA256 (includes uncommitted inventory bytes):
+
+| File | SHA256 |
+|------|--------|
+| `IvInventoryPostingService.cs` | `E9EE1E41051EEFFFA94DA5341D9C51402FE95704635C6027F62A2C0B133B0BE8` |
+| `IvInventoryPostingService.WacReplay.cs` | `A4708D7F51CF52C50A78AD850BC42EC9A7DB9CEA64CE283F3318AFAD58E234B2` |
+| `IvInventoryPostingService.StandardMrReplay.cs` | `05A1D11F801139F15BDAA530D77CF868C38706FA4899028FF7D74ED50ECA9F8B` |
+| `IvInventoryPostingService.FifoReplay.cs` | `58892D78D9D298D9E4FE34B68DA3AB20E4691E9017E24A1A843B73C772A7B488` |
+| `IvGoodsReceiptService.cs` | `CD9CFEB7418052BE11E4B831DB220D5135E249C55D1748E8FB8066DDFA2AD7BD` |
+| `PoOrderService.cs` | `5C5B3A9E9604A15E0CD444FFA90FDF9D53357DF0391159F00F36DD345CAE175C` |
+| `PoPrService.cs` | `454CB8A2E447E0856AC614B9DA0D6731693B00C44DAFC3A7067CB107CE4B1A8C` |
+| `ProcurementApprovalService.cs` | `BB06D35ED6728ED7689E33B25BA25A8889ACA9BE399FD08239BC15318072C620` |
+| `ProcurementApprovalFingerprint.cs` | `7D00FE763D7A612F12EEA37062A4C02EDE97DF391334324F323EB260AADF92E3` |
+
+## Non-negotiable facts
+
+- A UI picker is **not** an authorization gate.
+- At **committed HEAD**, GR/NG `PostGoodsReceiptAsync` has **no** `AssertPoReceivableAsync`.
+- `LockLatestForUpdateAsync` is **not** an atomic latest-revision lock (`GetMaxRelNoAsync` then `LockForUpdateAsync`).
+- Uncommitted shared-lock approval gate is **unsafe** for rollback/VR.
+
+---
+
+## Global lock-order proposal (design only — not implemented)
+
+Existing writers already take locks in mixed orders. Gate 1 **must not** introduce a cycle. Proposed **single** order for any transaction that both posts stock and checks approval:
+
+1. **Branch stock applock** `STOCK_WRITE|{COMPANY}|{BRANCH}` — existing [`BranchStockTransactionLock`](../ErpWeb.Core/StockLedger/BranchStockTransactionLock.cs) (SQL Server only, requires open tx).
+2. **Per-PO revision-set applock** `PO_REV|{COMPANY}|{BRANCH}|{PONO}` — **new**, Exclusive, Transaction-owned, **before** reading max `PoRelNo`. Sorted by `PoNo`.
+3. **PR headers** `POPR WITH (UPDLOCK, HOLDLOCK)` sorted — existing `LockPrHeadersAsync` / `LockPrAsync`.
+4. **PO header exact revision** `POOrder WITH (UPDLOCK, HOLDLOCK)` on the rechecked max `PoRelNo`.
+5. **PR details** `UPDLOCK` — existing `LockPrDetailsAsync` (after PR header + PR approval instance in current `LockConsumptionAsync`).
+6. **Policy applock** `PO_APPR_POLICY|{COMPANY}|{DOCTYPE}` — **new**; publisher acquires **only this** (never a document header). Guards acquire **after** document headers so publisher cannot invert.
+7. **Approval instance** `PoApprovalInstance WITH (UPDLOCK, HOLDLOCK)` by natural key or UID.
+
+**Publisher (`SavePolicyAsync`):** step 6 only, then load published policy, unpublish, insert, commit.  
+**Decide/Withdraw that read document creator/consumption:** nonlocking instance-ID → key; then steps 3 or 4; then step 7; revalidate tenant/key/rev/rowversion. **Do not** take policy lock unless current published policy is required.  
+**Reassign:** instance-only (step 7) **if** it continues to never read/lock PR/PO (current source ~491–549).
+
+Failed/timeout applock → fail closed, retryable business message. No partial GR/stock/RecvQty.
+
+---
+
+## Authoritative path table
+
+Legend: **NEW-post** = first-time RecvQty/stock/commitment; **reversal**; **replay-already-posted** = revaluation of previously posted descendants; **write** = document mutation; **read** = no commit of approval-required qty.
+
+### Inventory posting / GR / NG / VR / repair
+
+| Path | Caller | Service / method | Lines (HEAD unless WT) | SQL tx | Lock order today | Classification | Mutation | Policy/approval today | Test |
+|------|--------|------------------|------------------------|--------|------------------|----------------|----------|----------------------|------|
+| Stock GR post | UI `IvGoodsReceiptList` / `IvGoodsReceiptService.PostAsync` 729–738 | `IvInventoryPostingService.PostGoodsReceiptAsync` | 1062–1161 | Begin 1102 / Commit 1155 | BranchStock 1103 → `LockGoodsReceiptPurchaseOrdersAsync` 1119 → qty validate 1126 → ledger 1133 → `PostInventoryMRCoreAsync` 1144 → `ApplyGoodsReceiptPoQtyAsync` +1 1151 | **NEW-post** | RecvQty +1, IvBalLoc, history, V2 ledger, batch POSTED | HEAD: none. WT: AssertPoReceivable **inside shared PO lock helper (unsafe)** | `IvGoodsReceiptServiceTests`, `IvInventoryPostingServiceTests` (policy OFF, no guard) |
+| Non-stock NG post | same | same, `PostNonStockGoodsReceiptCoreAsync` | 1142–1143, core 1277–1366 | same | same | **NEW-post** | RecvQty +1, history/batch; no IvBalLoc in NG core | same | same |
+| Direct posting API | repair, tests | `IIvInventoryPostingService.PostAsync` 231–235 → `DispatchAsync` | 243+ | via PostGoodsReceipt | same | **NEW-post** if GR/NG | same | HEAD none | tests construct posting **without** guard |
+| WAC NEW backdated GR | `PostGoodsReceiptAsync` 1070–1077 | `TryPostBackdatedWacGrAsync` | WacReplay.cs 129–301; PO lock 210–211; RecvQty +1 274–276 | own tx after branch lock ~198 | Branch → PO lock helper → replay writer → RecvQty +1 | **NEW-post for approval** (new RecvQty/stock at historical cost authority). Costing engine is replay; **root commitment is still NEW GR** | RecvQty +1 + historical WAC insert | WT: via shared helper (would also hit WAC **rollback** — unsafe) | none for approval |
+| Standard NEW backdated GR | 1078–1086 | `TryPostBackdatedStandardMrAsync` | StandardMrReplay.cs 15–192; PO 106–107; RecvQty +1 189–192 | own tx | Branch → PO lock → RecvQty +1 | **NEW-post for approval** | RecvQty +1 + Standard root | same | none |
+| FIFO NEW backdated GR | 1087–1095 | `TryPostBackdatedFifoMrAsync` | FifoReplay.cs 13–214; PO 116–117; RecvQty +1 184–187 | own tx | Branch → PO lock → RecvQty +1 | **NEW-post for approval** | RecvQty +1 + FIFO root | same | none |
+| GR rollback fast | `IvGoodsReceiptService.RollbackAsync` 741–750 | `RollBackGoodsReceiptAsync` | 1163–1275; PO lock 1231; RecvQty −1 1265 | Begin 1204 / Commit 1269 | Branch 1205 → PO lock → validate −1 → rollback core → RecvQty −1 | **reversal** | RecvQty −1, reverse stock/ledger | HEAD none. WT would **incorrectly** AssertPoReceivable | existing rollback tests |
+| WAC/Std/FIFO GR rollback replay | rollback 1171–1197 | `TryRollBackBackdated*` | WAC 673–741; Std 781+; FIFO 383+ | own tx | Branch → **same PO lock helper** → RecvQty −1 | **reversal** | RecvQty −1 | WT unsafe shared gate | existing |
+| Vendor return post/rollback | `IvVendorReturnService` | `ApplyVendorReturnPoQtyAsync` | 4337–4436; lock helper 4351; ReturnQty 4404 | caller tx | **Stock core first, PO lock after** (MI 2322 branch → core 2339 → PO 2353) | ReturnQty write; **not** first RecvQty | ReturnQty ± | WT unsafe shared gate | VR tests |
+| Repair reverse | `CostingRepairService` | `PurchaseGoodsReceiptRepairAdapter.ReverseAsync` | CostingRepairAdapters.cs ~285–289 | via GR rollback | same as rollback | **reversal** | as rollback | none | costing repair tests |
+| Repair repost | same | `RepostAsync` | 293–299: `_posting.PostAsync(type, [batchNo])` | via PostAsync | same as NEW post | **NEW-post of a NEW batch** after rollback. `CostingRepairExecutionContext` **unused**. **No tamper-resistant proof** | same as GR post | would inherit posting gate | none proving exemption |
+| GR picker | UI | `SearchPoLinesAsync` | 194–291 | no write tx | none | **read** | none | HEAD none; WT `IsPoVisibleForGrAsync` | none |
+| GR save new/update | UI | `SaveNewAsync` 518–591; `UpdateAsync` 594–678 | tx 537/618 **no** branch lock | line `IsGrPickable` 847 | **write draft only** | draft GR lines; **no RecvQty** | **no approval** HEAD or WT | GR service tests |
+| GR delete | UI | `DeleteAsync` 683–726 | tx + BranchStock 704 | branch only | write | draft delete | none | |
+
+**Callers of `LockGoodsReceiptPurchaseOrdersAsync` (must stay ungated except proven NEW-post):** PostGoodsReceipt 1119; RollBackGoodsReceipt 1231; ApplyVendorReturnPoQty 4351; WacReplay 210, 673; StandardMrReplay 106, 781; FifoReplay 116, 383.
+
+**Callers of `LockLatestForUpdateAsync`:** `PoOrderService.SaveExistingAsync` ~1023; `PoOrderService.LockRequestedPoAsync` ~1416; `LockGoodsReceiptPurchaseOrdersAsync` ~4210. **Do not change the helper globally without auditing all three.**
+
+### PR / PO document and approval engine
+
+| Path | Caller | Method | Lines | SQL tx | Lock order today | Classification | Mutation | Approval | Test |
+|------|--------|--------|-------|--------|------------------|----------------|----------|----------|------|
+| PR New | `PoPr.razor` | `PoPrService.SaveNewAsync` | ~356–534 | yes | numbering; **no** approval lock | write NEW PR | header/lines; `CreatedDate=_dates.Now` (~472) | none | `PoPrServiceTests` |
+| PR Edit | UI | `UpdateAsync` | ~936–1055 | yes | live PO refs → `LockPoHeadersAsync` → PR `LockForUpdate` ~949 → `LockInstancesAsync` ~978 → `AssertDocumentMaterialEditAsync` | write | material if fingerprint changes | yes if guard injected | same |
+| PR Cancel/Delete | UI | `CancelAsync` ~1284; `DeleteAsync` ~1437 | yes | PO locks → PR lock → instances → `ClosePendingOnDocumentCancelAsync` | write | close pending | yes | same |
+| PR WO generate | production | `CreateFromWorkOrderMaterialAsync` | ~536–862 | WO material/WO locks | **NEW PR, no auto-submit, no approval lock** | write NEW | none | WO/PR tests |
+| PR Submit | UI | `SubmitAsync` | 220–269 | 244–269 | **LockPr** 248 → fingerprint `ForPr` 258 → `SubmitLockedAsync` instance lock 959 → policy load 966 | write instance | snapshot PolicyId/Version/amounts/fingerprint/assignees | policy must be ON | `ProcurementApprovalServiceTests` |
+| PO Submit | UI | `SubmitAsync` | 271–295 | | **LockPo exact DocRev** 273 → `ForPo` → SubmitLocked | write instance | same | same | same |
+| Decide Approve/Reject/Return | inbox | `DecideAsync` | 298–445 | 323–443 | **instance-first** `LockInstanceByIdAsync` 325 then `IsDocumentCreatorAsync` 347 / `IsDocumentConsumedAsync` 387 **without document UPDLOCK** | write decision/event | **DEADLOCK RISK vs document-first saves** | tests exist; no SQL barrier vs edit | |
+| Withdraw | UI | `WithdrawAsync` | 447–489 | 458–487 | **instance-first** 460 then `IsDocumentConsumedAsync` 477 unlocked | write | same inversion | limited | |
+| Reassign | admin | `ReassignAsync` | 491–549 | instance lock | instance/assignees/users only | write assignees | **instance-only OK if it never locks PR/PO** | limited | |
+| Policy save | settings | `SavePolicyAsync` | 109–217 | 132–216 | **no applock**; `LoadPublishedPolicyAsync` 134 ordinary read; unpublish; insert next version | write policy+event | **not serialized vs GR/submit** | tests mutate DEMO | |
+| PR picker for PO | PO UI | `SearchPrForPoAsync` | 461–522 | no write | Take(100) then `IsPrVisibleForPoAsync` → `AssertGateAsync` which **can Add cutover exemption/event** (1168–1194). Picker context **does not SaveChanges** (tracked, not proven persisted) | **read** (must stay side-effect-free) | none intended | N+1 | |
+| PR remaining lines | PO UI | `GetPrRemainingLinesAsync` | 524–563 | no write | `AssertPrConvertibleAsync` 552 | advisory read | none | remaining-qty formula **unchanged** | |
+| PO New / from PR | UI | `SaveNewAsync` | ~565+; consumption 610, 1708–1771 | yes | `LockConsumptionAsync`: PR headers → PR instances 1718 → PR details 1727 → CJ; then `AssertPrConvertibleAsync` 1767 | write PO + PR remaining via existing calc | PR gate; **no PO instance lock on create** | `PoOrderServiceTests` |
+| PO Edit/Revise | UI | `SaveExistingAsync` | lock latest 1023; instances 1035; fingerprint 1167/1225; `StampAttachRevNoAsync` ~1200 / 2594 | yes | **GetMax then lock (non-atomic)** then instances | write / new RelNo | material edit blocked if fingerprint changes | same | |
+| Force Close | list | `ForceCloseAsync` → `ChangeStatusAsync` | 952–973, 1309–1356 | yes | `LockRequestedPoAsync` → instances 1326 → `AssertPoCloseableAsync` 1333 | write CLOSED | stock remainder only (`HasRemainingBalance` ignores service lines) | same | |
+| Reopen | list | `ReopenAsync` | 975–987, 1358+ | yes | PO lock; **no approval** | write | none | same | |
+| PO Cancel/Delete | UI | | 806–824, 899–916 | yes | requested PO lock → close pending | write | close pending | same | |
+| Attachment upload/delete PO | endpoints `MapPoOrderAttachmentEndpoints` | `PoOrderAttachmentService` | Upload 312–510; Delete 595–663 | **no explicit tx**; unlocked `Max(PoRelNo)` 377–380 | file I/O then SaveChanges (upload); SaveChanges then file delete (delete) | write files+rows | `AssertAttachmentMutationAsync` if guard not null | attachment tests |
+| Attachment PR | `MapPoPrAttachmentEndpoints` | `PoPrAttachmentService` | similar; `docRev: 0` | same pattern | same | write | same | same |
+| Temp attach promote | PO/PR save | `StampAttachDocIdsInDbAsync` 2585; `MoveDraftSafeAsync` after commit 2602 | after document commit | filesystem after commit | write DocId/RevNo | **no re-assert in stamp/move** | | |
+| Invoice post | UI | `PoInvoiceService.PostAsync` / `ValidateMatchOnPostAsync` | ~647–678, **1633–1637** net≤0 | invoice+PO locks | no approval | `InvoicedQty` | **blocked without RecvQty** (non-CN) | `PoInvoiceServiceTests` |
+| CDN post | UI | `PoCdnService.PostOneAsync` | ~1890+ | CDN lock; VR subpath for stock | no RecvQty write in CDN service | ReturnQty via VR posting | no extra CDN gate | `PoCdnServiceTests` |
+| Self-billed | UI | `PoSbInvoiceService` | remarks: no PO lineage | n/a | n/a | **no PO commitment** | out of scope | |
+| Background jobs | — | no `HostedService` in `ErpWeb.Core` | — | — | — | **none found** | — | |
+| HTTP APIs | `Program.cs` 223–224 | attachment endpoints only for PR/PO files | not Post GR | n/a | n/a | files | via attachment services | |
+| `ApplyCjConsumption` | PO save | `PoOrderService` ~1783–1802 | empty body | — | **non-functional / unverified** | none | — | |
+
+---
+
+## Latest-revision race schedule (required SQL tests — Gate 3, not executed here)
+
+`LockLatestForUpdateAsync` ([`PoOrderRepository.cs`](../ErpWeb.Model/Repositories/Purchase/PoOrderRepository.cs) 136–149): unlocked `Max(PoRelNo)` then `UPDLOCK` that row. Concurrent `ReviseAsync` can insert `max+1` in the gap.
+
+| # | Connection A | Connection B | Required outcome |
+|---|--------------|--------------|------------------|
+| R1 | GR post reads max=rev1, pauses before lock | PO revise commits rev2 | A must not post against rev1; fail “Purchase Order was revised. Reload and select the latest approved revision.”; **no** RecvQty/stock |
+| R2 | PO revise holds header/applock | GR post waits then rechecks max | GR posts only latest approved rev or fails cleanly |
+| R3 | GR draft saved with PoRelNo=1 | rev2 exists and is latest | Post rejects stale line `PoRelNo` (existing validator 4263+) **and** approval of rev1 must not authorize rev2 |
+| R4 | GR post vs ForceClose/Cancel of latest | serialized on PO set lock | one winner; no partial batch |
+| R5 | Multi-PO GR; one PO revises | sorted PoNo locks | all-or-nothing batch |
+| R6 | Latest rev approved; older rev also had approval | GR for old RelNo | reject even if old instance APPROVED |
+
+Existing cancelled-old-revision status is a **secondary** safeguard only; not a substitute for an atomic latest-revision contract.
+
+---
+
+## Policy / fingerprint / cutover (see DECISIONS file)
+
+- `AssertGateAsync` 1087–1199: Pending first (blocks even if policy OFF); then policy OFF pass; then APPROVED/NOT_REQUIRED fingerprint (`null` fingerprint **passes** — V4-M1); then cutover exemption row; then progressed RecvQty/Received/Closed; then LegacyExempt insert; else fail submit-required.
+- `SavePolicyAsync` CutoverAtUtc = `DateTime.UtcNow`. Document `CreatedDate` = company-local `_dates.Now` mapped to column `Created`. Comparison is Kind-unaware.
+- Submit snapshots PolicyId, PolicyVersion, Gross/Taxes/Total, MaterialFingerprint, assignees (`SubmitLockedAsync` 1003–1024).
+
+---
+
+## Open / STOP items carried to decisions
+
+1. Shared-lock WT gate must not ship.  
+2. Latest-revision applock not implemented.  
+3. Policy applock not implemented.  
+4. Repair has no proof — **no public bypass**; Gate 1 should treat repair `PostAsync` as normal NEW post unless a later signed design exists.  
+5. Fingerprint instances **exist** on local DEMO (7 PENDING + 3 APPROVED PR) — no in-place hash change.  
+6. Local `ERPWeb` / SQLEXPRESS is a **shared DEMO tenant with policy ON** — forbidden as Gate 3 test DB.

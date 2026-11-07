@@ -113,6 +113,16 @@ public sealed partial class IvInventoryPostingService
                 cancellationToken) is string changedTail)
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.LedgerMismatch, changedTail));
+        var writeDetails = await write.IvTrxBatchDetails
+            .Where(d => d.BatchId == batch.Id)
+            .ToListAsync(cancellationToken);
+        var qaError = await AssertQaPhysicalFromDetailsAsync(
+            write, companyCode, branchCode, IvTrxTypes.StockTransfer, batchNo, writeDetails, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         var written = await StockReplayFifoTransferRootWriter.InsertAsync(
             context, plan, batchNo, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(
@@ -242,6 +252,13 @@ public sealed partial class IvInventoryPostingService
                 cancellationToken) is string changedTail)
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.LedgerMismatch, changedTail));
+        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
+            write, companyCode, branchCode, batchNo, cancellationToken);
+        if (qaRestore is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
+        }
         var written = await StockReplayFifoTransferRemovalRootWriter.RemoveAsync(
             context, plan, batchNo, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(

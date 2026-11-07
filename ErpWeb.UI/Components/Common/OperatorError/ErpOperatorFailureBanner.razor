@@ -1,0 +1,58 @@
+@using ErpWeb.UI.Components.Common.OperatorError
+
+@if (Failure is not null)
+{
+    <div class="iv-toast iv-toast--err iv-toast--stack" role="alert">
+        <div class="iv-toast__body">
+            <span>
+                @Failure.Headline
+                @if (!string.IsNullOrWhiteSpace(Failure.Reason))
+                {
+                    <text> @Failure.Reason</text>
+                }
+            </span>
+            @if (Failure.Notes.Count > 0)
+            {
+                <details class="iv-toast__more">
+                    <summary>What happened for each record</summary>
+                    <ul class="iv-toast__list">
+                        @foreach (var note in Failure.Notes)
+                        {
+                            <li>
+                                <strong>@note.Title</strong>
+                                <span>@note.Explanation</span>
+                                @if (!string.IsNullOrWhiteSpace(note.NextStep))
+                                {
+                                    <span>@note.NextStep</span>
+                                }
+                                @if (note.Facts.Count > 0)
+                                {
+                                    <dl class="iv-toast__facts">
+                                        @foreach (var fact in note.Facts)
+                                        {
+                                            <dt>@fact.Label</dt>
+                                            <dd>@fact.Value</dd>
+                                        }
+                                    </dl>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(note.Reference))
+                                {
+                                    <span class="iv-toast__ref">Support reference: @note.Reference</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </details>
+            }
+        </div>
+        @if (OnDismiss.HasDelegate)
+        {
+            <button type="button" class="iv-toast__close" @onclick="OnDismiss" aria-label="Dismiss">×</button>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public ErpOperatorFailureView? Failure { get; set; }
+    [Parameter] public EventCallback OnDismiss { get; set; }
+}

@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.Sales;
@@ -24,10 +25,13 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     IStockPostingCoordinator coordinator, IIvStockPostingRepository stock, IProductionStockWriter production,
     IIvInventoryHistoryWriter historyWriter,
     ISaDeliveryRequestFulfilmentService? deliveryRequestFulfilment = null,
+    IQaFgAuthorization? qaFg = null,
     ILogger<ProductionFinishedGoodReceiptService>? logger = null) : IProductionFinishedGoodReceiptService
 {
     private const string Menu = MenuCodes.PlanningFinishedGoodReceipt;
-    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation) => IvMasterOperationResult<T>.Fail(code, message);
+    private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation,
+        ErpWeb.Core.Services.ErpOperatorError? operatorError = null) =>
+        IvMasterOperationResult<T>.Fail(code, message, operatorError: operatorError);
     private async Task<InventoryTenantScope> ScopeAsync(string permission, CancellationToken ct)
     {
         if (!await access.CanAsync(Menu, PermissionCodes.Access, ct) || !await access.CanAsync(Menu, permission, ct))

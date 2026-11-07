@@ -1,4 +1,6 @@
 using ErpWeb.Core;
+using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Sales;
 using ErpWeb.Model;
 using Microsoft.Extensions.Configuration;
@@ -60,6 +62,38 @@ public class ServiceRegistrationTests
         var resolved = scope.ServiceProvider.GetService(serviceType);
 
         Assert.NotNull(resolved);
+    }
+
+    [Theory]
+    [InlineData(typeof(IProcurementApprovalService))]
+    [InlineData(typeof(IProcurementApprovalGuard))]
+    [InlineData(typeof(IPoPrService))]
+    [InlineData(typeof(IPoOrderService))]
+    [InlineData(typeof(IPoPrAttachmentService))]
+    [InlineData(typeof(IPoOrderAttachmentService))]
+    [InlineData(typeof(IIvInventoryPostingService))]
+    public void Procurement_approval_services_are_resolvable(Type serviceType)
+    {
+        using var provider = CreateCompositionRoot().BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolved = scope.ServiceProvider.GetService(serviceType);
+
+        Assert.NotNull(resolved);
+    }
+
+    [Fact]
+    public void Procurement_approval_guard_is_the_real_service_not_the_disabled_stub()
+    {
+        using var provider = CreateCompositionRoot().BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var guard = scope.ServiceProvider.GetRequiredService<IProcurementApprovalGuard>();
+        var service = scope.ServiceProvider.GetRequiredService<IProcurementApprovalService>();
+
+        Assert.Same(service, guard);
+        Assert.IsType<ProcurementApprovalService>(guard);
+        Assert.IsNotType<DisabledProcurementApprovalGuard>(guard);
     }
 
     /// <summary>

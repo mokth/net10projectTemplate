@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Core.Transactions;
@@ -23,6 +24,8 @@ public sealed partial class ProductionStockReturnService
     private async Task<IvMasterOperationResult<ProductionStockReturnDocument>> ExecuteAsync(
         ProductionStockReturnCommand request, bool reversal, CancellationToken ct)
     {
+        string? documentNo = null;
+        var action = reversal ? ErpErrorAction.Rollback : ErpErrorAction.Post;
         try
         {
             var scope = await ScopeAsync(reversal ? PermissionCodes.Rollback : PermissionCodes.Post, ct);
@@ -51,6 +54,7 @@ public sealed partial class ProductionStockReturnService
 
             var r = await LoadAsync(db, scope, request.Id, true, ct);
             Version(r, request.ExpectedVersion);
+            documentNo = r.Batch.BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (r.DeletedAtUtc is not null || r.Batch.DeletedAtUtc is not null)
                 throw new ReturnException(TransactionLifecycleGuard.ArchivedError(r.DeletedAtUtc ?? r.Batch.DeletedAtUtc, "This return")!);
             if (r.Batch.TrxType != IvTrxTypes.ProductionStockReturn
@@ -143,7 +147,10 @@ public sealed partial class ProductionStockReturnService
                 ReasonText = reversal ? request.Reason!.Trim() : null
             };
             var begin = await coordinator.BeginInTransactionAsync(db, postingCommand, ct);
-            if (begin.Error is not null) throw new ReturnException(begin.Error.Message);
+            if (begin.Error is not null)
+                throw new ReturnException(begin.Error.Message, IvMasterErrorCode.Validation,
+                    ProductionOperatorErrorLog.Ledger(logger, null, begin.Error, ErpDocumentKind.ProductionStockReturn,
+                        documentNo, action, "Production Stock Return begin"));
             if (!begin.LedgerEnabled || begin.Context is null)
                 throw new ReturnException("An active V2 stock ledger is required. No legacy Production Stock Return is permitted.");
             var context = begin.Context;
@@ -230,8 +237,13 @@ public sealed partial class ProductionStockReturnService
             await tx.CommitAsync(ct);
             return IvMasterOperationResult<ProductionStockReturnDocument>.Ok(await MapAsync(db, r, scope, ct));
         }
-        catch (ReturnException e) { return Fail<ProductionStockReturnDocument>(e.Message, e.Code); }
-        catch (StockLedgerException e) { return Fail<ProductionStockReturnDocument>(e.Error.Message); }
+        catch (ReturnException e) { return Fail<ProductionStockReturnDocument>(e.Message, e.Code, e.OperatorError); }
+        catch (StockLedgerException e)
+        {
+            return Fail<ProductionStockReturnDocument>(e.Error.Message, IvMasterErrorCode.Validation,
+                ProductionOperatorErrorLog.Ledger(logger, e, e.Error, ErpDocumentKind.ProductionStockReturn,
+                    documentNo, action, "Production Stock Return"));
+        }
         catch (DbUpdateConcurrencyException) { return Fail<ProductionStockReturnDocument>("Stock or return document changed. Reload and retry.", IvMasterErrorCode.Concurrency); }
         catch (InvalidOperationException e) { return Fail<ProductionStockReturnDocument>(e.Message); }
     }

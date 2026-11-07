@@ -4,6 +4,7 @@ using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Sales.Delivery;
 using ErpWeb.Core.Purchase;
@@ -237,6 +238,9 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<IIvInventoryPostingService, IvInventoryPostingService>();
         services.AddScoped<IIvInventoryHistoryWriter, IvInventoryHistoryWriter>();
+        // Read-only explanation of a refused stock transaction (failure evidence), used only on the
+        // error path. It reads one history row and never participates in a posting decision.
+        services.AddScoped<IIvFailureEvidenceReader, IvFailureEvidenceReader>();
         services.AddScoped<IInventoryAsOfStockService, InventoryAsOfStockService>();
 
         services.AddScoped<IIvSpShipmentService, IvSpShipmentService>();
@@ -299,6 +303,14 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IMachineScheduleSegmentBackfillService, MachineScheduleSegmentBackfillService>();
         services.AddScoped<IMachineScheduleAllocationBackfillService, MachineScheduleAllocationBackfillService>();
 
+        services.AddScoped<IQaPolicyService, QaPolicyService>();
+        services.AddScoped<IQaCaseService, QaCaseService>();
+        services.AddScoped<IQaReceiptAuthorization, QaReceiptAuthorizationService>();
+        services.AddScoped<IQaFgAuthorization, QaFgAuthorizationService>();
+        services.AddScoped<IQaLogicalHoldAuthorization, QaLogicalHoldAuthorizationService>();
+        services.AddScoped<IQaPhysicalHoldAuthorization, QaPhysicalHoldAuthorizationService>();
+        services.AddScoped<IQaNonGoodAuthorization, QaNonGoodAuthorizationService>();
+
         services.AddScoped<IPlanningMasterAccess, PlanningMasterAccess>();
         services.AddScoped<IPlanningDependencyChecker, PlanningDependencyChecker>();
         services.AddScoped<IPrWorkCentreService, PrWorkCentreService>();
@@ -340,6 +352,9 @@ public static class CoreServiceCollectionExtensions
             (IPoSupplierAttachmentFileCleanup)sp.GetRequiredService<IPoSupplierAttachmentService>());
 
         services.AddScoped<IPoMasterRefService, PoMasterRefService>();
+
+        services.AddScoped<IProcurementApprovalService, ProcurementApprovalService>();
+        services.AddScoped<IProcurementApprovalGuard>(sp => sp.GetRequiredService<IProcurementApprovalService>());
 
         services.AddScoped<IPoPrService, PoPrService>();
         services.AddScoped<IWorkOrderMaterialProcurementTraceService, WorkOrderMaterialProcurementTraceService>();

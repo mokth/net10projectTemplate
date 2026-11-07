@@ -4,6 +4,7 @@ using ErpWeb.Core.Inventory.Lifecycle;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
@@ -1354,8 +1355,7 @@ public sealed class SaDoService : ISaDoService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "DO POST failed for {DoNo}", item.DoNo);
-                results.Add(SaDoPostingItemResult.Failed(item.DoNo, ex.Message));
+                results.Add(FailedDeliveryOrder(item.DoNo, ex, ErpErrorAction.Post, "POST"));
                 stop = true;
             }
         }
@@ -1412,8 +1412,7 @@ public sealed class SaDoService : ISaDoService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "DO ROLLBACK failed for {DoNo}", item.DoNo);
-                results.Add(SaDoPostingItemResult.Failed(item.DoNo, ex.Message));
+                results.Add(FailedDeliveryOrder(item.DoNo, ex, ErpErrorAction.Rollback, "ROLLBACK"));
                 stop = true;
             }
         }
@@ -1470,8 +1469,7 @@ public sealed class SaDoService : ISaDoService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "DO FORCE-CLOSE failed for {DoNo}", item.DoNo);
-                results.Add(SaDoPostingItemResult.Failed(item.DoNo, ex.Message));
+                results.Add(FailedDeliveryOrder(item.DoNo, ex, ErpErrorAction.Cancel, "FORCE-CLOSE"));
                 stop = true;
             }
         }
@@ -3504,6 +3502,24 @@ WHERE UID = {source.DeliveryRequestId} AND CompanyCode = {companyCode} AND Branc
         var message = ex.InnerException?.Message ?? ex.Message;
         return message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
             || message.Contains("unique", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Turns one failed delivery order into a per-document result that carries both the original
+    /// technical message (logs) and operator text (screen). The posting decision is already made here;
+    /// this only chooses the wording.
+    /// </summary>
+    private SaDoPostingItemResult FailedDeliveryOrder(
+        string doNo, Exception ex, ErpErrorAction action, string step)
+    {
+        var reference = ErpOperatorErrors.NewReferenceId();
+        _logger.LogError(ex, "DO {Step} failed for {DoNo} (ref {Reference})", step, doNo, reference);
+        var operatorError = ex is StockLedgerException ledger
+            ? ErpOperatorErrors.FromLedgerError(ledger.Error, ErpErrorOrigin.Sales,
+                ErpDocumentKind.DeliveryOrder, doNo, action, reference)
+            : ErpOperatorErrors.Unexpected(ErpErrorOrigin.Sales,
+                ErpDocumentKind.DeliveryOrder, doNo, action, reference);
+        return SaDoPostingItemResult.Failed(doNo, ex.Message, operatorError);
     }
 
     // ─────────────────────────── Private Types ───────────────────────────

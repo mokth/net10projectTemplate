@@ -121,6 +121,7 @@
                         <p class="mr-eyebrow">Lines</p>
                         <h2 class="mr-lines__title">Receipt items</h2>
                     </div>
+                    <div class="mr-row-actions">
                     @if (CanEditDocument)
                     {
                         <DxButton RenderStyle="ButtonRenderStyle.Primary"
@@ -129,6 +130,16 @@
                                   Click="@OnNewLineClickAsync"
                                   Enabled="@(!IsSubmitting)" />
                     }
+                    @if (CanRequestQa)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Request QA"
+                                  IconCssClass="fa-solid fa-clipboard-check"
+                                  title="Inspection record only — posting approval not active"
+                                  Click="@OnRequestQa"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                    </div>
                 </div>
 
                 <DxGrid Data="@Lines"
@@ -144,7 +155,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (IvMiscReceiptLineVm)context.DataItem;
