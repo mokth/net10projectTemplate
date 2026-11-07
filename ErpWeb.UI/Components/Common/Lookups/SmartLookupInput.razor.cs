@@ -26,6 +26,9 @@ public partial class SmartLookupInput<TItem> : IAsyncDisposable
     [Parameter] public string? CssClass { get; set; }
     [Parameter] public string? InputCssClass { get; set; }
     [Parameter] public string SearchButtonAriaLabel { get; set; } = "Search";
+
+    /// <summary>Rendered onto the inner input so an external label can name the editor.</summary>
+    [Parameter] public string? InputId { get; set; }
     [Parameter] public string NotFoundMessage { get; set; } = "Not found";
     [Parameter] public int InputDelayMs { get; set; } = SmartLookupState.DefaultInputDelayMs;
     [Parameter] public int NotFoundRestoreDelayMs { get; set; } = SmartLookupState.DefaultNotFoundRestoreDelayMs;

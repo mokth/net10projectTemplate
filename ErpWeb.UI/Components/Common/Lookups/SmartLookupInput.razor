@@ -5,6 +5,7 @@
 <div class="smart-lookup @CssClass">
     <div class="smart-lookup__row">
         <DxTextBox @ref="_input"
+                   InputId="@InputId"
                    Text="@_state.InputText"
                    TextChanged="@OnTextChangedAsync"
                    TextExpression="@TextExpression"

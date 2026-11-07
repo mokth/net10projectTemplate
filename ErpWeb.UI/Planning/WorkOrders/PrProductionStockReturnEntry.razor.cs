@@ -196,6 +196,15 @@ public partial class PrProductionStockReturnEntry : IAsyncDisposable
         return LoadSourcesAsync(debounce: true);
     }
 
+    /// <summary>
+    /// Magnifier action: cancels the pending 350 ms debounce and loads the latest filter once.
+    /// </summary>
+    protected Task ApplySourceSearchAsync()
+    {
+        SourcePage = 0;
+        return LoadSourcesAsync(debounce: false);
+    }
+
     protected async Task OpenSourcePickerAsync()
     {
         if (!CanEditFields || Busy || !CanAddMoreSources || Document.WorkOrderId <= 0) return;

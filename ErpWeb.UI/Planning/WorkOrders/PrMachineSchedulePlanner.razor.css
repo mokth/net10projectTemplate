@@ -213,7 +213,14 @@
 }
 
 .pr-machine-schedule-filter--search {
-    flex-basis: 190px;
+    display: block;
+    flex: 0 1 300px;
+    min-width: 240px;
+}
+
+/* The search cell hosts the shared inline row: caption, editor and magnifier on one line. */
+.pr-machine-schedule-filter--search .erp-inline-search {
+    inline-size: 100%;
 }
 
 .pr-machine-schedule-filter-actions {

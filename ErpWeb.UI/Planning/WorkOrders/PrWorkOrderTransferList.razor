@@ -17,9 +17,24 @@
         @if (!string.IsNullOrWhiteSpace(Error)) { <div class="iv-toast iv-toast--err" role="alert">@Error</div> }
         <section class="iv-card">
             <div class="iv-toolbar-row">
-                <div class="iv-toolbar-row__search">
-                    <DxTextBox Text="@SearchText" TextChanged="SearchChanged" NullText="Search transfer, item, lot or Work Order"
-                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" />
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption" for="pr-work-order-transfer-list-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="pr-work-order-transfer-list-search"
+                                   Text="@SearchText"
+                                   TextChanged="SearchChanged"
+                                   NullText="Search transfer, item, lot or Work Order"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   CssClass="w-100"
+                                   TextExpression="@(() => SearchText)"
+                                   BindValueMode="BindValueMode.OnInput" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
+                              Click="@ApplySearchAsync"
+                              aria-label="Search work order transfers"
+                              title="Search work order transfers" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="FILTER" IconCssClass="fa-solid fa-filter" Click="OpenFilterPopup" />
             </div>

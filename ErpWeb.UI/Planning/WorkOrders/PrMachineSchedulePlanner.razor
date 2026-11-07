@@ -83,12 +83,26 @@
             </div>
 
             <div class="pr-machine-schedule-toolbar__filters" aria-label="Schedule filters">
-                <label class="pr-machine-schedule-filter pr-machine-schedule-filter--search">
-                    <span>Search</span>
-                    <DxTextBox Text="@SearchText" TextChanged="@OnSearchTextChangedAsync"
-                               NullText="WO, DR, product or process"
-                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
-                </label>
+                <div class="pr-machine-schedule-filter pr-machine-schedule-filter--search">
+                    <div class="erp-inline-search">
+                        <label class="erp-inline-search__caption" for="pr-machine-schedule-search">Search</label>
+                        <div class="erp-inline-search__editor">
+                            <DxTextBox InputId="pr-machine-schedule-search"
+                                       Text="@SearchText"
+                                       TextChanged="@OnSearchTextChangedAsync"
+                                       TextExpression="@(() => SearchText)"
+                                       BindValueMode="BindValueMode.OnInput"
+                                       NullText="WO, DR, product or process"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </div>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  CssClass="erp-inline-search__button"
+                                  Click="@ApplySearchAsync"
+                                  aria-label="Search the machine schedule"
+                                  title="Search the machine schedule" />
+                    </div>
+                </div>
                 <label class="pr-machine-schedule-filter pr-machine-schedule-filter--centre">
                     <span>Work Centre</span>
                     <DxComboBox TData="MachineSchedulePlannerLookupOption" TValue="string"

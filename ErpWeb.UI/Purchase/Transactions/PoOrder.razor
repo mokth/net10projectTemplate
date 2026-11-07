@@ -804,9 +804,21 @@
                     {
                         <p class="sdoc-popup-error">@PrPickerError</p>
                     }
-                    <div class="poorder-pr-search">
-                        <DxTextBox @bind-Text="@PrSearchText" NullText="Search PR no, requester, item…" CssClass="w-100" />
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Search" IconCssClass="fa-solid fa-search" Click="@SearchPrAsync" />
+                    <div class="erp-inline-search erp-inline-search--popup">
+                        <label class="erp-inline-search__caption" for="po-order-pr-picker-search">Search</label>
+                        <div class="erp-inline-search__editor">
+                            <DxTextBox InputId="po-order-pr-picker-search"
+                                       @bind-Text="@PrSearchText"
+                                       BindValueMode="BindValueMode.OnInput"
+                                       NullText="Search PR no, requester, item…"
+                                       CssClass="w-100" />
+                        </div>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  CssClass="erp-inline-search__button"
+                                  Click="@SearchPrAsync"
+                                  aria-label="Search purchase requisitions"
+                                  title="Search purchase requisitions" />
                     </div>
                     <div class="poorder-pr-picker">
                         <DxGrid ColumnResizeMode="GridColumnResizeMode.ColumnsContainer" Data="@PrRows" KeyFieldName="@nameof(PoPrForPoRow.PrNo)" PageSize="8" CssClass="sdoc-line-grid" TextWrapEnabled="false">

@@ -818,17 +818,25 @@
                      @bind-Visible="@SourceLookupVisible">
                 <Content>
                     <p class="sdoc-field-hint">@SourceLookupSearchHint Results are limited to 20 headers; refine the search if needed.</p>
-                    <div class="sdoc-source-search">
-                        <DxTextBox Text="@SourceLookupSearchText"
-                                   TextChanged="@OnSourceLookupSearchTextChanged"
-                                   TextExpression="@(() => SourceLookupSearchText)"
-                                   NullText="@SourceLookupSearchPlaceholder"
-                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                   Enabled="@CanEditDocument" />
+                    <div class="erp-inline-search erp-inline-search--popup">
+                        <label class="erp-inline-search__caption" for="sa-invoice-source-lookup-search">Search</label>
+                        <div class="erp-inline-search__editor">
+                            <DxTextBox InputId="sa-invoice-source-lookup-search"
+                                       Text="@SourceLookupSearchText"
+                                       TextChanged="@OnSourceLookupSearchTextChanged"
+                                       TextExpression="@(() => SourceLookupSearchText)"
+                                       BindValueMode="BindValueMode.OnInput"
+                                       NullText="@SourceLookupSearchPlaceholder"
+                                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                       Enabled="@CanEditDocument" />
+                        </div>
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="Search"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  CssClass="erp-inline-search__button"
                                   Click="@SearchSourceHeadersAsync"
-                                  Enabled="@(!SourceLookupLoading && !string.IsNullOrWhiteSpace(SourceLookupSearchText))" />
+                                  Enabled="@(!SourceLookupLoading && !string.IsNullOrWhiteSpace(SourceLookupSearchText))"
+                                  aria-label="Search source documents"
+                                  title="Search source documents" />
                     </div>
                     @if (!string.IsNullOrWhiteSpace(SourceLookupError))
                     {
@@ -954,15 +962,23 @@
              @bind-Visible="@DoPickerVisible">
         <Content>
             <div class="sdoc-popup-body">
-                <div class="sdoc-field-row mb-2">
-                    <DxTextBox @bind-Text="@DoPickerSearchText"
-                               NullText="Search DO / SO / item…"
-                               CssClass="w-100"
-                               Enabled="@(!DoPickerLoading)" />
-                    <DxButton Text="Search"
-                              RenderStyle="ButtonRenderStyle.Secondary"
+                <div class="erp-inline-search erp-inline-search--popup">
+                    <label class="erp-inline-search__caption" for="sa-invoice-do-picker-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="sa-invoice-do-picker-search"
+                                   @bind-Text="@DoPickerSearchText"
+                                   BindValueMode="BindValueMode.OnInput"
+                                   NullText="Search DO / SO / item…"
+                                   CssClass="w-100"
+                                   Enabled="@(!DoPickerLoading)" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
                               Click="@SearchDoPickerAsync"
-                              Enabled="@(!DoPickerLoading)" />
+                              Enabled="@(!DoPickerLoading)"
+                              aria-label="Search delivery orders for lines"
+                              title="Search delivery orders for lines" />
                 </div>
                 @if (!string.IsNullOrWhiteSpace(DoPickerError))
                 {

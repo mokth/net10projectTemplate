@@ -41,12 +41,24 @@
 
         <section class="iv-card">
             <div class="iv-toolbar-row">
-                <div class="iv-toolbar-row__search">
-                    <DxTextBox Text="@SearchText"
-                               TextChanged="OnSearchTextChanged"
-                               NullText="Search Work Order or product…"
-                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                               CssClass="w-100" TextExpression="@(() => SearchText)" />
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption" for="pr-material-issue-list-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="pr-material-issue-list-search"
+                                   Text="@SearchText"
+                                   TextChanged="OnSearchTextChanged"
+                                   NullText="Search Work Order or product…"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   CssClass="w-100"
+                                   TextExpression="@(() => SearchText)"
+                                   BindValueMode="BindValueMode.OnInput" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
+                              Click="@ApplySearchAsync"
+                              aria-label="Search material issues"
+                              title="Search material issues" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="FILTER"

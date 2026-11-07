@@ -209,6 +209,12 @@ public partial class PoInvoice : PageBase
     protected async Task OnVendorChanged(string? vendorCode)
     {
         Model.VendorCode = vendorCode ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(Model.VendorCode)
+            && string.Equals(ErrorMessage, "Select a vendor first.", StringComparison.Ordinal))
+        {
+            ErrorMessage = null;
+        }
+
         if (!IsEditable || string.IsNullOrWhiteSpace(Model.VendorCode))
         {
             return;
@@ -244,6 +250,11 @@ public partial class PoInvoice : PageBase
         {
             ErrorMessage = "Select a vendor first.";
             return;
+        }
+
+        if (string.Equals(ErrorMessage, "Select a vendor first.", StringComparison.Ordinal))
+        {
+            ErrorMessage = null;
         }
 
         PoPickerSearchText = null;

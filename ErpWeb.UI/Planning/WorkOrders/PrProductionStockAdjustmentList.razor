@@ -7,7 +7,25 @@
         @if (!string.IsNullOrWhiteSpace(StatusMessage)) { <div class="iv-toast iv-toast--ok" role="status">@StatusMessage</div> }
         @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="iv-toast iv-toast--err" role="alert">@ErrorMessage</div> }
         <header class="iv-hero"><div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-scale-balanced"></i></div><div class="iv-hero__copy"><p class="iv-eyebrow">Planning · Production</p><h1 class="iv-title">Production Stock Adjustment</h1><div class="iv-chips"><span class="iv-chip">@TotalCount documents</span>@if(HasActiveFilters){<span class="iv-chip">Filtered</span>}</div></div><div class="iv-hero__kpi"><span>Documents</span><strong>@TotalCount.ToString("N0")</strong></div></header>
-        <section class="iv-card"><div class="iv-toolbar-row"><div class="iv-toolbar-row__search"><DxTextBox Text="@SearchText" TextChanged="OnSearchChanged" NullText="Search adjustment, Work Order or reference…" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" /></div><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="FILTER" IconCssClass="fa-solid fa-filter" Click="OpenFilterPopup" /></div>
+        <section class="iv-card"><div class="iv-toolbar-row"><div class="iv-toolbar-row__search erp-inline-search">
+    <label class="erp-inline-search__caption" for="pr-production-stock-adjustment-list-search">Search</label>
+    <div class="erp-inline-search__editor">
+        <DxTextBox InputId="pr-production-stock-adjustment-list-search"
+                   Text="@SearchText"
+                   TextChanged="OnSearchChanged"
+                   NullText="Search adjustment, Work Order or reference…"
+                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                   CssClass="w-100"
+                   TextExpression="@(() => SearchText)"
+                   BindValueMode="BindValueMode.OnInput" />
+    </div>
+    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+              IconCssClass="fa-solid fa-magnifying-glass"
+              CssClass="erp-inline-search__button"
+              Click="@ApplySearchAsync"
+              aria-label="Search production stock adjustments"
+              title="Search production stock adjustments" />
+</div><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="FILTER" IconCssClass="fa-solid fa-filter" Click="OpenFilterPopup" /></div>
             @if(Loading){<div class="iv-skeleton" aria-busy="true"><div class="iv-skeleton__line iv-skeleton__line--lg"></div><div class="iv-skeleton__line"></div></div>}else{
                 <div class="iv-list-desktop"><CommonDataGridEx T="ProductionStockAdjustmentSummary" Columns="@Columns" Buttons="@Buttons" ActionButtons="@ActionButtons" KeyName="@nameof(ProductionStockAdjustmentSummary.Id)" GridKey="pln-stock-adjustments" Title="Production Stock Adjustment" CustomDataSource="@DataSource" ShowToolbarText="true" ShowResetLayoutButton="true" UseBuiltInExport="false" ShowSearchBox="false" ShowFilterRow="false" ShowGroupPanel="false" allowSelect="true" OnGridInstance="@OnGridInstance" OnSelectionsEventHandle="@OnSelections" OnButtonEventHandle="@OnButton" OnActionEventHandle="@OnAction" /></div>
                 <div class="iv-list-compact">@if(CompactRows.Count==0){<p class="text-muted mb-0">No Production Stock Adjustments match the search.</p>}@foreach(var row in CompactRows){<button type="button" class="iv-compact-row" @onclick="@(()=>OpenView(row.Id))"><div class="iv-compact-row__title"><span class="code-style">PADJ @row.BatchNo</span><span>@row.WorkOrderNo · @row.ItemSummary</span></div><div class="iv-compact-row__meta"><span>@row.QtySummary</span><span>@row.Status</span><span>@row.EffectiveDate.ToString("dd MMM yyyy")</span></div></button>}</div>

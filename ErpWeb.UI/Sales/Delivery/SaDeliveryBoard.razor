@@ -64,10 +64,22 @@
                         <DxDateEdit Id="delivery-board-date" @bind-Date="SelectedDate" DisplayFormat="dd/MM/yyyy" />
                     </div>
                     <div class="delivery-board__search">
-                        <label for="delivery-board-search">Search trip, customer, driver or vehicle</label>
-                        <DxTextBox Id="delivery-board-search" @bind-Text="SearchText"
-                                   NullText="Trip no, customer name/code, driver or registration"
-                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        <div class="erp-inline-search">
+                            <label class="erp-inline-search__caption" for="delivery-board-search">Search</label>
+                            <div class="erp-inline-search__editor">
+                                <DxTextBox InputId="delivery-board-search" @bind-Text="SearchText"
+                                           BindValueMode="BindValueMode.OnInput"
+                                           NullText="Trip no, customer name/code, driver or registration"
+                                           ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                            </div>
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      IconCssClass="fa-solid fa-magnifying-glass"
+                                      CssClass="erp-inline-search__button"
+                                      Click="ReloadAsync"
+                                      Enabled="@(!IsLoading)"
+                                      aria-label="Search trips by trip no, customer, driver or vehicle"
+                                      title="Search trips by trip no, customer, driver or vehicle" />
+                        </div>
                     </div>
                     <DxButton Text="APPLY" IconCssClass="fa-solid fa-filter" RenderStyle="ButtonRenderStyle.Secondary"
                               Click="ReloadAsync" Enabled="@(!IsLoading)" />

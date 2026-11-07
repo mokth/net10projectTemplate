@@ -22,6 +22,7 @@ public partial class PoSuppList : PageBase, IDisposable
     private DxGrid? _grid;
     private Timer? _searchDebounce;
     private int _searchVersion;
+    private bool _disposed;
     private readonly List<PoSupplierListRow> _selectedRows = [];
     private PendingBulkAction _pendingAction = PendingBulkAction.None;
 
@@ -189,22 +190,45 @@ public partial class PoSuppList : PageBase, IDisposable
     protected void NavigateView(string code) =>
         Navigation.NavigateTo($"/purchase/suppliers/view/{code}");
 
+    /// <summary>
+    /// Invalidates a pending debounced search and any in-flight response so the
+    /// newest filter set owns the grid state.
+    /// </summary>
+    private void CancelPendingSearch()
+    {
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _searchDebounce, null);
+        timer?.Stop();
+        timer?.Dispose();
+    }
+
+    /// <summary>
+    /// Explicit magnifier action: applies the latest text once and cancels the
+    /// pending debounce so no second reload follows the click.
+    /// </summary>
+    protected async Task ApplySearchAsync()
+    {
+        CancelPendingSearch();
+        SyncDataSourceFilters();
+        await ReloadGridAsync();
+    }
+
     protected async Task OnSearchTextChanged(string text)
     {
         SearchText = text ?? string.Empty;
-        _searchDebounce?.Stop();
-        _searchDebounce?.Dispose();
+        CancelPendingSearch();
         _searchDebounce = new Timer(400) { AutoReset = false };
-        var version = Interlocked.Increment(ref _searchVersion);
+        var version = Volatile.Read(ref _searchVersion);
         _searchDebounce.Elapsed += async (_, _) =>
         {
-            if (version != _searchVersion)
+            if (version != Volatile.Read(ref _searchVersion))
             {
                 return;
             }
 
             await InvokeAsync(async () =>
             {
+                if (_disposed || version != Volatile.Read(ref _searchVersion)) return;
                 SyncDataSourceFilters();
                 await ReloadGridAsync();
             });
@@ -229,6 +253,7 @@ public partial class PoSuppList : PageBase, IDisposable
 
     protected async Task ApplyFiltersAsync()
     {
+        CancelPendingSearch();
         AppliedType = string.IsNullOrWhiteSpace(DraftType) ? null : DraftType.Trim();
         AppliedGroup = string.IsNullOrWhiteSpace(DraftGroup) ? null : DraftGroup.Trim();
         AppliedArea = string.IsNullOrWhiteSpace(DraftArea) ? null : DraftArea.Trim();
@@ -245,6 +270,7 @@ public partial class PoSuppList : PageBase, IDisposable
 
     protected async Task ClearFiltersAsync()
     {
+        CancelPendingSearch();
         DraftType = string.Empty;
         DraftGroup = string.Empty;
         DraftArea = null;
@@ -317,8 +343,11 @@ public partial class PoSuppList : PageBase, IDisposable
 
     public void Dispose()
     {
-        _searchDebounce?.Stop();
-        _searchDebounce?.Dispose();
+        _disposed = true;
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _searchDebounce, null);
+        timer?.Stop();
+        timer?.Dispose();
     }
 
     private async Task OnCopyAsync()
@@ -428,6 +457,7 @@ public partial class PoSuppList : PageBase, IDisposable
 
     private async Task RefreshCompactPreviewAsync()
     {
+        var searchGeneration = Volatile.Read(ref _searchVersion);
         var query = DataSource.CurrentQuery;
         query.Skip = 0;
         query.Take = 50;

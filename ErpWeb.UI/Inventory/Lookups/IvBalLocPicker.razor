@@ -7,9 +7,10 @@
                CssClass="flex-grow-1" ValidationEnabled="false" />
     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
               IconCssClass="fa-solid fa-magnifying-glass"
-              Text="Search"
               Click="@OpenSearchAsync"
-              Enabled="@Enabled" />
+              Enabled="@Enabled"
+              aria-label="Search lot balances"
+              title="Search lot balances" />
 </div>
 
 <IvBalLocSearchPopup @bind-Visible="@_popupVisible"

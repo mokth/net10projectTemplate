@@ -66,8 +66,9 @@
         <section class="iv-card">
             <div class="iv-toolbar-row">
                 <div class="iv-toolbar-row__search">
-                    <label class="iv-field-label">Rule</label>
-<DxComboBox Data="@RuleOptions"
+                    <label class="iv-field-label" for="iv-stock-alerts-rule">Rule</label>
+<DxComboBox InputId="iv-stock-alerts-rule"
+                            Data="@RuleOptions"
                                 TextFieldName="@nameof(RuleOption.Name)"
                                 ValueFieldName="@nameof(RuleOption.Token)"
                                 Value="@AppliedRule"

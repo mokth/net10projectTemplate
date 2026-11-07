@@ -199,11 +199,20 @@
                         else
                         {
                             <div class="d-flex flex-wrap align-items-end gap-3 mb-3">
-                                <div class="wot-filter">
-                                    <label class="form-label" for="wot-source-search">Filter by item, description, or lot</label>
-                                    <DxTextBox Id="wot-source-search" Text="@SourceSearch" TextChanged="@SourceSearchChanged"
-                                               BindValueMode="BindValueMode.OnInput" NullText="Item code, description, or lot"
-                                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" CssClass="w-100" />
+                                <div class="erp-inline-search wot-filter">
+                                    <label class="erp-inline-search__caption" for="wot-source-search">Filter by item, description, or lot</label>
+                                    <div class="erp-inline-search__editor">
+                                        <DxTextBox InputId="wot-source-search" Text="@SourceSearch" TextChanged="@SourceSearchChanged"
+                                                   TextExpression="@(() => SourceSearch)"
+                                                   BindValueMode="BindValueMode.OnInput" NullText="Item code, description, or lot"
+                                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                    </div>
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              IconCssClass="fa-solid fa-magnifying-glass"
+                                              CssClass="erp-inline-search__button"
+                                              Click="@ApplySourceSearchAsync"
+                                              aria-label="Filter WIP balances by item, description, or lot"
+                                              title="Filter WIP balances" />
                                 </div>
                                 <div class="small text-muted">@SelectedSourceWorkOrder.WorkOrderNo</div>
                             </div>
@@ -571,7 +580,7 @@
         @if (RollbackConfirmVisible)
         {
             <DxPopup Visible="true" HeaderText="Rollback Work Order Transfer?" ShowFooter="true" Width="min(560px,95vw)" CloseOnOutsideClick="false">
-                <BodyContentTemplate><div class="common-popup__body"><p>The exact original WIP quantity and value will return to the source pool. Later Production activity or downstream use blocks rollback.</p><label class="form-label" for="wot-rollback-reason">Reason (required)</label><DxTextBox Id="wot-rollback-reason" Text="@RollbackReason" TextChanged="@RollbackReasonChanged" maxlength="500" CssClass="w-100" /></div></BodyContentTemplate>
+                <BodyContentTemplate><div class="common-popup__body"><p>The exact original WIP quantity and value will return to the source pool. Later Production activity or downstream use blocks rollback.</p><label class="form-label" for="wot-rollback-reason">Reason (required)</label><DxTextBox InputId="wot-rollback-reason" Text="@RollbackReason" TextChanged="@RollbackReasonChanged" maxlength="500" CssClass="w-100" /></div></BodyContentTemplate>
                 <FooterContentTemplate><div class="common-popup__footer"><DxButton Text="CANCEL" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => RollbackConfirmVisible = false)" /><DxButton Text="ROLLBACK" RenderStyle="ButtonRenderStyle.Danger" Click="RollbackAsync" Enabled="@(!Busy && !string.IsNullOrWhiteSpace(RollbackReason))" /></div></FooterContentTemplate>
             </DxPopup>
         }

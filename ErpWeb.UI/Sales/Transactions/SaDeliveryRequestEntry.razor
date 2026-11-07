@@ -483,9 +483,21 @@
                     {
                         <p class="sdoc-popup-error">@SourcePickerError</p>
                     }
-                    <div class="dr-picker-search">
-                        <DxTextBox @bind-Text="@SourceSearchSoNo" NullText="Sales Order number" CssClass="w-100" />
-                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Search" IconCssClass="fa-solid fa-magnifying-glass" Click="@LoadEligibleAsync" />
+                    <div class="erp-inline-search erp-inline-search--popup">
+                        <label class="erp-inline-search__caption" for="sa-delivery-request-source-picker-search">Search</label>
+                        <div class="erp-inline-search__editor">
+                            <DxTextBox InputId="sa-delivery-request-source-picker-search"
+                                       @bind-Text="@SourceSearchSoNo"
+                                       BindValueMode="BindValueMode.OnInput"
+                                       NullText="Sales Order number"
+                                       CssClass="w-100" />
+                        </div>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  IconCssClass="fa-solid fa-magnifying-glass"
+                                  CssClass="erp-inline-search__button"
+                                  Click="@LoadEligibleAsync"
+                                  aria-label="Search eligible sales orders"
+                                  title="Search eligible sales orders" />
                     </div>
                     @if (EligibleSources.Count == 0)
                     {

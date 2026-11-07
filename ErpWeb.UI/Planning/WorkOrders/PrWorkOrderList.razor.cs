@@ -21,6 +21,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
     private Timer? _searchDebounce;
     private int _searchVersion;
 
+    private bool _disposed;
     protected bool IsBootstrapping = true;
     protected bool FilterPopupVisible;
     protected string? StatusMessage;
@@ -408,6 +409,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
 
     protected async Task ApplyFiltersAsync()
     {
+        CancelPendingSearch();
         AppliedWorkOrderNo = NullIfEmpty(DraftWorkOrderNo);
         AppliedProductCode = NullIfEmpty(DraftProductCode);
         AppliedDefinitionCode = NullIfEmpty(DraftDefinitionCode);
@@ -420,23 +422,59 @@ public partial class PrWorkOrderList : PageBase, IDisposable
 
     protected async Task ClearFiltersAsync()
     {
+        CancelPendingSearch();
         DraftWorkOrderNo = DraftProductCode = DraftDefinitionCode = DraftStatus = string.Empty;
         DraftStartFrom = DraftStartTo = null;
         await ApplyFiltersAsync();
     }
 
+    /// <summary>
+    /// Invalidates a pending debounced search and any in-flight response so the
+    /// newest filter set owns the grid state.
+    /// </summary>
+    private void CancelPendingSearch()
+    {
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _searchDebounce, null);
+        timer?.Stop();
+        timer?.Dispose();
+    }
+
+    /// <summary>
+    /// Explicit magnifier action: applies the latest text once and cancels the
+    /// pending debounce so no second reload follows the click.
+    /// </summary>
+    protected async Task ApplySearchAsync()
+    {
+        CancelPendingSearch();
+        SyncDataSourceFilters();
+        await ReloadGridAsync();
+    }
+
     protected async Task OnSearchTextChanged(string text)
     {
         SearchText = text ?? string.Empty;
-        _searchDebounce?.Stop();
-        _searchDebounce?.Dispose();
+        CancelPendingSearch();
         _searchDebounce = new Timer(400) { AutoReset = false };
-        var version = Interlocked.Increment(ref _searchVersion);
+        var version = Volatile.Read(ref _searchVersion);
         _searchDebounce.Elapsed += async (_, _) =>
         {
-            if (version == _searchVersion)
+            try
             {
-                await InvokeAsync(ReloadGridAsync);
+                if (version != Volatile.Read(ref _searchVersion)) return;
+                await InvokeAsync(async () =>
+                {
+                    if (_disposed || version != Volatile.Read(ref _searchVersion)) return;
+                    await ReloadGridAsync();
+                });
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                await InvokeAsync(() =>
+                {
+                    if (_disposed) return;
+                    ErrorMessage = "Search could not be completed.";
+                });
             }
         };
         _searchDebounce.Start();
@@ -448,6 +486,7 @@ public partial class PrWorkOrderList : PageBase, IDisposable
 
     private async Task ReloadGridAsync()
     {
+        var searchGeneration = Volatile.Read(ref _searchVersion);
         SyncDataSourceFilters();
         await RefreshCompactPreviewAsync();
         _grid?.Reload();
@@ -504,8 +543,11 @@ public partial class PrWorkOrderList : PageBase, IDisposable
 
     public void Dispose()
     {
-        _searchDebounce?.Stop();
-        _searchDebounce?.Dispose();
+        _disposed = true;
+        Interlocked.Increment(ref _searchVersion);
+        var timer = Interlocked.Exchange(ref _searchDebounce, null);
+        timer?.Stop();
+        timer?.Dispose();
     }
 
     protected sealed record FilterOption(string Key, string Name);

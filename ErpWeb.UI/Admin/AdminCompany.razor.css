@@ -74,6 +74,16 @@
     padding: 0 16px 12px;
 }
 
+/* The rail is narrow: the live filter keeps a short caption and a usable input floor. */
+.company-rail__search .erp-inline-search__caption {
+    flex: 0 0 auto;
+    max-inline-size: 34%;
+}
+
+.company-rail__search .erp-inline-search__editor {
+    min-inline-size: 5.5rem;
+}
+
 .company-rail__list {
     list-style: none;
     margin: 0;

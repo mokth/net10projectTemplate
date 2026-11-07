@@ -32,22 +32,28 @@
 
         <section class="iv-card lot-trace-search">
             <div class="iv-toolbar-row lot-trace-search__row">
-                <div class="iv-toolbar-row__search">
-                    <label class="iv-field-label lot-trace-search__label">Search item, lot, Work Order, PO/GR, DO, supplier, or customer</label>
-                    <DxTextBox Text="@SearchText"
-                               TextChanged="@OnSearchTextChanged"
-                               TextExpression="@(() => SearchText)"
-                               NullText="Enter at least two characters"
-                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                               BindValueMode="BindValueMode.OnInput"
-                               CssClass="w-100"
-                               @onkeydown="OnSearchKeyDownAsync" />
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption" for="iv-lot-genealogy-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="iv-lot-genealogy-search"
+                                   Text="@SearchText"
+                                   TextChanged="@OnSearchTextChanged"
+                                   TextExpression="@(() => SearchText)"
+                                   NullText="Enter at least two characters"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   BindValueMode="BindValueMode.OnInput"
+                                   CssClass="w-100"
+                                   @onkeydown="OnSearchKeyDownAsync" />
+                    </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              IconCssClass="@(IsSearching ? "fa-solid fa-spinner fa-spin" : "fa-solid fa-magnifying-glass")"
+                              CssClass="erp-inline-search__button"
+                              Enabled="@(!IsBusy)"
+                              Click="@SearchAsync"
+                              aria-busy="@(IsSearching ? "true" : "false")"
+                              aria-label="@(IsSearching ? "Searching lot genealogy" : "Search item, lot, Work Order, PO/GR, DO, supplier, or customer")"
+                              title="@(IsSearching ? "Searching…" : "Search item, lot, Work Order, PO/GR, DO, supplier, or customer")" />
                 </div>
-                <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                          Text="@(IsSearching ? "SEARCHING…" : "SEARCH")"
-                          IconCssClass="fa-solid fa-magnifying-glass"
-                          Enabled="@(!IsBusy)"
-                          Click="@SearchAsync" />
             </div>
 
             @if (CandidateRows.Count > 0)
