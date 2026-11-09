@@ -496,6 +496,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (needsReplay
             && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
             && _coordinator is not null
+            && await TryPostBackdatedMultiWacMrAsync(companyCode, branchCode,
+                batchNo, cancellationToken) is { } multiReplayResult)
+            return multiReplayResult;
+        if (needsReplay
+            && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
+            && _coordinator is not null
             && await TryPostBackdatedWacMrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } replayResult)
             return replayResult;
@@ -851,6 +857,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken)
     {
+        if (_openPeriodBackdatedReplayEnabled
+            && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
+            && _coordinator is not null
+            && await TryRollBackBackdatedMultiWacMrAsync(companyCode, branchCode,
+                userId, batchNo, cancellationToken) is { } multiReplayResult)
+            return multiReplayResult;
         if (_openPeriodBackdatedReplayEnabled
             && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
             && _coordinator is not null
