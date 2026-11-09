@@ -202,7 +202,7 @@ public static class AppSettingCatalogue
         AppSettingType.Flag,
         AppSettingScope.Company,
         "false",
-        Description: "Reserved for the quality-assurance module.");
+        Description: "Reserved for a later posting gate. Phase 1 Quality is record-only; this flag stays off and does not block GR or FG posting.");
 
     /// <summary>Every definition, in module order then declaration order.</summary>
     public static readonly IReadOnlyList<AppSettingDefinition> All =

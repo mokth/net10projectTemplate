@@ -118,6 +118,10 @@ public sealed partial class ProductionOutputService
                 return Fail(finalError);
 
             var processed = IvQty.Round(output.GoodQty + output.ScrapQty + output.RejectQty + output.HoldQty);
+            var qaError = await _qaNonGood.ClaimDailyProductionAsync(
+                db, scope.CompanyCode, scope.BranchCode!, output, cancellationToken);
+            if (qaError is not null)
+                return Fail(qaError);
             var operationRemaining = IvQty.Round(operation.PlannedOutputQty - operation.GoodQty);
             if (output.GoodQty > operationRemaining)
                 return Fail($"Good qty {output.GoodQty} exceeds operation remaining {operationRemaining}.");
@@ -347,13 +351,18 @@ public sealed partial class ProductionOutputService
             foreach (var fact in consumeFacts.OrderBy(x => x.Lot.Uid))
             {
                 var lot = fact.Lot;
+                var remainingBase = IvQty.Round(lot.BaseQty - fact.BaseQty);
+                var holdError = await AssertHoldAllowsRemainingAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, lot.Uid, remainingBase, cancellationToken);
+                if (holdError is not null)
+                    return Fail(holdError);
                 // A final depletion receives the exact remaining cost. This prevents rounded
                 // proportional splits from leaving value stranded in an empty production pile.
-                var takeCost = IvQty.Round(lot.BaseQty - fact.BaseQty) <= 0m
+                var takeCost = remainingBase <= 0m
                     ? lot.TotalCost
                     : StockLedgerPrecision.Money(lot.TotalCost * (fact.BaseQty / lot.BaseQty));
                 lot.Qty = IvQty.Round(lot.Qty - fact.LotQty);
-                lot.BaseQty = IvQty.Round(lot.BaseQty - fact.BaseQty);
+                lot.BaseQty = remainingBase;
                 lot.TotalCost = StockLedgerPrecision.Money(lot.TotalCost - takeCost);
                 lot.AverageUnitCost = lot.BaseQty > 0m ? StockLedgerPrecision.Money(lot.TotalCost / lot.BaseQty) : 0m;
                 lot.LastMovementDate = output.ProductionDate;
@@ -420,11 +429,16 @@ public sealed partial class ProductionOutputService
 
             if (handoffLot is not null && handoffConsumeQty > 0m && consumerContract is not null)
             {
-                var handoffCost = IvQty.Round(handoffLot.BaseQty - handoffConsumeBase) <= 0m
+                var remainingHandoff = IvQty.Round(handoffLot.BaseQty - handoffConsumeBase);
+                var holdError = await AssertHoldAllowsRemainingAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, handoffLot.Uid, remainingHandoff, cancellationToken);
+                if (holdError is not null)
+                    return Fail(holdError);
+                var handoffCost = remainingHandoff <= 0m
                     ? handoffLot.TotalCost
                     : StockLedgerPrecision.Money(handoffLot.TotalCost * (handoffConsumeBase / handoffLot.BaseQty));
                 handoffLot.Qty = IvQty.Round(handoffLot.Qty - handoffConsumeQty);
-                handoffLot.BaseQty = IvQty.Round(handoffLot.BaseQty - handoffConsumeBase);
+                handoffLot.BaseQty = remainingHandoff;
                 handoffLot.TotalCost = StockLedgerPrecision.Money(handoffLot.TotalCost - handoffCost);
                 handoffLot.AverageUnitCost = handoffLot.BaseQty > 0m
                     ? StockLedgerPrecision.Money(handoffLot.TotalCost / handoffLot.BaseQty)

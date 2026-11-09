@@ -282,6 +282,12 @@ public static class MenuCodes
     public const string PlanningMaterialConsumeVariance = "PLN_MAT_CONSUME_VAR";
 
 
+    /// <summary>Quality Assurance parent. Record-only workbench and settings; no POST permission.</summary>
+    public const string Quality = "QUALITY";
+    public const string QualityWorkbench = "QA_WORKBENCH";
+    public const string QualityInquiry = "QA_INQUIRY";
+    public const string QualitySettings = "QA_SETTINGS";
+
     public const string Security = "SECURITY";
     public const string Admin = "ADMIN";
     public const string AdminDemo = "ADMIN_DEMO";

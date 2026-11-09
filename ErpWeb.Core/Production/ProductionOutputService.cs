@@ -1,6 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using Microsoft.Extensions.Logging;
 using ErpWeb.Model.Data;
@@ -27,6 +28,8 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     private readonly IAppSettingService? _settings;
     private readonly ProductionAbsorbedCostCalculator _absorbedCostCalculator = new();
     private readonly ILogger? _logger;
+    private readonly IQaLogicalHoldAuthorization? _qaHold;
+    private readonly IQaNonGoodAuthorization _qaNonGood;
 
     public ProductionOutputService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -37,9 +40,13 @@ public sealed partial class ProductionOutputService : IProductionOutputService
         IStockPostingCoordinator stockCoordinator,
         IProductionOperationEligibilityService? operationEligibility = null,
         IAppSettingService? settings = null,
-        ILogger<ProductionOutputService>? logger = null)
+        ILogger<ProductionOutputService>? logger = null,
+        IQaLogicalHoldAuthorization? qaHold = null,
+        IQaNonGoodAuthorization? qaNonGood = null)
     {
         _logger = logger;
+        _qaHold = qaHold;
+        _qaNonGood = qaNonGood ?? DisabledQaNonGoodAuthorization.Instance;
         _dbFactory = dbFactory;
         _tenant = tenant;
         _access = access;
@@ -550,6 +557,23 @@ public sealed partial class ProductionOutputService : IProductionOutputService
     {
         var lot = requestedLot?.Trim();
         return string.IsNullOrWhiteSpace(lot) ? documentNo : lot;
+    }
+
+    private async Task<string?> AssertHoldAllowsRemainingAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        long productionBalLotId,
+        decimal remainingBaseQty,
+        CancellationToken cancellationToken)
+    {
+        if (_qaHold is null)
+        {
+            return null;
+        }
+
+        return await _qaHold.AssertRemainingCoversHoldsAsync(
+            db, companyCode, branchCode, productionBalLotId, remainingBaseQty, cancellationToken);
     }
 
     private static IvMasterOperationResult<ProductionOutputDetail> Fail(

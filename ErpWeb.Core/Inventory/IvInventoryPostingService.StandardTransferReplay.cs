@@ -116,6 +116,23 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, lockedClosed);
         }
+        var pileError = await LockQaTransferPilesAsync(write, companyCode, branchCode,
+            source, destination, cancellationToken);
+        if (pileError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, pileError);
+        }
+        var writeDetails = await write.IvTrxBatchDetails
+            .Where(d => d.BatchId == batch.Id)
+            .ToListAsync(cancellationToken);
+        var qaError = await AssertQaPhysicalFromDetailsAsync(
+            write, companyCode, branchCode, IvTrxTypes.StockTransfer, batchNo, writeDetails, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,
             source, cancellationToken);
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,
@@ -819,6 +836,14 @@ public sealed partial class IvInventoryPostingService
             || state.OnHandBaseQty != tail.CurrentQuantity
             || state.InventoryValue != tail.CurrentValue)
             throw InvalidStandardTransfer("The Standard item state changed before rollback.");
+
+        var qaError = await AssertQaTransferRemovalAsync(
+            db, companyCode, branchCode, batchNo, sourcePlan, destPlan, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
 
         var now = DateTime.UtcNow;
         var user = root.UserId.Length > 10 ? root.UserId[..10] : root.UserId;

@@ -1,0 +1,80 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="9c82585e-53e9-4d81-aa6f-66fa5d80c663" name="Mokth@MOKTH 2026-11-05 22:46:17" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-05T22:46:17.9608904+08:00" queuing="2026-11-05T22:46:17.9608911+08:00" start="2026-11-05T22:45:50.9838518+08:00" finish="2026-11-05T22:46:19.8960143+08:00" />
+  <TestSettings name="default" id="be8cc7c6-c64e-4625-8e29-b79f810e56f4">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-05_22_46_17" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="c3108bdc-0dbf-42af-a514-42f30874a377" testId="f8a75760-93bf-5b10-5b2c-e280d88f731f" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(rollback: False)" computerName="MOKTH" duration="00:00:12.1939608" startTime="2026-11-05T22:46:03.8051176+08:00" endTime="2026-11-05T22:46:17.8189338+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c3108bdc-0dbf-42af-a514-42f30874a377">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(Boolean rollback) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockCountLedgerAuthorityTests.cs:line 148&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="cdebb372-9505-4b81-a19f-e0a28dced2fc" testId="f8ebbf34-d921-ac19-6e6d-deee4e06adb3" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(rollback: True)" computerName="MOKTH" duration="00:00:01.9427592" startTime="2026-11-05T22:46:17.9270155+08:00" endTime="2026-11-05T22:46:19.7768232+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cdebb372-9505-4b81-a19f-e0a28dced2fc">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(Boolean rollback) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockCountLedgerAuthorityTests.cs:line 148&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(rollback: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="f8ebbf34-d921-ac19-6e6d-deee4e06adb3">
+      <Execution id="cdebb372-9505-4b81-a19f-e0a28dced2fc" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests" name="Historical_wac_count_post_and_rollback_respect_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(rollback: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="f8a75760-93bf-5b10-5b2c-e280d88f731f">
+      <Execution id="c3108bdc-0dbf-42af-a514-42f30874a377" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests" name="Historical_wac_count_post_and_rollback_respect_qa_stock_holds" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="f8a75760-93bf-5b10-5b2c-e280d88f731f" executionId="c3108bdc-0dbf-42af-a514-42f30874a377" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f8ebbf34-d921-ac19-6e6d-deee4e06adb3" executionId="cdebb372-9505-4b81-a19f-e0a28dced2fc" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="0" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:10.64]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:12.00]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:12.08]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:26.21]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:26.21]       Expected: False&#xD;
+[xUnit.net 00:00:26.22]       Actual:   True&#xD;
+[xUnit.net 00:00:26.22]       Stack Trace:&#xD;
+[xUnit.net 00:00:26.25]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockCountLedgerAuthorityTests.cs(148,0): at ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(Boolean rollback)&#xD;
+[xUnit.net 00:00:26.25]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:28.16]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:28.16]       Expected: False&#xD;
+[xUnit.net 00:00:28.16]       Actual:   True&#xD;
+[xUnit.net 00:00:28.16]       Stack Trace:&#xD;
+[xUnit.net 00:00:28.16]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockCountLedgerAuthorityTests.cs(148,0): at ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(Boolean rollback)&#xD;
+[xUnit.net 00:00:28.16]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:28.17]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T22:46:17.8308698+08:00">
+        <Text>[xUnit.net 00:00:26.21]     ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(rollback: False) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T22:46:19.7778810+08:00">
+        <Text>[xUnit.net 00:00:28.16]     ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_wac_count_post_and_rollback_respect_qa_stock_holds(rollback: True) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

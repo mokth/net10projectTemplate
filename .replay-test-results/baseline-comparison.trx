@@ -1,0 +1,122 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="95a5ade1-3a26-4980-9e1a-78ee98a3517b" name="Mokth@MOKTH 2026-11-04 23:26:21" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-04T23:26:21.3278258+08:00" queuing="2026-11-04T23:26:21.3278266+08:00" start="2026-11-04T23:26:03.6776332+08:00" finish="2026-11-04T23:26:32.4991342+08:00" />
+  <TestSettings name="default" id="51665834-9474-468e-9b34-4f30e390ea5f">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-04_23_26_21" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="bf1cc1a3-82fd-4dea-b652-13b15c699738" testId="75f82f50-2c93-011f-af95-e6839f4aa684" testName="ErpWeb.Tests.Planning.Master.BomExplosionServiceTests.Make_without_bom_is_hard_error" computerName="MOKTH" duration="00:00:11.1671324" startTime="2026-11-04T23:26:19.7895090+08:00" endTime="2026-11-04T23:26:32.0726188+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bf1cc1a3-82fd-4dea-b652-13b15c699738">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Contains() Failure: Sub-string not found&#xD;
+String:    "Cannot explode Product A[STANDARD] becaus"···&#xD;
+Not found: "no active BOM"</Message>
+          <StackTrace>   at ErpWeb.Tests.Planning.Master.BomExplosionServiceTests.Make_without_bom_is_hard_error() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Planning\Master\BomExplosionServiceTests.cs:line 191&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a3b8d06b-c8d1-4225-ae64-30447fce3bda" testId="dd7a8b15-3358-0c4e-f0b3-f860d25dbe4b" testName="ErpWeb.Tests.Sales.Master.SaCustServiceTests.Salesman_LegacyValue_ToleratedOnUnrelatedEdit" computerName="MOKTH" duration="00:00:01.2700115" startTime="2026-11-04T23:26:31.0748880+08:00" endTime="2026-11-04T23:26:32.3591077+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a3b8d06b-c8d1-4225-ae64-30447fce3bda">
+      <Output>
+        <ErrorInfo>
+          <Message>Validation failed.</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Master.SaCustServiceTests.Salesman_LegacyValue_ToleratedOnUnrelatedEdit() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 1048&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="aeeda99d-cdeb-4344-a35a-74378428d08c" testId="6a8e1544-7ae1-63ad-8369-27ab8c7a67ab" testName="ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_On_CopiesGeneralToInvoice" computerName="MOKTH" duration="00:00:09.8869624" startTime="2026-11-04T23:26:19.7896012+08:00" endTime="2026-11-04T23:26:31.0679057+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="aeeda99d-cdeb-4344-a35a-74378428d08c">
+      <Output>
+        <ErrorInfo>
+          <Message>Validation failed.</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_On_CopiesGeneralToInvoice() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 604&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="3736a0ff-5b4c-485f-aade-8070cda95355" testId="87560876-4e10-f3c0-4d2b-1aeced3da694" testName="ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests.PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom" computerName="MOKTH" duration="00:00:00.3101905" startTime="2026-11-04T23:26:19.7874472+08:00" endTime="2026-11-04T23:26:20.0864236+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3736a0ff-5b4c-485f-aade-8070cda95355">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Contains() Failure: Sub-string not found&#xD;
+String:    "The two latest posted lines do not share "···&#xD;
+Not found: "same verified purchase UOM"</Message>
+          <StackTrace>   at ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests.PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Procurement\Inquiry\PoProcurementKpiServiceTests.cs:line 76&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_On_CopiesGeneralToInvoice" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="6a8e1544-7ae1-63ad-8369-27ab8c7a67ab">
+      <Execution id="aeeda99d-cdeb-4344-a35a-74378428d08c" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Master.SaCustServiceTests" name="AppInvoice_On_CopiesGeneralToInvoice" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Master.SaCustServiceTests.Salesman_LegacyValue_ToleratedOnUnrelatedEdit" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="dd7a8b15-3358-0c4e-f0b3-f860d25dbe4b">
+      <Execution id="a3b8d06b-c8d1-4225-ae64-30447fce3bda" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Master.SaCustServiceTests" name="Salesman_LegacyValue_ToleratedOnUnrelatedEdit" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests.PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="87560876-4e10-f3c0-4d2b-1aeced3da694">
+      <Execution id="3736a0ff-5b4c-485f-aade-8070cda95355" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests" name="PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Planning.Master.BomExplosionServiceTests.Make_without_bom_is_hard_error" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="75f82f50-2c93-011f-af95-e6839f4aa684">
+      <Execution id="bf1cc1a3-82fd-4dea-b652-13b15c699738" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Planning.Master.BomExplosionServiceTests" name="Make_without_bom_is_hard_error" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="75f82f50-2c93-011f-af95-e6839f4aa684" executionId="bf1cc1a3-82fd-4dea-b652-13b15c699738" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dd7a8b15-3358-0c4e-f0b3-f860d25dbe4b" executionId="a3b8d06b-c8d1-4225-ae64-30447fce3bda" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6a8e1544-7ae1-63ad-8369-27ab8c7a67ab" executionId="aeeda99d-cdeb-4344-a35a-74378428d08c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="87560876-4e10-f3c0-4d2b-1aeced3da694" executionId="3736a0ff-5b4c-485f-aade-8070cda95355" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="4" executed="4" passed="0" failed="4" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:12.25]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:13.60]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:13.65]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:14.04]       Assert.Contains() Failure: Sub-string not found&#xD;
+[xUnit.net 00:00:14.04]       String:    "The two latest posted lines do not share "···&#xD;
+[xUnit.net 00:00:14.04]       Not found: "same verified purchase UOM"&#xD;
+[xUnit.net 00:00:14.04]       Stack Trace:&#xD;
+[xUnit.net 00:00:14.05]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Procurement\Inquiry\PoProcurementKpiServiceTests.cs(76,0): at ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests.PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom()&#xD;
+[xUnit.net 00:00:14.05]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:25.01]       Validation failed.&#xD;
+[xUnit.net 00:00:25.01]       Stack Trace:&#xD;
+[xUnit.net 00:00:25.01]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs(604,0): at ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_On_CopiesGeneralToInvoice()&#xD;
+[xUnit.net 00:00:25.01]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:26.02]       Assert.Contains() Failure: Sub-string not found&#xD;
+[xUnit.net 00:00:26.02]       String:    "Cannot explode Product A[STANDARD] becaus"···&#xD;
+[xUnit.net 00:00:26.02]       Not found: "no active BOM"&#xD;
+[xUnit.net 00:00:26.02]       Stack Trace:&#xD;
+[xUnit.net 00:00:26.02]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Planning\Master\BomExplosionServiceTests.cs(191,0): at ErpWeb.Tests.Planning.Master.BomExplosionServiceTests.Make_without_bom_is_hard_error()&#xD;
+[xUnit.net 00:00:26.02]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:26.30]       Validation failed.&#xD;
+[xUnit.net 00:00:26.30]       Stack Trace:&#xD;
+[xUnit.net 00:00:26.30]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs(1048,0): at ErpWeb.Tests.Sales.Master.SaCustServiceTests.Salesman_LegacyValue_ToleratedOnUnrelatedEdit()&#xD;
+[xUnit.net 00:00:26.30]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:26.31]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:26:20.0924787+08:00">
+        <Text>[xUnit.net 00:00:14.03]     ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests.PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:26:31.0692633+08:00">
+        <Text>[xUnit.net 00:00:25.01]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_On_CopiesGeneralToInvoice [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:26:32.0735492+08:00">
+        <Text>[xUnit.net 00:00:26.01]     ErpWeb.Tests.Planning.Master.BomExplosionServiceTests.Make_without_bom_is_hard_error [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:26:32.3598651+08:00">
+        <Text>[xUnit.net 00:00:26.30]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.Salesman_LegacyValue_ToleratedOnUnrelatedEdit [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

@@ -7,6 +7,69 @@ namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 public sealed class StockReplayWacSimulatorTests
 {
+    [Theory]
+    [InlineData(10, 14.4)]
+    [InlineData(1, 7.2)]
+    public void Reversed_production_issue_follows_its_repriced_issue_on_receipt_post_and_rollback(
+        double receiptUnitCost, double correctedIssueValue)
+    {
+        var price = (decimal)receiptUnitCost;
+        var corrected = (decimal)correctedIssueValue;
+        var receipt = new StockReplayWacEvent(1,
+            Key(new DateTime(2026, 10, 1, 8, 0, 0), 3),
+            0m, 0m, 5m, FixedSignedValue: 5m * price);
+        var issue = new StockReplayWacEvent(2,
+            Key(new DateTime(2026, 10, 2, 8, 0, 0), 1), -4m, -8m, -4m);
+        var reversal = new StockReplayWacEvent(3,
+            Key(new DateTime(2026, 10, 3, 8, 0, 0), 2),
+            4m, 8m, 4m, FixedSignedValue: 8m, ReversedProductionIssueEventId: 2);
+
+        var inserted = StockReplayWacSimulator.SimulateInsertion(
+            20m, 40m, receipt, [issue, reversal]);
+        Assert.Equal(new[] { -corrected, corrected }, inserted.LaterSteps.Select(s => s.SignedValue));
+        Assert.Equal(25m, inserted.FinalQuantity);
+        Assert.Equal(40m + 5m * price, inserted.FinalValue);
+
+        var removed = StockReplayWacSimulator.SimulateRemoval(
+            inserted.FinalQuantity, inserted.FinalValue,
+            receipt with { OldSignedQuantity = 5m, OldSignedValue = 5m * price },
+            [issue with { OldSignedValue = -corrected },
+             reversal with { OldSignedValue = corrected, FixedSignedValue = corrected }]);
+        Assert.Equal(new[] { -8m, 8m }, removed.LaterSteps.Select(s => s.SignedValue));
+        Assert.Equal(20m, removed.FinalQuantity);
+        Assert.Equal(40m, removed.FinalValue);
+    }
+
+    [Fact]
+    public void Reversed_production_issue_rejects_missing_partial_or_duplicate_lineage()
+    {
+        var receipt = new StockReplayWacEvent(1,
+            Key(new DateTime(2026, 10, 1, 8, 0, 0), 3), 0m, 0m, 5m, FixedSignedValue: 50m);
+        var issue = new StockReplayWacEvent(2,
+            Key(new DateTime(2026, 10, 2, 8, 0, 0), 1), -4m, -8m, -4m);
+        var reversal = new StockReplayWacEvent(3,
+            Key(new DateTime(2026, 10, 3, 8, 0, 0), 2),
+            4m, 8m, 4m, FixedSignedValue: 8m, ReversedProductionIssueEventId: 2);
+
+        Assert.Throws<StockLedgerException>(() => StockReplayWacSimulator.SimulateInsertion(
+            20m, 40m, receipt, [issue, reversal with { ReversedProductionIssueEventId = 99 }]));
+        Assert.Throws<StockLedgerException>(() => StockReplayWacSimulator.SimulateInsertion(
+            20m, 40m, receipt, [issue, reversal with
+            {
+                OldSignedQuantity = 3m, ReplaySignedQuantity = 3m, OldSignedValue = 6m,
+                FixedSignedValue = 6m
+            }]));
+        Assert.Throws<StockLedgerException>(() => StockReplayWacSimulator.SimulateInsertion(
+            20m, 40m, receipt, [issue, reversal with { OldSignedValue = 9m, FixedSignedValue = 9m }]));
+        Assert.Throws<ArgumentException>(() => StockReplayWacSimulator.SimulateInsertion(
+            20m, 40m, receipt, [issue, reversal with { FixedSignedValue = 9m }]));
+        Assert.Throws<StockLedgerException>(() => StockReplayWacSimulator.SimulateInsertion(
+            20m, 40m, receipt, [issue, reversal, reversal with
+            {
+                EventId = 4, Key = Key(new DateTime(2026, 10, 4, 8, 0, 0), 4)
+            }]));
+    }
+
     [Fact]
     public void Replayed_customer_return_follows_the_repriced_sale_on_insertion_and_removal()
     {

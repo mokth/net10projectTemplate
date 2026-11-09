@@ -1,0 +1,226 @@
+using System.Globalization;
+using ErpWeb.Core.Production;
+using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Production;
+using ErpWeb.Model.Entities.StockLedger;
+using Microsoft.EntityFrameworkCore;
+
+namespace ErpWeb.Core.Inventory;
+
+public sealed partial class IvInventoryPostingService
+{
+    private sealed record EarlierReceiptCycleAuthority(
+        decimal Quantity, decimal Value, ExistingWacPairCorrection? ActiveCorrection);
+
+    // The first receipt was posted before the issue existed. Each later removal
+    // changes both historical issue legs; a repost must reverse that exact pair.
+    private static async Task<EarlierReceiptCycleAuthority?> ValidateEarlierReceiptCyclesAsync(
+        AppDbContext db, string company, string branch, IvTrxBatch batch,
+        StockPosting issueOwner, StockPosting reverseOwner,
+        StockValuationFact issueFact, StockValuationFact reverseFact,
+        ProductionBalLotMovement issueMovement, ProductionBalLotMovement reverseMovement,
+        IvTrxHistory[] receiptHistories, StockValuationFact[] receiptFacts,
+        StockValuationFact[] valueFacts, ProductionCostRestatementFact[] costs,
+        bool rollback, CancellationToken ct)
+    {
+        if (receiptHistories.Length == 0 || receiptHistories.Length % 2 != (rollback ? 1 : 0)
+            || receiptFacts.Length != receiptHistories.Length
+            || valueFacts.Length != (receiptHistories.Length - 1) * 2
+            || costs.Length != valueFacts.Length
+            || receiptHistories.Any(h => h.StockPostingId is not > 0))
+            return null;
+        var rootIds = receiptHistories.Select(h => h.StockPostingId!.Value).ToArray();
+        if (rootIds.Distinct().Count() != rootIds.Length) return null;
+        var roots = await db.StockPostings.AsNoTracking().Where(p => rootIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, ct);
+        var runs = await db.StockReplayRuns.AsNoTracking().Where(r => rootIds.Contains(r.RootStockPostingId))
+            .ToDictionaryAsync(r => r.RootStockPostingId, ct);
+        var effects = await db.StockReplayEffects.AsNoTracking().Where(e => rootIds.Contains(e.RootStockPostingId))
+            .ToArrayAsync(ct);
+        if (roots.Count != rootIds.Length || runs.Count != rootIds.Length - 1
+            || effects.Length != (rootIds.Length - 1) * 4)
+            return null;
+        var valueIds = valueFacts.Select(f => f.Id).ToArray();
+        var costIds = costs.Select(f => f.Id).ToArray();
+        if (await db.StockValuationFacts.AsNoTracking().CountAsync(f =>
+                f.ReversesValuationFactId.HasValue && valueIds.Contains(f.ReversesValuationFactId.Value), ct)
+                != valueFacts.Count(f => f.ReversesValuationFactId.HasValue)
+            || await db.ProductionCostRestatementFacts.AsNoTracking().CountAsync(f =>
+                f.ReversesRestatementFactId.HasValue && costIds.Contains(f.ReversesRestatementFactId.Value), ct)
+                != costs.Count(f => f.ReversesRestatementFactId.HasValue))
+            return null;
+        var ordered = receiptHistories.OrderBy(h => roots[h.StockPostingId!.Value].PostingSequence).ToArray();
+        var first = ordered[0];
+        var firstRoot = roots[first.StockPostingId!.Value];
+        var firstFact = receiptFacts.SingleOrDefault(f => f.InventoryHistoryId == first.Id);
+        if (firstFact is null || first.EntryRole != "ORIGINAL"
+            || firstRoot.PostingSequence >= issueOwner.PostingSequence || runs.ContainsKey(firstRoot.Id)
+            || firstFact.BaseQty <= 0m || firstFact.CostAmount < 0m)
+            return null;
+
+        StockValuationFact? previousIssueValue = null, previousReverseValue = null;
+        ProductionCostRestatementFact? previousIssueCost = null, previousReverseCost = null;
+        IvTrxHistory? precedingReceipt = null;
+        StockValuationFact? precedingReceiptFact = null;
+        long previousSequence = 0;
+        for (var i = 0; i < ordered.Length; i++)
+        {
+            var history = ordered[i];
+            var root = roots[history.StockPostingId!.Value];
+            var primary = i % 2 == 0;
+            var matches = receiptFacts.Where(f => f.InventoryHistoryId == history.Id).ToArray();
+            if (matches.Length != 1) return null;
+            var receipt = matches[0];
+            if (history.CompanyCode != company || history.BranchCode != branch
+                || history.BatchNo != batch.BatchNo || history.TrxType != batch.TrxType
+                || history.ICode != issueFact.ItemCode
+                || history.LedgerVersion != 2 || history.LedgerEpochId != issueFact.LedgerEpochId
+                || history.BatchStatus != IvBatchStatuses.Posted || history.TrxDtTime != batch.TrxDtTime
+                || history.EntryRole != (primary ? "ORIGINAL" : "REVERSAL")
+                || root.CompanyCode != company || root.BranchCode != branch || root.SealedAtUtc is null
+                || root.SourceModule != "INVENTORY" || root.SourceDocumentType != batch.TrxType
+                || root.SourceDocumentId != batch.Id.ToString(CultureInfo.InvariantCulture)
+                || root.SourceDocumentNo != batch.BatchNo.ToString(CultureInfo.InvariantCulture)
+                || root.LedgerEpochId != issueFact.LedgerEpochId || root.EffectiveAt != history.TrxDtTime
+                || root.DocumentRevision != history.DocumentRevision
+                || root.PostingRole != (primary ? "PRIMARY" : "REVERSAL")
+                || root.PostingSequence <= previousSequence
+                || i > 0 && root.PostingSequence <= reverseOwner.PostingSequence
+                || receipt.CompanyCode != company || receipt.BranchCode != branch
+                || receipt.StockPostingId != root.Id || receipt.LedgerEpochId != issueFact.LedgerEpochId
+                || receipt.ItemCode != issueFact.ItemCode || receipt.EffectiveAt != history.TrxDtTime
+                || receipt.BusinessDate != root.BusinessDate || receipt.PeriodKey != root.PeriodKey
+                || receipt.SourceDocumentType != root.SourceDocumentType
+                || receipt.SourceDocumentId != root.SourceDocumentId || receipt.SourceDocumentNo != root.SourceDocumentNo
+                || receipt.SourceDocumentLine != history.TrxLineNo.ToString(CultureInfo.InvariantCulture)
+                || receipt.BaseCurrency != issueFact.BaseCurrency
+                || receipt.BaseUom != issueFact.BaseUom || receipt.CostMethod != StockCostMethods.MovingAverage
+                || receipt.BaseQty != firstFact.BaseQty || receipt.CostAmount != firstFact.CostAmount
+                || receipt.BaseCostAmount != receipt.CostAmount || receipt.UnitCost != firstFact.UnitCost
+                || StockLedgerPrecision.Money(receipt.BaseQty * receipt.UnitCost) != receipt.CostAmount
+                || receipt.Direction != (primary ? 1 : -1))
+                return null;
+            if (primary)
+            {
+                if (history.ReversesHistoryId is not null || history.ToBalLocId != issueFact.FromBalLocId
+                    || history.FromBalLocId is not null || history.ToStdQty != receipt.BaseQty
+                    || history.ToStdUom != receipt.BaseUom || receipt.ToBalLocId != history.ToBalLocId
+                    || receipt.ValuationStatus != StockValuationStatuses.Valued
+                    || receipt.ValuationSource != (i == 0
+                        ? batch.TrxType == IvTrxTypes.GoodsReceive
+                            ? StockValuationSources.ReceiptActual : StockValuationSources.ManualApproved
+                        : StockValuationSources.MovingAverage)
+                    || root.ReversesPostingId is not null
+                    || receipt.OriginalValuationFactId is not null || receipt.ReversesValuationFactId is not null)
+                    return null;
+                precedingReceipt = history;
+                precedingReceiptFact = receipt;
+            }
+            else if (precedingReceipt is null || precedingReceiptFact is null
+                || history.ReversesHistoryId != precedingReceipt.Id
+                || history.DocumentRevision != precedingReceipt.DocumentRevision
+                || history.TrxLineNo != precedingReceipt.TrxLineNo
+                || history.FromBalLocId != precedingReceipt.ToBalLocId || history.ToBalLocId is not null
+                || history.FrStdQty != precedingReceipt.ToStdQty || history.FrStdUom != precedingReceipt.ToStdUom
+                || root.ReversesPostingId != precedingReceipt.StockPostingId
+                || receipt.FromBalLocId != history.FromBalLocId
+                || receipt.ValuationStatus != StockValuationStatuses.Reversed
+                || receipt.ValuationSource != StockValuationSources.OriginalReversal
+                || receipt.OriginalValuationFactId != precedingReceiptFact.Id
+                || receipt.ReversesValuationFactId != precedingReceiptFact.Id)
+                return null;
+            previousSequence = root.PostingSequence;
+            if (i == 0) continue;
+
+            if (!runs.TryGetValue(root.Id, out var run)
+                || run.CompanyCode != company || run.BranchCode != branch
+                || run.RootRequestId != root.RequestId || run.RootDocumentType != root.SourceDocumentType
+                || run.RootDocumentId != root.SourceDocumentId
+                || run.EarliestEffectiveAt > issueFact.EffectiveAt || run.LatestEffectiveAt < reverseFact.EffectiveAt)
+                return null;
+            var rootValues = valueFacts.Where(f => f.StockPostingId == root.Id).ToArray();
+            var rootCosts = costs.Where(f => f.ReplayStockPostingId == root.Id).ToArray();
+            if (rootValues.Length != 2 || rootCosts.Length != 2 || rootValues.Sum(f => f.SignedValue) != 0m)
+                return null;
+            var issueValues = rootValues.Where(f => f.OriginalValuationFactId == issueFact.Id).ToArray();
+            var reverseValues = rootValues.Where(f => f.OriginalValuationFactId == reverseFact.Id).ToArray();
+            var issueCosts = rootCosts.Where(f => f.ProductionBalLotMovementId == issueMovement.Uid).ToArray();
+            var reverseCosts = rootCosts.Where(f => f.ProductionBalLotMovementId == reverseMovement.Uid).ToArray();
+            if (issueValues.Length != 1 || reverseValues.Length != 1 || issueCosts.Length != 1 || reverseCosts.Length != 1
+                || issueCosts[0].CorrectedEffectiveTotalCost != reverseCosts[0].CorrectedEffectiveTotalCost
+                || issueCosts[0].CorrectedUnitCost != reverseCosts[0].CorrectedUnitCost
+                || !MatchesLeg(issueValues[0], issueCosts[0], issueFact, issueMovement, previousIssueValue, previousIssueCost)
+                || !MatchesLeg(reverseValues[0], reverseCosts[0], reverseFact, reverseMovement, previousReverseValue, previousReverseCost))
+                return null;
+            previousIssueValue = primary ? null : issueValues[0];
+            previousReverseValue = primary ? null : reverseValues[0];
+            previousIssueCost = primary ? null : issueCosts[0];
+            previousReverseCost = primary ? null : reverseCosts[0];
+
+            bool MatchesLeg(StockValuationFact value, ProductionCostRestatementFact cost,
+                StockValuationFact baseline, ProductionBalLotMovement movement,
+                StockValuationFact? priorValue, ProductionCostRestatementFact? priorCost)
+            {
+                if (value.CompanyCode != company || value.BranchCode != branch
+                    || value.LedgerEpochId != baseline.LedgerEpochId || value.InventoryHistoryId is not null
+                    || value.ItemCode != baseline.ItemCode || value.BaseQty != 0m || value.BaseUom != baseline.BaseUom
+                    || value.MovementCode != ReversedIssueValueMovement || value.CostMethod != StockCostMethods.MovingAverage
+                    || value.Direction is not (-1 or 1) || value.CostAmount <= 0m || value.BaseCostAmount != value.CostAmount
+                    || value.EffectiveAt != baseline.EffectiveAt || value.BusinessDate != baseline.BusinessDate
+                    || value.PeriodKey != baseline.PeriodKey || value.FromBalLocId != baseline.FromBalLocId
+                    || value.ToBalLocId != baseline.ToBalLocId || value.WarehouseCode != baseline.WarehouseCode
+                    || value.LocationCode != baseline.LocationCode || value.LotId != baseline.LotId
+                    || value.LotNo != baseline.LotNo || value.ItemStatus != baseline.ItemStatus
+                    || value.BaseCurrency != baseline.BaseCurrency || value.SourceLineId != baseline.SourceLineId
+                    || value.SourceDocumentType != baseline.SourceDocumentType
+                    || value.SourceDocumentId != baseline.SourceDocumentId || value.SourceDocumentNo != baseline.SourceDocumentNo
+                    || value.SourceDocumentLine != baseline.SourceDocumentLine
+                    || cost.CompanyCode != company || cost.BranchCode != branch || cost.ReplayRequestId != root.RequestId
+                    || cost.EffectiveAt != movement.MovementDate || cost.CorrectedEffectiveTotalCost < 0m
+                    || cost.DeltaCost != cost.CorrectedEffectiveTotalCost - cost.PriorEffectiveTotalCost
+                    || cost.DeltaCost == 0m || value.SignedValue != baseline.Direction * cost.DeltaCost
+                    || cost.CorrectedUnitCost != StockLedgerPrecision.Money(cost.CorrectedEffectiveTotalCost / movement.BaseQty)
+                    || !HasEffect(value.Id, StockReplayEffectTypes.StockValuationFact, ReversedIssueValueEffect,
+                        baseline.StockPostingId, baseline.Id)
+                    || !HasEffect(cost.Id, "PRODUCTION_COST_RESTATEMENT_FACT", "PRODUCTION_COST_RESTATEMENT",
+                        movement.StockPostingId!.Value, movement.Uid))
+                    return false;
+                if (!primary)
+                    return priorValue is null && priorCost is null && value.ReversesValuationFactId is null
+                        && value.ValuationStatus == StockValuationStatuses.Valued
+                        && value.ValuationSource == StockValuationSources.MovingAverage
+                        && cost.ReversesRestatementFactId is null && cost.PriorEffectiveTotalCost == movement.TotalCost;
+                return priorValue is not null && priorCost is not null
+                    && value.ReversesValuationFactId == priorValue.Id && value.Direction == -priorValue.Direction
+                    && value.CostAmount == priorValue.CostAmount && value.ValuationStatus == StockValuationStatuses.Reversed
+                    && value.ValuationSource == StockValuationSources.OriginalReversal
+                    && cost.ReversesRestatementFactId == priorCost.Id
+                    && cost.PriorEffectiveTotalCost == priorCost.CorrectedEffectiveTotalCost
+                    && cost.CorrectedEffectiveTotalCost == movement.TotalCost;
+            }
+
+            bool HasEffect(long affectedId, string type, string kind, long businessOwner, long originalId) =>
+                effects.Count(e => e.CompanyCode == company && e.BranchCode == branch && e.ReplayRunId == run.Id
+                    && e.RootStockPostingId == root.Id && e.BusinessOwnerPostingId == businessOwner
+                    && e.AffectedEntityType == type && e.AffectedEntityId == affectedId
+                    && e.EffectKind == kind && e.OriginalEntityId == originalId) == 1;
+        }
+
+        try
+        {
+            var effective = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch,
+                [issueMovement.Uid, reverseMovement.Uid], ct);
+            if (effective[issueMovement.Uid].RestatementFactId != previousIssueCost?.Id
+                || effective[reverseMovement.Uid].RestatementFactId != previousReverseCost?.Id)
+                return null;
+        }
+        catch (StockLedgerException) { return null; }
+        var active = previousIssueCost is null ? null : new ExistingWacPairCorrection(
+            previousIssueCost.CorrectedEffectiveTotalCost, previousIssueValue!.Id, previousReverseValue!.Id,
+            previousIssueCost.Id, previousReverseCost!.Id);
+        return new EarlierReceiptCycleAuthority(firstFact.BaseQty, firstFact.CostAmount, active);
+    }
+}

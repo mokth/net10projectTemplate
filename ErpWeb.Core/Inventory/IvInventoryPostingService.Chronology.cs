@@ -11,6 +11,189 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
+    // Caller has locked the affected slices in the branch transaction. The live
+    // balance can include a same-day reversal that occurs after this document.
+    private static async Task<string?> ValidateV2AsOfOutgoingAsync(
+        AppDbContext db, string company, string branch, DateTime effectiveAt,
+        IReadOnlyDictionary<int, decimal> requiredByBalance, CancellationToken ct,
+        StockPostingContext? pendingCount = null, int? countBatchNo = null)
+    {
+        if (requiredByBalance.Count == 0 || !await db.StockLedgerEpochs.AsNoTracking().AnyAsync(e =>
+                e.CompanyCode == company && e.BranchCode == branch
+                && e.Status == StockLedgerEpochStatuses.Active && e.Version == 2
+                && e.EffectiveFrom <= effectiveAt, ct))
+            return null;
+        if (pendingCount is not null && (!ReferenceEquals(pendingCount.Db, db)
+                || pendingCount.CompanyCode != company || pendingCount.BranchCode != branch
+                || pendingCount.Posting.EffectiveAt != effectiveAt || countBatchNo is not > 0))
+            throw new InvalidOperationException("The pending count does not match this stock transaction.");
+        var quantities = pendingCount is null
+            ? await StockReplayPhysicalAsOfReader.ReadAsync(db, company, branch,
+                requiredByBalance.Keys.ToArray(), effectiveAt, ct)
+            : await StockReplayPhysicalAsOfReader.ReadBeforePendingCountAsync(pendingCount,
+                countBatchNo!.Value, requiredByBalance.Keys.ToArray(), ct);
+        foreach (var (balanceId, required) in requiredByBalance)
+        {
+            if (!quantities.TryGetValue(balanceId, out var stock))
+                return $"Stock balance {balanceId} could not be checked at the transaction time.";
+            if (required > stock.UsableBaseQty)
+                return $"Insufficient stock on balance {balanceId} at the transaction time "
+                    + $"(available {stock.UsableBaseQty}, required {required}).";
+        }
+        return null;
+    }
+
+    // A fast receipt rollback removes the receipt at its original business key.
+    // A later reversed Production issue may have no net current effect, but
+    // it still needed stock and the correct cost before its reversal.
+    private async Task<IvInventoryPostingBatchResult?> RejectUnsafeReversedProductionReceiptRollbackAsync(
+        AppDbContext db, string company, string branch, int batchNo, string trxType,
+        CancellationToken cancellationToken)
+    {
+        if (db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Receipt rollback must hold its branch transaction.");
+
+        var roots = await db.IvTrxHistories.AsNoTracking().Where(h =>
+            h.CompanyCode == company && h.BranchCode == branch && h.BatchNo == batchNo
+            && h.TrxType == trxType && h.LedgerVersion == 2 && h.EntryRole == "ORIGINAL"
+            && h.ToBalLocId != null && h.ToStdQty > 0m
+            && !db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id))
+            .ToArrayAsync(cancellationToken);
+        if (roots.Length == 0)
+            return null;
+
+        var batch = await db.IvTrxBatches.AsNoTracking().SingleOrDefaultAsync(b =>
+            b.CompanyCode == company && b.BranchCode == branch && b.BatchNo == batchNo
+            && b.TrxType == trxType && b.BatchStatus == IvBatchStatuses.Posted, cancellationToken);
+        if (batch is null)
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "The receipt's original posting could not be verified for rollback.");
+
+        var balanceIds = roots.Select(h => h.ToBalLocId!.Value).Distinct().ToArray();
+        var itemCodes = roots.Select(h => h.ICode).Distinct().ToArray();
+        var earliest = roots.Min(h => h.TrxDtTime);
+        // WAC is item-wide, so a later Production issue can depend on this
+        // receipt even if it used a different physical pile.
+        var reversedIssues = await db.IvTrxHistories.AsNoTracking().Where(h =>
+            h.CompanyCode == company && h.BranchCode == branch
+            && h.TrxType == IvTrxTypes.IssueToProduction && h.EntryRole == "ORIGINAL"
+            && itemCodes.Contains(h.ICode) && h.TrxDtTime >= earliest
+            && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id))
+            .ToArrayAsync(cancellationToken);
+        if (reversedIssues.Length == 0)
+            return null;
+
+        IvInventoryPostingBatchResult Unsafe(string reason) =>
+            IvInventoryPostingBatchResult.Fail(batchNo, reason);
+
+        var balances = await db.IvBalLocs.AsNoTracking().Where(b =>
+            b.CompanyCode == company && b.BranchCode == branch && balanceIds.Contains(b.Id))
+            .ToArrayAsync(cancellationToken);
+        if (balances.Length != balanceIds.Length)
+            return Unsafe("The receipt's stock balance could not be verified for rollback.");
+        var slices = _posting.GetOrderedStockSlices(balances.Select(b => IvStockSliceKey.Create(
+            b.CompanyCode, b.BranchCode, b.ICode, b.WhCode, b.LocCode, b.LotNo, b.IStatus)));
+        var locked = await _posting.LockBalanceSlicesAsync(db, slices, cancellationToken);
+        if (locked.Count != balanceIds.Length || locked.Values.Select(b => b.Id).ToHashSet().Count != balanceIds.Length)
+            return Unsafe("The receipt's stock balances changed during rollback.");
+
+        // A count is an absolute reset, so subtracting a receipt through it is
+        // not a valid fast-path projection. Its replay planner must own that case.
+        if (await db.IvStockCountLines.AsNoTracking().AnyAsync(l => balanceIds.Contains(l.BalLocId)
+                && l.Header.CompanyCode == company && l.Header.BranchCode == branch
+                && (l.Header.Status == "POSTED" || l.Header.Status == "ROLLED_BACK")
+                && l.Header.CountDate >= earliest.Date, cancellationToken))
+            return Unsafe("This receipt has later stock-count history and needs historical replay before rollback.");
+
+        var histories = roots.Concat(reversedIssues).ToArray();
+        var ownerIds = histories.Where(h => h.StockPostingId.HasValue)
+            .Select(h => h.StockPostingId!.Value).Distinct().ToArray();
+        var owners = await db.StockPostings.AsNoTracking().Where(p => ownerIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+        bool TryKey(IvTrxHistory history, out StockReplayEventKey key)
+        {
+            key = default;
+            if (history.LedgerVersion != 2 || history.BatchStatus != IvBatchStatuses.Posted
+                || history.EntryRole is not ("ORIGINAL" or "REVERSAL")
+                || history.StockPostingId is not long id || !owners.TryGetValue(id, out var owner)
+                || owner.CompanyCode != company || owner.BranchCode != branch
+                || owner.SealedAtUtc is null || owner.LedgerEpochId != history.LedgerEpochId
+                || owner.PostingSequence <= 0 || owner.EffectiveAt != history.TrxDtTime
+                || owner.DocumentRevision != history.DocumentRevision
+                || owner.PostingRole != (history.EntryRole == "ORIGINAL" ? "PRIMARY" : "REVERSAL"))
+                return false;
+            key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                owner.PostingSequence, $"H{history.Id:D10}", 0);
+            return true;
+        }
+
+        var receiptByBalance = new Dictionary<int, (decimal Quantity, StockReplayEventKey LastKey)>();
+        var receiptByItem = new Dictionary<string, StockReplayEventKey>();
+        foreach (var root in roots)
+        {
+            if (!TryKey(root, out var key) || root.FromBalLocId is not null
+                || root.TrxDtTime != batch.TrxDtTime
+                || owners[root.StockPostingId!.Value].SourceModule != "INVENTORY"
+                || owners[root.StockPostingId!.Value].SourceDocumentType != trxType
+                || owners[root.StockPostingId!.Value].SourceDocumentId != batch.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                || owners[root.StockPostingId!.Value].SourceDocumentNo != batchNo.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                return Unsafe("The receipt's original stock posting could not be verified for rollback.");
+            var pileId = root.ToBalLocId!.Value;
+            if (receiptByBalance.TryGetValue(pileId, out var previous))
+                receiptByBalance[pileId] = (IvQty.Round(previous.Quantity + root.ToStdQty!.Value),
+                    previous.LastKey.CompareTo(key) >= 0 ? previous.LastKey : key);
+            else
+                receiptByBalance.Add(pileId, (root.ToStdQty!.Value, key));
+            if (!receiptByItem.TryGetValue(root.ICode, out var itemKey) || key.CompareTo(itemKey) < 0)
+                receiptByItem[root.ICode] = key;
+        }
+
+        try
+        {
+            foreach (var issue in reversedIssues)
+            {
+                if (!TryKey(issue, out var key) || issue.FromBalLocId is not int pileId
+                    || issue.FrStdQty is not > 0m || issue.ToBalLocId is not null)
+                    return Unsafe("The later reversed Production issue could not be verified for receipt rollback.");
+                if (!receiptByBalance.TryGetValue(pileId, out var receipt)
+                    || key.CompareTo(receipt.LastKey) <= 0)
+                    continue;
+                var stock = await StockReplayPhysicalAsOfReader.ReadAtKeyAsync(db, company, branch,
+                    [pileId], key, cancellationToken);
+                if (stock[pileId].AsOfBaseQty < receipt.Quantity)
+                    return Unsafe("Rolling back this receipt would make historical stock negative at the later Production issue.");
+            }
+        }
+        catch (StockLedgerException)
+        {
+            return Unsafe("The later Production issue's stock history could not be verified for receipt rollback.");
+        }
+
+        var affectedWacItems = new HashSet<string>(StringComparer.Ordinal);
+        var methods = await db.StockCostStates.AsNoTracking().Where(s =>
+                s.CompanyCode == company && s.BranchCode == branch && itemCodes.Contains(s.ItemCode))
+            .ToArrayAsync(cancellationToken);
+        foreach (var issue in reversedIssues)
+        {
+            if (!TryKey(issue, out var issueKey))
+                return Unsafe("The later reversed Production issue could not be verified for receipt rollback.");
+            if (issueKey.CompareTo(receiptByItem[issue.ICode]) <= 0)
+                continue;
+            var method = methods.Where(s => s.ItemCode == issue.ICode).ToArray();
+            if (method.Length != 1)
+                return Unsafe("The item's cost method could not be verified for receipt rollback.");
+            if (method[0].CostMethod == StockCostMethods.MovingAverage)
+                affectedWacItems.Add(issue.ICode);
+            else if (method[0].CostMethod is not (StockCostMethods.Fifo or StockCostMethods.Standard))
+                return Unsafe("The item's cost method is not supported for receipt rollback.");
+        }
+        if (affectedWacItems.Count > 0
+            && !await HasUnchangedWacReversedIssueAsync(db, company, branch,
+                batch, itemCodes, rollback: true, cancellationToken))
+            return Unsafe("This receipt cannot be rolled back until the later reversed Production issue's historical costs are reconciled.");
+        return null;
+    }
+
     /// <summary>INV-03: locked BalLoc must have TransDate on or before the document date.</summary>
     private string? ValidateBalanceStockDate(
         int balLocId,

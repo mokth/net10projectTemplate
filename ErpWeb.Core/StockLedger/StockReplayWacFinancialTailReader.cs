@@ -22,13 +22,33 @@ public sealed record StockReplayWacFinancialTail(
 /// </summary>
 public static class StockReplayWacFinancialTailReader
 {
-    public static async Task<StockReplayWacFinancialTail> ReadLaterAsync(
+    public static Task<StockReplayWacFinancialTail> ReadLaterAsync(
         AppDbContext db,
         string companyCode,
         string branchCode,
         string itemCode,
         StockReplayEventKey after,
+        CancellationToken cancellationToken = default) =>
+        ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after, [], cancellationToken);
+
+    // Only receipt replay with an independently verified complete isolated
+    // issue/reversal pair may omit its two zero-net value deltas.
+    internal static Task<StockReplayWacFinancialTail> ReadLaterForReversedIssueAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
         CancellationToken cancellationToken = default)
+    {
+        if (excludedValueIds.Count != 2 || excludedValueIds.Any(id => id <= 0)
+            || excludedValueIds.Distinct().Count() != 2)
+            throw Corrupt("The reversed Production issue value pair is incomplete.");
+        return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
+            excludedValueIds, cancellationToken);
+    }
+
+    private static async Task<StockReplayWacFinancialTail> ReadLaterCoreAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (string.IsNullOrWhiteSpace(companyCode)
@@ -184,6 +204,16 @@ public static class StockReplayWacFinancialTailReader
                 && f.EffectiveAt >= after.EffectiveAt.Date
                 && f.StockPosting!.SealedAtUtc != null)
             .ToArrayAsync(cancellationToken);
+        if (excludedValueIds.Count != 0)
+        {
+            var excluded = valueRows.Where(f => excludedValueIds.Contains(f.Id)).ToArray();
+            if (excluded.Length != excludedValueIds.Count
+                || excluded.Any(f => f.BaseQty != 0m || f.ReversesValuationFactId is not null
+                    || f.ValuationStatus != StockValuationStatuses.Valued)
+                || StockLedgerPrecision.Money(excluded.Sum(f => f.SignedValue)) != 0m)
+                throw Corrupt($"Item {itemCode} has an invalid reversed issue value pair.");
+            valueRows = valueRows.Where(f => !excludedValueIds.Contains(f.Id)).ToArray();
+        }
         var valueIds = valueRows.Where(f => f.ReversesValuationFactId is null)
             .Select(f => f.Id).ToArray();
         var reversalRows = await db.StockValuationFacts.AsNoTracking()
@@ -243,6 +273,8 @@ public static class StockReplayWacFinancialTailReader
             .ToArrayAsync(cancellationToken)).ToHashSet();
         foreach (var fact in activeValues)
         {
+            if (fact.MovementCode == "PRODUCTION_ISSUE_REPLAY_VALUE")
+                throw Corrupt("This transaction cannot be replayed with unresolved reversed Production issue cost corrections. Check the source quantity and correction history.");
             if (!postings.TryGetValue(fact.StockPostingId, out var owner))
                 throw Corrupt($"Value fact {fact.Id} has no sealed posting.");
             StockReplayWacEvent valueEvent;

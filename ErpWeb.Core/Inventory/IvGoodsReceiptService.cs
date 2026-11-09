@@ -616,6 +616,10 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         }
 
         var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+        var revisions = existingDetails.Select(d => d.DocumentRevision).Distinct().ToArray();
+        if (revisions.Length > 1)
+            return IvGoodsReceiptOperationResult.Fail("Receipt lines have inconsistent posting revisions.");
+        var documentRevision = revisions.SingleOrDefault();
         var validated = await ValidateLinesAsync(
             db,
             request.Lines,
@@ -648,7 +652,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
             return IvGoodsReceiptOperationResult.Fail(costError);
         }
 
-        AddDetails(batch, validated.Lines!, costEvidence!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo, trxType);
+        AddDetails(batch, validated.Lines!, costEvidence!, context.CompanyCode!, context.BranchCode!, context.LocationCode, batch.BatchNo, trxType, documentRevision);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
@@ -1139,7 +1143,8 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
         string branchCode,
         string? locationCode,
         int batchNo,
-        string trxType)
+        string trxType,
+        int documentRevision = 0)
     {
         short trxLineNo = 1;
         foreach (var row in validated)
@@ -1151,6 +1156,7 @@ public sealed class IvGoodsReceiptService : IIvGoodsReceiptService
                 CompanyCode = companyCode,
                 BranchCode = branchCode,
                 BatchNo = batchNo,
+                DocumentRevision = documentRevision,
                 TrxLineNo = trxLineNo,
                 TrxType = trxType,
                 ICode = poLine.ICode,

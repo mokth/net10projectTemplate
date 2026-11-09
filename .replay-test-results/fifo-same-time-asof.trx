@@ -1,0 +1,40 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="7d665369-8dbc-4e9d-8788-a30086e900aa" name="Mokth@MOKTH 2026-11-09 14:03:27" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-09T14:03:27.8777752+08:00" queuing="2026-11-09T14:03:27.8777754+08:00" start="2026-11-09T14:03:15.2439818+08:00" finish="2026-11-09T14:03:29.7998891+08:00" />
+  <TestSettings name="default" id="55e0ad19-8ff3-49ac-b194-6eba3e09b8b7">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-09_14_03_27" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="da967e52-b4d7-4545-a54e-fb704534f22b" testId="c78ee154-6633-a905-c40c-265b03f1af18" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_issue_preserves_earlier_same_time_layers(goodsReceipt: False)" computerName="MOKTH" duration="00:00:09.1813385" startTime="2026-11-09T14:03:18.6958474+08:00" endTime="2026-11-09T14:03:27.8475170+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="da967e52-b4d7-4545-a54e-fb704534f22b" />
+    <UnitTestResult executionId="bbb03719-f87e-462e-b8d8-88c2bec24b0f" testId="8e2e4503-d1fd-a3bf-ff7c-f9b58b9c4010" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_issue_preserves_earlier_same_time_layers(goodsReceipt: True)" computerName="MOKTH" duration="00:00:01.8490529" startTime="2026-11-09T14:03:27.8639779+08:00" endTime="2026-11-09T14:03:29.6969340+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bbb03719-f87e-462e-b8d8-88c2bec24b0f" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_issue_preserves_earlier_same_time_layers(goodsReceipt: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c78ee154-6633-a905-c40c-265b03f1af18">
+      <Execution id="da967e52-b4d7-4545-a54e-fb704534f22b" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Fifo_reversed_issue_preserves_earlier_same_time_layers" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_issue_preserves_earlier_same_time_layers(goodsReceipt: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="8e2e4503-d1fd-a3bf-ff7c-f9b58b9c4010">
+      <Execution id="bbb03719-f87e-462e-b8d8-88c2bec24b0f" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Fifo_reversed_issue_preserves_earlier_same_time_layers" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="c78ee154-6633-a905-c40c-265b03f1af18" executionId="da967e52-b4d7-4545-a54e-fb704534f22b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8e2e4503-d1fd-a3bf-ff7c-f9b58b9c4010" executionId="bbb03719-f87e-462e-b8d8-88c2bec24b0f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="2" executed="2" passed="2" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:02.48]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.99]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.03]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:14.10]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

@@ -1,0 +1,51 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="452808a3-1afa-4d5b-9fdb-d05f0c7bf49b" name="Mokth@MOKTH 2026-11-06 16:14:45" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-06T16:14:45.6087333+08:00" queuing="2026-11-06T16:14:45.6087338+08:00" start="2026-11-06T16:14:21.7702077+08:00" finish="2026-11-06T16:14:45.6199196+08:00" />
+  <TestSettings name="default" id="f89e4bb9-f413-47ad-8d90-3cd3014099ed">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-06_16_14_45" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="e32fe141-8ce7-4d3f-a64d-d3556a6d104c" testId="c64e5726-0617-286d-cbed-a55e7d54796a" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_issue_cannot_use_stock_restored_by_a_later_production_reversal" computerName="MOKTH" duration="00:00:16.2475902" startTime="2026-11-06T16:14:29.0744673+08:00" endTime="2026-11-06T16:14:45.3148100+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e32fe141-8ce7-4d3f-a64d-d3556a6d104c">
+      <Output>
+        <ErrorInfo>
+          <Message>Batch 2: Item RM001 / WH01 has a later posted stock movement dated 06/11/2026. A transaction dated 04/10/2026 cannot modify this stock balance.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 703&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_issue_cannot_use_stock_restored_by_a_later_production_reversal" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c64e5726-0617-286d-cbed-a55e7d54796a">
+      <Execution id="e32fe141-8ce7-4d3f-a64d-d3556a6d104c" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_issue_cannot_use_stock_restored_by_a_later_production_reversal" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="c64e5726-0617-286d-cbed-a55e7d54796a" executionId="e32fe141-8ce7-4d3f-a64d-d3556a6d104c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="1" executed="1" passed="0" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:05.02]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:05.86]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:05.90]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:22.20]       Batch 2: Item RM001 / WH01 has a later posted stock movement dated 06/11/2026. A transaction dated 04/10/2026 cannot modify this stock balance.&#xD;
+[xUnit.net 00:00:22.20]       Stack Trace:&#xD;
+[xUnit.net 00:00:22.20]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(703,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:22.20]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:22.23]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T16:14:45.3201214+08:00">
+        <Text>[xUnit.net 00:00:22.20]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_issue_cannot_use_stock_restored_by_a_later_production_reversal [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

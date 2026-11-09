@@ -1,0 +1,73 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="6d387fd3-871f-41c3-9647-5e96c35abb25" name="Mokth@MOKTH 2026-11-06 09:41:00" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-06T09:41:00.1031970+08:00" queuing="2026-11-06T09:41:00.1031975+08:00" start="2026-11-06T09:40:48.0890861+08:00" finish="2026-11-06T09:41:03.7812422+08:00" />
+  <TestSettings name="default" id="62870257-411e-4ca0-a774-7ba15ec9e21e">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-06_09_41_00" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="af1e48e1-94b8-44fe-aa36-7f8704bd72ce" testId="80c5ce24-93be-57c0-30de-16143cb7df78" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal" computerName="MOKTH" duration="00:00:08.8273030" startTime="2026-11-06T09:40:51.2634327+08:00" endTime="2026-11-06T09:41:00.0675525+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="af1e48e1-94b8-44fe-aa36-7f8704bd72ce" />
+    <UnitTestResult executionId="8744afa7-f42f-4337-9a77-4f2c1c8c50a4" testId="d80ff531-54aa-3213-4113-a0cab2c50296" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price" computerName="MOKTH" duration="00:00:01.9910898" startTime="2026-11-06T09:41:00.0870017+08:00" endTime="2026-11-06T09:41:02.0611106+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8744afa7-f42f-4337-9a77-4f2c1c8c50a4" />
+    <UnitTestResult executionId="42b82432-30ec-4d1b-bb62-d5600a1a0711" testId="a53cf145-8f56-9bcd-9732-493e80760c36" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation" computerName="MOKTH" duration="00:00:01.5966947" startTime="2026-11-06T09:41:02.0650722+08:00" endTime="2026-11-06T09:41:03.6677287+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="42b82432-30ec-4d1b-bb62-d5600a1a0711">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Collections differ&#xD;
+                                                             ↓ (pos 1)&#xD;
+Expected: &lt;generated&gt;                                    [1, 2]&#xD;
+Actual:   ListSelectIterator&lt;ProductionPostingLink, int&gt; [1, 1, 1, 1, 1, ···]&#xD;
+                                                             ↑ (pos 1)</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 722&#xD;
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 723&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="80c5ce24-93be-57c0-30de-16143cb7df78">
+      <Execution id="af1e48e1-94b8-44fe-aa36-7f8704bd72ce" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="d80ff531-54aa-3213-4113-a0cab2c50296">
+      <Execution id="8744afa7-f42f-4337-9a77-4f2c1c8c50a4" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="a53cf145-8f56-9bcd-9732-493e80760c36">
+      <Execution id="42b82432-30ec-4d1b-bb62-d5600a1a0711" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Partial_receipt_reopens_same_document_and_reposts_as_new_generation" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="80c5ce24-93be-57c0-30de-16143cb7df78" executionId="af1e48e1-94b8-44fe-aa36-7f8704bd72ce" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d80ff531-54aa-3213-4113-a0cab2c50296" executionId="8744afa7-f42f-4337-9a77-4f2c1c8c50a4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a53cf145-8f56-9bcd-9732-493e80760c36" executionId="42b82432-30ec-4d1b-bb62-d5600a1a0711" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="3" executed="3" passed="2" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:02.11]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.60]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.65]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:15.10]       Assert.Equal() Failure: Collections differ&#xD;
+[xUnit.net 00:00:15.10]                                                                    ↓ (pos 1)&#xD;
+[xUnit.net 00:00:15.10]       Expected: &lt;generated&gt;                                    [1, 2]&#xD;
+[xUnit.net 00:00:15.10]       Actual:   ListSelectIterator&lt;ProductionPostingLink, int&gt; [1, 1, 1, 1, 1, ···]&#xD;
+[xUnit.net 00:00:15.10]                                                                    ↑ (pos 1)&#xD;
+[xUnit.net 00:00:15.10]       Stack Trace:&#xD;
+[xUnit.net 00:00:15.11]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(722,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation()&#xD;
+[xUnit.net 00:00:15.11]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(723,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation()&#xD;
+[xUnit.net 00:00:15.11]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:15.12]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:41:03.6712297+08:00">
+        <Text>[xUnit.net 00:00:15.10]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

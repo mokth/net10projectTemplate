@@ -1,0 +1,64 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="aae34e69-b58e-4239-8fa5-1bf7d5effcfd" name="Mokth@MOKTH 2026-11-05 22:50:50" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-05T22:50:50.0588800+08:00" queuing="2026-11-05T22:50:50.0588806+08:00" start="2026-11-05T22:50:26.8643070+08:00" finish="2026-11-05T22:50:58.3132358+08:00" />
+  <TestSettings name="default" id="3b5470ec-4cf4-411b-92a7-993291e9014c">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-05_22_50_50" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="584f12d3-453d-47ba-9cb0-742b8db0c8f9" testId="7bc7f8f9-bd47-d58a-cf18-4ade1713ca65" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;FIFO&quot;, rollback: False)" computerName="MOKTH" duration="00:00:01.8730670" startTime="2026-11-05T22:50:54.3802995+08:00" endTime="2026-11-05T22:50:56.2713704+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="584f12d3-453d-47ba-9cb0-742b8db0c8f9" />
+    <UnitTestResult executionId="d8be6970-1f6b-41ee-9ea5-de2d775097b1" testId="e6dc4ea6-79a1-bcdb-1c95-9281ea9f5aa0" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;WAC&quot;, rollback: False)" computerName="MOKTH" duration="00:00:01.5317409" startTime="2026-11-05T22:50:50.0344303+08:00" endTime="2026-11-05T22:50:51.5544664+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d8be6970-1f6b-41ee-9ea5-de2d775097b1" />
+    <UnitTestResult executionId="ef32d728-c704-4516-a6d4-30210b857268" testId="ce454284-dedb-b7ed-bbba-0d7128096047" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;STANDARD&quot;, rollback: False)" computerName="MOKTH" duration="00:00:01.2368761" startTime="2026-11-05T22:50:51.5587483+08:00" endTime="2026-11-05T22:50:52.8080611+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ef32d728-c704-4516-a6d4-30210b857268" />
+    <UnitTestResult executionId="4d56eff8-c027-4c4c-8904-738ec5c25c53" testId="fea9c456-1f36-ac7b-e48f-afd4930c4786" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;WAC&quot;, rollback: True)" computerName="MOKTH" duration="00:00:01.5598023" startTime="2026-11-05T22:50:52.8084495+08:00" endTime="2026-11-05T22:50:54.3799766+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4d56eff8-c027-4c4c-8904-738ec5c25c53" />
+    <UnitTestResult executionId="7c9093dd-d079-4bc8-95e9-8b5539d6eb65" testId="8bef1c17-ccbb-64a3-b381-699b27047711" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;STANDARD&quot;, rollback: True)" computerName="MOKTH" duration="00:00:15.8421379" startTime="2026-11-05T22:50:32.4862729+08:00" endTime="2026-11-05T22:50:50.0091668+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7c9093dd-d079-4bc8-95e9-8b5539d6eb65" />
+    <UnitTestResult executionId="7295c285-0518-4783-bc4d-3db47995a0ff" testId="06493c13-3ffd-64c1-daa4-8978e4f52a73" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;FIFO&quot;, rollback: True)" computerName="MOKTH" duration="00:00:01.8737815" startTime="2026-11-05T22:50:56.2726026+08:00" endTime="2026-11-05T22:50:58.1647927+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7295c285-0518-4783-bc4d-3db47995a0ff" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;WAC&quot;, rollback: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="e6dc4ea6-79a1-bcdb-1c95-9281ea9f5aa0">
+      <Execution id="d8be6970-1f6b-41ee-9ea5-de2d775097b1" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests" name="Historical_count_post_and_rollback_respect_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;WAC&quot;, rollback: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="fea9c456-1f36-ac7b-e48f-afd4930c4786">
+      <Execution id="4d56eff8-c027-4c4c-8904-738ec5c25c53" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests" name="Historical_count_post_and_rollback_respect_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;FIFO&quot;, rollback: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="06493c13-3ffd-64c1-daa4-8978e4f52a73">
+      <Execution id="7295c285-0518-4783-bc4d-3db47995a0ff" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests" name="Historical_count_post_and_rollback_respect_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;STANDARD&quot;, rollback: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="8bef1c17-ccbb-64a3-b381-699b27047711">
+      <Execution id="7c9093dd-d079-4bc8-95e9-8b5539d6eb65" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests" name="Historical_count_post_and_rollback_respect_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;FIFO&quot;, rollback: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="7bc7f8f9-bd47-d58a-cf18-4ade1713ca65">
+      <Execution id="584f12d3-453d-47ba-9cb0-742b8db0c8f9" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests" name="Historical_count_post_and_rollback_respect_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests.Historical_count_post_and_rollback_respect_qa_stock_holds(method: &quot;STANDARD&quot;, rollback: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="ce454284-dedb-b7ed-bbba-0d7128096047">
+      <Execution id="ef32d728-c704-4516-a6d4-30210b857268" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountLedgerAuthorityTests" name="Historical_count_post_and_rollback_respect_qa_stock_holds" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="7bc7f8f9-bd47-d58a-cf18-4ade1713ca65" executionId="584f12d3-453d-47ba-9cb0-742b8db0c8f9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e6dc4ea6-79a1-bcdb-1c95-9281ea9f5aa0" executionId="d8be6970-1f6b-41ee-9ea5-de2d775097b1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ce454284-dedb-b7ed-bbba-0d7128096047" executionId="ef32d728-c704-4516-a6d4-30210b857268" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fea9c456-1f36-ac7b-e48f-afd4930c4786" executionId="4d56eff8-c027-4c4c-8904-738ec5c25c53" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8bef1c17-ccbb-64a3-b381-699b27047711" executionId="7c9093dd-d079-4bc8-95e9-8b5539d6eb65" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="06493c13-3ffd-64c1-daa4-8978e4f52a73" executionId="7295c285-0518-4783-bc4d-3db47995a0ff" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="6" executed="6" passed="6" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:03.47]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:04.79]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:04.86]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:30.62]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

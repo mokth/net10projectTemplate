@@ -113,6 +113,23 @@ public sealed partial class IvInventoryPostingService
                 cancellationToken) is string changedTail)
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.LedgerMismatch, changedTail));
+        var pileError = await LockQaTransferPilesAsync(write, companyCode, branchCode,
+            source, destination, cancellationToken);
+        if (pileError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, pileError);
+        }
+        var writeDetails = await write.IvTrxBatchDetails
+            .Where(d => d.BatchId == batch.Id)
+            .ToListAsync(cancellationToken);
+        var qaError = await AssertQaPhysicalFromDetailsAsync(
+            write, companyCode, branchCode, IvTrxTypes.StockTransfer, batchNo, writeDetails, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         var written = await StockReplayFifoTransferRootWriter.InsertAsync(
             context, plan, batchNo, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(
@@ -242,6 +259,13 @@ public sealed partial class IvInventoryPostingService
                 cancellationToken) is string changedTail)
             throw new StockLedgerException(new(
                 StockLedgerErrorCodes.LedgerMismatch, changedTail));
+        var qaError = await AssertQaTransferRemovalAsync(
+            write, companyCode, branchCode, batchNo, source, destination, cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
         var written = await StockReplayFifoTransferRemovalRootWriter.RemoveAsync(
             context, plan, batchNo, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(

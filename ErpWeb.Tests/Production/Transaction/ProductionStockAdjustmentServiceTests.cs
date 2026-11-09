@@ -2,7 +2,9 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -365,7 +367,7 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         Assert.Empty(await db.StockValuationFacts.ToListAsync());
     }
 
-    private async Task<(long WorkOrderId, long PoolId)> SeedWorkOrderAndPoolAsync()
+    private async Task<(long WorkOrderId, long PoolId)> SeedWorkOrderAndPoolAsync(string? balanceStage = null)
     {
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
@@ -392,6 +394,20 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         db.ProductionWorkOrders.Add(workOrder);
         await db.SaveChangesAsync();
 
+        ProductionLocation? location = null;
+        if (balanceStage is not null)
+        {
+            location = new ProductionLocation
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                Code = "FG",
+                Description = "FG staging"
+            };
+            db.ProductionLocations.Add(location);
+            await db.SaveChangesAsync();
+        }
+
         var pool = new ProductionBalLot
         {
             CompanyCode = "DEMO",
@@ -411,6 +427,10 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
             WarehouseCode = "MAIN",
             LocationCode = "SITE",
             LotNo = "PADJ-LOT",
+            BalanceStage = balanceStage,
+            ProductionLocationId = location?.Id,
+            StockStatusCode = balanceStage is null ? null : "AVAILABLE",
+            OriginType = balanceStage is null ? null : "PRODUCED",
             LastMovementDate = EffectiveAt.AddDays(-1),
         };
         db.ProductionBalLots.Add(pool);
@@ -420,9 +440,47 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         return (workOrder.Uid, pool.Uid);
     }
 
+    [Fact]
+    public async Task Padj_blocks_fg_staging_when_finished_goods_inspection_is_on()
+    {
+        var (workOrderId, poolId) = await SeedWorkOrderAndPoolAsync(balanceStage: "FG_STAGING");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.QaPolicies.Add(new QaPolicy
+            {
+                CompanyCode = "DEMO",
+                Version = 1,
+                Enabled = true,
+                FinalFgInspectionEnabled = true,
+                IsPublished = true,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "tester"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = CreateService(qaFg: new QaFgAuthorizationService());
+        var saved = await service.SaveAsync(new ProductionStockAdjustmentSaveRequest
+        {
+            WorkOrderId = workOrderId,
+            SnapshotRevision = 1,
+            SnapshotHash = new string('A', 64),
+            EffectiveDate = EffectiveAt,
+            Lines = [new ProductionStockAdjustmentLineInput
+            {
+                ProductionBalLotId = poolId,
+                AdjustmentQty = 1m,
+                Reason = ProductionStockAdjustmentReasons.Count,
+            }],
+        });
+        Assert.False(saved.Succeeded);
+        Assert.Equal(QaReadinessMessages.FinalFgFrozen, saved.Message);
+    }
+
     private ProductionStockAdjustmentService CreateService(
         IProductionStockWriter? productionWriter = null,
-        IAccessRightService? access = null) => new(
+        IAccessRightService? access = null,
+        IQaFgAuthorization? qaFg = null) => new(
         _factory,
         InventoryTenantTestHelper.CreateTenantContext(),
         access ?? ProductionLedgerTestFixture.Allow(MenuCodes.PlanningStockAdjustment),
@@ -431,7 +489,8 @@ public sealed class ProductionStockAdjustmentServiceTests : IAsyncDisposable
         new BranchStockTransactionLock(),
         _coordinator,
         productionWriter ?? new ProductionStockWriter(new StockMovementRegistry()),
-        new ItemStandardCostResolver());
+        new ItemStandardCostResolver(),
+        qaFg);
 
     private static IAccessRightService Access(bool canPost = true, bool canRollback = true)
     {

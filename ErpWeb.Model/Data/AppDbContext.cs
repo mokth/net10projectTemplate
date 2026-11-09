@@ -4,6 +4,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
@@ -43,6 +44,7 @@ public class AppDbContext : DbContext
                     or PurchaseReceiptCostSettlement or PurchaseCostAdjustment
                     or SalesReturnCostAllocation or SalesReturnStandardCostVariance
                     or StockFifoLayerConsumption
+                    or StockFifoReversedIssueGeneration or StockFifoReversedIssueSplit
                     or ProductionStandardCostVariance
                     or ProductionConversionCostFact
                     or StockCountCostBasis or StockCountReplayGeneration
@@ -174,6 +176,8 @@ public class AppDbContext : DbContext
     public DbSet<ItemStandardCostRevision> ItemStandardCostRevisions => Set<ItemStandardCostRevision>();
     public DbSet<StockFifoLayer> StockFifoLayers => Set<StockFifoLayer>();
     public DbSet<StockFifoLayerConsumption> StockFifoLayerConsumptions => Set<StockFifoLayerConsumption>();
+    public DbSet<StockFifoReversedIssueGeneration> StockFifoReversedIssueGenerations => Set<StockFifoReversedIssueGeneration>();
+    public DbSet<StockFifoReversedIssueSplit> StockFifoReversedIssueSplits => Set<StockFifoReversedIssueSplit>();
     public DbSet<PurchaseReceiptCostSettlement> PurchaseReceiptCostSettlements => Set<PurchaseReceiptCostSettlement>();
     public DbSet<PurchaseCostAdjustment> PurchaseCostAdjustments => Set<PurchaseCostAdjustment>();
     public DbSet<StockValuationPeriodSnapshotHdr> StockValuationPeriodSnapshotHdrs => Set<StockValuationPeriodSnapshotHdr>();
@@ -334,6 +338,22 @@ public class AppDbContext : DbContext
     public DbSet<ProductionOutputMaterial> ProductionOutputMaterials => Set<ProductionOutputMaterial>();
     public DbSet<WipItemBalLoc> WipItemBalLocs => Set<WipItemBalLoc>();
     public DbSet<PrSchDailyProd> PrSchDailyProds => Set<PrSchDailyProd>();
+
+    public DbSet<QaPolicy> QaPolicies => Set<QaPolicy>();
+    public DbSet<QaCase> QaCases => Set<QaCase>();
+    public DbSet<QaCaseLine> QaCaseLines => Set<QaCaseLine>();
+    public DbSet<QaInspection> QaInspections => Set<QaInspection>();
+    public DbSet<QaDispositionLine> QaDispositionLines => Set<QaDispositionLine>();
+    public DbSet<QaAuditEvent> QaAuditEvents => Set<QaAuditEvent>();
+    public DbSet<QaReceiptGrant> QaReceiptGrants => Set<QaReceiptGrant>();
+    public DbSet<QaReceiptAllocation> QaReceiptAllocations => Set<QaReceiptAllocation>();
+    public DbSet<QaFgGrant> QaFgGrants => Set<QaFgGrant>();
+    public DbSet<QaFgAllocation> QaFgAllocations => Set<QaFgAllocation>();
+    public DbSet<QaLogicalHold> QaLogicalHolds => Set<QaLogicalHold>();
+    public DbSet<QaPhysicalHold> QaPhysicalHolds => Set<QaPhysicalHold>();
+    public DbSet<QaPhysicalAllocation> QaPhysicalAllocations => Set<QaPhysicalAllocation>();
+    public DbSet<QaNonGoodGrant> QaNonGoodGrants => Set<QaNonGoodGrant>();
+    public DbSet<QaNonGoodAllocation> QaNonGoodAllocations => Set<QaNonGoodAllocation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

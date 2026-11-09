@@ -1,0 +1,8 @@
+.qa-muted {
+    color: var(--muted, #667085);
+    font-size: 0.85rem;
+}
+
+.iv-list-compact a.iv-list-compact__item {
+    text-decoration: none;
+}

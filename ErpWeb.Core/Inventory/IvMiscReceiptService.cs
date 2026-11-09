@@ -459,6 +459,10 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         }
 
         var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
+        var revisions = existingDetails.Select(d => d.DocumentRevision).Distinct().ToArray();
+        if (revisions.Length > 1)
+            return IvMiscReceiptOperationResult.Fail("Receipt lines have inconsistent posting revisions.");
+        var documentRevision = revisions.SingleOrDefault();
         var trxDate = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
 
         var validatedResult = await ValidateLinesAsync(
@@ -498,7 +502,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
             batch.BatchNo,
             doResult.DoNo,
             userId,
-            now);
+            now,
+            documentRevision);
 
         if (batch.DeletedAtUtc is not null)
         {
@@ -710,7 +715,8 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
         int batchNo,
         string? supplierDoNo,
         string approvedBy,
-        DateTime approvedAtUtc)
+        DateTime approvedAtUtc,
+        int documentRevision = 0)
     {
         short trxLineNo = 1;
         foreach (var row in validated)
@@ -720,6 +726,7 @@ public sealed class IvMiscReceiptService : IIvMiscReceiptService
                 CompanyCode = companyCode,
                 BranchCode = branchCode,
                 BatchNo = batchNo,
+                DocumentRevision = documentRevision,
                 TrxLineNo = trxLineNo,
                 TrxType = IvTrxTypes.MiscellaneousReceipt,
                 ICode = row.Item.ICode,

@@ -349,6 +349,8 @@ public static class StockReplayWacTailRepricingWriter
         foreach (var movement in laterEvents)
         {
             var step = steps[movement.EventId];
+            if (movement.ReversedProductionIssueEventId.HasValue)
+                throw Invalid("A reversed Production issue needs its paired valuation correction writer.");
             if (step.SignedQuantity != movement.OldSignedQuantity)
             {
                 if (movement.EventId >= 0 || changedCountPlan is null

@@ -1,9 +1,11 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.Sqlite;
@@ -91,6 +93,179 @@ public sealed class IvStockTransferLedgerAuthorityTests : IAsyncLifetime
     }
 
     public async Task DisposeAsync() => await _connection.DisposeAsync();
+
+    [Theory]
+    [InlineData("WAC", false)]
+    [InlineData("WAC", true)]
+    [InlineData("FIFO", false)]
+    [InlineData("FIFO", true)]
+    [InlineData("STANDARD", false)]
+    [InlineData("STANDARD", true)]
+    public async Task Transfer_rollback_respects_destination_qa_hold(string method, bool historical)
+    {
+        var sourceId = await SeedBalanceAsync(15m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100", WhCode = "MAIN", LocCode = "BIN2",
+                LotNo = string.Empty, IStatus = "ACTIVE",
+                StdQty = 0m, StdUom = "EA", TransDate = FixedToday
+            });
+            if (method == "FIFO")
+            {
+                await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+                    [new FifoLayerSeed(5m, 3m, new DateTime(2026, 2, 1)),
+                     new FifoLayerSeed(10m, 4m, new DateTime(2026, 3, 1))]);
+            }
+            else if (method == "STANDARD")
+            {
+                await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 3m);
+                await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 15m, 3m,
+                    StockCostMethods.Standard);
+            }
+            else
+            {
+                await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 15m, 3m);
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var service = InventoryLedgerTestFixture.CreateStockTransfer(_factory, FixedToday,
+            enableBackdatedReplay: true, qaPhysical: new QaPhysicalHoldAuthorizationService());
+        var later = await service.SaveNewAsync(Request(sourceId, 8m));
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        var laterPost = await service.PostAsync([later.BatchNo]);
+        Assert.True(laterPost.Succeeded, laterPost.ErrorMessage);
+        var request = Request(sourceId, 1m);
+        if (historical) request.TrxDate = FixedToday.AddDays(-1);
+        var target = await service.SaveNewAsync(request);
+        Assert.True(target.Succeeded, target.ErrorMessage);
+        if (historical)
+        {
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                var source = await db.IvBalLocs.SingleAsync(b => b.Id == sourceId);
+                db.QaPolicies.Add(new QaPolicy
+                {
+                    CompanyCode = "DEMO", Version = 1, Enabled = true, IsPublished = true,
+                    PhysicalHoldEnabled = true, CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
+                });
+                var sourceLine = new QaCaseLine { LineNo = 1, ItemCode = "A100", Uom = "EA", Qty = 0.5m };
+                var sourceCase = new QaCase
+                {
+                    CompanyCode = "DEMO", BranchCode = "HQ", CaseNo = "QA-TRANSFER-SOURCE",
+                    CaseDate = FixedToday, Status = QaCaseStatuses.Approved,
+                    SourceType = QaSourceTypes.InventoryStock, CreatedDate = DateTime.UtcNow,
+                    CreatedBy = "tester", Lines = [sourceLine]
+                };
+                sourceCase.PhysicalHolds.Add(new QaPhysicalHold
+                {
+                    CompanyCode = "DEMO", BranchCode = "HQ", CaseLine = sourceLine, BalLocId = sourceId,
+                    ItemCode = source.ICode, WarehouseCode = source.WhCode, LocationCode = source.LocCode,
+                    LotNo = source.LotNo ?? string.Empty, ItemStatus = source.IStatus,
+                    ReservedBaseQty = 0.5m, Status = QaLogicalHoldStatuses.Active,
+                    Cause = QaLogicalHoldCauses.KeepHold, CreatedAtUtc = DateTime.UtcNow
+                });
+                db.QaCases.Add(sourceCase);
+                await db.SaveChangesAsync();
+            }
+            var blockedPost = await service.PostAsync([target.BatchNo]);
+            Assert.False(blockedPost.Succeeded);
+            Assert.Contains("quality hold", blockedPost.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                Assert.Equal(7m, (await db.IvBalLocs.SingleAsync(b => b.Id == sourceId)).StdQty);
+                Assert.Equal(8m, (await db.IvBalLocs.SingleAsync(b => b.LocCode == "BIN2")).StdQty);
+                Assert.Equal(IvBatchStatuses.New,
+                    (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == target.BatchNo)).BatchStatus);
+                Assert.Empty(await db.IvTrxHistories.Where(h => h.BatchNo == target.BatchNo).ToArrayAsync());
+                var sourceHold = await db.QaPhysicalHolds.SingleAsync();
+                sourceHold.Status = QaLogicalHoldStatuses.Released;
+                sourceHold.ReleasedAtUtc = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+            }
+        }
+        var targetPost = await service.PostAsync([target.BatchNo]);
+        Assert.True(targetPost.Succeeded, targetPost.ErrorMessage);
+
+        int postingCount;
+        int valuationCount;
+        int historyCount;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var destination = await db.IvBalLocs.SingleAsync(b => b.LocCode == "BIN2");
+            if (!await db.QaPolicies.AnyAsync())
+                db.QaPolicies.Add(new QaPolicy
+                {
+                    CompanyCode = "DEMO", Version = 1, Enabled = true, IsPublished = true,
+                    PhysicalHoldEnabled = true, CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
+                });
+            var line = new QaCaseLine { LineNo = 1, ItemCode = "A100", Uom = "EA", Qty = 8.5m };
+            var qaCase = new QaCase
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CaseNo = "QA-TRANSFER-HOLD",
+                CaseDate = FixedToday, Status = QaCaseStatuses.Approved,
+                SourceType = QaSourceTypes.InventoryStock, CreatedDate = DateTime.UtcNow,
+                CreatedBy = "tester", Lines = [line]
+            };
+            qaCase.PhysicalHolds.Add(new QaPhysicalHold
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CaseLine = line, BalLocId = destination.Id,
+                ItemCode = destination.ICode, WarehouseCode = destination.WhCode,
+                LocationCode = destination.LocCode, LotNo = destination.LotNo ?? string.Empty,
+                ItemStatus = destination.IStatus, ReservedBaseQty = 8.5m,
+                Status = QaLogicalHoldStatuses.Active, Cause = QaLogicalHoldCauses.KeepHold,
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            db.QaCases.Add(qaCase);
+            await db.SaveChangesAsync();
+            postingCount = await db.StockPostings.CountAsync();
+            valuationCount = await db.StockValuationFacts.CountAsync();
+            historyCount = await db.IvTrxHistories.CountAsync();
+        }
+
+        var blocked = await service.RollbackAsync([target.BatchNo]);
+        Assert.False(blocked.Succeeded);
+        Assert.Contains("quality hold", blocked.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(6m, (await db.IvBalLocs.SingleAsync(b => b.Id == sourceId)).StdQty);
+            Assert.Equal(9m, (await db.IvBalLocs.SingleAsync(b => b.LocCode == "BIN2")).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal(15m, state.OnHandBaseQty);
+            Assert.Equal(method == "FIFO" ? 55m : 45m, state.InventoryValue);
+            Assert.Equal(IvBatchStatuses.Posted,
+                (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == target.BatchNo)).BatchStatus);
+            Assert.Equal(postingCount, await db.StockPostings.CountAsync());
+            Assert.Equal(valuationCount, await db.StockValuationFacts.CountAsync());
+            Assert.Equal(historyCount, await db.IvTrxHistories.CountAsync());
+            var hold = await db.QaPhysicalHolds.SingleAsync(h => h.Status == QaLogicalHoldStatuses.Active);
+            Assert.Equal(QaLogicalHoldStatuses.Active, hold.Status);
+            Assert.Equal(8.5m, hold.ReservedBaseQty);
+            hold.ReservedBaseQty = 8m;
+            await db.SaveChangesAsync();
+        }
+
+        var reversed = await service.RollbackAsync([target.BatchNo]);
+        Assert.True(reversed.Succeeded, reversed.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7m, (await db.IvBalLocs.SingleAsync(b => b.Id == sourceId)).StdQty);
+            Assert.Equal(8m, (await db.IvBalLocs.SingleAsync(b => b.LocCode == "BIN2")).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal(15m, state.OnHandBaseQty);
+            Assert.Equal(method == "FIFO" ? 55m : 45m, state.InventoryValue);
+            Assert.Equal(8m, (await db.QaPhysicalHolds.SingleAsync(h => h.Status == QaLogicalHoldStatuses.Active)).ReservedBaseQty);
+            Assert.Equal(IvBatchStatuses.New,
+                (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == target.BatchNo)).BatchStatus);
+        }
+    }
 
     [Fact]
     public async Task Dated_on_hand_lookup_uses_historical_quantity_after_later_issue()

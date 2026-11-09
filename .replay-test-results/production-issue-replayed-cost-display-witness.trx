@@ -1,0 +1,80 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="ec4d7b4a-e5cb-4f69-b2e4-2f09b5130752" name="Mokth@MOKTH 2026-11-06 23:42:22" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-06T23:42:22.8259269+08:00" queuing="2026-11-06T23:42:22.8259275+08:00" start="2026-11-06T23:42:06.5153698+08:00" finish="2026-11-06T23:42:24.1547581+08:00" />
+  <TestSettings name="default" id="2a383acc-c292-4b88-a084-f4680ff2d357">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-06_23_42_22" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="2b9728db-5817-4a36-8a7d-e14b393edb73" testId="d1ad3685-b25f-e487-6a2a-5ed92c4cd83c" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Production_issue_detail_shows_replayed_cost_and_restores_it_on_receipt_rollback(goodsReceipt: False)" computerName="MOKTH" duration="00:00:01.2803513" startTime="2026-11-06T23:42:22.8057361+08:00" endTime="2026-11-06T23:42:24.0477789+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2b9728db-5817-4a36-8a7d-e14b393edb73">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Values differ&#xD;
+Expected: 3.6&#xD;
+Actual:   2.0</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 2562&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="8bf4e160-f7b1-4ddb-b1d1-032b78dbcd6c" testId="55908f0d-ba2a-05c2-c1b4-8e94d13da8cc" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Production_issue_detail_shows_replayed_cost_and_restores_it_on_receipt_rollback(goodsReceipt: True)" computerName="MOKTH" duration="00:00:12.8271833" startTime="2026-11-06T23:42:09.9488331+08:00" endTime="2026-11-06T23:42:22.7670953+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8bf4e160-f7b1-4ddb-b1d1-032b78dbcd6c">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Values differ&#xD;
+Expected: 3.6&#xD;
+Actual:   2.0</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 2562&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Production_issue_detail_shows_replayed_cost_and_restores_it_on_receipt_rollback(goodsReceipt: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="55908f0d-ba2a-05c2-c1b4-8e94d13da8cc">
+      <Execution id="8bf4e160-f7b1-4ddb-b1d1-032b78dbcd6c" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Production_issue_detail_shows_replayed_cost_and_restores_it_on_receipt_rollback" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Production_issue_detail_shows_replayed_cost_and_restores_it_on_receipt_rollback(goodsReceipt: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="d1ad3685-b25f-e487-6a2a-5ed92c4cd83c">
+      <Execution id="2b9728db-5817-4a36-8a7d-e14b393edb73" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Production_issue_detail_shows_replayed_cost_and_restores_it_on_receipt_rollback" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="d1ad3685-b25f-e487-6a2a-5ed92c4cd83c" executionId="2b9728db-5817-4a36-8a7d-e14b393edb73" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="55908f0d-ba2a-05c2-c1b4-8e94d13da8cc" executionId="8bf4e160-f7b1-4ddb-b1d1-032b78dbcd6c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="0" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:02.36]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.93]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.98]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:15.87]       Assert.Equal() Failure: Values differ&#xD;
+[xUnit.net 00:00:15.87]       Expected: 3.6&#xD;
+[xUnit.net 00:00:15.87]       Actual:   2.0&#xD;
+[xUnit.net 00:00:15.87]       Stack Trace:&#xD;
+[xUnit.net 00:00:15.87]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(2562,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:15.87]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:17.14]       Assert.Equal() Failure: Values differ&#xD;
+[xUnit.net 00:00:17.14]       Expected: 3.6&#xD;
+[xUnit.net 00:00:17.14]       Actual:   2.0&#xD;
+[xUnit.net 00:00:17.14]       Stack Trace:&#xD;
+[xUnit.net 00:00:17.14]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(2562,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:17.14]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:17.15]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T23:42:22.7714604+08:00">
+        <Text>[xUnit.net 00:00:15.86]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Production_issue_detail_shows_replayed_cost_and_restores_it_on_receipt_rollback(goodsReceipt: True) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T23:42:24.0487612+08:00">
+        <Text>[xUnit.net 00:00:17.14]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Production_issue_detail_shows_replayed_cost_and_restores_it_on_receipt_rollback(goodsReceipt: False) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

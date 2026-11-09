@@ -4,6 +4,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
@@ -54,6 +55,38 @@ public sealed class FinishedGoodReceiptMathTests
 [Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class FinishedGoodReceiptSqliteReplayBoundaryTests
 {
+    [Fact]
+    public async Task Missing_legacy_production_location_is_not_ready_and_cannot_post()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        var factory = new TestDbContextFactory(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).AddInterceptors(new SqliteUnicodeLiteralInterceptor()).Options);
+        var fixture = await FinishedGoodReceiptSqlServerTests.CreateFixtureAsync(factory);
+        await using (var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync())
+        {
+            // Model an imported legacy inconsistency that SQL Server's V2 check now forbids.
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints = ON;");
+            var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == fixture.PoolId);
+            lot.ProductionLocationId = null;
+            await db.SaveChangesAsync();
+        }
+        var search = await fixture.Service.SearchSourcesAsync(new());
+        Assert.True(search.Succeeded, search.Message);
+        var row = Assert.Single(search.Data!.Rows, x => x.Id == fixture.PoolId);
+        Assert.Contains("production location", row.Readiness, StringComparison.OrdinalIgnoreCase);
+
+        var draft = await fixture.Service.SaveAsync(fixture.Draft(1));
+        Assert.True(draft.Succeeded, draft.Message);
+        await using (var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE PrFinishedGoodReceipt SET RowVersion = X'01' WHERE BatchId = {draft.Data!.Id};");
+        var current = await fixture.Service.GetAsync(draft.Data!.Id);
+        var posted = await fixture.Service.PostAsync(new(draft.Data.Id, current.Data!.RowVersion, Guid.NewGuid()));
+        Assert.False(posted.Succeeded);
+        Assert.Contains("production location", posted.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -129,6 +162,127 @@ public sealed class FinishedGoodReceiptSqliteReplayBoundaryTests
             .SingleAsync(x => x.BatchId == saved.Data.Id && x.ReversesFactId == null)).TotalValue);
         Assert.False(await verify.ProductionFinishedGoodFactRows.AsNoTracking()
             .AnyAsync(x => x.BatchId == saved.Data.Id && x.ReversesFactId != null));
+    }
+
+    [Theory]
+    [InlineData(130, 6, 0)]
+    [InlineData(110, 6, 0)]
+    [InlineData(130, 10, 0)]
+    [InlineData(130, 6, 1)]
+    [InlineData(130, 6, 2)]
+    [InlineData(130, 6, 3)]
+    public async Task Corrected_terminal_wac_receipt_rolls_back_only_with_owned_matching_values(
+        decimal correctedSourceValue, decimal finishedQty, int refusalCase)
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        var factory = new TestDbContextFactory(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).AddInterceptors(new SqliteUnicodeLiteralInterceptor()).Options);
+        var fixture = await FinishedGoodReceiptSqlServerTests.CreateFixtureAsync(factory,
+            valueInventory: true, singleContribution: true);
+        var saved = await fixture.Service.SaveAsync(fixture.Draft(finishedQty));
+        Assert.True(saved.Succeeded, saved.Message);
+        await using (var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE PrFinishedGoodReceipt SET RowVersion = X'01' WHERE BatchId = {saved.Data!.Id};");
+        var draft = await fixture.Service.GetAsync(saved.Data!.Id);
+        var posted = await fixture.Service.PostAsync(new(saved.Data.Id,
+            draft.Data!.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+
+        long originalReceiptId;
+        long deltaId;
+        await using (var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync())
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            var fact = await db.ProductionFinishedGoodFactRows.AsNoTracking()
+                .SingleAsync(f => f.BatchId == saved.Data.Id && f.ReversesFactId == null);
+            var outbound = await db.ProductionBalLotMovements.AsNoTracking()
+                .SingleAsync(m => m.Uid == fact.ProductionMovementId);
+            var inbound = await db.ProductionBalLotMovements.AsNoTracking().SingleAsync(m =>
+                m.ProductionBalLotId == outbound.ProductionBalLotId
+                && m.MovementType == ProductionBalLotMovementTypes.Produce);
+            var owner = await db.StockPostings.AsNoTracking().SingleAsync(p => p.Id == fact.StockPostingId);
+            var context = await BeginReplayRootAsync(db, fixture.Company, owner, inventoryRoot: refusalCase != 3);
+            var currentInbound = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+                fixture.Company, "HQ", [inbound.Uid]))[inbound.Uid];
+            await ProductionCostRestatementWriter.AppendWithinRootAsync(context,
+                currentInbound, correctedSourceValue, correctedSourceValue / 10m);
+            var projection = await ProductionFinishedGoodSourceCostAuthority.ReadWithinRootAsync(
+                context, saved.Data.Id);
+            var statePlan = await ProductionFinishedGoodTerminalWacStatePlanner.PrepareWithinRootAsync(
+                context, saved.Data.Id);
+            var corrected = await ProductionFinishedGoodWacReceiptCorrection.AppendWithinRootAsync(
+                context, fact.InventoryHistoryId, projection.OriginalInventoryValuationFactId,
+                correctedSourceValue * finishedQty / 10m, 20, 21);
+            Assert.NotNull(corrected?.ActiveDelta);
+            originalReceiptId = projection.OriginalInventoryValuationFactId;
+            deltaId = corrected.ActiveDelta!.Id;
+            var expectedFg = (await ProductionEffectiveCostResolver.ResolveAsync(db,
+                fixture.Company, "HQ", [outbound.Uid]))[outbound.Uid];
+            await ProductionFinishedGoodCostCorrectionWriter.AppendWithinRootAsync(
+                context, saved.Data.Id, expectedFg);
+            await ProductionFinishedGoodTerminalWacStatePlanner.ApplyWithinRootAsync(context, statePlan);
+            context.Posting.SealedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            if (refusalCase == 1)
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"DELETE FROM StockReplayEffect WHERE AffectedEntityType = {StockReplayEffectTypes.StockValuationFact} AND AffectedEntityId = {deltaId};");
+            await transaction.CommitAsync();
+        }
+
+        if (refusalCase == 2)
+        {
+            await using var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync();
+            db.IvPeriodCloseHdrs.Add(new IvPeriodCloseHdr
+            {
+                CompanyCode = fixture.Company, BranchCode = "HQ", Status = IvPeriodCloseStatuses.Closed,
+                PeriodFrom = new DateTime(2026, 10, 1), PeriodTo = new DateTime(2026, 10, 31)
+            });
+            await db.SaveChangesAsync();
+            fixture.Now = new DateTime(2026, 11, 1, 10, 0, 0);
+        }
+
+        var detail = await fixture.Service.GetAsync(saved.Data.Id);
+        var correctedFinishedValue = correctedSourceValue * finishedQty / 10m;
+        var originalFinishedValue = 120m * finishedQty / 10m;
+        Assert.Equal(correctedFinishedValue, Assert.Single(detail.Data!.Lines).TotalValue);
+        var request = new FinishedGoodReceiptCommand(saved.Data.Id, detail.Data.RowVersion,
+            Guid.NewGuid(), "Reverse corrected finished goods");
+        var rollback = await fixture.Service.RollbackAsync(request);
+        await using var verify = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync();
+        var stockState = await verify.StockCostStates.AsNoTracking().SingleAsync(s =>
+            s.CompanyCode == fixture.Company && s.BranchCode == "HQ" && s.ItemCode == "FG");
+        var pool = await verify.ProductionBalLots.AsNoTracking().SingleAsync(p => p.Uid == fixture.PoolId);
+        if (refusalCase != 0)
+        {
+            Assert.False(rollback.Succeeded);
+            Assert.Equal(finishedQty, stockState.OnHandBaseQty);
+            Assert.Equal(correctedFinishedValue, stockState.InventoryValue);
+            Assert.Equal(correctedSourceValue - correctedFinishedValue, pool.TotalCost);
+            Assert.False(await verify.ProductionFinishedGoodFactRows.AsNoTracking()
+                .AnyAsync(f => f.BatchId == saved.Data.Id && f.ReversesFactId != null));
+            return;
+        }
+        Assert.True(rollback.Succeeded, rollback.Message);
+        Assert.Equal(IvBatchStatuses.New, rollback.Data!.Status);
+        Assert.Equal(0m, stockState.OnHandBaseQty);
+        Assert.Equal(0m, stockState.InventoryValue);
+        Assert.Equal(10m, pool.BaseQty);
+        Assert.Equal(correctedSourceValue, pool.TotalCost);
+        var reverseFact = await verify.ProductionFinishedGoodFactRows.AsNoTracking()
+            .SingleAsync(f => f.BatchId == saved.Data.Id && f.ReversesFactId != null);
+        Assert.Equal(correctedFinishedValue, reverseFact.TotalValue);
+        var reversal = await verify.StockValuationFacts.AsNoTracking()
+            .SingleAsync(f => f.ReversesValuationFactId == deltaId);
+        Assert.Equal(originalFinishedValue - correctedFinishedValue, reversal.SignedValue);
+        Assert.Equal(originalReceiptId, reversal.OriginalValuationFactId);
+        Assert.True(await verify.StockReplayEffects.AsNoTracking().AnyAsync(e =>
+            e.AffectedEntityType == StockReplayEffectTypes.StockValuationFact
+            && e.AffectedEntityId == reversal.Id && e.OriginalEntityId == originalReceiptId));
+        var retry = await fixture.Service.RollbackAsync(request);
+        Assert.True(retry.Succeeded, retry.Message);
+        Assert.Equal(IvBatchStatuses.New, retry.Data!.Status);
     }
 
     [Fact]
@@ -403,7 +557,7 @@ public sealed class FinishedGoodReceiptSqliteReplayBoundaryTests
     }
 
     private static async Task<StockPostingContext> BeginReplayRootAsync(
-        AppDbContext db, string company, StockPosting owner)
+        AppDbContext db, string company, StockPosting owner, bool inventoryRoot = false)
     {
         var epoch = await db.StockLedgerEpochs.SingleAsync();
         var counter = await db.StockPostingBranchSequences.SingleAsync();
@@ -413,7 +567,8 @@ public sealed class FinishedGoodReceiptSqliteReplayBoundaryTests
             CompanyCode = company, BranchCode = "HQ", LedgerEpochId = epoch.Id,
             PostingSequence = ++counter.LastSequence, RequestId = Guid.NewGuid(),
             CommandType = "FG_RESTATEMENT_TEST", RequestFingerprint = new string('C', 64),
-            SourceModule = "PRODUCTION", SourceDocumentType = "TEST",
+            SourceModule = inventoryRoot ? "INVENTORY" : "PRODUCTION",
+            SourceDocumentType = inventoryRoot ? IvTrxTypes.MiscellaneousReceipt : "TEST",
             SourceDocumentId = "FG-COST", SourceDocumentNo = "FG-COST",
             DocumentRevision = 1, SourceSnapshotJson = "{}",
             SourceSnapshotHash = new string('D', 64), EffectiveAt = rootAt,
@@ -470,17 +625,27 @@ public sealed class FinishedGoodReceiptSqlServerTests
         }
         Assert.Contains("test", new SqlConnectionStringBuilder(cs).InitialCatalog, StringComparison.OrdinalIgnoreCase);
         var factory = new TestDbContextFactory(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options);
-        return await CreateFixtureAsync(factory, lotControlled, existingCompany, branch);
+        return await CreateFixtureAsync(factory, lotControlled, existingCompany, branch, valueInventory: true);
     }
 
     internal static async Task<Fixture> CreateFixtureAsync(TestDbContextFactory factory,
         bool lotControlled = false, string? existingCompany = null, string branch = "HQ",
         bool valueInventory = false, bool singleContribution = false,
         decimal singleContributionQty = 10m,
-        decimal singleContributionValue = 120m)
+        decimal singleContributionValue = 120m,
+        IQaFgAuthorization? qaFg = null)
     {
         await using var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
-        var company = existingCompany ?? "F" + Guid.NewGuid().ToString("N")[..4].ToUpperInvariant();
+        var company = existingCompany;
+        if (company is null)
+        {
+            do
+            {
+                company = "F" + Guid.NewGuid().ToString("N")[..4].ToUpperInvariant();
+            }
+            while (await db.ProductionWorkOrders.AnyAsync(x => x.CompanyCode == company)
+                || await db.IvWarehouses.AnyAsync(x => x.CompanyCode == company));
+        }
         var order = new ProductionWorkOrder { CompanyCode = company, BranchCode = branch, WorkOrderNo = "WO-FG-" + branch, Status = "COMPLETED",
             ProductCode = "FG", PlannedQty = 10, OutputUom = "EA", CreatedBy = "TEST" };
         var bom = await db.PrBomHdrs.FirstOrDefaultAsync(x => x.CompanyCode == company && x.ProdCode == "FG");
@@ -516,7 +681,7 @@ public sealed class FinishedGoodReceiptSqlServerTests
         });
         await db.SaveChangesAsync();
         var fixture = new Fixture(factory, company, order.Uid, pool.Uid, route.Uid,
-            operation.Uid, branch, valueInventory);
+            operation.Uid, branch, valueInventory, qaFg);
         // The third contributor remains unused by FIFO for a six-unit receipt, but it must
         // still be retained as a pooled-value dependency.
         if (singleContribution)
@@ -592,7 +757,8 @@ public sealed class FinishedGoodReceiptSqlServerTests
         Assert.Equal(48, (await verify.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId)).TotalCost);
         Assert.Equal(6, (await verify.IvBalLocs.SingleAsync(x => x.CompanyCode == f.Company)).StdQty);
         var generations = await verify.ProductionPostingLinks
-            .Where(x => x.InventoryBatchNo == saved.Data.BatchNo
+            .Where(x => x.CompanyCode == f.Company && x.BranchCode == "HQ"
+                && x.InventoryBatchNo == saved.Data.BatchNo
                 && x.CommandType == ProductionPostingCommandTypes.FinishedGoodReceiptPost)
             .OrderBy(x => x.DocumentRevision).ToListAsync();
         Assert.Equal([1, 2], generations.Select(x => x.DocumentRevision));
@@ -640,6 +806,20 @@ public sealed class FinishedGoodReceiptSqlServerTests
         var update = f.Draft(4); update.Id = first.Data!.Id; update.ExpectedVersion = first.Data.RowVersion; update.RefNo = "Changed header";
         var second = await f.Service.SaveAsync(update); Assert.True(second.Succeeded, second.Message);
         Assert.False(first.Data.RowVersion.SequenceEqual(second.Data!.RowVersion));
+        var stalePost = await f.Service.PostAsync(new(first.Data.Id, first.Data.RowVersion, Guid.NewGuid()));
+        Assert.False(stalePost.Succeeded);
+        Assert.Contains("changed", stalePost.Message, StringComparison.OrdinalIgnoreCase);
+        var lineUpdate = f.Draft(3);
+        lineUpdate.Id = second.Data.Id;
+        lineUpdate.ExpectedVersion = second.Data.RowVersion;
+        lineUpdate.RefNo = "Changed header";
+        var third = await f.Service.SaveAsync(lineUpdate);
+        Assert.True(third.Succeeded, third.Message);
+        Assert.False(second.Data.RowVersion.SequenceEqual(third.Data!.RowVersion));
+        var staleLinePost = await f.Service.PostAsync(new(second.Data.Id, second.Data.RowVersion, Guid.NewGuid()));
+        Assert.False(staleLinePost.Succeeded);
+        Assert.Contains("changed", staleLinePost.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3m, Assert.Single(third.Data.Lines).Quantity);
         Assert.False((await f.Service.DeleteAsync(first.Data.Id, first.Data.RowVersion)).Succeeded);
         await using (var db = await f.Factory.CreateDbContextAsync())
         {
@@ -696,26 +876,19 @@ public sealed class FinishedGoodReceiptSqlServerTests
     }
 
     [Fact]
-    public async Task Missing_production_location_is_not_ready_and_cannot_post()
+    public async Task SqlServer_rejects_missing_location_for_v2_production_source()
     {
         var f = await CreateAsync(); if (f is null) return;
         await using (var db = await f.Factory.CreateDbContextAsync())
         {
             var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId);
             lot.ProductionLocationId = null;
-            await db.SaveChangesAsync();
+            var error = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+            Assert.Contains("CK_PrProductionBalLot_V2", error.InnerException?.Message,
+                StringComparison.OrdinalIgnoreCase);
         }
-
-        var search = await f.Service.SearchSourcesAsync(new());
-        Assert.True(search.Succeeded, search.Message);
-        var row = Assert.Single(search.Data!.Rows, x => x.Id == f.PoolId);
-        Assert.Contains("production location", row.Readiness, StringComparison.OrdinalIgnoreCase);
-
-        var draft = await f.Service.SaveAsync(f.Draft(1));
-        Assert.True(draft.Succeeded, draft.Message);
-        var posted = await f.Service.PostAsync(new(draft.Data!.Id, draft.Data.RowVersion, Guid.NewGuid()));
-        Assert.False(posted.Succeeded);
-        Assert.Contains("production location", posted.Message, StringComparison.OrdinalIgnoreCase);
+        await using var verify = await f.Factory.CreateDbContextAsync();
+        Assert.NotNull((await verify.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId)).ProductionLocationId);
     }
 
     private sealed class FailureWriter(Func<bool> fail) : IProductionStockWriter
@@ -1164,11 +1337,13 @@ public sealed class FinishedGoodReceiptSqlServerTests
         private readonly long _route, _operation;
         private readonly string _branch;
         public bool FailAfterProduction;
+        public DateTime Now = BusinessDate;
         public bool CanViewCost = true, AllowAccess = true, CanPostAccess = true, CanRollbackAccess = true;
         public ProductionFinishedGoodReceiptService Service { get; }
         private readonly StockPostingCoordinator _coordinator;
         public Fixture(TestDbContextFactory factory, string company, long order, long pool,
-            long route, long operation, string branch = "HQ", bool valueInventory = false)
+            long route, long operation, string branch = "HQ", bool valueInventory = false,
+            IQaFgAuthorization? qaFg = null)
         {
             _branch = branch;
             Factory = factory; Company = company; OrderId = order; PoolId = pool; _route = route; _operation = operation;
@@ -1180,13 +1355,14 @@ public sealed class FinishedGoodReceiptSqlServerTests
                     && (permission != PermissionCodes.Rollback || CanRollbackAccess)));
             var numbers = new Mock<IRunningNumberService>(); var next = 0;
             numbers.Setup(x => x.GetNextAsync(It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(() => Interlocked.Increment(ref next));
-            var clock = new Mock<ICurrentDateService>(); clock.SetupGet(x => x.Now).Returns(BusinessDate);
-            clock.SetupGet(x => x.Today).Returns(BusinessDate.Date);
+            var clock = new Mock<ICurrentDateService>(); clock.SetupGet(x => x.Now).Returns(() => Now);
+            clock.SetupGet(x => x.Today).Returns(() => Now.Date);
             _coordinator = new(factory, tenant, new BranchStockTransactionLock(), new StockPeriodGuard(),
                 new NoActiveStockFreezeGuard(),
                 valueInventory ? new InventoryValuationService() : null);
             Service = new(factory, tenant, access.Object, clock.Object, numbers.Object, new BranchStockTransactionLock(), _coordinator,
-                new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter());
+                new IvStockPostingRepository(), new FailureWriter(() => FailAfterProduction), new IvInventoryHistoryWriter(),
+                null, qaFg);
         }
         public FinishedGoodReceiptSaveRequest Draft(decimal qty) => new() { WorkOrderId = OrderId, EffectiveDate = BusinessDate,
             Lines = [new() { ProductionBalLotId = PoolId, Quantity = qty, Warehouse = "WH" }] };

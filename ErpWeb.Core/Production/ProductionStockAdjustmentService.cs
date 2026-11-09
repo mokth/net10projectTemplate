@@ -1,6 +1,7 @@
 using System.Globalization;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Lookups;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
@@ -22,6 +23,7 @@ public sealed class ProductionStockAdjustmentService(
     ICurrentDateService clock, IRunningNumberService numbers, IBranchStockTransactionLock branchLock,
     IStockPostingCoordinator coordinator, IProductionStockWriter production,
     IItemStandardCostResolver standardCosts,
+    IQaFgAuthorization? qaFg = null,
     ILogger<ProductionStockAdjustmentService>? logger = null)
     : IProductionStockAdjustmentService
 {
@@ -324,6 +326,15 @@ public sealed class ProductionStockAdjustmentService(
                 return IvMasterOperationResult<ProductionStockAdjustmentSourcePage>.Ok(new([], 0));
             var pools = db.ProductionBalLots.AsNoTracking().Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
                 && x.WorkOrderId == order.Uid && (x.Kind == ProductionBalLotKinds.MaterialIn || x.Kind == ProductionBalLotKinds.Wip));
+            var qaReady = await QaSchemaReadiness.EvaluateAsync(db, ct);
+            if (qaReady.ProbeFailed || (!qaReady.ShouldSkipAllQaQueries && !qaReady.CanQueryPolicy))
+                throw new AdjustmentException(qaReady.UserMessage ?? QaReadinessMessages.Incomplete);
+            if (!qaReady.ShouldSkipAllQaQueries)
+            {
+                var policy = await QaPolicyService.LoadPublishedAsync(db, scope.CompanyCode, ct);
+                if (policy is { FinalFgInspectionEnabled: true })
+                    pools = pools.Where(x => x.BalanceStage != QaFgAuthorizationService.FgStagingStage);
+            }
             if (!string.IsNullOrWhiteSpace(query.SearchText)) { var term = query.SearchText.Trim(); pools = pools.Where(x => x.ItemCode.Contains(term)
                 || x.LotNo.Contains(term) || (x.Description != null && x.Description.Contains(term))); }
             var count = await pools.CountAsync(ct); var take = Math.Clamp(query.Take <= 0 ? 30 : query.Take, 1, 100);
@@ -389,6 +400,9 @@ public sealed class ProductionStockAdjustmentService(
             {
                 var pool = await LockPoolAsync(db, scope, input.ProductionBalLotId, ct);
                 if (pool.WorkOrderId != order.Uid) throw new AdjustmentException("Every source pool must belong to the selected Work Order.");
+                if (await (qaFg ?? DisabledQaFgAuthorization.Instance).AssertWipAdjustmentAllowedAsync(
+                        db, scope.CompanyCode, [pool], ct) is string qaPadjSaveError)
+                    throw new AdjustmentException(qaPadjSaveError);
                 RequireScalarContract(pool); await RequireMaterialIssueAsync(db, scope, pool, ct);
                 if (await ProductionCostReadiness.PoolValuationError(db, pool, ct) is { } poolError) throw new AdjustmentException(poolError);
                 if (pool.LastStockEventEffectiveAt > date || pool.LastMovementDate > date) throw new AdjustmentException($"Adjustment date precedes the latest Production stock event for pool {pool.Uid}.");
@@ -550,6 +564,9 @@ public sealed class ProductionStockAdjustmentService(
                     if (pool.LastStockEventEffectiveAt > date || pool.LastMovementDate > date) throw new AdjustmentException($"PADJ date precedes a later stock event on pool {pool.Uid}.");
                 }
             }
+            if (!reversal && await (qaFg ?? DisabledQaFgAuthorization.Instance).AssertWipAdjustmentAllowedAsync(
+                    db, scope.CompanyCode, pools.Values, ct) is string qaPadjError)
+                throw new AdjustmentException(qaPadjError);
             var originalFacts = reversal ? await db.ProductionStockAdjustmentFacts.Where(x => x.BatchId == doc.BatchId && x.StockPostingId == doc.PostingId && x.ReversesFactId == null).ToListAsync(ct) : [];
             if (reversal && originalFacts.Count != doc.Lines.Count) throw new AdjustmentException("The original PADJ facts are incomplete.");
             var evidence = StockPostingFingerprint.Create(new { request.Id, Version = Convert.ToBase64String(request.ExpectedVersion), Command = commandType, Reason = request.Reason?.Trim() },

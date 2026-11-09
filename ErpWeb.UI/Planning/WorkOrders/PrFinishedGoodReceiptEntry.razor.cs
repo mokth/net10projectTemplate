@@ -2,6 +2,7 @@ using System.Text.Json;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.UI.Components.Common.OperatorError;
 using ErpWeb.UI.Components.Pages;
@@ -15,6 +16,8 @@ namespace ErpWeb.UI.Planning.WorkOrders;
 public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
 {
     [Parameter] public int Id { get; set; }
+
+    [SupplyParameterFromQuery(Name = "qaCase")] public string? QueryQaCase { get; set; }
     [Inject] private IProductionFinishedGoodReceiptService Receipts { get; set; } = default!;
     [Inject] private IIvInventoryLookupService Lookups { get; set; } = default!;
     [Inject] private IAccessRightService Access { get; set; } = default!;
@@ -128,6 +131,10 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         && string.Equals(Document.Status, "NEW", StringComparison.OrdinalIgnoreCase)
         && CanPostAccess;
     protected bool CanPost => ShowPost && !IsSubmitting;
+    protected bool CanRequestQa =>
+        !LoadFailed
+        && !EntryPermissionDenied
+        && HasLockedWorkOrder;
     protected bool CanRollback =>
         Id > 0
         && string.Equals(Document.Status, "POSTED", StringComparison.OrdinalIgnoreCase)
@@ -238,6 +245,11 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
         }
 
         _saved = JsonSerializer.Serialize(ToRequest());
+        if (IsNewMode && string.IsNullOrWhiteSpace(StatusMessage) && string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            StatusMessage = QaOpenedFromCase.Banner(QueryQaCase);
+        }
+
         IsBootstrapping = false;
     }
 
@@ -401,6 +413,22 @@ public partial class PrFinishedGoodReceiptEntry : PageBase, IDisposable
 
     protected void OpenDeleteConfirm() => DeleteConfirmationVisible = true;
     protected void OpenChangeWorkOrderConfirm() => ChangeWorkOrderVisible = true;
+
+    protected void OnRequestQa()
+    {
+        var line = Editors.FirstOrDefault()?.Line ?? Document.Lines.FirstOrDefault();
+        var returnUrl = IsNewMode
+            ? "/planning/finished-good-receipts/new"
+            : IsEditMode
+                ? $"/planning/finished-good-receipts/{Id}/edit"
+                : $"/planning/finished-good-receipts/{Id}/view";
+        var href =
+            $"/quality/cases/new?source={Uri.EscapeDataString(QaSourceTypes.FgStagingLot)}"
+            + $"&workOrderNo={Uri.EscapeDataString(Document.WorkOrderNo ?? string.Empty)}"
+            + (line is null || line.ProductionBalLotId <= 0 ? string.Empty : $"&lotId={line.ProductionBalLotId}")
+            + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        Navigation.NavigateTo(href);
+    }
 
     protected void OpenEdit()
     {

@@ -1,11 +1,13 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.Data.Sqlite;
@@ -103,6 +105,137 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
     }
 
     public async Task DisposeAsync() => await _connection.DisposeAsync();
+
+    [Theory]
+    [InlineData("WAC", false)]
+    [InlineData("WAC", true)]
+    [InlineData("FIFO", false)]
+    [InlineData("FIFO", true)]
+    [InlineData("STANDARD", false)]
+    [InlineData("STANDARD", true)]
+    public async Task Historical_count_post_and_rollback_respect_qa_stock_holds(string method, bool rollback)
+    {
+        if (method == "WAC")
+            await SeedWacOpeningEvidenceAsync();
+        else
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+            db.StockCostStates.Remove(await db.StockCostStates.SingleAsync());
+            await db.SaveChangesAsync();
+            if (method == "FIFO")
+            {
+                await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+                    [new FifoLayerSeed(100m, 2m, FixedToday.AddDays(-1).AddHours(9))]);
+            }
+            else
+            {
+                await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 100m, 2m, StockCostMethods.Standard);
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 2m);
+            }
+        }
+        var service = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday.AddDays(10),
+            enableBackdatedReplay: true, qaPhysical: new QaPhysicalHoldAuthorizationService());
+        var saved = await service.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        var generated = await service.GenerateAsync(saved.Id, discardCounts: false);
+        Assert.True(generated.Succeeded, generated.ErrorMessage);
+        var document = await service.GetAsync(saved.CountNo!);
+        Assert.True(document.Succeeded, document.ErrorMessage);
+        var line = Assert.Single(document.Document!.Lines);
+        var counted = await service.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest
+            {
+                BalLocId = line.BalLocId, PhysicalQty = rollback ? 110m : 90m
+            }], null);
+        Assert.True(counted.Succeeded, counted.ErrorMessage);
+        StockCountCostApprovalRequest[] approvals = method == "FIFO"
+            ? [new(line.Id, "MANUAL_APPROVED", 2m, "Count manager verified FIFO cost")]
+            : [];
+        if (rollback)
+        {
+            var initial = await service.PostAsync(saved.Id, costApprovals: approvals);
+            Assert.True(initial.Succeeded, initial.ErrorMessage);
+        }
+
+        await SeedCountQaHoldAsync(line.BalLocId, rollback ? 105m : 95m);
+        int postingCount;
+        int generationCount;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            postingCount = await db.StockPostings.CountAsync();
+            generationCount = await db.StockCountReplayGenerations.CountAsync();
+        }
+        var blocked = rollback ? await service.RollbackAsync(saved.Id, "recount")
+            : await service.PostAsync(saved.Id, costApprovals: approvals);
+        Assert.False(blocked.Succeeded);
+        Assert.Contains("quality hold", blocked.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var stock = await db.StockCostStates.SingleAsync();
+            var expectedQty = rollback ? 110m : 100m;
+            Assert.Equal(expectedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(expectedQty, stock.OnHandBaseQty);
+            Assert.Equal(expectedQty * 2m, stock.InventoryValue);
+            Assert.Equal(postingCount, await db.StockPostings.CountAsync());
+            Assert.Equal(generationCount, await db.StockCountReplayGenerations.CountAsync());
+            Assert.Equal(rollback ? IvStockCountStatuses.Posted : IvStockCountStatuses.Counted,
+                (await db.IvStockCountHdrs.SingleAsync(h => h.Id == saved.Id)).Status);
+            var hold = await db.QaPhysicalHolds.SingleAsync();
+            Assert.Equal(rollback ? 105m : 95m, hold.ReservedBaseQty);
+            Assert.Equal(QaLogicalHoldStatuses.Active, hold.Status);
+            hold.ReservedBaseQty = rollback ? 100m : 90m;
+            await db.SaveChangesAsync();
+        }
+        var completed = rollback ? await service.RollbackAsync(saved.Id, "recount")
+            : await service.PostAsync(saved.Id, costApprovals: approvals);
+        Assert.True(completed.Succeeded, completed.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var expectedQty = rollback ? 100m : 90m;
+            var stock = await db.StockCostStates.SingleAsync();
+            Assert.Equal(expectedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(expectedQty, stock.OnHandBaseQty);
+            Assert.Equal(expectedQty * 2m, stock.InventoryValue);
+            Assert.Equal(expectedQty, (await db.QaPhysicalHolds.SingleAsync()).ReservedBaseQty);
+            Assert.Equal(rollback ? IvStockCountStatuses.RolledBack : IvStockCountStatuses.Posted,
+                (await db.IvStockCountHdrs.SingleAsync(h => h.Id == saved.Id)).Status);
+        }
+    }
+
+    private async Task SeedCountQaHoldAsync(int balanceId, decimal quantity)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var balance = await db.IvBalLocs.SingleAsync(b => b.Id == balanceId);
+        db.QaPolicies.Add(new QaPolicy
+        {
+            CompanyCode = "DEMO", Version = 1, Enabled = true, IsPublished = true,
+            PhysicalHoldEnabled = true, CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
+        });
+        var line = new QaCaseLine { LineNo = 1, ItemCode = balance.ICode, Uom = "EA", Qty = quantity };
+        var qaCase = new QaCase
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", CaseNo = "QA-COUNT-HOLD",
+            CaseDate = FixedToday, Status = QaCaseStatuses.Approved,
+            SourceType = QaSourceTypes.InventoryStock, CreatedDate = DateTime.UtcNow,
+            CreatedBy = "tester", Lines = [line]
+        };
+        qaCase.PhysicalHolds.Add(new QaPhysicalHold
+        {
+            CompanyCode = "DEMO", BranchCode = "HQ", CaseLine = line, BalLocId = balance.Id,
+            ItemCode = balance.ICode, WarehouseCode = balance.WhCode, LocationCode = balance.LocCode,
+            LotNo = balance.LotNo ?? string.Empty, ItemStatus = balance.IStatus,
+            ReservedBaseQty = quantity, Status = QaLogicalHoldStatuses.Active,
+            Cause = QaLogicalHoldCauses.KeepHold, CreatedAtUtc = DateTime.UtcNow
+        });
+        db.QaCases.Add(qaCase);
+        await db.SaveChangesAsync();
+    }
 
     [Fact]
     public async Task Replay_enabled_open_period_count_can_generate_and_count_after_legacy_age_limit()

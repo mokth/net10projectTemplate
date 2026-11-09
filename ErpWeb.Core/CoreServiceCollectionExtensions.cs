@@ -4,6 +4,7 @@ using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Sales.Delivery;
 using ErpWeb.Core.Purchase;
@@ -301,6 +302,14 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IMachineScheduleAdvancedPlanningService, MachineScheduleAdvancedPlanningService>();
         services.AddScoped<IMachineScheduleSegmentBackfillService, MachineScheduleSegmentBackfillService>();
         services.AddScoped<IMachineScheduleAllocationBackfillService, MachineScheduleAllocationBackfillService>();
+
+        services.AddScoped<IQaPolicyService, QaPolicyService>();
+        services.AddScoped<IQaCaseService, QaCaseService>();
+        services.AddScoped<IQaReceiptAuthorization, QaReceiptAuthorizationService>();
+        services.AddScoped<IQaFgAuthorization, QaFgAuthorizationService>();
+        services.AddScoped<IQaLogicalHoldAuthorization, QaLogicalHoldAuthorizationService>();
+        services.AddScoped<IQaPhysicalHoldAuthorization, QaPhysicalHoldAuthorizationService>();
+        services.AddScoped<IQaNonGoodAuthorization, QaNonGoodAuthorizationService>();
 
         services.AddScoped<IPlanningMasterAccess, PlanningMasterAccess>();
         services.AddScoped<IPlanningDependencyChecker, PlanningDependencyChecker>();

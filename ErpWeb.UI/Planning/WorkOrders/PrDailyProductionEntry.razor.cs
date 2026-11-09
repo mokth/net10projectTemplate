@@ -1,6 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Security;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
@@ -19,6 +20,7 @@ public partial class PrDailyProductionEntry : PageBase
     [Parameter] public string Mode { get; set; } = "new";
     [Parameter] public long? OutputId { get; set; }
     [Parameter] public long? WorkOrderOperationId { get; set; }
+    [SupplyParameterFromQuery(Name = "qaCase")] public string? QueryQaCase { get; set; }
 
     protected bool IsBootstrapping = true;
     protected bool IsSubmitting;
@@ -103,6 +105,9 @@ public partial class PrDailyProductionEntry : PageBase
     protected bool CanPost => CurrentOutputId is > 0
         && HeaderStatus == ProductionOutputStatuses.New
         && CanAccessPost;
+    protected bool CanRequestQa => !string.IsNullOrWhiteSpace(WorkOrderNo);
+    protected bool CanRequestQaNonGood => CurrentOutputId is > 0
+        && ScrapQty + RejectQty + HoldQty > 0m;
     protected bool CanRollback => CurrentOutputId is > 0
         && HeaderStatus == ProductionOutputStatuses.Posted
         && CanAccessRollback;
@@ -182,6 +187,11 @@ public partial class PrDailyProductionEntry : PageBase
         {
             await LoadFilterOptionsAsync();
             await SearchEligibleAsync();
+        }
+
+        if (string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            StatusMessage = QaOpenedFromCase.Banner(QueryQaCase);
         }
 
         IsBootstrapping = false;
@@ -613,6 +623,32 @@ public partial class PrDailyProductionEntry : PageBase
         await LoadFilterOptionsAsync();
         OperationPage = 0;
         await SearchEligibleAsync();
+    }
+
+    protected void OnRequestQa()
+    {
+        var returnUrl = CurrentOutputId is > 0
+            ? $"/planning/daily-production/{(IsViewMode ? "view" : IsEditMode ? "edit" : "view")}/{CurrentOutputId.Value}"
+            : "/planning/daily-production/new";
+        var href =
+            $"/quality/cases/new?source={Uri.EscapeDataString(QaSourceTypes.ProductionOutputGood)}"
+            + $"&workOrderNo={Uri.EscapeDataString(WorkOrderNo ?? string.Empty)}"
+            + (CurrentOutputId is > 0 ? $"&outputId={CurrentOutputId.Value}" : string.Empty)
+            + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        Navigation.NavigateTo(href);
+    }
+
+    protected void OnRequestQaNonGood()
+    {
+        var returnUrl = CurrentOutputId is > 0
+            ? $"/planning/daily-production/{(IsViewMode ? "view" : IsEditMode ? "edit" : "view")}/{CurrentOutputId.Value}"
+            : "/planning/daily-production/new";
+        var href =
+            $"/quality/cases/new?source={Uri.EscapeDataString(QaSourceTypes.ProductionOutputNonGood)}"
+            + $"&workOrderNo={Uri.EscapeDataString(WorkOrderNo ?? string.Empty)}"
+            + $"&outputId={CurrentOutputId}"
+            + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        Navigation.NavigateTo(href);
     }
 
     protected void BackToList() => DocumentReturnNavigation.NavigateBack(Navigation, "/planning/daily-production");

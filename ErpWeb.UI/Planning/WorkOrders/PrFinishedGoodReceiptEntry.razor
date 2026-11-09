@@ -91,6 +91,15 @@
                               Click="@OpenPostConfirm"
                               Enabled="@CanPost" />
                 }
+                @if (CanRequestQa)
+                {
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Request QA"
+                              IconCssClass="fa-solid fa-clipboard-check"
+                              title="Inspection record only — posting approval not active"
+                              Click="@OnRequestQa"
+                              Enabled="@(!IsSubmitting)" />
+                }
                 @if (CanRollback)
                 {
                     <DxButton RenderStyle="ButtonRenderStyle.Warning"
@@ -304,7 +313,7 @@
                 <header class="pr-dp-section-head">
                     <div>
                         <strong>Find eligible source lots</strong>
-                        <small>Select a final production lot. Non-ready sources can be added; POST is the readiness gate.</small>
+                        <small>Select a final production lot. Non-ready sources can be added; POST is the readiness gate. If finished-goods inspection is on, POST also needs an approved QA grant for the accepted quantity.</small>
                     </div>
                 </header>
 

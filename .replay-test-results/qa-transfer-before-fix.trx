@@ -1,0 +1,180 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="402d9898-c6f9-4cd1-925c-8ae712c9e880" name="Mokth@MOKTH 2026-11-05 22:58:32" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-05T22:58:32.8905638+08:00" queuing="2026-11-05T22:58:32.8905647+08:00" start="2026-11-05T22:58:12.0356063+08:00" finish="2026-11-05T22:58:41.7062753+08:00" />
+  <TestSettings name="default" id="92a86dbc-58b6-4bc6-9f46-914a74e4d3f8">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-05_22_58_32" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="894d1655-1f6a-4545-bbb3-b78b595c58eb" testId="aceed724-a8e7-2023-0455-3ce61f177912" testName="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;STANDARD&quot;, historical: False)" computerName="MOKTH" duration="00:00:13.2660537" startTime="2026-11-05T22:58:17.6899003+08:00" endTime="2026-11-05T22:58:32.7694590+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="894d1655-1f6a-4545-bbb3-b78b595c58eb">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs:line 188&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="1e6cd355-50f4-4fcc-900a-619c53d77147" testId="8152aa2b-7a61-afcb-0e1d-e91c98a83076" testName="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;WAC&quot;, historical: True)" computerName="MOKTH" duration="00:00:01.8082496" startTime="2026-11-05T22:58:37.5054137+08:00" endTime="2026-11-05T22:58:39.3220448+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1e6cd355-50f4-4fcc-900a-619c53d77147">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs:line 188&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="6f10b459-ac0a-4367-a439-07c0861baafa" testId="275fb2f3-784d-920c-84df-ab6d905999cb" testName="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;WAC&quot;, historical: False)" computerName="MOKTH" duration="00:00:00.6049856" startTime="2026-11-05T22:58:40.9476238+08:00" endTime="2026-11-05T22:58:41.5653321+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6f10b459-ac0a-4367-a439-07c0861baafa">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs:line 188&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5e272699-946f-4f9c-a432-96f962cb40b7" testId="df14d9a9-3ee9-48e2-17b8-8f0538bb9ce5" testName="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;STANDARD&quot;, historical: True)" computerName="MOKTH" duration="00:00:02.8958965" startTime="2026-11-05T22:58:34.5984690+08:00" endTime="2026-11-05T22:58:37.5024262+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5e272699-946f-4f9c-a432-96f962cb40b7">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs:line 188&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="b397bbd0-e342-4142-80a3-36c226f28ae1" testId="ac8b2a93-f0b4-a9f6-8115-cd854c56da4d" testName="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;FIFO&quot;, historical: False)" computerName="MOKTH" duration="00:00:01.8096065" startTime="2026-11-05T22:58:32.8573448+08:00" endTime="2026-11-05T22:58:34.5924366+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b397bbd0-e342-4142-80a3-36c226f28ae1">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs:line 188&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="3e1e4d6d-76d4-4433-acd4-ce27259169fa" testId="096d43b0-7bc0-158d-70df-21cc2e5d1437" testName="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;FIFO&quot;, historical: True)" computerName="MOKTH" duration="00:00:01.6094152" startTime="2026-11-05T22:58:39.3242896+08:00" endTime="2026-11-05T22:58:40.9459196+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3e1e4d6d-76d4-4433-acd4-ce27259169fa">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs:line 188&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;FIFO&quot;, historical: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="ac8b2a93-f0b4-a9f6-8115-cd854c56da4d">
+      <Execution id="b397bbd0-e342-4142-80a3-36c226f28ae1" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests" name="Transfer_rollback_respects_destination_qa_hold" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;WAC&quot;, historical: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="275fb2f3-784d-920c-84df-ab6d905999cb">
+      <Execution id="6f10b459-ac0a-4367-a439-07c0861baafa" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests" name="Transfer_rollback_respects_destination_qa_hold" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;STANDARD&quot;, historical: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="df14d9a9-3ee9-48e2-17b8-8f0538bb9ce5">
+      <Execution id="5e272699-946f-4f9c-a432-96f962cb40b7" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests" name="Transfer_rollback_respects_destination_qa_hold" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;FIFO&quot;, historical: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="096d43b0-7bc0-158d-70df-21cc2e5d1437">
+      <Execution id="3e1e4d6d-76d4-4433-acd4-ce27259169fa" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests" name="Transfer_rollback_respects_destination_qa_hold" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;STANDARD&quot;, historical: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="aceed724-a8e7-2023-0455-3ce61f177912">
+      <Execution id="894d1655-1f6a-4545-bbb3-b78b595c58eb" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests" name="Transfer_rollback_respects_destination_qa_hold" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: &quot;WAC&quot;, historical: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="8152aa2b-7a61-afcb-0e1d-e91c98a83076">
+      <Execution id="1e6cd355-50f4-4fcc-900a-619c53d77147" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests" name="Transfer_rollback_respects_destination_qa_hold" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="aceed724-a8e7-2023-0455-3ce61f177912" executionId="894d1655-1f6a-4545-bbb3-b78b595c58eb" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8152aa2b-7a61-afcb-0e1d-e91c98a83076" executionId="1e6cd355-50f4-4fcc-900a-619c53d77147" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="275fb2f3-784d-920c-84df-ab6d905999cb" executionId="6f10b459-ac0a-4367-a439-07c0861baafa" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="df14d9a9-3ee9-48e2-17b8-8f0538bb9ce5" executionId="5e272699-946f-4f9c-a432-96f962cb40b7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ac8b2a93-f0b4-a9f6-8115-cd854c56da4d" executionId="b397bbd0-e342-4142-80a3-36c226f28ae1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="096d43b0-7bc0-158d-70df-21cc2e5d1437" executionId="3e1e4d6d-76d4-4433-acd4-ce27259169fa" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="6" executed="6" passed="0" failed="6" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:03.98]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:04.93]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:05.00]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:20.17]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:20.17]       Expected: False&#xD;
+[xUnit.net 00:00:20.17]       Actual:   True&#xD;
+[xUnit.net 00:00:20.17]       Stack Trace:&#xD;
+[xUnit.net 00:00:20.18]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs(188,0): at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical)&#xD;
+[xUnit.net 00:00:20.18]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:21.98]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:21.98]       Expected: False&#xD;
+[xUnit.net 00:00:21.98]       Actual:   True&#xD;
+[xUnit.net 00:00:21.98]       Stack Trace:&#xD;
+[xUnit.net 00:00:21.98]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs(188,0): at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical)&#xD;
+[xUnit.net 00:00:21.98]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:24.89]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:24.89]       Expected: False&#xD;
+[xUnit.net 00:00:24.89]       Actual:   True&#xD;
+[xUnit.net 00:00:24.89]       Stack Trace:&#xD;
+[xUnit.net 00:00:24.89]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs(188,0): at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical)&#xD;
+[xUnit.net 00:00:24.89]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:26.71]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:26.71]       Expected: False&#xD;
+[xUnit.net 00:00:26.71]       Actual:   True&#xD;
+[xUnit.net 00:00:26.71]       Stack Trace:&#xD;
+[xUnit.net 00:00:26.71]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs(188,0): at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical)&#xD;
+[xUnit.net 00:00:26.71]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:28.33]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:28.34]       Expected: False&#xD;
+[xUnit.net 00:00:28.34]       Actual:   True&#xD;
+[xUnit.net 00:00:28.34]       Stack Trace:&#xD;
+[xUnit.net 00:00:28.34]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs(188,0): at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical)&#xD;
+[xUnit.net 00:00:28.34]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:28.95]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:28.95]       Expected: False&#xD;
+[xUnit.net 00:00:28.95]       Actual:   True&#xD;
+[xUnit.net 00:00:28.95]       Stack Trace:&#xD;
+[xUnit.net 00:00:28.95]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvStockTransferLedgerAuthorityTests.cs(188,0): at ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(String method, Boolean historical)&#xD;
+[xUnit.net 00:00:28.95]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:28.96]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T22:58:32.7790809+08:00">
+        <Text>[xUnit.net 00:00:20.16]     ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: "STANDARD", historical: False) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T22:58:34.5933527+08:00">
+        <Text>[xUnit.net 00:00:21.98]     ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: "FIFO", historical: False) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T22:58:37.5039462+08:00">
+        <Text>[xUnit.net 00:00:24.89]     ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: "STANDARD", historical: True) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T22:58:39.3228676+08:00">
+        <Text>[xUnit.net 00:00:26.71]     ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: "WAC", historical: True) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T22:58:40.9466587+08:00">
+        <Text>[xUnit.net 00:00:28.33]     ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: "FIFO", historical: True) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T22:58:41.5659569+08:00">
+        <Text>[xUnit.net 00:00:28.95]     ErpWeb.Tests.Inventory.Transaction.IvStockTransferLedgerAuthorityTests.Transfer_rollback_respects_destination_qa_hold(method: "WAC", historical: False) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

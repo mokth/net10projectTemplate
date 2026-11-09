@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Core.StockLedger;
@@ -67,6 +68,10 @@ public sealed partial class ProductionOutputService
                 return Fail(TransactionLifecycleGuard.ArchivedError(output.DeletedAtUtc, "This production output")!);
             if (output.Status != ProductionOutputStatuses.Posted)
                 return Fail("Only POSTED Daily Production documents can be rolled back.");
+            var qaRestore = await _qaNonGood.RestoreDailyProductionAsync(
+                db, scope.CompanyCode, scope.BranchCode!, output.Uid, cancellationToken);
+            if (qaRestore is not null)
+                return Fail(qaRestore);
             if (output.PostingId is not long originalPostingId)
                 return Fail("The current PRIMARY posting pointer is missing.");
 
@@ -183,6 +188,34 @@ public sealed partial class ProductionOutputService
 
             if (await ProductionPoolValuationService.HasActiveDependentsAsync(db, produceMovements.Select(x => x.Uid).ToArray(), cancellationToken))
                 return Fail("Rollback is blocked by an active pooled-value dependency. Reverse downstream production/FG receipts first.");
+
+            // A corrected FG receipt can already have been reversed. Removing the
+            // output before its active source receipt would require replaying both
+            // reversal pairs, which this bounded route does not yet support.
+            var outputPoolIds = produceMovements.Select(m => m.ProductionBalLotId).Distinct().ToArray();
+            var reversedFinishedIds = await db.ProductionBalLotMovements.AsNoTracking()
+                .Where(m => outputPoolIds.Contains(m.ProductionBalLotId)
+                    && m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut
+                    && m.OriginalMovementId == null
+                    && db.ProductionBalLotMovements.Any(r => r.OriginalMovementId == m.Uid
+                        && r.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal))
+                .Select(m => m.Uid).ToArrayAsync(cancellationToken);
+            if (reversedFinishedIds.Length != 0)
+            {
+                var finishedCosts = await ProductionReplayEffectiveCostReader.ReadAsync(db,
+                    scope.CompanyCode, scope.BranchCode!, reversedFinishedIds, cancellationToken);
+                var correctionIds = finishedCosts.Values.Where(c => c.RestatementFactId.HasValue)
+                    .Select(c => c.RestatementFactId!.Value).ToArray();
+                if (correctionIds.Length != 0 && await (from correction in db.ProductionCostRestatementFacts.AsNoTracking()
+                    join source in db.StockPostings.AsNoTracking() on correction.ReplayStockPostingId equals source.Id
+                    where correctionIds.Contains(correction.Id) && source.SourceModule == "INVENTORY"
+                        && (source.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+                            || source.SourceDocumentType == IvTrxTypes.GoodsReceive)
+                        && source.PostingRole == "PRIMARY" && source.SealedAtUtc != null
+                        && !db.StockPostings.Any(r => r.ReversesPostingId == source.Id && r.SealedAtUtc != null)
+                    select source.Id).AnyAsync(cancellationToken))
+                    return Fail("Reverse the backdated source receipt before reversing this Production output.");
+            }
 
             foreach (var produce in produceMovements)
             {
@@ -384,6 +417,10 @@ public sealed partial class ProductionOutputService
                 var nextCost = StockLedgerPrecision.Money(lot.TotalCost - effective.TotalCost);
                 if (nextQty < 0m || nextBaseQty < 0m || nextCost < 0m)
                     return Fail($"Reversing output would make production balance lot {lot.Uid} negative.");
+                var holdError = await AssertHoldAllowsRemainingAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, lot.Uid, nextBaseQty, cancellationToken);
+                if (holdError is not null)
+                    return Fail(holdError);
                 lot.Qty = nextQty;
                 lot.BaseQty = nextBaseQty;
                 lot.TotalCost = nextCost;

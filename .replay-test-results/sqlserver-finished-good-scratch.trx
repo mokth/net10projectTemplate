@@ -1,0 +1,423 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="ba0448e4-8766-4ac8-bd62-a01dc8eacfc8" name="Mokth@MOKTH 2026-11-06 09:37:06" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-06T09:37:06.9965962+08:00" queuing="2026-11-06T09:37:06.9965965+08:00" start="2026-11-06T09:37:02.1372532+08:00" finish="2026-11-06T09:37:22.1966989+08:00" />
+  <TestSettings name="default" id="35beaddb-cc63-4c20-8c86-812ad827319d">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-06_09_37_06" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="ac840d2d-4f15-414b-8ca4-06458ad7e4b3" testId="3e2930f0-3c22-f063-1b8b-7c99d4a93063" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Failure_after_both_stock_legs_leaves_no_partial_facts_or_lot_ownership" computerName="MOKTH" duration="00:00:01.0765781" startTime="2026-11-06T09:37:10.9769034+08:00" endTime="2026-11-06T09:37:12.0444101+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ac840d2d-4f15-414b-8ca4-06458ad7e4b3" />
+    <UnitTestResult executionId="cd2db6f8-c2ce-4c66-9640-286188fd6097" testId="0d78a165-161a-aaca-f988-d1346ffe49ad" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned" computerName="MOKTH" duration="00:00:00.5362879" startTime="2026-11-06T09:37:10.4184422+08:00" endTime="2026-11-06T09:37:10.9689416+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cd2db6f8-c2ce-4c66-9640-286188fd6097">
+      <Output>
+        <ErrorInfo>
+          <Message>Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the entity changes. See the inner exception for details.&#xD;
+---- Microsoft.Data.SqlClient.SqlException : An active stock-ledger branch requires an unsealed V2 posting write context.</Message>
+          <StackTrace>   at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.SqlServer.Update.Internal.SqlServerModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalDatabase.SaveChangesAsync(IList`1 entries, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(IList`1 entriesToSave, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(StateManager stateManager, Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.SqlServer.Storage.Internal.SqlServerExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1200&#xD;
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1201&#xD;
+--- End of stack trace from previous location ---&#xD;
+----- Inner Stack Trace -----&#xD;
+   at Microsoft.Data.SqlClient.SqlCommand.&lt;&gt;c.&lt;ExecuteDbDataReaderAsync&gt;b__195_0(Task`1 result)&#xD;
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()&#xD;
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task&amp; currentTaskSlot, Thread threadPoolThread)&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ff414376-82ec-4b47-8769-4f56eb7cf437" testId="2da67c7c-bfbf-3945-09c2-daec0306897d" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Missing_production_location_is_not_ready_and_cannot_post" computerName="MOKTH" duration="00:00:00.4132085" startTime="2026-11-06T09:37:17.3364256+08:00" endTime="2026-11-06T09:37:17.7508798+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ff414376-82ec-4b47-8769-4f56eb7cf437">
+      <Output>
+        <ErrorInfo>
+          <Message>Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the entity changes. See the inner exception for details.&#xD;
+---- Microsoft.Data.SqlClient.SqlException : The UPDATE statement conflicted with the CHECK constraint "CK_PrProductionBalLot_V2". The conflict occurred in database "CodexReplayTest_20261106_8fb42ce93", table "dbo.PrProductionBalLot".&#xD;
+The statement has been terminated.</Message>
+          <StackTrace>   at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.SqlServer.Update.Internal.SqlServerModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalDatabase.SaveChangesAsync(IList`1 entries, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(IList`1 entriesToSave, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(StateManager stateManager, Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.SqlServer.Storage.Internal.SqlServerExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Missing_production_location_is_not_ready_and_cannot_post() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 830&#xD;
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Missing_production_location_is_not_ready_and_cannot_post() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 831&#xD;
+--- End of stack trace from previous location ---&#xD;
+----- Inner Stack Trace -----&#xD;
+   at Microsoft.Data.SqlClient.SqlCommand.&lt;&gt;c.&lt;ExecuteDbDataReaderAsync&gt;b__195_0(Task`1 result)&#xD;
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()&#xD;
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task&amp; currentTaskSlot, Thread threadPoolThread)&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="8340a2f3-4f12-4a98-a22f-68a3b4776b7c" testId="80c5ce24-93be-57c0-30de-16143cb7df78" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal" computerName="MOKTH" duration="00:00:01.1971579" startTime="2026-11-06T09:37:12.5629948+08:00" endTime="2026-11-06T09:37:13.7617046+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8340a2f3-4f12-4a98-a22f-68a3b4776b7c">
+      <Output>
+        <ErrorInfo>
+          <Message>History 13 has no complete, single-method active valuation generation.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 750&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="6d357ca1-8683-47d1-9cd9-7805649f16d3" testId="1869c08a-34cc-a231-d3de-d91dd0664ecf" testName="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_production_authority_money_columns_keep_six_decimals" computerName="MOKTH" duration="00:00:03.2169327" startTime="2026-11-06T09:37:03.1673164+08:00" endTime="2026-11-06T09:37:06.3919875+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6d357ca1-8683-47d1-9cd9-7805649f16d3" />
+    <UnitTestResult executionId="e7f2baec-2922-498a-9b53-304c3560437c" testId="c504ac79-7d7e-1fc3-8dd1-eabfb250b130" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Save_maps_product_codes_grouped_qty_and_non_lot_expiry" computerName="MOKTH" duration="00:00:00.6746793" startTime="2026-11-06T09:37:16.6610878+08:00" endTime="2026-11-06T09:37:17.3361159+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e7f2baec-2922-498a-9b53-304c3560437c" />
+    <UnitTestResult executionId="1d045c9f-4c3f-4764-977b-b6c717c02e9d" testId="bc4479d4-53ac-cfe7-4d0f-16cb87fef943" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_and_exact_search_use_eligible_sources_only" computerName="MOKTH" duration="00:00:04.9887845" startTime="2026-11-06T09:37:03.1683072+08:00" endTime="2026-11-06T09:37:08.1604349+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1d045c9f-4c3f-4764-977b-b6c717c02e9d" />
+    <UnitTestResult executionId="0c36cb09-dcb8-49f0-ac05-fc4f8e6acea5" testId="fdc023fd-34da-859a-3094-fb794f73029e" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Whitespace_reference_defaults_to_batch_number" computerName="MOKTH" duration="00:00:00.3717774" startTime="2026-11-06T09:37:21.7157274+08:00" endTime="2026-11-06T09:37:22.0881400+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0c36cb09-dcb8-49f0-ac05-fc4f8e6acea5" />
+    <UnitTestResult executionId="e8fd430d-f10c-4517-81e7-d65ba64a3473" testId="87daacf4-1172-b425-5d1b-b02265579e1a" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Manual_reference_is_trimmed_and_preserved" computerName="MOKTH" duration="00:00:00.2747353" startTime="2026-11-06T09:37:15.4102137+08:00" endTime="2026-11-06T09:37:15.6836623+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e8fd430d-f10c-4517-81e7-d65ba64a3473" />
+    <UnitTestResult executionId="f17f75aa-7397-4110-bb8f-40af0447eb83" testId="a31f5654-60a3-532c-ef62-12c43bfd31d4" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cross_branch_creation_serializes_company_wide_lot_identity" computerName="MOKTH" duration="00:00:00.9624812" startTime="2026-11-06T09:37:13.7625456+08:00" endTime="2026-11-06T09:37:14.7246225+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f17f75aa-7397-4110-bb8f-40af0447eb83" />
+    <UnitTestResult executionId="26502cf1-f914-4741-9506-04dbb16f2284" testId="0604c037-d40c-e4d7-f839-de9872f15d2d" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Separate_drafts_do_not_reserve_the_same_source" computerName="MOKTH" duration="00:00:00.4331773" startTime="2026-11-06T09:37:20.4650801+08:00" endTime="2026-11-06T09:37:20.8985310+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="26502cf1-f914-4741-9506-04dbb16f2284" />
+    <UnitTestResult executionId="3481c770-471a-4a62-9c08-eb5538cb6d58" testId="d80ff531-54aa-3213-4113-a0cab2c50296" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price" computerName="MOKTH" duration="00:00:01.3396291" startTime="2026-11-06T09:37:17.7531903+08:00" endTime="2026-11-06T09:37:19.0915452+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3481c770-471a-4a62-9c08-eb5538cb6d58">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.True() Failure&#xD;
+Expected: True&#xD;
+Actual:   False</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 805&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="d2b1b6f6-d55b-4f3e-b734-db9214ec48f1" testId="67dbacc1-b17d-6a3d-bb84-380bf11af2b5" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_can_scope_to_a_locked_work_order" computerName="MOKTH" duration="00:00:00.3272410" startTime="2026-11-06T09:37:15.0810317+08:00" endTime="2026-11-06T09:37:15.4084120+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d2b1b6f6-d55b-4f3e-b734-db9214ec48f1">
+      <Output>
+        <ErrorInfo>
+          <Message>Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the entity changes. See the inner exception for details.&#xD;
+---- Microsoft.Data.SqlClient.SqlException : An active stock-ledger branch requires an unsealed V2 posting write context.</Message>
+          <StackTrace>   at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.SqlServer.Update.Internal.SqlServerModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalDatabase.SaveChangesAsync(IList`1 entries, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(IList`1 entriesToSave, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(StateManager stateManager, Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.SqlServer.Storage.Internal.SqlServerExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.SeedSecondEligibleWorkOrderAsync(Fixture f) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1067&#xD;
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.SeedSecondEligibleWorkOrderAsync(Fixture f) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1068&#xD;
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_can_scope_to_a_locked_work_order() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 944&#xD;
+--- End of stack trace from previous location ---&#xD;
+----- Inner Stack Trace -----&#xD;
+   at Microsoft.Data.SqlClient.SqlCommand.&lt;&gt;c.&lt;ExecuteDbDataReaderAsync&gt;b__195_0(Task`1 result)&#xD;
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()&#xD;
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task&amp; currentTaskSlot, Thread threadPoolThread)&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="96d9f731-0365-458d-a4a2-0e937dd69e8f" testId="d6b3a08d-73dc-c99a-0742-998f3338238e" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Period_close_and_post_share_the_branch_lock" computerName="MOKTH" duration="00:00:00.6199439" startTime="2026-11-06T09:37:16.0407229+08:00" endTime="2026-11-06T09:37:16.6608014+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="96d9f731-0365-458d-a4a2-0e937dd69e8f" />
+    <UnitTestResult executionId="b85a0ad3-c86d-448c-a4c0-6e1e65e2f7da" testId="f8fa7cb8-c6c4-b9bb-3bb2-3de4cbac77c7" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.All_draft_edits_invalidate_stale_clients_and_restrict_costs" computerName="MOKTH" duration="00:00:00.3531352" startTime="2026-11-06T09:37:14.7248897+08:00" endTime="2026-11-06T09:37:15.0784824+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b85a0ad3-c86d-448c-a4c0-6e1e65e2f7da">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.All_draft_edits_invalidate_stale_clients_and_restrict_costs() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 766&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="216d19c9-b512-4dca-ab1c-ef1ec49b3178" testId="34a43747-459d-8e6f-9fcf-2c29f4b7fc8a" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Lot_controlled_source_defaults_and_keeps_destination_lot" computerName="MOKTH" duration="00:00:00.3560998" startTime="2026-11-06T09:37:15.6839048+08:00" endTime="2026-11-06T09:37:16.0402941+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="216d19c9-b512-4dca-ab1c-ef1ec49b3178" />
+    <UnitTestResult executionId="80739f64-907f-4231-919f-69cbd9c9000e" testId="988d2395-a2f7-d744-e2da-4d3504e97fcf" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Blank_reference_defaults_to_batch_number" computerName="MOKTH" duration="00:00:00.3415613" startTime="2026-11-06T09:37:10.0767375+08:00" endTime="2026-11-06T09:37:10.4179759+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="80739f64-907f-4231-919f-69cbd9c9000e" />
+    <UnitTestResult executionId="b48daa71-89ed-497a-85dc-42e0527a1a3f" testId="7d687054-76b1-6f38-4f4e-729396760504" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Destination_location_is_branch_scoped" computerName="MOKTH" duration="00:00:00.8163934" startTime="2026-11-06T09:37:20.8988426+08:00" endTime="2026-11-06T09:37:21.7155086+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b48daa71-89ed-497a-85dc-42e0527a1a3f" />
+    <UnitTestResult executionId="1eb122fb-a954-46ff-a592-8215cbc9b907" testId="a53cf145-8f56-9bcd-9732-493e80760c36" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation" computerName="MOKTH" duration="00:00:00.8963530" startTime="2026-11-06T09:37:19.0922714+08:00" endTime="2026-11-06T09:37:19.9886166+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1eb122fb-a954-46ff-a592-8215cbc9b907">
+      <Output>
+        <ErrorInfo>
+          <Message>History 17 has no complete, single-method active valuation generation.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 698&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="2fd401b0-891e-4ffc-baec-3d2ac8efc676" testId="642cd6ad-aba9-a51e-0a23-aa47f69f1ffc" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Concurrent_source_competition_and_lost_response_duplicate_requests" computerName="MOKTH" duration="00:00:01.9146817" startTime="2026-11-06T09:37:08.1615668+08:00" endTime="2026-11-06T09:37:10.0756974+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2fd401b0-891e-4ffc-baec-3d2ac8efc676" />
+    <UnitTestResult executionId="2651dda5-c22b-4143-ae6c-d7e3422a9ede" testId="df54d162-9f46-1089-616b-8f8335e4e6a5" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Unknown_pool_cannot_be_cleansed_by_verified_replenishment" computerName="MOKTH" duration="00:00:00.4757635" startTime="2026-11-06T09:37:19.9894712+08:00" endTime="2026-11-06T09:37:20.4648249+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2651dda5-c22b-4143-ae6c-d7e3422a9ede" />
+    <UnitTestResult executionId="ff1a0987-3631-4410-aff5-dc8c6b7bfda9" testId="d12d69c6-5f5b-e51c-2d88-392fdcaae2d3" testName="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Inactive_saved_destination_is_rejected_until_replaced" computerName="MOKTH" duration="00:00:00.5177018" startTime="2026-11-06T09:37:12.0455196+08:00" endTime="2026-11-06T09:37:12.5627377+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ff1a0987-3631-4410-aff5-dc8c6b7bfda9" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Destination_location_is_branch_scoped" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="7d687054-76b1-6f38-4f4e-729396760504">
+      <Execution id="b48daa71-89ed-497a-85dc-42e0527a1a3f" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Destination_location_is_branch_scoped" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="80c5ce24-93be-57c0-30de-16143cb7df78">
+      <Execution id="8340a2f3-4f12-4a98-a22f-68a3b4776b7c" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="a53cf145-8f56-9bcd-9732-493e80760c36">
+      <Execution id="1eb122fb-a954-46ff-a592-8215cbc9b907" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Partial_receipt_reopens_same_document_and_reposts_as_new_generation" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Whitespace_reference_defaults_to_batch_number" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="fdc023fd-34da-859a-3094-fb794f73029e">
+      <Execution id="0c36cb09-dcb8-49f0-ac05-fc4f8e6acea5" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Whitespace_reference_defaults_to_batch_number" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Failure_after_both_stock_legs_leaves_no_partial_facts_or_lot_ownership" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="3e2930f0-3c22-f063-1b8b-7c99d4a93063">
+      <Execution id="ac840d2d-4f15-414b-8ca4-06458ad7e4b3" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Failure_after_both_stock_legs_leaves_no_partial_facts_or_lot_ownership" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cross_branch_creation_serializes_company_wide_lot_identity" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="a31f5654-60a3-532c-ef62-12c43bfd31d4">
+      <Execution id="f17f75aa-7397-4110-bb8f-40af0447eb83" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Cross_branch_creation_serializes_company_wide_lot_identity" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_can_scope_to_a_locked_work_order" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="67dbacc1-b17d-6a3d-bb84-380bf11af2b5">
+      <Execution id="d2b1b6f6-d55b-4f3e-b734-db9214ec48f1" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Source_filter_options_can_scope_to_a_locked_work_order" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Period_close_and_post_share_the_branch_lock" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="d6b3a08d-73dc-c99a-0742-998f3338238e">
+      <Execution id="96d9f731-0365-458d-a4a2-0e937dd69e8f" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Period_close_and_post_share_the_branch_lock" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Separate_drafts_do_not_reserve_the_same_source" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="0604c037-d40c-e4d7-f839-de9872f15d2d">
+      <Execution id="26502cf1-f914-4741-9506-04dbb16f2284" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Separate_drafts_do_not_reserve_the_same_source" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_production_authority_money_columns_keep_six_decimals" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="1869c08a-34cc-a231-d3de-d91dd0664ecf">
+      <Execution id="6d357ca1-8683-47d1-9cd9-7805649f16d3" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests" name="SqlServer_production_authority_money_columns_keep_six_decimals" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_and_exact_search_use_eligible_sources_only" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="bc4479d4-53ac-cfe7-4d0f-16cb87fef943">
+      <Execution id="1d045c9f-4c3f-4764-977b-b6c717c02e9d" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Source_filter_options_and_exact_search_use_eligible_sources_only" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Lot_controlled_source_defaults_and_keeps_destination_lot" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="34a43747-459d-8e6f-9fcf-2c29f4b7fc8a">
+      <Execution id="216d19c9-b512-4dca-ab1c-ef1ec49b3178" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Lot_controlled_source_defaults_and_keeps_destination_lot" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Unknown_pool_cannot_be_cleansed_by_verified_replenishment" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="df54d162-9f46-1089-616b-8f8335e4e6a5">
+      <Execution id="2651dda5-c22b-4143-ae6c-d7e3422a9ede" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Unknown_pool_cannot_be_cleansed_by_verified_replenishment" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Missing_production_location_is_not_ready_and_cannot_post" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="2da67c7c-bfbf-3945-09c2-daec0306897d">
+      <Execution id="ff414376-82ec-4b47-8769-4f56eb7cf437" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Missing_production_location_is_not_ready_and_cannot_post" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Save_maps_product_codes_grouped_qty_and_non_lot_expiry" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c504ac79-7d7e-1fc3-8dd1-eabfb250b130">
+      <Execution id="e7f2baec-2922-498a-9b53-304c3560437c" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Save_maps_product_codes_grouped_qty_and_non_lot_expiry" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="0d78a165-161a-aaca-f988-d1346ffe49ad">
+      <Execution id="cd2db6f8-c2ce-4c66-9640-286188fd6097" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="List_search_summary_is_document_owned" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.All_draft_edits_invalidate_stale_clients_and_restrict_costs" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="f8fa7cb8-c6c4-b9bb-3bb2-3de4cbac77c7">
+      <Execution id="b85a0ad3-c86d-448c-a4c0-6e1e65e2f7da" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="All_draft_edits_invalidate_stale_clients_and_restrict_costs" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Inactive_saved_destination_is_rejected_until_replaced" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="d12d69c6-5f5b-e51c-2d88-392fdcaae2d3">
+      <Execution id="ff1a0987-3631-4410-aff5-dc8c6b7bfda9" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Inactive_saved_destination_is_rejected_until_replaced" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Blank_reference_defaults_to_batch_number" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="988d2395-a2f7-d744-e2da-4d3504e97fcf">
+      <Execution id="80739f64-907f-4231-919f-69cbd9c9000e" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Blank_reference_defaults_to_batch_number" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="d80ff531-54aa-3213-4113-a0cab2c50296">
+      <Execution id="3481c770-471a-4a62-9c08-eb5538cb6d58" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Concurrent_source_competition_and_lost_response_duplicate_requests" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="642cd6ad-aba9-a51e-0a23-aa47f69f1ffc">
+      <Execution id="2fd401b0-891e-4ffc-baec-3d2ac8efc676" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Concurrent_source_competition_and_lost_response_duplicate_requests" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Manual_reference_is_trimmed_and_preserved" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="87daacf4-1172-b425-5d1b-b02265579e1a">
+      <Execution id="e8fd430d-f10c-4517-81e7-d65ba64a3473" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests" name="Manual_reference_is_trimmed_and_preserved" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="3e2930f0-3c22-f063-1b8b-7c99d4a93063" executionId="ac840d2d-4f15-414b-8ca4-06458ad7e4b3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0d78a165-161a-aaca-f988-d1346ffe49ad" executionId="cd2db6f8-c2ce-4c66-9640-286188fd6097" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2da67c7c-bfbf-3945-09c2-daec0306897d" executionId="ff414376-82ec-4b47-8769-4f56eb7cf437" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="80c5ce24-93be-57c0-30de-16143cb7df78" executionId="8340a2f3-4f12-4a98-a22f-68a3b4776b7c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1869c08a-34cc-a231-d3de-d91dd0664ecf" executionId="6d357ca1-8683-47d1-9cd9-7805649f16d3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c504ac79-7d7e-1fc3-8dd1-eabfb250b130" executionId="e7f2baec-2922-498a-9b53-304c3560437c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="bc4479d4-53ac-cfe7-4d0f-16cb87fef943" executionId="1d045c9f-4c3f-4764-977b-b6c717c02e9d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fdc023fd-34da-859a-3094-fb794f73029e" executionId="0c36cb09-dcb8-49f0-ac05-fc4f8e6acea5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="87daacf4-1172-b425-5d1b-b02265579e1a" executionId="e8fd430d-f10c-4517-81e7-d65ba64a3473" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a31f5654-60a3-532c-ef62-12c43bfd31d4" executionId="f17f75aa-7397-4110-bb8f-40af0447eb83" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0604c037-d40c-e4d7-f839-de9872f15d2d" executionId="26502cf1-f914-4741-9506-04dbb16f2284" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d80ff531-54aa-3213-4113-a0cab2c50296" executionId="3481c770-471a-4a62-9c08-eb5538cb6d58" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="67dbacc1-b17d-6a3d-bb84-380bf11af2b5" executionId="d2b1b6f6-d55b-4f3e-b734-db9214ec48f1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d6b3a08d-73dc-c99a-0742-998f3338238e" executionId="96d9f731-0365-458d-a4a2-0e937dd69e8f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f8fa7cb8-c6c4-b9bb-3bb2-3de4cbac77c7" executionId="b85a0ad3-c86d-448c-a4c0-6e1e65e2f7da" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="34a43747-459d-8e6f-9fcf-2c29f4b7fc8a" executionId="216d19c9-b512-4dca-ab1c-ef1ec49b3178" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="988d2395-a2f7-d744-e2da-4d3504e97fcf" executionId="80739f64-907f-4231-919f-69cbd9c9000e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7d687054-76b1-6f38-4f4e-729396760504" executionId="b48daa71-89ed-497a-85dc-42e0527a1a3f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a53cf145-8f56-9bcd-9732-493e80760c36" executionId="1eb122fb-a954-46ff-a592-8215cbc9b907" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="642cd6ad-aba9-a51e-0a23-aa47f69f1ffc" executionId="2fd401b0-891e-4ffc-baec-3d2ac8efc676" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="df54d162-9f46-1089-616b-8f8335e4e6a5" executionId="2651dda5-c22b-4143-ae6c-d7e3422a9ede" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d12d69c6-5f5b-e51c-2d88-392fdcaae2d3" executionId="ff1a0987-3631-4410-aff5-dc8c6b7bfda9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="22" executed="22" passed="15" failed="7" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:00.20]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:00.63]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:00.66]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:08.48]       Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the entity changes. See the inner exception for details.&#xD;
+[xUnit.net 00:00:08.48]       ---- Microsoft.Data.SqlClient.SqlException : An active stock-ledger branch requires an unsealed V2 posting write context.&#xD;
+[xUnit.net 00:00:08.48]       Stack Trace:&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.SqlServer.Update.Internal.SqlServerModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.Storage.RelationalDatabase.SaveChangesAsync(IList`1 entries, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(IList`1 entriesToSave, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(StateManager stateManager, Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.SqlServer.Storage.Internal.SqlServerExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(1200,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned()&#xD;
+[xUnit.net 00:00:08.48]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(1201,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned()&#xD;
+[xUnit.net 00:00:08.48]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:08.48]         ----- Inner Stack Trace -----&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.Data.SqlClient.SqlCommand.&lt;&gt;c.&lt;ExecuteDbDataReaderAsync&gt;b__195_0(Task`1 result)&#xD;
+[xUnit.net 00:00:08.48]            at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()&#xD;
+[xUnit.net 00:00:08.48]            at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+[xUnit.net 00:00:08.48]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:08.48]            at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+[xUnit.net 00:00:08.48]            at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task&amp; currentTaskSlot, Thread threadPoolThread)&#xD;
+[xUnit.net 00:00:08.48]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:08.48]            at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:11.27]       History 13 has no complete, single-method active valuation generation.&#xD;
+[xUnit.net 00:00:11.27]       Stack Trace:&#xD;
+[xUnit.net 00:00:11.27]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(750,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal()&#xD;
+[xUnit.net 00:00:11.27]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:12.59]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:12.59]       Expected: False&#xD;
+[xUnit.net 00:00:12.59]       Actual:   True&#xD;
+[xUnit.net 00:00:12.59]       Stack Trace:&#xD;
+[xUnit.net 00:00:12.59]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(766,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.All_draft_edits_invalidate_stale_clients_and_restrict_costs()&#xD;
+[xUnit.net 00:00:12.59]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:12.92]       Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the entity changes. See the inner exception for details.&#xD;
+[xUnit.net 00:00:12.92]       ---- Microsoft.Data.SqlClient.SqlException : An active stock-ledger branch requires an unsealed V2 posting write context.&#xD;
+[xUnit.net 00:00:12.92]       Stack Trace:&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.SqlServer.Update.Internal.SqlServerModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.Storage.RelationalDatabase.SaveChangesAsync(IList`1 entries, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(IList`1 entriesToSave, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(StateManager stateManager, Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.SqlServer.Storage.Internal.SqlServerExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(1067,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.SeedSecondEligibleWorkOrderAsync(Fixture f)&#xD;
+[xUnit.net 00:00:12.92]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(1068,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.SeedSecondEligibleWorkOrderAsync(Fixture f)&#xD;
+[xUnit.net 00:00:12.92]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(944,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_can_scope_to_a_locked_work_order()&#xD;
+[xUnit.net 00:00:12.92]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:12.92]         ----- Inner Stack Trace -----&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.Data.SqlClient.SqlCommand.&lt;&gt;c.&lt;ExecuteDbDataReaderAsync&gt;b__195_0(Task`1 result)&#xD;
+[xUnit.net 00:00:12.92]            at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()&#xD;
+[xUnit.net 00:00:12.92]            at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+[xUnit.net 00:00:12.92]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:12.92]            at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+[xUnit.net 00:00:12.92]            at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task&amp; currentTaskSlot, Thread threadPoolThread)&#xD;
+[xUnit.net 00:00:12.92]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:12.92]            at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]       Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the entity changes. See the inner exception for details.&#xD;
+[xUnit.net 00:00:15.26]       ---- Microsoft.Data.SqlClient.SqlException : The UPDATE statement conflicted with the CHECK constraint "CK_PrProductionBalLot_V2". The conflict occurred in database "CodexReplayTest_20261106_8fb42ce93", table "dbo.PrProductionBalLot".&#xD;
+[xUnit.net 00:00:15.26]       The statement has been terminated.&#xD;
+[xUnit.net 00:00:15.26]       Stack Trace:&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.SqlServer.Update.Internal.SqlServerModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.Storage.RelationalDatabase.SaveChangesAsync(IList`1 entries, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(IList`1 entriesToSave, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(StateManager stateManager, Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.SqlServer.Storage.Internal.SqlServerExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(830,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Missing_production_location_is_not_ready_and_cannot_post()&#xD;
+[xUnit.net 00:00:15.26]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(831,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Missing_production_location_is_not_ready_and_cannot_post()&#xD;
+[xUnit.net 00:00:15.26]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:15.26]         ----- Inner Stack Trace -----&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.Data.SqlClient.SqlCommand.&lt;&gt;c.&lt;ExecuteDbDataReaderAsync&gt;b__195_0(Task`1 result)&#xD;
+[xUnit.net 00:00:15.26]            at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()&#xD;
+[xUnit.net 00:00:15.26]            at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+[xUnit.net 00:00:15.26]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:15.26]            at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)&#xD;
+[xUnit.net 00:00:15.26]            at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task&amp; currentTaskSlot, Thread threadPoolThread)&#xD;
+[xUnit.net 00:00:15.26]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:15.26]            at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:16.60]       Assert.True() Failure&#xD;
+[xUnit.net 00:00:16.60]       Expected: True&#xD;
+[xUnit.net 00:00:16.60]       Actual:   False&#xD;
+[xUnit.net 00:00:16.60]       Stack Trace:&#xD;
+[xUnit.net 00:00:16.60]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(805,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price()&#xD;
+[xUnit.net 00:00:16.60]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:17.50]       History 17 has no complete, single-method active valuation generation.&#xD;
+[xUnit.net 00:00:17.50]       Stack Trace:&#xD;
+[xUnit.net 00:00:17.50]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs(698,0): at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation()&#xD;
+[xUnit.net 00:00:17.50]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:19.60]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:37:10.9731100+08:00">
+        <Text>[xUnit.net 00:00:08.48]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:37:13.7622246+08:00">
+        <Text>[xUnit.net 00:00:11.27]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:37:15.0788873+08:00">
+        <Text>[xUnit.net 00:00:12.59]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.All_draft_edits_invalidate_stale_clients_and_restrict_costs [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:37:15.4090065+08:00">
+        <Text>[xUnit.net 00:00:12.92]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_can_scope_to_a_locked_work_order [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:37:17.7515315+08:00">
+        <Text>[xUnit.net 00:00:15.26]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Missing_production_location_is_not_ready_and_cannot_post [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:37:19.0919901+08:00">
+        <Text>[xUnit.net 00:00:16.60]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:37:19.9890343+08:00">
+        <Text>[xUnit.net 00:00:17.50]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

@@ -14,14 +14,23 @@ public sealed partial class IvInventoryPostingService
         int HistoryId, ProductionLeafReplayPlan? Leaf, string StableHash,
         DateTime LatestEffectiveAt, int MovementCount,
         long? IssueMovementId = null, long? ConsumeMovementId = null,
-        long? ProduceMovementId = null, bool OutputReversed = false);
+        long? ProduceMovementId = null, bool OutputReversed = false,
+        ActiveFinishedGoodReplayPlan? ActiveFinishedGood = null,
+        CorrectedReversedFinishedGoodPlan? CorrectedReversedFinishedGood = null);
+
+    private sealed record ActiveFinishedGoodReplayPlan(
+        int BatchId, long MovementId, decimal Quantity, decimal BaseQuantity, decimal Value,
+        ProductionEffectiveCost EffectiveCost,
+        DateTime EffectiveAt, string StableHash);
 
     // Standard receipts may pass an already consumed issue only when every
     // affected quantity and cost remains unchanged. This bounded case admits
     // one output and its exact reversal, with no later WIP consumption.
     private static async Task<StandardProductionReplayPlan?> PlanStandardProductionAsync(
         AppDbContext db, string company, string branch, IReadOnlyList<int> historyIds,
-        DateTime candidateDate, CancellationToken ct, bool allowRestatements = false)
+        DateTime candidateDate, CancellationToken ct, bool allowRestatements = false,
+        long? removingReceiptOwnerId = null,
+        ProductionIssueCostAuthority? reversedIssueAuthority = null)
     {
         var ids = await db.IvTrxHistories.AsNoTracking()
             .Where(h => historyIds.Contains(h.Id) && h.TrxType == IvTrxTypes.IssueToProduction)
@@ -47,8 +56,10 @@ public sealed partial class IvInventoryPostingService
             return new(ids[0], leaf!, string.Empty, leaf!.EffectiveAt, 1);
         }
 
-        var authority = (await ProductionIssueEffectiveCostReader.ReadAsync(
+        var authority = reversedIssueAuthority ?? (await ProductionIssueEffectiveCostReader.ReadAsync(
             db, company, branch, [issue.Uid], ct))[issue.Uid];
+        if (authority.MovementId != issue.Uid || authority.InventoryHistoryId != ids[0])
+            throw ProductionReplayError("Production issue authority does not match its movement.");
         var issuedMaterial = await db.ProductionMaterialMovements.AsNoTracking()
             .SingleAsync(m => m.Uid == authority.MaterialMovementId, ct);
         var sourceLot = await db.ProductionBalLots.AsNoTracking()
@@ -62,7 +73,14 @@ public sealed partial class IvInventoryPostingService
         var consume = consumes[0];
         var consumeReversals = poolMovements.Where(m => m.OriginalMovementId == consume.Uid).ToArray();
         if (consumeReversals.Length > 1
-            || poolMovements.Length != 2 + consumeReversals.Length
+            || poolMovements.Length != 2 + consumeReversals.Length + (reversedIssueAuthority is null ? 0 : 1)
+            || reversedIssueAuthority is not null && (consumeReversals.Length != 1
+                || poolMovements.Count(m => m.OriginalMovementId == issue.Uid
+                    && m.MovementType == ProductionBalLotMovementTypes.IssueReversal) != 1
+                || consume.BaseQty <= 0m || consume.BaseQty > issue.BaseQty
+                || consume.Qty <= 0m || consume.Qty > issue.Qty
+                || consume.BaseUom != issue.BaseUom || consume.Uom != issue.Uom
+                || consume.ConversionFactorToBase != issue.ConversionFactorToBase)
             || consume.ProductionOutputId is not long outputId
             || consume.StockPostingId is not long outputPostingId
             || consume.MovementDate.Year != candidateDate.Year
@@ -177,8 +195,39 @@ public sealed partial class IvInventoryPostingService
         var outputPoolMovements = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(m => m.ProductionBalLotId == produce.ProductionBalLotId)
             .OrderBy(m => m.Uid).ToArrayAsync(ct);
+        var downstreamMovements = outputPoolMovements.Where(m => m.Uid != produce.Uid
+            && !(reversed && m.OriginalMovementId == produce.Uid
+                && m.MovementType == ProductionBalLotMovementTypes.ProduceReversal)).ToArray();
+        string? reversedFinishedGoodHash = null;
+        ActiveFinishedGoodReplayPlan? activeFinishedGood = null;
+        CorrectedReversedFinishedGoodPlan? correctedReversedFinishedGood = null;
+        if (downstreamMovements.Length != 0)
+        {
+            if (!allowRestatements)
+                throw ProductionReplayError("Production output has unsupported downstream history.");
+            if (!reversed && downstreamMovements.Length == 1
+                && downstreamMovements[0].MovementType == ProductionBalLotMovementTypes.FgReceiptOut)
+            {
+                var issueMethods = await db.StockValuationFacts.AsNoTracking()
+                    .Where(f => authority.ActiveValuationFactIds.Contains(f.Id))
+                    .Select(f => f.CostMethod).Distinct().ToArrayAsync(ct);
+                if (issueMethods.Length != 1)
+                    throw ProductionReplayError("Production issue has inconsistent cost methods.");
+                activeFinishedGood = await VerifyActiveFinishedGoodAsync(db, company, branch,
+                    candidateDate, produce, costs[produce.Uid], downstreamMovements[0], issueMethods[0], ct);
+            }
+            else
+            {
+                var verified = await VerifyReversedFinishedGoodAsync(db, company, branch,
+                    candidateDate, produce, downstreamMovements, removingReceiptOwnerId, ct);
+                reversedFinishedGoodHash = verified.Hash;
+                correctedReversedFinishedGood = verified.Corrected;
+            }
+        }
+        if (reversed && correctedReversedFinishedGood is not null)
+            throw ProductionReplayError("Corrected finished goods and their reversed Production output require a wider replay.");
         if (outputLot is null || outputPool is null || outputLot.Uid == sourceLot.Uid
-            || outputPoolMovements.Length != (reversed ? 2 : 1)
+            || outputPoolMovements.Length != (reversed ? 2 : 1) + downstreamMovements.Length
             || outputPoolMovements.Count(m => m.Uid == produce.Uid) != 1
             || sourceLot.CompanyCode != company || sourceLot.BranchCode != branch
             || outputLot.CompanyCode != company || outputLot.BranchCode != branch
@@ -190,32 +239,45 @@ public sealed partial class IvInventoryPostingService
             || outputPool.Generation <= 0
             || ProductionCostReadiness.PoolValuationError(sourceLot, sourcePool) is not null
             || ProductionCostReadiness.PoolValuationError(outputLot, outputPool) is not null
-            || sourceLot.BaseQty != issue.BaseQty - (reversed ? 0m : consume.BaseQty)
-            || sourceLot.Qty != issue.Qty - (reversed ? 0m : consume.Qty)
-            || sourceLot.TotalCost != costs[issue.Uid].TotalCost - (reversed ? 0m : costs[consume.Uid].TotalCost)
+            || sourceLot.BaseQty != (reversedIssueAuthority is null ? issue.BaseQty - (reversed ? 0m : consume.BaseQty) : 0m)
+            || sourceLot.Qty != (reversedIssueAuthority is null ? issue.Qty - (reversed ? 0m : consume.Qty) : 0m)
+            || sourceLot.TotalCost != (reversedIssueAuthority is null
+                ? costs[issue.Uid].TotalCost - (reversed ? 0m : costs[consume.Uid].TotalCost) : 0m)
             || consume.BaseQty > issue.BaseQty || consume.Qty > issue.Qty
             || !reversed && costs[consume.Uid].TotalCost != (consume.BaseQty == issue.BaseQty ? costs[issue.Uid].TotalCost
                 : StockLedgerPrecision.Money(costs[issue.Uid].TotalCost * consume.BaseQty / issue.BaseQty))
             || sourceLot.AverageUnitCost != (sourceLot.BaseQty == 0m ? 0m
                 : StockLedgerPrecision.Money(sourceLot.TotalCost / sourceLot.BaseQty))
-            || outputLot.BaseQty != (reversed ? 0m : produce.BaseQty)
-            || outputLot.Qty != (reversed ? 0m : produce.Qty)
-            || outputLot.TotalCost != (reversed ? 0m : costs[produce.Uid].TotalCost)
+            || outputLot.BaseQty != (reversed ? 0m : produce.BaseQty - (activeFinishedGood?.BaseQuantity ?? 0m))
+            || outputLot.Qty != (reversed ? 0m : produce.Qty - (activeFinishedGood?.Quantity ?? 0m))
+            || outputLot.TotalCost != (reversed ? 0m : costs[produce.Uid].TotalCost - (activeFinishedGood?.Value ?? 0m))
             || outputLot.AverageUnitCost != (outputLot.BaseQty == 0m ? 0m
                 : StockLedgerPrecision.Money(outputLot.TotalCost / outputLot.BaseQty)))
             throw ProductionReplayError("Production issue or output pool does not reconcile.");
 
-        var graph = await ProductionReplayDependencyPlanner.BuildAsync(db, company, branch, [issue.Uid], ct);
+        var graph = reversedIssueAuthority is null
+            ? await ProductionReplayDependencyPlanner.BuildAsync(db, company, branch, [issue.Uid], ct)
+            : new ProductionReplayDependencyPlan([issue.Uid], []);
+        if (reversedIssueAuthority is not null && await ProductionActiveEdgeResolver.Dependencies(db)
+                .AsNoTracking().AnyAsync(e => e.ContributorMovementId == issue.Uid
+                    || e.ConsumerMovementId == issue.Uid, ct))
+            throw ProductionReplayError("The reversed Production issue has an active dependency.");
         var allocations = await ProductionActiveEdgeResolver.Allocations(db).AsNoTracking()
             .Where(a => a.ReceiptMovementId == issue.Uid || a.ReceiptMovementId == produce.Uid
                 || a.OutboundMovementId == consume.Uid).ToArrayAsync(ct);
-        if (!reversed && (graph.OrderedMovementIds.Count != 3 || graph.Edges.Count != 2
+        if (!reversed && (graph.OrderedMovementIds.Count != (activeFinishedGood is null ? 3 : 4)
+                || graph.Edges.Count != (activeFinishedGood is null ? 2 : 3)
                 || !graph.Edges.Any(e => e.ContributorMovementId == issue.Uid && e.ConsumerMovementId == consume.Uid)
                 || !graph.Edges.Any(e => e.ContributorMovementId == consume.Uid && e.ConsumerMovementId == produce.Uid)
-                || allocations.Length != 1 || allocations[0].ReceiptMovementId != issue.Uid
-                || allocations[0].OutboundMovementId != consume.Uid
-                || allocations[0].StockPostingId != outputPostingId
-                || allocations[0].BaseQty != consume.BaseQty)
+                || activeFinishedGood is not null && !graph.Edges.Any(e =>
+                    e.ContributorMovementId == produce.Uid && e.ConsumerMovementId == activeFinishedGood.MovementId)
+                || allocations.Length != (activeFinishedGood is null ? 1 : 2)
+                || allocations.Count(a => a.ReceiptMovementId == issue.Uid
+                    && a.OutboundMovementId == consume.Uid && a.StockPostingId == outputPostingId
+                    && a.BaseQty == consume.BaseQty) != 1
+                || activeFinishedGood is not null && allocations.Count(a =>
+                    a.ReceiptMovementId == produce.Uid && a.OutboundMovementId == activeFinishedGood.MovementId
+                    && a.BaseQty == activeFinishedGood.BaseQuantity) != 1)
             || reversed && (graph.OrderedMovementIds.Count != 1 || graph.Edges.Count != 0
                 || allocations.Length != 0))
             throw ProductionReplayError("Production output has an unsupported or inconsistent dependency.");
@@ -224,6 +286,8 @@ public sealed partial class IvInventoryPostingService
         var reversals = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(m => m.OriginalMovementId.HasValue && reversalIds.Contains(m.OriginalMovementId.Value))
             .OrderBy(m => m.Uid).ToArrayAsync(ct);
+        var pairedOutput = reversed && allowRestatements && downstreamMovements.Length == 0;
+        IReadOnlyDictionary<long, ProductionEffectiveCost>? reversalCosts = null;
         long? reversalPostingId = null;
         if (reversed)
         {
@@ -255,8 +319,23 @@ public sealed partial class IvInventoryPostingService
                     && r.MovementType == (m.MovementType == ProductionBalLotMovementTypes.Consume
                         ? ProductionBalLotMovementTypes.ConsumeReversal : ProductionBalLotMovementTypes.ProduceReversal)
                     && r.Qty == m.Qty && r.BaseQty == m.BaseQty && r.Uom == m.Uom && r.BaseUom == m.BaseUom
-                    && r.TotalCost == costs[m.Uid].TotalCost && r.UnitCost == costs[m.Uid].UnitCost) != 1))
+                    && (pairedOutput || r.TotalCost == costs[m.Uid].TotalCost
+                        && r.UnitCost == costs[m.Uid].UnitCost)) != 1))
                 throw ProductionReplayError("Production output reversal is not exact and sealed.");
+            if (pairedOutput)
+            {
+                await ProductionOutputReversalCostAuthority.ValidateBaselineAsync(
+                    db, company, branch, outputMovements, reversals, ct);
+                reversalCosts = await ProductionReplayEffectiveCostReader.ReadAsync(
+                    db, company, branch, reversals.Select(r => r.Uid).ToArray(), ct);
+                if (outputMovements.Any(m =>
+                    {
+                        var reverse = reversals.Single(r => r.OriginalMovementId == m.Uid);
+                        return reversalCosts[reverse.Uid].TotalCost != costs[m.Uid].TotalCost
+                            || reversalCosts[reverse.Uid].UnitCost != costs[m.Uid].UnitCost;
+                    }))
+                    throw ProductionReplayError("Production output reversal effective costs do not match.");
+            }
         }
         else if (output.ReversalPostingId is not null || reversals.Length != 0)
             throw ProductionReplayError("Production output has an unexpected reversal.");
@@ -309,8 +388,8 @@ public sealed partial class IvInventoryPostingService
                 || materialReversals[0].WorkOrderOperationId != material[0].WorkOrderOperationId
                 || materialReversals[0].PostingLinkId != consumeReversal.PostingLinkId
                 || materialReversals[0].BaseQty != material[0].BaseQty
-                || materialReversals[0].TotalCost != costs[consume.Uid].TotalCost
-                || materialReversals[0].UnitCost != costs[consume.Uid].UnitCost
+                || materialReversals[0].TotalCost != consumeReversal.TotalCost
+                || materialReversals[0].UnitCost != consumeReversal.UnitCost
                 || allocationReversals.Length != 1
                 || allocationReversals[0].CompanyCode != company || allocationReversals[0].BranchCode != branch
                 || allocationReversals[0].StockPostingId != reversalPostingId
@@ -349,6 +428,7 @@ public sealed partial class IvInventoryPostingService
         {
             authority.InventoryHistoryId, authority.MaterialMovementId, issue.Uid, issue.TotalCost, issue.UnitCost,
             EffectiveCosts = costs.Values.OrderBy(c => c.MovementId).ToArray(),
+            ReversalEffectiveCosts = reversalCosts?.Values.OrderBy(c => c.MovementId).ToArray(),
             IssueOwner = new { issue.WorkOrderId, issue.WorkOrderMaterialId, issue.WorkOrderOperationId,
                 issue.PostingLinkId, issue.StockPostingId, issue.LedgerEpochId, issue.ItemCode },
             IssuedMaterial = new { issuedMaterial.Uid, issuedMaterial.WorkOrderId,
@@ -358,6 +438,8 @@ public sealed partial class IvInventoryPostingService
                 material[0].WorkOrderId, material[0].WorkOrderMaterialId, material[0].WorkOrderOperationId,
                 material[0].PostingLinkId, material[0].StockPostingId, material[0].ItemCode, material[0].BaseUom },
             OutputId = outputId, OutputPostingId = outputPostingId, output.DocumentRevision, output.Status,
+            ReversedFinishedGood = reversedFinishedGoodHash,
+            ActiveFinishedGood = activeFinishedGood,
             output.ReversalPostingId, OutputRowVersion = Convert.ToHexString(output.RowVersion ?? []),
             Movements = outputMovements.Select(m => new { m.Uid, m.ProductionBalLotId, m.BaseQty, m.Qty,
                 m.TotalCost, m.UnitCost, m.PostingLinkId, m.StockPostingId, m.LedgerEpochId,
@@ -385,8 +467,12 @@ public sealed partial class IvInventoryPostingService
                 RowVersion = Convert.ToHexString(outputLot.RowVersion ?? []) },
             Graph = graph.Edges, Allocations = allocations.Select(a => new { a.Id, a.BaseQty }).ToArray()
         }, new { }).RequestFingerprint;
-        return new(ids[0], null, hash, consume.MovementDate, outputMovements.Length + 1,
-            issue.Uid, consume.Uid, produce.Uid, reversed);
+        return new(ids[0], null, hash,
+            new[] { consume.MovementDate, activeFinishedGood?.EffectiveAt ?? consume.MovementDate,
+                correctedReversedFinishedGood?.ReversalAt ?? consume.MovementDate }.Max(),
+            outputMovements.Length + 1 + (pairedOutput ? reversals.Length : 0) + (activeFinishedGood is null ? 0 : 1)
+                + (correctedReversedFinishedGood is null ? 0 : 2),
+            issue.Uid, consume.Uid, produce.Uid, reversed, activeFinishedGood, correctedReversedFinishedGood);
     }
 
     private static async Task ApplyStandardProductionAsync(
