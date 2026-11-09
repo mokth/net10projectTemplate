@@ -54,10 +54,10 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     }
 
     internal static async Task VerifySqlServerWacReceiptEditRaceAsync(
-        IDbContextFactory<AppDbContext> factory, WacReceiptPostingBarrier barrier)
+        IDbContextFactory<AppDbContext> factory, WacReceiptPostingBarrier barrier, bool goodsReceipt)
     {
         await using var fixture = new ProductionMaterialIssueSequenceOverlapTests(factory, wacPostingBarrier: barrier);
-        await fixture.BackdatedReceiptAndProductionIssueAsync(goodsReceipt: false, receiptFirst: true, 181, standard: false);
+        await fixture.BackdatedReceiptAndProductionIssueAsync(goodsReceipt, receiptFirst: true, 181, standard: false);
     }
 
     internal static async Task VerifySqlServerNeutralIssueReceiptAsync(
@@ -1582,7 +1582,6 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         if (consumeAt == 181)
         {
             Assert.NotNull(_wacPostingBarrier);
-            Assert.NotNull(receipts);
             IvMiscReceiptSaveRequest EditedReceipt() => new()
             {
                 TrxDate = receiptDate,
@@ -1593,9 +1592,24 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                     Uom = "EA", IClassCode = "RAW", IStatus = IvItemStatuses.Active, Reason = "ADJ"
                 }]
             };
+            async Task<(bool Succeeded, string? Error)> EditReceiptAsync()
+            {
+                if (goods is not null)
+                {
+                    var result = await goods.UpdateAsync(receiptBatchNo, new IvGoodsReceiptSaveRequest
+                    {
+                        TrxType = IvTrxTypes.GoodsReceive, TrxDate = receiptDate, Remark = "Edited after rollback",
+                        Lines = [new IvGoodsReceiptLineRequest { PoNo = "PO-IP-REPLAY", PoRelNo = 1, PoLineNo = 1,
+                            ToWarehouse = "WH01", ToLocation = "BIN-A", ToRecvQty = 5m }]
+                    });
+                    return (result.Succeeded, result.ErrorMessage);
+                }
+                var updated = await receipts!.UpdateAsync(receiptBatchNo, EditedReceipt());
+                return (updated.Succeeded, updated.ErrorMessage);
+            }
             _wacPostingBarrier.Arm();
             var posting = PostReceiptAsync();
-            Task<IvMiscReceiptOperationResult>? editing = null;
+            Task<(bool Succeeded, string? Error)>? editing = null;
             var editedBeforePostFinished = false;
             try
             {
@@ -1606,8 +1620,9 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                     Assert.Fail($"Posting ended before the race point: {early.Succeeded}; {early.Error}\n{_wacPostingBarrier.Diagnostics}");
                 }
                 Assert.True(first == _wacPostingBarrier.Reached, $"The WAC receipt race point was not reached.\n{_wacPostingBarrier.Diagnostics}");
-                editing = receipts.UpdateAsync(receiptBatchNo, EditedReceipt());
-                editedBeforePostFinished = await Task.WhenAny(editing, Task.Delay(750)) == editing;
+                editing = EditReceiptAsync();
+                await _wacPostingBarrier.EditAttempt.WaitAsync(TimeSpan.FromSeconds(10));
+                editedBeforePostFinished = await Task.WhenAny(editing, Task.Delay(500)) == editing;
             }
             finally
             {
@@ -1626,22 +1641,26 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
                 Assert.Equal(25m, state.OnHandBaseQty);
                 Assert.Equal(90m, state.InventoryValue);
+                Assert.Equal(25m, (await db.IvBalLocs.SingleAsync(b => b.Id == 58)).StdQty);
                 Assert.Equal(10m, (await db.IvTrxHistories.SingleAsync(h => h.BatchNo == receiptBatchNo && h.EntryRole == "ORIGINAL")).UnitPrice);
+                if (goodsReceipt) Assert.Equal(5m, (await db.PoOrderDetails.SingleAsync()).RecvQty);
             }
             var firstRollback = await RollbackReceiptAsync();
             Assert.True(firstRollback.Succeeded, firstRollback.Error);
             await AssertReversedIssueCostsAsync(issue.Data.BatchNo, 8m);
-            var acceptedEdit = await receipts.UpdateAsync(receiptBatchNo, EditedReceipt());
-            Assert.True(acceptedEdit.Succeeded, acceptedEdit.ErrorMessage);
+            var acceptedEdit = await EditReceiptAsync();
+            Assert.True(acceptedEdit.Succeeded, acceptedEdit.Error);
             var repost = await PostReceiptAsync();
             Assert.True(repost.Succeeded, repost.Error);
-            await AssertReversedIssueCostsAsync(issue.Data.BatchNo, 15.2m);
-            await AssertReversedIssueInventoryCostAsync(issue.Data.BatchNo, 15.2m);
+            await AssertReversedIssueCostsAsync(issue.Data.BatchNo, goodsReceipt ? 14.4m : 15.2m);
+            await AssertReversedIssueInventoryCostAsync(issue.Data.BatchNo, goodsReceipt ? 14.4m : 15.2m);
             await using (var db = await _factory.CreateDbContextAsync())
             {
                 var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
                 Assert.Equal(25m, state.OnHandBaseQty);
-                Assert.Equal(95m, state.InventoryValue);
+                Assert.Equal(goodsReceipt ? 90m : 95m, state.InventoryValue);
+                Assert.Equal(25m, (await db.IvBalLocs.SingleAsync(b => b.Id == 58)).StdQty);
+                if (goodsReceipt) Assert.Equal(5m, (await db.PoOrderDetails.SingleAsync()).RecvQty);
             }
             var finalRollback = await RollbackReceiptAsync();
             Assert.True(finalRollback.Succeeded, finalRollback.Error);
@@ -1651,6 +1670,10 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
                 Assert.Equal(20m, state.OnHandBaseQty);
                 Assert.Equal(40m, state.InventoryValue);
+                Assert.Equal(20m, (await db.IvBalLocs.SingleAsync(b => b.Id == 58)).StdQty);
+                Assert.Equal(2, await db.IvTrxHistories.CountAsync(h => h.BatchNo == receiptBatchNo && h.EntryRole == "ORIGINAL"));
+                Assert.Equal(2, await db.IvTrxHistories.CountAsync(h => h.BatchNo == receiptBatchNo && h.EntryRole == "REVERSAL"));
+                if (goodsReceipt) Assert.Equal(0m, (await db.PoOrderDetails.SingleAsync()).RecvQty);
             }
             return;
         }

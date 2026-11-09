@@ -98,9 +98,17 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        // Draft edits lock the batch without taking the branch lock. Keep the
+        // same batch lock through proof, source write and seal so an edit
+        // cannot replace the approved line after it has been validated.
+        var lockedBatch = await _posting.LockBatchForUpdateAsync(
+            write, companyCode, branchCode, batchNo, cancellationToken);
+        if (lockedBatch is null || lockedBatch.Id != batch.Id
+            || lockedBatch.TrxType != IvTrxTypes.MiscellaneousReceipt
+            || lockedBatch.BatchStatus != IvBatchStatuses.New)
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt changed. Retry posting.");
         if (reversedIssuePlan is not null)
         {
-            var lockedBatch = await write.IvTrxBatches.AsNoTracking().SingleAsync(b => b.Id == batch.Id, cancellationToken);
             var lockedPlan = await PlanIsolatedWacReversedIssueAsync(write, companyCode, branchCode,
                 lockedBatch, [itemCode], rollback: false, cancellationToken);
             if (lockedPlan != reversedIssuePlan)
@@ -238,6 +246,12 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        var lockedBatch = await _posting.LockBatchForUpdateAsync(
+            write, companyCode, branchCode, batchNo, cancellationToken);
+        if (lockedBatch is null || lockedBatch.Id != batch.Id
+            || lockedBatch.TrxType != IvTrxTypes.GoodsReceive
+            || lockedBatch.BatchStatus != IvBatchStatuses.New)
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The goods receipt changed. Retry posting.");
         await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
             financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, productionPlan, cancellationToken,
             insertingReceiptBatchId: batch.Id);
@@ -599,11 +613,19 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        IvTrxBatch? lockedBatch = null;
+        if (isReceipt)
+        {
+            lockedBatch = await _posting.LockBatchForUpdateAsync(
+                write, companyCode, branchCode, batchNo, cancellationToken);
+            if (lockedBatch is null || lockedBatch.Id != batch.Id
+                || lockedBatch.TrxType != trxType || lockedBatch.BatchStatus != IvBatchStatuses.Posted)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt changed. Retry rollback.");
+        }
         if (reversedIssuePlan is not null)
         {
-            var lockedBatch = await write.IvTrxBatches.AsNoTracking().SingleAsync(b => b.Id == batch.Id, cancellationToken);
             var lockedPlan = await PlanIsolatedWacReversedIssueAsync(write, companyCode, branchCode,
-                lockedBatch, [original.ICode], rollback: true, cancellationToken);
+                lockedBatch!, [original.ICode], rollback: true, cancellationToken);
             if (lockedPlan != reversedIssuePlan)
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed Production issue changed. Retry rollback.");
         }

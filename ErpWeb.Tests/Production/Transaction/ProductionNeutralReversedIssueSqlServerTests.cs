@@ -286,6 +286,10 @@ public sealed class ProductionNeutralReversedIssueSqlServerTests
     public Task Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost() =>
         RunAsync(goodsReceipt: false, wacReceiptEditRace: true);
 
+    [Fact]
+    public Task Wac_reversed_issue_goods_receipt_serializes_edit_through_post_and_repost() =>
+        RunAsync(goodsReceipt: true, wacReceiptEditRace: true);
+
     private static async Task RunAsync(bool goodsReceipt, bool concurrent = false,
         bool sameDay = false, bool replayEnabled = true, bool? rollbackCostChanged = null,
         bool? issueDetailDamage = null, bool? crossPileReplay = null, bool? correctedIssueLower = null,
@@ -332,7 +336,7 @@ public sealed class ProductionNeutralReversedIssueSqlServerTests
             await ProductionLedgerTestFixture.SeedActiveEpochAsync(db);
         }
         if (wacBarrier is not null)
-            await ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(factory, wacBarrier);
+            await ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(factory, wacBarrier, goodsReceipt);
         else if (fifoGuardReplay is bool fifoReplay)
             await ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerFifoReceiptReversalGuardAsync(
                 factory, goodsReceipt, fifoReplay, fifoGuardSafe, fifoNeutral, concurrent,

@@ -11,9 +11,11 @@ internal sealed class WacReceiptPostingBarrier : DbCommandInterceptor
     private int _armed;
     private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _editAttempt = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentQueue<string> _observed = new();
 
     internal Task Reached => _reached.Task;
+    internal Task EditAttempt => _editAttempt.Task;
     internal string Diagnostics => string.Join("\n---\n", _observed.TakeLast(8));
     internal void Arm() => Interlocked.Exchange(ref _armed, 1);
     internal void Release() => _release.TrySetResult();
@@ -22,6 +24,9 @@ internal sealed class WacReceiptPostingBarrier : DbCommandInterceptor
         DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
         CancellationToken cancellationToken = default)
     {
+        if (_reached.Task.IsCompleted && !_release.Task.IsCompleted
+            && command.CommandText.Contains("dbo.IvTrxBatch WITH (UPDLOCK, HOLDLOCK)", StringComparison.OrdinalIgnoreCase))
+            _editAttempt.TrySetResult();
         if (Volatile.Read(ref _armed) == 1 && command.CommandText.Contains("[IvTrxBatchDetail]", StringComparison.OrdinalIgnoreCase))
             _observed.Enqueue(command.CommandText);
         if (Volatile.Read(ref _armed) == 1

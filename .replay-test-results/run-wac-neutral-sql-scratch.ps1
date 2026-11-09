@@ -51,8 +51,8 @@ try {
     $env:ERPWEB_REQUIRE_SQLSERVER_TESTS = '1'
     Remove-Item Env:ConnectionStrings__DefaultConnection, Env:ERPWEB_PRODUCTION_STOCK_TEST_CONNECTION -ErrorAction SilentlyContinue
     if ($WacEditRace) {
-        $testName = 'Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost'
-        $resultName = 'sqlserver-wac-reversed-edit-race.trx'
+        $testName = if ($GoodsReceipt) { 'Wac_reversed_issue_goods_receipt_serializes_edit_through_post_and_repost' } else { 'Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost' }
+        $resultName = if ($GoodsReceipt) { 'sqlserver-wac-reversed-edit-race-gr.trx' } else { 'sqlserver-wac-reversed-edit-race.trx' }
     }
     elseif ($FifoChangedCost) {
         if ($Edited -and $GoodsReceipt) {

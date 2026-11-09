@@ -1,0 +1,57 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="fbcc39c0-bd24-4bd4-ac86-893b78adbd86" name="Mokth@MOKTH 2026-11-09 18:55:45" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-09T18:55:45.5593122+08:00" queuing="2026-11-09T18:55:45.5593129+08:00" start="2026-11-09T18:55:14.9802710+08:00" finish="2026-11-09T18:55:45.5659118+08:00" />
+  <TestSettings name="default" id="65af307d-b7da-443a-bc83-3769a80905b9">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-09_18_55_45" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="e2f92b0e-4df6-4697-9270-d1dff2bbc5ca" testId="bc02ed4b-51af-4e44-b7f1-e48c2e28afaf" testName="ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost" computerName="MOKTH" duration="00:00:25.2893411" startTime="2026-11-09T18:55:20.0942624+08:00" endTime="2026-11-09T18:55:45.3459593+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e2f92b0e-4df6-4697-9270-d1dff2bbc5ca">
+      <Output>
+        <ErrorInfo>
+          <Message>The receipt draft was editable during the posting transaction.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1619&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(IDbContextFactory`1 factory, WacReceiptPostingBarrier barrier) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 60&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(IDbContextFactory`1 factory, WacReceiptPostingBarrier barrier) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 60&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.RunAsync(Boolean goodsReceipt, Boolean concurrent, Boolean sameDay, Boolean replayEnabled, Nullable`1 rollbackCostChanged, Nullable`1 issueDetailDamage, Nullable`1 crossPileReplay, Nullable`1 correctedIssueLower, Nullable`1 earlierReceiptLower, Boolean earlierReceiptConcurrent, Boolean earlierReceiptFailure, Boolean earlierReceiptEdited, Boolean earlierReceiptEditedFailure, Boolean earlierReceiptNeutralEdited, Boolean earlierReceiptQuantityEdited, Boolean earlierReceiptQuantityRounding, Boolean correctedIssueFailure, Nullable`1 reversedOutputLower, Boolean reversedOutputFailure, Boolean earlierOutput, Boolean outputEdited, Boolean outputQuantityEdited, Boolean partialOutput, Nullable`1 fifoGuardReplay, Boolean fifoGuardSafe, Boolean fifoNeutral, Boolean fifoNeutralFailure, Boolean fifoNeutralQa, Boolean fifoNeutralEdited, Boolean fifoNeutralRounding, Boolean fifoProjectionInsertion, Int32 fifoSameTimeCase, Boolean wacReceiptEditRace) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionNeutralReversedIssueSqlServerTests.cs:line 335&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="bc02ed4b-51af-4e44-b7f1-e48c2e28afaf">
+      <Execution id="e2f92b0e-4df6-4697-9270-d1dff2bbc5ca" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests" name="Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="bc02ed4b-51af-4e44-b7f1-e48c2e28afaf" executionId="e2f92b0e-4df6-4697-9270-d1dff2bbc5ca" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="1" executed="1" passed="0" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:03.27]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:04.19]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:04.22]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:29.57]       The receipt draft was editable during the posting transaction.&#xD;
+[xUnit.net 00:00:29.57]       Stack Trace:&#xD;
+[xUnit.net 00:00:29.57]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1619,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:29.58]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(60,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(IDbContextFactory`1 factory, WacReceiptPostingBarrier barrier)&#xD;
+[xUnit.net 00:00:29.58]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(60,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(IDbContextFactory`1 factory, WacReceiptPostingBarrier barrier)&#xD;
+[xUnit.net 00:00:29.58]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionNeutralReversedIssueSqlServerTests.cs(335,0): at ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.RunAsync(Boolean goodsReceipt, Boolean concurrent, Boolean sameDay, Boolean replayEnabled, Nullable`1 rollbackCostChanged, Nullable`1 issueDetailDamage, Nullable`1 crossPileReplay, Nullable`1 correctedIssueLower, Nullable`1 earlierReceiptLower, Boolean earlierReceiptConcurrent, Boolean earlierReceiptFailure, Boolean earlierReceiptEdited, Boolean earlierReceiptEditedFailure, Boolean earlierReceiptNeutralEdited, Boolean earlierReceiptQuantityEdited, Boolean earlierReceiptQuantityRounding, Boolean correctedIssueFailure, Nullable`1 reversedOutputLower, Boolean reversedOutputFailure, Boolean earlierOutput, Boolean outputEdited, Boolean outputQuantityEdited, Boolean partialOutput, Nullable`1 fifoGuardReplay, Boolean fifoGuardSafe, Boolean fifoNeutral, Boolean fifoNeutralFailure, Boolean fifoNeutralQa, Boolean fifoNeutralEdited, Boolean fifoNeutralRounding, Boolean fifoProjectionInsertion, Int32 fifoSameTimeCase, Boolean wacReceiptEditRace)&#xD;
+[xUnit.net 00:00:29.58]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:29.59]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-09T18:55:45.3500202+08:00">
+        <Text>[xUnit.net 00:00:29.57]     ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>
