@@ -25,10 +25,6 @@
     <section class="iv-card">
         <header class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
             <h2 class="iv-card__title mb-0">WORK SHIFT</h2>
-            <div class="iv-toolbar-row mb-0">
-                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE" IconCssClass="fa-solid fa-floppy-disk" Click="@SaveAsync" />
-                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="CANCEL" IconCssClass="fa-solid fa-arrow-left" Click="@(() => Nav.NavigateTo("/planning/shifts"))" />
-            </div>
         </header>
 
         <DxFormLayout SizeMode="SizeMode.Small" CssClass="shift-entry-form">
@@ -115,6 +111,13 @@
             </DxFormLayoutItem>
         </DxFormLayout>
     </section>
+
+    <footer class="iv-footer">
+        <div class="iv-footer__actions" style="margin-inline-start: auto;">
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="CANCEL" IconCssClass="fa-solid fa-xmark" Click="@(() => Nav.NavigateTo("/planning/shifts"))" />
+            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="SAVE" IconCssClass="fa-solid fa-floppy-disk" Click="@SaveAsync" />
+        </div>
+    </footer>
 </div>
 </MenuAuthorize>
 

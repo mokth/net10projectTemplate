@@ -141,6 +141,10 @@ public sealed partial class IvInventoryPostingService
             if (locked.Error is not null)
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     locked.Error);
+            var approvalError = await AssertNewGoodsReceiptPoApprovalAsync(
+                write, companyCode, branchCode, locked.Orders!.Values, cancellationToken);
+            if (approvalError is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, approvalError);
             grOrders = locked.Orders!;
             var poError = await ValidateGoodsReceiptPoQtyAsync(write,
                 grOrders, grDetails, +1, receiptType, cancellationToken);

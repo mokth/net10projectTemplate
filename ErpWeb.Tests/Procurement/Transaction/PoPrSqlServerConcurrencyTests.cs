@@ -363,7 +363,8 @@ public class PoPrSqlServerConcurrencyTests
             new FixedCurrentDateService(FixedToday),
             Options.Create(new AttachmentStorageOptions { RootPath = attachRoot }),
             Options.Create(new PoPrOptions()),
-            NullLogger<PoPrAttachmentService>.Instance);
+            NullLogger<PoPrAttachmentService>.Instance,
+            TestDisabledProcurementApprovalGuard.Instance);
 
         return new PoPrService(
             factory,
@@ -374,6 +375,7 @@ public class PoPrSqlServerConcurrencyTests
             new PoPrRepository(),
             Options.Create(new PoPrOptions()),
             attachments,
-            NullLogger<PoPrService>.Instance);
+            NullLogger<PoPrService>.Instance,
+            TestDisabledProcurementApprovalGuard.Instance);
     }
 }

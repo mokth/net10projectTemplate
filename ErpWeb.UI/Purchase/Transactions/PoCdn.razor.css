@@ -1,0 +1,10 @@
+.pocdn-footer__entry {
+    margin-inline-start: auto;
+}
+
+@media (max-width: 767px) {
+    .pocdn-footer__entry {
+        margin-inline-start: 0;
+        width: 100%;
+    }
+}

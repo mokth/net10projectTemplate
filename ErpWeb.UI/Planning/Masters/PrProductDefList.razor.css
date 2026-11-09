@@ -1,0 +1,12 @@
+.pdf-compact-card {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+}
+
+.pdf-compact-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}

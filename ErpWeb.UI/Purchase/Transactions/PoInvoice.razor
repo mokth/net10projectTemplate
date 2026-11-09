@@ -354,7 +354,7 @@
                     }
                     else
                     {
-                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@GoBack" Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" IconCssClass="fa-solid fa-xmark" Click="@GoBack" Enabled="@(!IsSubmitting)" />
                         <DxButton RenderStyle="ButtonRenderStyle.Primary"
                                   Text="@(IsSubmitting ? "Saving…" : "Save")"
                                   IconCssClass="fa-solid fa-floppy-disk"
@@ -374,6 +374,12 @@
                         <DxButton Text="Create Purchase Credit Note"
                                   RenderStyle="ButtonRenderStyle.Secondary"
                                   Click="@CreateCreditNoteAsync" />
+                    }
+                    @if (CanCreateDebitNote)
+                    {
+                        <DxButton Text="Create Purchase Debit Note"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="@CreateDebitNoteAsync" />
                     }
                 </div>
             </footer>

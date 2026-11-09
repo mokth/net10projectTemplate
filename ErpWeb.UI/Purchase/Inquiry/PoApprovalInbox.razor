@@ -1,0 +1,355 @@
+@page "/purchase/approval/inbox"
+@inherits PageBase
+@using ErpWeb.Core.Menus
+@using ErpWeb.Core.Purchase
+@using ErpWeb.Model.Entities.Purchase
+@using ErpWeb.UI.Components.Common.DataGrid
+@using ErpWeb.UI.Components.Security
+
+<PageTitle>My Approvals</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseApprovalInbox">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage) && !PreviewVisible && !ReassignVisible && !ConfirmVisible)
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true"><i class="fa-solid fa-inbox"></i></div>
+        <div class="iv-hero__copy">
+            <p class="iv-eyebrow">Purchase · Approval</p>
+            <h1 class="iv-title">My Approvals</h1>
+            <div class="iv-chips">
+                <span class="iv-chip">Branch @ScopeBranchLabel</span>
+                <span class="iv-chip">@QueueLabel</span>
+                <span class="iv-chip">@RowCountLabel</span>
+                @if (HasActiveFilters)
+                {
+                    <span class="iv-chip">Filtered</span>
+                }
+            </div>
+        </div>
+        <div class="iv-hero__kpi">
+            <span>@PendingBranchLabel</span>
+            <strong>@(Kpi is null ? "—" : (Kpi.PendingPr + Kpi.PendingPo).ToString("N0"))</strong>
+            <span class="iv-hero__kpi-sub">Overdue @(Kpi?.Overdue.ToString("N0") ?? "—")</span>
+        </div>
+    </header>
+
+    <section class="iv-card">
+        <div class="iv-toolbar-row">
+            <div class="iv-toolbar-row__search erp-inline-search">
+                <label class="erp-inline-search__caption" for="po-approval-inbox-search">Search</label>
+                <div class="erp-inline-search__editor">
+                    <DxTextBox InputId="po-approval-inbox-search"
+                               Text="@SearchText"
+                               TextChanged="OnSearchTextChanged"
+                               TextExpression="@(() => SearchText)"
+                               BindValueMode="BindValueMode.OnInput"
+                               NullText="Search document no, submitter, type, status…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          IconCssClass="fa-solid fa-magnifying-glass"
+                          CssClass="erp-inline-search__button"
+                          Click="@ApplySearch"
+                          aria-label="Search approval requests"
+                          title="Search approval requests" />
+            </div>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="FILTER"
+                      IconCssClass="fa-solid fa-filter"
+                      Click="@OpenFilterPopup" />
+        </div>
+
+        @if (IsBootstrapping)
+        {
+            <div class="iv-skeleton" aria-busy="true">
+                <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                <div class="iv-skeleton__line iv-skeleton__line--md"></div>
+                <div class="iv-skeleton__line"></div>
+            </div>
+        }
+        else
+        {
+            <div class="iv-list-desktop">
+                <CommonDataGridEx @key="@InboxGridKey"
+                                  T="PoApprovalInboxGridRow"
+                                  Columns="@Columns"
+                                  ActionButtons="@ActionButtons"
+                                  KeyName="@nameof(PoApprovalInboxGridRow.InstanceId)"
+                                  GridKey="po-approval-inbox"
+                                  Title="Approval requests"
+                                  GridData="@GridRows"
+                                  ShowToolbarText="true"
+                                  ShowResetLayoutButton="true"
+                                  UseBuiltInExport="false"
+                                  ShowSearchBox="false"
+                                  ShowFilterRow="false"
+                                  ShowGroupPanel="false"
+                                  allowSelect="false"
+                                  OnButtonEventHandle="@OnGridButtonAsync"
+                                  OnActionEventHandle="@OnActionClick" />
+            </div>
+
+            @if (GridRows.Count == 0)
+            {
+                <div class="iv-empty-hint text-muted px-2 pb-2">
+                    <p class="mb-1">@EmptyQueueHint</p>
+                    @if (Kpi is not null && (Kpi.PendingPr + Kpi.PendingPo) > 0 && string.Equals(AppliedQueueKey, "mine", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <p class="mb-0">This branch still has @((Kpi.PendingPr + Kpi.PendingPo).ToString("N0")) pending approval(s). Try <strong>FILTER → Submitted by me</strong> or <strong>All pending</strong> (if authorized).</p>
+                    }
+                </div>
+            }
+
+            <div class="iv-list-compact">
+                @if (GridRows.Count == 0)
+                {
+                    <p class="text-muted mb-0">No approval requests match the current filters.</p>
+                }
+                else
+                {
+                    @foreach (var row in GridRows)
+                    {
+                        <button type="button"
+                                class="iv-list-compact__item"
+                                @onclick="() => OpenPreview(row)">
+                            <span class="iv-list-compact__code">@row.DocType @row.DocNo</span>
+                            <span class="iv-list-compact__desc">
+                                @(row.SubmittedBy ?? "—") · @row.TotalDisplay
+                            </span>
+                            <div class="iv-list-compact__meta">
+                                <span class="iv-status @StatusChipClass(row.Status)">@row.Status</span>
+                            </div>
+                        </button>
+                    }
+                }
+            </div>
+        }
+    </section>
+</div>
+
+<DxPopup HeaderText="Filter approvals"
+         CloseOnOutsideClick="false"
+         Width="480px"
+         CssClass="common-popup"
+         @bind-Visible="@FilterPopupVisible">
+    <Content>
+        <div class="iv-popup-body">
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Queue" ColSpanMd="12">
+                    <Template>
+                        <DxComboBox Data="@QueueOptions"
+                                    TextFieldName="@nameof(QueueOption.Name)"
+                                    ValueFieldName="@nameof(QueueOption.Key)"
+                                    @bind-Value="@DraftQueueKey" />
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+        </div>
+        <div class="iv-popup-footer">
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Clear" Click="@ClearFiltersAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@ApplyFiltersAsync" />
+            </div>
+        </div>
+    </Content>
+</DxPopup>
+
+<DxPopup HeaderText="Approval"
+         CloseOnOutsideClick="false"
+         Width="720px"
+         CssClass="common-popup"
+         @bind-Visible="@PreviewVisible">
+    <Content>
+        @if (Preview is not null)
+        {
+            <div class="iv-popup-body">
+                @if (!string.IsNullOrWhiteSpace(PopupError))
+                {
+                    <p class="iv-popup-error" role="alert">@PopupError</p>
+                }
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Document" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox Text="@($"{Preview.DocType} {Preview.DocNo}")" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Rev / status" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox Text="@($"rev {Preview.DocRev} · {Preview.DocumentStatus}")" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Amount" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox Text="@(Preview.AmountHidden ? "Hidden" : $"{Preview.Currency} {Preview.Total:n2}")" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Approval" ColSpanMd="6">
+                        <Template>
+                            <DxTextBox Text="@($"{Preview.Instance?.Status ?? "None"} · level {Preview.Instance?.CurrentLevel.ToString() ?? "—"}")" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Assignees" ColSpanMd="12">
+                        <Template>
+                            <DxTextBox Text="@AssigneeSummary" ReadOnly="true" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    @if (IsPending)
+                    {
+                        <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                            <Template>
+                                <DxMemo @bind-Text="@DecisionReason"
+                                        Rows="3"
+                                        NullText="Required for return or reject"
+                                        CssClass="w-100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    }
+                </DxFormLayout>
+                <h3 class="iv-card__title mt-3">History</h3>
+                @if (Preview.History.Count == 0)
+                {
+                    <p class="sdoc-field-hint mb-0">No approval events yet.</p>
+                }
+                else
+                {
+                    @foreach (var ev in Preview.History)
+                    {
+                        <p class="mb-1">@ev.OccurredAtUtc.ToString("dd/MM/yyyy HH:mm") · @ev.ActorUserId · @ev.EventType @(string.IsNullOrWhiteSpace(ev.Reason) ? "" : "· " + ev.Reason)</p>
+                    }
+                }
+            </div>
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Close"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@ClosePreview"
+                              Enabled="@(!IsSubmitting)" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Open document"
+                              Click="OpenDocument"
+                              Enabled="@(!IsSubmitting)" />
+                    @if (CanReassign && IsPending)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Reassign"
+                                  Click="OpenReassign"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                    @if (IsPending)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Return"
+                                  Click="@(() => BeginDecision(ProcurementApprovalDecisions.Return))"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                  Text="Reject"
+                                  Click="@(() => BeginDecision(ProcurementApprovalDecisions.Reject))"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Approve"
+                                  Click="@(() => BeginDecision(ProcurementApprovalDecisions.Approve))"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                </div>
+            </div>
+        }
+    </Content>
+</DxPopup>
+
+<DxPopup HeaderText="Reassign approver"
+         CloseOnOutsideClick="false"
+         Width="520px"
+         CssClass="common-popup"
+         @bind-Visible="@ReassignVisible">
+    <Content>
+        <div class="iv-popup-body">
+            @if (!string.IsNullOrWhiteSpace(PopupError))
+            {
+                <p class="iv-popup-error" role="alert">@PopupError</p>
+            }
+            <p class="sdoc-field-hint">Does not cast a vote. Settings edit permission is required.</p>
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Replace" ColSpanMd="12">
+                    <Template>
+                        <DxComboBox Data="@ReassignFromUsers"
+                                    TextFieldName="@nameof(ProcurementApprovalLookupRow.DisplayText)"
+                                    ValueFieldName="@nameof(ProcurementApprovalLookupRow.Code)"
+                                    @bind-Value="@ReassignRemoveUserId"
+                                    SearchMode="ListSearchMode.AutoSearch"
+                                    SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                    NullText="Select current assignee" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="With user" ColSpanMd="12">
+                    <Template>
+                        <DxComboBox Data="@ReassignToUsers"
+                                    TextFieldName="@nameof(ProcurementApprovalLookupRow.DisplayText)"
+                                    ValueFieldName="@nameof(ProcurementApprovalLookupRow.Code)"
+                                    @bind-Value="@ReassignAddUserId"
+                                    SearchMode="ListSearchMode.AutoSearch"
+                                    SearchFilterCondition="ListSearchFilterCondition.Contains"
+                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                    NullText="Select user"
+                                    CssClass="required-field" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                    <Template>
+                        <DxMemo @bind-Text="@ReassignReason" Rows="3" MaxLength="200" NullText="Required" CssClass="w-100 required-field" />
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+        </div>
+        <div class="iv-popup-footer">
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@CloseReassign"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="@(IsSubmitting ? "Saving…" : "Reassign")"
+                          Click="ReassignAsync"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </div>
+    </Content>
+</DxPopup>
+
+<DxPopup HeaderText="@ConfirmTitle"
+         CloseOnOutsideClick="false"
+         Width="480px"
+         CssClass="common-popup"
+         @bind-Visible="@ConfirmVisible">
+    <Content>
+        <p class="iv-confirm__copy">@ConfirmMessage</p>
+        <div class="iv-popup-footer">
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Cancel"
+                          Click="@(() => ConfirmVisible = false)"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="@ConfirmButtonStyle"
+                          Text="@(IsSubmitting ? "Saving…" : ConfirmButtonText)"
+                          Click="@ConfirmDecisionAsync"
+                          Enabled="@(!IsSubmitting)" />
+            </div>
+        </div>
+    </Content>
+</DxPopup>
+</MenuAuthorize>

@@ -346,7 +346,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Backdated_wac_gr_reprices_later_issue_and_restores_po_on_rollback()
+    public async Task Backdated_wac_gr_checks_approval_reprices_later_issue_and_restores_po_on_rollback()
     {
         await EnsureActiveStockLedgerAsync();
         await using (var db = await _factory.CreateDbContextAsync())
@@ -410,6 +410,39 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             line.BaseUnitPrices = 10m;
             await unchanged.SaveChangesAsync();
         }
+
+        var approval = new Mock<IProcurementApprovalGuard>();
+        approval.Setup(x => x.LockPublishedPolicyAsync(
+                It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        approval.Setup(x => x.LockInstancesAsync(
+                It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IEnumerable<(string DocNo, short DocRev)>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        approval.Setup(x => x.AssertPoReceivableAsync(
+                It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<short>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("Pending approval");
+        var unapprovedReceipt = CreateGrSut(withLedger: true,
+            enableBackdatedReplay: true, approval: approval.Object);
+        var rejectedApproval = await unapprovedReceipt.PostAsync([saved.BatchNo]);
+        Assert.False(rejectedApproval.Succeeded);
+        Assert.Contains("needs approval", rejectedApproval.ErrorMessage ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase);
+        approval.Verify(x => x.AssertPoReceivableAsync(
+            It.IsAny<AppDbContext>(), "DEMO", "HQ", po.PoNo,
+            It.IsAny<short>(), It.IsAny<CancellationToken>()), Times.Once);
+        await using (var unchanged = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(0m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
+            Assert.Equal(11m, (await unchanged.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(33m, (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
+            Assert.Equal(IvBatchStatuses.New, (await unchanged.IvTrxBatches
+                .SingleAsync(b => b.BatchNo == saved.BatchNo)).BatchStatus);
+            Assert.Empty(await unchanged.IvTrxHistories
+                .Where(h => h.BatchNo == saved.BatchNo).ToListAsync());
+        }
+
         var posted = await receipt.PostAsync([saved.BatchNo]);
         Assert.True(posted.Succeeded, posted.ErrorMessage);
         await using (var db = await _factory.CreateDbContextAsync())
@@ -3457,6 +3490,72 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SearchPoLines_hides_unapproved_purchase_order()
+    {
+        var po = await CreatePoAsync(qty: 10m);
+        var sut = CreateGrSut(approval: new HiddenPoApprovalGuard());
+
+        var rows = await sut.SearchPoLinesAsync(IvTrxTypes.GoodsReceive, po.PoNo);
+
+        Assert.True(rows.Succeeded, rows.ErrorMessage);
+        Assert.Empty(rows.PoLines);
+    }
+
+    [Fact]
+    public async Task Post_after_po_revise_does_not_write_RecvQty_or_stock()
+    {
+        var po = await CreatePoAsync(qty: 10m);
+        var sut = CreateGrSut();
+        var draft = await sut.SaveNewAsync(GrRequest(po, recvQty: 4m));
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+
+        var poSut = CreatePoSut();
+        var current = await poSut.GetAsync(po.PoNo);
+        Assert.True(current.Succeeded, current.ErrorMessage);
+        var reviseRequest = new PoOrderSaveRequest
+        {
+            PoDate = FixedToday,
+            VendCode = "SUP01",
+            VendName = "Alpha Supplier",
+            CurCode = "MYR",
+            RevisionReason = "Bump revision before GR post",
+            RowVersion = current.Document!.RowVersion,
+            Lines =
+            [
+                new PoOrderLineDto
+                {
+                    Line = current.Document.Lines[0].Line,
+                    ICode = "A100",
+                    PoPurQty = 10m,
+                    PoQty = 10m,
+                    PurchaseUom = "EA",
+                    StdUom = "EA",
+                    PackSz = 1m,
+                    CurCode = "MYR",
+                    TaxGroup = "SR",
+                    ToWarehouse = "MAIN"
+                }
+            ]
+        };
+        var revised = await poSut.ReviseAsync(po.PoNo, reviseRequest);
+        Assert.True(revised.Succeeded, revised.ErrorMessage);
+        Assert.Equal(2, revised.Document!.PoRelNo);
+
+        var posted = await sut.PostAsync([draft.BatchNo]);
+
+        Assert.False(posted.Succeeded);
+        Assert.Contains("revised", posted.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(0m, await db.PoOrderDetails.Where(x => x.PoRelNo == 1).Select(x => x.RecvQty).SingleAsync());
+        Assert.Equal(0m, await db.PoOrderDetails.Where(x => x.PoRelNo == 2).Select(x => x.RecvQty).SingleAsync());
+        Assert.Empty(await db.IvBalLocs.ToListAsync());
+        Assert.Equal(IvBatchStatuses.New, await db.IvTrxBatches
+            .Where(x => x.BatchNo == draft.BatchNo)
+            .Select(x => x.BatchStatus)
+            .SingleAsync());
+    }
+
+    [Fact]
     public async Task SearchPoLines_subtracts_NEW_draft_ToPurQty()
     {
         var po = await CreatePoAsync(qty: 10m);
@@ -4487,7 +4586,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             new FixedCurrentDateService(FixedToday),
             Options.Create(new AttachmentStorageOptions { RootPath = attachRoot }),
             Options.Create(new PoOrderOptions()),
-            NullLogger<PoOrderAttachmentService>.Instance);
+            NullLogger<PoOrderAttachmentService>.Instance,
+            TestDisabledProcurementApprovalGuard.Instance);
 
         return new PoOrderService(
             _factory,
@@ -4498,13 +4598,16 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             new PoOrderRepository(),
             Options.Create(new PoOrderOptions()),
             attach,
-            NullLogger<PoOrderService>.Instance);
+            NullLogger<PoOrderService>.Instance,
+            TestDisabledProcurementApprovalGuard.Instance);
     }
 
     private IvGoodsReceiptService CreateGrSut(bool withLedger = false,
         DateTime? postingToday = null, bool enableBackdatedReplay = false,
-        IIvFailureEvidenceReader? failureEvidence = null)
+        IIvFailureEvidenceReader? failureEvidence = null,
+        IProcurementApprovalGuard? approval = null)
     {
+        approval ??= TestDisabledProcurementApprovalGuard.Instance;
         var tenant = InventoryTenantTestHelper.CreateTenantContext(location: "MAIN");
         var access = GrAccess();
         var postingRepo = new IvStockPostingRepository();
@@ -4543,7 +4646,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 ? new PurchaseCostAdjustmentPostingService(coordinator!,
                     new StockValueAdjustmentWriter())
                 : null,
-            failureEvidence: failureEvidence);
+            failureEvidence: failureEvidence,
+            approval: approval);
 
         return new IvGoodsReceiptService(
             _factory,
@@ -4556,7 +4660,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             new IvStockTransactionRepository(),
             postingRepo,
             posting,
-            NullLogger<IvGoodsReceiptService>.Instance);
+            NullLogger<IvGoodsReceiptService>.Instance,
+            approval: approval);
     }
 
     private async Task AssertCreditNoteReplacementOwnerResolutionAsync(
@@ -4926,5 +5031,68 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         return access;
+    }
+
+    private sealed class HiddenPoApprovalGuard : IProcurementApprovalGuard
+    {
+        private readonly IProcurementApprovalGuard _inner = TestDisabledProcurementApprovalGuard.Instance;
+
+        public Task<bool> IsPoVisibleForGrAsync(
+            AppDbContext db, string companyCode, string branchCode, string poNo, short poRelNo, CancellationToken cancellationToken = default) =>
+            Task.FromResult(false);
+
+        public Task<string?> AssertPrConvertibleAsync(
+            AppDbContext db, string companyCode, string branchCode, string prNo, CancellationToken cancellationToken = default) =>
+            _inner.AssertPrConvertibleAsync(db, companyCode, branchCode, prNo, cancellationToken);
+
+        public Task<string?> AssertPoReceivableAsync(
+            AppDbContext db, string companyCode, string branchCode, string poNo, short poRelNo, CancellationToken cancellationToken = default) =>
+            _inner.AssertPoReceivableAsync(db, companyCode, branchCode, poNo, poRelNo, cancellationToken);
+
+        public Task<string?> AssertPoCloseableAsync(
+            AppDbContext db, string companyCode, string branchCode, string poNo, short poRelNo, CancellationToken cancellationToken = default) =>
+            _inner.AssertPoCloseableAsync(db, companyCode, branchCode, poNo, poRelNo, cancellationToken);
+
+        public Task<string?> AssertDocumentMaterialEditAsync(
+            AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
+            string newFingerprint, CancellationToken cancellationToken = default) =>
+            _inner.AssertDocumentMaterialEditAsync(db, companyCode, branchCode, docType, docNo, docRev, newFingerprint, cancellationToken);
+
+        public Task<string?> AssertAttachmentMutationAsync(
+            AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
+            CancellationToken cancellationToken = default, bool deleting = false) =>
+            _inner.AssertAttachmentMutationAsync(db, companyCode, branchCode, docType, docNo, docRev, cancellationToken, deleting);
+
+        public Task<string?> ClosePendingOnDocumentCancelAsync(
+            AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
+            string actorUserId, CancellationToken cancellationToken = default) =>
+            _inner.ClosePendingOnDocumentCancelAsync(db, companyCode, branchCode, docType, docNo, docRev, actorUserId, cancellationToken);
+
+        public Task LockInstancesAsync(
+            AppDbContext db, string companyCode, string branchCode, string docType,
+            IEnumerable<(string DocNo, short DocRev)> keys, CancellationToken cancellationToken = default) =>
+            _inner.LockInstancesAsync(db, companyCode, branchCode, docType, keys, cancellationToken);
+
+        public Task<string?> LockPublishedPolicyAsync(
+            AppDbContext db, string companyCode, string docType, CancellationToken cancellationToken = default) =>
+            _inner.LockPublishedPolicyAsync(db, companyCode, docType, cancellationToken);
+
+        public Task<bool> IsPrVisibleForPoAsync(
+            AppDbContext db, string companyCode, string branchCode, string prNo, CancellationToken cancellationToken = default) =>
+            _inner.IsPrVisibleForPoAsync(db, companyCode, branchCode, prNo, cancellationToken);
+
+        public Task<string?> EvaluatePrConvertibleReadOnlyAsync(
+            AppDbContext db, string companyCode, string branchCode, string prNo, CancellationToken cancellationToken = default) =>
+            _inner.EvaluatePrConvertibleReadOnlyAsync(db, companyCode, branchCode, prNo, cancellationToken);
+
+        public Task<IReadOnlySet<string>> FilterConvertiblePrNosReadOnlyAsync(
+            AppDbContext db, string companyCode, string branchCode, IReadOnlyCollection<string> prNos,
+            CancellationToken cancellationToken = default) =>
+            _inner.FilterConvertiblePrNosReadOnlyAsync(db, companyCode, branchCode, prNos, cancellationToken);
+
+        public Task<bool> CanReadDocumentAsync(
+            AppDbContext db, string companyCode, string branchCode, string docType, string docNo, short docRev,
+            string userId, CancellationToken cancellationToken = default) =>
+            _inner.CanReadDocumentAsync(db, companyCode, branchCode, docType, docNo, docRev, userId, cancellationToken);
     }
 }

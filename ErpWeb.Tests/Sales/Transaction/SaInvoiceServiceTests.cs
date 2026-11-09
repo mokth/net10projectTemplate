@@ -14,6 +14,7 @@ using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Sales;
 using ErpWeb.Tests.Inventory.Transaction;
+using ErpWeb.Tests.Procurement.Transaction;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -2680,7 +2681,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
                 new IvStockTransactionRepository(), new IvStockPostingRepository(),
                 InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
-                    enableBackdatedReplay: true), NullLogger<IvGoodsReceiptService>.Instance);
+                    enableBackdatedReplay: true), NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
             var saved = await goods.SaveNewAsync(new IvGoodsReceiptSaveRequest
             {
                 TrxType = IvTrxTypes.GoodsReceive, TrxDate = FixedToday.AddDays(-1),
@@ -3060,7 +3061,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
                 new IvStockTransactionRepository(), new IvStockPostingRepository(),
                 InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
-                    enableBackdatedReplay: true), NullLogger<IvGoodsReceiptService>.Instance);
+                    enableBackdatedReplay: true), NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
             var saved = await goods.SaveNewAsync(new IvGoodsReceiptSaveRequest
             {
                 TrxType = IvTrxTypes.GoodsReceive, TrxDate = FixedToday.AddDays(-1),
@@ -3605,7 +3606,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
                 new IvStockTransactionRepository(), new IvStockPostingRepository(),
                 InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
-                    enableBackdatedReplay: true), NullLogger<IvGoodsReceiptService>.Instance);
+                    enableBackdatedReplay: true), NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
             var saved = await goods.SaveNewAsync(new IvGoodsReceiptSaveRequest
             {
                 TrxType = IvTrxTypes.GoodsReceive, TrxDate = FixedToday.AddDays(-1),
@@ -4358,7 +4359,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
                 new IvStockTransactionRepository(), new IvStockPostingRepository(),
                 InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
-                    enableBackdatedReplay: true), NullLogger<IvGoodsReceiptService>.Instance);
+                    enableBackdatedReplay: true), NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
             var saved = await goods.SaveNewAsync(new IvGoodsReceiptSaveRequest
             {
                 TrxType = IvTrxTypes.GoodsReceive, TrxDate = FixedToday.AddDays(-1),
@@ -5259,7 +5260,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             new IvStockTransactionRepository(), new IvStockPostingRepository(),
             InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
                 enableBackdatedReplay: true),
-            NullLogger<IvGoodsReceiptService>.Instance);
+            NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
         var saved = await gr.SaveNewAsync(new IvGoodsReceiptSaveRequest
         {
             TrxType = IvTrxTypes.GoodsReceive, TrxDate = FixedToday.AddDays(-1),
@@ -5473,7 +5474,8 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             new IvStockCommonRepository(_factory),
             new PoOrderRepository(),
             NullLogger<IvInventoryPostingService>.Instance,
-            currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
     private static Mock<IAccessRightService> Access()
     {

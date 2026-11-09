@@ -115,7 +115,7 @@
                     <Columns>
                         @if (CanEditDocument)
                         {
-                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                            <DxGridCommandColumn Width="88px" MinWidth="80" Caption=" " VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
                                 <CellDisplayTemplate>
                                     @{
                                         var line = (IvScrapLineVm)context.DataItem;

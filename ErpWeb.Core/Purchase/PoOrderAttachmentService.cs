@@ -4,6 +4,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -41,6 +42,7 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
     private readonly AttachmentStorageOptions _options;
     private readonly PoOrderOptions _orderOptions;
     private readonly ILogger<PoOrderAttachmentService> _logger;
+    private readonly IProcurementApprovalGuard _approval;
 
     public PoOrderAttachmentService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -49,7 +51,8 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
         ICurrentDateService dates,
         IOptions<AttachmentStorageOptions> options,
         IOptions<PoOrderOptions> orderOptions,
-        ILogger<PoOrderAttachmentService> logger)
+        ILogger<PoOrderAttachmentService> logger,
+        IProcurementApprovalGuard approval)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -58,6 +61,7 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
         _options = options.Value;
         _orderOptions = orderOptions.Value;
         _logger = logger;
+        _approval = approval ?? throw new ArgumentNullException(nameof(approval));
     }
 
     public async Task MoveDraftToPoAsync(
@@ -362,44 +366,6 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
             return Fail<PoOrderAttachmentRow>(IvMasterErrorCode.Validation, "Content type does not match the file extension.");
         }
 
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var access = await AuthorizeDocAccessAsync(db, context, id, requireOwnerForTemp: true, cancellationToken);
-        if (access is not null)
-        {
-            return Fail<PoOrderAttachmentRow>(access.Value.Code, access.Value.Message);
-        }
-
-        var count = await db.PoAttachFiles.CountAsync(
-            x => x.CompanyCode == context.CompanyCode
-                 && x.BranchCode == context.BranchCode
-                 && x.DocKey == DocKey
-                 && x.DocId == id,
-            cancellationToken);
-        if (count >= MaxAttachmentsPerDoc)
-        {
-            return Fail<PoOrderAttachmentRow>(
-                IvMasterErrorCode.Validation,
-                $"A purchase order may have at most {MaxAttachmentsPerDoc} attachments.");
-        }
-
-        var duplicate = await db.PoAttachFiles.AnyAsync(
-            x => x.CompanyCode == context.CompanyCode
-                 && x.BranchCode == context.BranchCode
-                 && x.DocKey == DocKey
-                 && x.DocId == id
-                 && x.DocName == displayName,
-            cancellationToken);
-        if (duplicate)
-        {
-            return IvMasterOperationResult<PoOrderAttachmentRow>.Fail(
-                IvMasterErrorCode.DuplicateKey,
-                "An attachment with this file name already exists.",
-                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["DocName"] = "An attachment with this file name already exists."
-                });
-        }
-
         var root = ResolveRoot();
         var relativeDir = Path.Combine(context.CompanyCode!, context.BranchCode!, DocKey, id);
         var storageName = $"{Guid.NewGuid():N}{ext.ToLowerInvariant()}";
@@ -444,61 +410,131 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
                         "File content does not match the declared type.");
                 }
             }
-
-            if (File.Exists(absolutePath))
-            {
-                TryDeleteFile(tempPath);
-                return Fail<PoOrderAttachmentRow>(IvMasterErrorCode.Validation, "Storage collision. Retry upload.");
-            }
-
-            File.Move(tempPath, absolutePath);
-
-            var entity = new PoAttachFile
-            {
-                CompanyCode = context.CompanyCode!,
-                BranchCode = context.BranchCode!,
-                DocId = id,
-                DocName = displayName,
-                DocKey = DocKey,
-                DocPath = storageName,
-                CreatedDate = _dates.Now,
-                CreatedBy = Truncate(context.UserId!, 20)
-            };
-
-            db.PoAttachFiles.Add(entity);
-            try
-            {
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            catch (DbUpdateException ex) when (IsDuplicateKey(ex))
-            {
-                TryDeleteFile(absolutePath);
-                return IvMasterOperationResult<PoOrderAttachmentRow>.Fail(
-                    IvMasterErrorCode.DuplicateKey,
-                    "An attachment with this file name already exists.",
-                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["DocName"] = "An attachment with this file name already exists."
-                    });
-            }
-            catch
-            {
-                TryDeleteFile(absolutePath);
-                throw;
-            }
-
-            return IvMasterOperationResult<PoOrderAttachmentRow>.Ok(new PoOrderAttachmentRow
-            {
-                DocName = entity.DocName,
-                CreatedDate = entity.CreatedDate,
-                CreatedBy = entity.CreatedBy
-            });
         }
         catch
         {
             TryDeleteFile(tempPath);
             throw;
         }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var access = await AuthorizeDocAccessAsync(db, context, id, requireOwnerForTemp: true, cancellationToken);
+        if (access is not null)
+        {
+            TryDeleteFile(tempPath);
+            return Fail<PoOrderAttachmentRow>(access.Value.Code, access.Value.Message);
+        }
+
+        if (!IsTempDocId(id))
+        {
+            var locked = await LockLatestPoForAttachmentAsync(
+                db, context.CompanyCode!, context.BranchCode!, id, cancellationToken);
+            if (locked.Error is not null)
+            {
+                TryDeleteFile(tempPath);
+                return Fail<PoOrderAttachmentRow>(IvMasterErrorCode.Validation, locked.Error);
+            }
+
+            await _approval.LockInstancesAsync(
+                db, context.CompanyCode!, context.BranchCode!, ProcurementApprovalDocTypes.Po,
+                [(id, locked.RelNo)], cancellationToken);
+            var approvalError = await _approval.AssertAttachmentMutationAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                ProcurementApprovalDocTypes.Po,
+                id,
+                locked.RelNo,
+                cancellationToken);
+            if (approvalError is not null)
+            {
+                TryDeleteFile(tempPath);
+                return Fail<PoOrderAttachmentRow>(IvMasterErrorCode.Validation, approvalError);
+            }
+        }
+
+        var count = await db.PoAttachFiles.CountAsync(
+            x => x.CompanyCode == context.CompanyCode
+                 && x.BranchCode == context.BranchCode
+                 && x.DocKey == DocKey
+                 && x.DocId == id,
+            cancellationToken);
+        if (count >= MaxAttachmentsPerDoc)
+        {
+            TryDeleteFile(tempPath);
+            return Fail<PoOrderAttachmentRow>(
+                IvMasterErrorCode.Validation,
+                $"A purchase order may have at most {MaxAttachmentsPerDoc} attachments.");
+        }
+
+        var duplicate = await db.PoAttachFiles.AnyAsync(
+            x => x.CompanyCode == context.CompanyCode
+                 && x.BranchCode == context.BranchCode
+                 && x.DocKey == DocKey
+                 && x.DocId == id
+                 && x.DocName == displayName,
+            cancellationToken);
+        if (duplicate)
+        {
+            TryDeleteFile(tempPath);
+            return IvMasterOperationResult<PoOrderAttachmentRow>.Fail(
+                IvMasterErrorCode.DuplicateKey,
+                "An attachment with this file name already exists.",
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["DocName"] = "An attachment with this file name already exists."
+                });
+        }
+
+        if (File.Exists(absolutePath))
+        {
+            TryDeleteFile(tempPath);
+            return Fail<PoOrderAttachmentRow>(IvMasterErrorCode.Validation, "Storage collision. Retry upload.");
+        }
+
+        File.Move(tempPath, absolutePath);
+        var entity = new PoAttachFile
+        {
+            CompanyCode = context.CompanyCode!,
+            BranchCode = context.BranchCode!,
+            DocId = id,
+            DocName = displayName,
+            DocKey = DocKey,
+            DocPath = storageName,
+            CreatedDate = _dates.Now,
+            CreatedBy = Truncate(context.UserId!, 20)
+        };
+
+        db.PoAttachFiles.Add(entity);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (IsDuplicateKey(ex))
+        {
+            TryDeleteFile(absolutePath);
+            return IvMasterOperationResult<PoOrderAttachmentRow>.Fail(
+                IvMasterErrorCode.DuplicateKey,
+                "An attachment with this file name already exists.",
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["DocName"] = "An attachment with this file name already exists."
+                });
+        }
+        catch
+        {
+            TryDeleteFile(absolutePath);
+            throw;
+        }
+
+        return IvMasterOperationResult<PoOrderAttachmentRow>.Ok(new PoOrderAttachmentRow
+        {
+            DocName = entity.DocName,
+            CreatedDate = entity.CreatedDate,
+            CreatedBy = entity.CreatedBy
+        });
     }
 
     public async Task<IvMasterOperationResult<(Stream Stream, string FileName, string ContentType)>> DownloadAsync(
@@ -595,10 +631,38 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var access = await AuthorizeDocAccessAsync(db, context, id, requireOwnerForTemp: true, cancellationToken);
         if (access is not null)
         {
             return Fail<object>(access.Value.Code, access.Value.Message);
+        }
+
+        if (!IsTempDocId(id))
+        {
+            var locked = await LockLatestPoForAttachmentAsync(
+                db, context.CompanyCode!, context.BranchCode!, id, cancellationToken);
+            if (locked.Error is not null)
+            {
+                return Fail<object>(IvMasterErrorCode.Validation, locked.Error);
+            }
+
+            await _approval.LockInstancesAsync(
+                db, context.CompanyCode!, context.BranchCode!, ProcurementApprovalDocTypes.Po,
+                [(id, locked.RelNo)], cancellationToken);
+            var approvalError = await _approval.AssertAttachmentMutationAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                ProcurementApprovalDocTypes.Po,
+                id,
+                locked.RelNo,
+                cancellationToken,
+                deleting: true);
+            if (approvalError is not null)
+            {
+                return Fail<object>(IvMasterErrorCode.Validation, approvalError);
+            }
         }
 
         var row = await db.PoAttachFiles.FirstOrDefaultAsync(
@@ -616,8 +680,39 @@ public sealed class PoOrderAttachmentService : IPoOrderAttachmentService
         var files = new List<(string DocName, string? DocPath)> { (row.DocName, row.DocPath) };
         db.PoAttachFiles.Remove(row);
         await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
         await DeletePhysicalForDocAsync(context.CompanyCode!, context.BranchCode!, id, files, cancellationToken);
         return IvMasterOperationResult<object>.Ok();
+    }
+
+    private static async Task<(string? Error, short RelNo)> LockLatestPoForAttachmentAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string poNo,
+        CancellationToken cancellationToken)
+    {
+        var revisionLock = await PurchaseOrderRevisionSetLock.AcquireAsync(
+            db, companyCode, branchCode, poNo, cancellationToken);
+        if (revisionLock is not null)
+        {
+            return (revisionLock, 0);
+        }
+
+        var repository = new PoOrderRepository();
+        var po = await repository.LockLatestForUpdateAsync(db, companyCode, branchCode, poNo, cancellationToken);
+        if (po is null)
+        {
+            return ("Purchase Order was not found.", 0);
+        }
+
+        var latestRel = await repository.GetMaxRelNoAsync(db, companyCode, branchCode, poNo, cancellationToken);
+        if (latestRel is null || latestRel.Value != po.PoRelNo)
+        {
+            return (PurchaseOrderRevisionSetLock.MessageFor(poNo), 0);
+        }
+
+        return (null, po.PoRelNo);
     }
 
     private string? TryResolveLeftoverTempPath(

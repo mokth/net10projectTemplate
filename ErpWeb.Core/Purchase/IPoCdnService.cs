@@ -42,6 +42,9 @@ public sealed class PoCdnOperationResult
     public IReadOnlyList<PoCdnInvoicePickerRow> InvoicePickerRows { get; init; } = [];
     public IReadOnlyList<PoCdnInvoiceLinePickerRow> InvoiceLinePickerRows { get; init; } = [];
 
+    /// <summary>Single posted-invoice header from the exact-ID resolver (deep-link bootstrap).</summary>
+    public PoCdnInvoicePickerRow? PostedInvoiceSource { get; init; }
+
     /// <summary>Reservation breakdown for a posted invoice (screen indicator / report).</summary>
     public PoCdnInvoiceReservationSummary? Reservations { get; init; }
 
@@ -121,6 +124,15 @@ public sealed class PoCdnOperationResult
 
     public static PoCdnOperationResult OkInvoiceLines(IReadOnlyList<PoCdnInvoiceLinePickerRow> rows) =>
         new() { Succeeded = true, ErrorKind = PoCdnErrorKind.None, InvoiceLinePickerRows = rows };
+
+    public static PoCdnOperationResult OkPostedInvoiceSource(PoCdnInvoicePickerRow row) =>
+        new()
+        {
+            Succeeded = true,
+            ErrorKind = PoCdnErrorKind.None,
+            PostedInvoiceSource = row,
+            InvoicePickerRows = [row]
+        };
 
     public static PoCdnOperationResult OkReservations(PoCdnInvoiceReservationSummary summary) =>
         new() { Succeeded = true, ErrorKind = PoCdnErrorKind.None, Reservations = summary };
@@ -585,11 +597,18 @@ public sealed class PoCdnLineRequest
 
 public sealed class PoCdnInvoicePickerRow
 {
+    /// <summary>Internal purchase invoice document number (<c>PoInvoice.DocNo</c>).</summary>
     public string InvNo { get; init; } = string.Empty;
     public DateTime InvDate { get; init; }
     public string VendorCode { get; init; } = string.Empty;
     public string? VendorName { get; init; }
     public decimal TotAmnt { get; init; }
+
+    /// <summary>Supplier's original invoice number (<c>PoInvoice.InvNo</c>); search/display only.</summary>
+    public string? SupplierInvNo { get; init; }
+
+    public string? Currency { get; init; }
+
     public string DisplayText => $"{InvNo} ({InvDate:yyyy-MM-dd}) — {TotAmnt:#,##0.00}";
 }
 
@@ -612,6 +631,25 @@ public sealed class PoCdnInvoiceLinePickerRow
     public string? PoNo { get; init; }
     public short? PoRelNo { get; init; }
     public short? PoLineNo { get; init; }
+
+    public decimal ItemDiscount { get; init; }
+    public decimal ItemDiscount1 { get; init; }
+    public string? IDiscountType { get; init; }
+    public string? IDiscountType1 { get; init; }
+    public string? StdUom { get; init; }
+    public string? SellingUom { get; init; }
+
+    /// <summary>PI-only snapshot; never written to PoCdn. Nonzero values block automatic import.</summary>
+    public decimal ItemDiscount2 { get; init; }
+
+    /// <summary>PI-only snapshot; never written to PoCdn. Nonzero values block automatic import.</summary>
+    public decimal ItemDiscount3 { get; init; }
+
+    /// <summary>PI line Discount field. May be unused/derived; not an automatic import block by itself.</summary>
+    public decimal Discount { get; init; }
+
+    /// <summary>Human-readable list of fields the CN/DN save DTO cannot represent, or null.</summary>
+    public string? UnsupportedSourceFields { get; init; }
 
     /// <summary>Invoice line StdQty minus what other NEW/POSTED CNs already consumed (C34).</summary>
     public decimal RemainingStdQty { get; init; }
@@ -743,6 +781,33 @@ public interface IPoCdnService
     /// <summary>Map a posted invoice to a draft document (never a quantity correction — C5).</summary>
     Task<PoCdnOperationResult> CopyFromInvoiceAsync(
         string invNo,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Family-authorized posted INV search for the vendor. Requires a vendor; never lists all vendors.</summary>
+    Task<PoCdnOperationResult> SearchPostedInvoicesAsync(
+        string type,
+        string vendorCode,
+        string? searchText,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Exact posted INV header by internal document number. <paramref name="expectedVendorCode"/>
+    /// may be omitted only to bootstrap vendor from a known internal DocNo.
+    /// </summary>
+    Task<PoCdnOperationResult> GetPostedInvoiceSourceAsync(
+        string type,
+        string internalPiDocNo,
+        string? expectedVendorCode,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Family-authorized source lines of a posted INV. Remaining CN figures are display hints only.
+    /// </summary>
+    Task<PoCdnOperationResult> GetInvoiceLinesAsync(
+        string type,
+        string internalPiDocNo,
+        string? excludeDocNo,
+        string expectedVendorCode,
         CancellationToken cancellationToken = default);
 
     Task<PoCdnOperationResult> GetInvoiceReservationsAsync(

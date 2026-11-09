@@ -15,6 +15,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
+using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Sales.Transaction;
 /// <summary>
 /// SQL Server concurrency/atomicity tests for sales invoices. Skipped unless
@@ -685,7 +686,8 @@ public class SaInvoiceSqlServerConcurrencyTests
             postingRepo,
             new IvStockCommonRepository(factory),
             new PoOrderRepository(),
-            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date));
+            NullLogger<IvInventoryPostingService>.Instance, currentDate: new FixedCurrentDateService(DateTime.MaxValue.Date),
+            approval: TestDisabledProcurementApprovalGuard.Instance);
 
         return new SaInvoiceService(
             factory,

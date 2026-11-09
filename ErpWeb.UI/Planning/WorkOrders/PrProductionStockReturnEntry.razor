@@ -69,22 +69,6 @@
                 }
             </div>
             <div class="pr-stock-commandbar__right">
-                @if (CanEditDraft)
-                {
-                    <DxButton Text="EDIT DRAFT"
-                              IconCssClass="far fa-edit"
-                              RenderStyle="ButtonRenderStyle.Primary"
-                              Click="EditDraft"
-                              Enabled="@(!Busy)" />
-                }
-                @if (CanEditFields)
-                {
-                    <DxButton Text="SAVE DRAFT"
-                              IconCssClass="fa-solid fa-floppy-disk"
-                              RenderStyle="ButtonRenderStyle.Primary"
-                              Click="SaveAsync"
-                              Enabled="@(CanSave && !Busy)" />
-                }
                 @if (ShowPost)
                 {
                     <DxButton Text="POST"
@@ -468,7 +452,7 @@
                                                    Enabled="@CanEditFields" />
                                     </CellDisplayTemplate>
                                 </DxGridDataColumn>
-                                <DxGridDataColumn Caption="" Width="92px">
+                                <DxGridDataColumn Caption="" Width="92px" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left">
                                     <CellDisplayTemplate>
                                         @{
                                             var row = (ReturnEditor)context.DataItem;
@@ -525,6 +509,43 @@
                     }
                 }
             </section>
+        }
+
+        @if (!BusyLoading)
+        {
+            <footer class="iv-footer pr-stock-footer">
+                <div class="iv-footer__actions" style="margin-inline-start: auto;">
+                    @if (CanEditFields)
+                    {
+                        <DxButton Text="CANCEL"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="BackAsync"
+                                  Enabled="@(!Busy)" />
+                        <DxButton Text="SAVE DRAFT"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  RenderStyle="ButtonRenderStyle.Primary"
+                                  Click="SaveAsync"
+                                  Enabled="@(CanSave && !Busy)" />
+                    }
+                    else
+                    {
+                        <DxButton Text="CLOSE"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Click="BackAsync"
+                                  Enabled="@(!Busy)" />
+                        @if (CanEditDraft)
+                        {
+                            <DxButton Text="EDIT DRAFT"
+                                      IconCssClass="far fa-edit"
+                                      RenderStyle="ButtonRenderStyle.Primary"
+                                      Click="EditDraft"
+                                      Enabled="@(!Busy)" />
+                        }
+                    }
+                </div>
+            </footer>
         }
 
         <DxPopup HeaderText="Find Production stock to return"
