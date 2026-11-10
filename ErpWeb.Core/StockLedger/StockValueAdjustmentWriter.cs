@@ -49,6 +49,8 @@ public sealed class StockValueAdjustmentWriter : IStockValueAdjustmentWriter
         var itemCodes = adjustments.Select(x => Required(x.ItemCode, "item code"))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        await InventoryValuationService.RejectUnreplayedSaleCorrectionsAsync(
+            context, itemCodes, cancellationToken);
         var states = await context.Db.StockCostStates
             .Where(x => x.CompanyCode == context.CompanyCode
                         && x.BranchCode == context.BranchCode

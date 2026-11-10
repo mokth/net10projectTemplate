@@ -111,6 +111,7 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                 .Where(x => x.CompanyCode == scope.CompanyCode
                     && x.BranchCode == scope.BranchCode
                     && x.Direction == -1
+                    && x.BaseQty > 0m
                     && x.ValuationStatus == StockValuationStatuses.Valued
                     && ownerNos.Contains(x.SourceDocumentNo)
                     && x.StockPosting!.SealedAtUtc != null

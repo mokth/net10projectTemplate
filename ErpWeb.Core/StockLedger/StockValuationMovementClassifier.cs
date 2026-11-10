@@ -13,6 +13,8 @@ public enum StockValuationMovementClass
 /// </summary>
 public sealed class StockValuationMovementClassifier
 {
+    public const string ReversedSaleReplayValue = "SALES_REVERSAL_REPLAY_VALUE";
+
     private static readonly IReadOnlySet<string> ValueOnlyCodes = new HashSet<string>(StringComparer.Ordinal)
     {
         "ADJUST_IN", "ADJUST_OUT",
@@ -21,6 +23,7 @@ public sealed class StockValuationMovementClassifier
         "STANDARD_REVALUE_IN", "STANDARD_REVALUE_OUT",
         "RETURN_STANDARD_VARIANCE_IN", "RETURN_STANDARD_VARIANCE_OUT",
         "PRODUCTION_ISSUE_REPLAY_VALUE",
+        ReversedSaleReplayValue,
         StockReplayFifoReversedIssueGenerationReader.ValueMovement,
         StockReplayFifoSalesReturnValueAdjustment.Movement,
         "COST_METHOD_CUTOVER_IN", "COST_METHOD_CUTOVER_OUT"

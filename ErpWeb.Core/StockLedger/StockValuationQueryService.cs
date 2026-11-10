@@ -123,6 +123,7 @@ public sealed class StockValuationQueryService : IStockValuationQueryService
                 .Where(x => x.CompanyCode == scope.CompanyCode
                             && x.BranchCode == scope.BranchCode
                             && x.Direction == -1
+                            && x.BaseQty > 0m
                             && x.ValuationStatus == StockValuationStatuses.Valued
                             && ownerNos.Contains(x.SourceDocumentNo)
                             && !db.StockValuationFacts.Any(r => r.ReversesValuationFactId == x.Id)

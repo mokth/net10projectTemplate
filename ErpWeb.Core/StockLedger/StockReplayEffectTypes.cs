@@ -10,4 +10,5 @@ public static class StockReplayEffectTypes
     public const string PurchaseCostAdjustment = "PO_COST_ADJUSTMENT";
     public const string FinishedGoodReceiptValue = "FG_RECEIPT_VALUE";
     public const string StockValuationFact = "STOCK_VALUATION_FACT";
+    public const string SalesReversalValue = "SALES_REVERSAL_VALUE";
 }

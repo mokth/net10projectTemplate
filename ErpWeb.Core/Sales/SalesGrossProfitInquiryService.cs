@@ -108,6 +108,7 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
                 .Where(x => x.CompanyCode == scope.CompanyCode
                             && x.BranchCode == scope.BranchCode
                             && x.Direction == -1
+                            && x.BaseQty > 0m
                             && x.ValuationStatus == StockValuationStatuses.Valued
                             && ownerNos.Contains(x.SourceDocumentNo)
                             && itemCodes.Contains(x.ItemCode)

@@ -275,6 +275,8 @@ public static class StockReplayWacFinancialTailReader
         {
             if (fact.MovementCode == "PRODUCTION_ISSUE_REPLAY_VALUE")
                 throw Corrupt("This transaction cannot be replayed with unresolved reversed Production issue cost corrections. Check the source quantity and correction history.");
+            if (fact.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue)
+                throw Corrupt("This transaction cannot yet replay an existing reversed-sale cost correction.");
             if (!postings.TryGetValue(fact.StockPostingId, out var owner))
                 throw Corrupt($"Value fact {fact.Id} has no sealed posting.");
             StockReplayWacEvent valueEvent;

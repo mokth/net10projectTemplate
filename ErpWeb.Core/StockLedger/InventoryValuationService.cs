@@ -1188,6 +1188,8 @@ public sealed class InventoryValuationService : IInventoryValuationService
         IReadOnlyCollection<string> itemCodes,
         CancellationToken cancellationToken)
     {
+        await RejectUnreplayedSaleCorrectionsAsync(context, itemCodes, cancellationToken);
+
         var sourceDocumentId = (context.Posting.SourceDocumentId ?? string.Empty).Trim();
         var laterRows = await context.Db.StockValuationFacts.AsNoTracking()
             .Where(x => x.CompanyCode == context.CompanyCode
@@ -1252,6 +1254,61 @@ public sealed class InventoryValuationService : IInventoryValuationService
 
         throw LedgerError(StockLedgerErrorCodes.BackdatedStockEvent,
             FormatBackdatedPostingMessage(context.Posting.EffectiveAt, blockers));
+    }
+
+    internal static async Task RejectUnreplayedSaleCorrectionsAsync(
+        StockPostingContext context, IReadOnlyCollection<string> itemCodes, CancellationToken cancellationToken)
+    {
+        // Both physical valuation and value-only writers share this check.
+        // A correction pair cannot be crossed until its replay is supported.
+        var candidateSequence = context.Posting.PostingSequence;
+        if (context.Posting.PostingRole == "REVERSAL")
+        {
+            candidateSequence = await context.Db.StockPostings.AsNoTracking()
+                .Where(p => p.Id == context.Posting.ReversesPostingId
+                    && p.CompanyCode == context.CompanyCode && p.BranchCode == context.BranchCode
+                    && p.LedgerEpochId == context.Epoch.Id && p.SealedAtUtc != null
+                    && p.EffectiveAt == context.Posting.EffectiveAt)
+                .Select(p => (long?)p.PostingSequence).SingleOrDefaultAsync(cancellationToken) ?? 0;
+        }
+        else if (context.Posting.PostingRole != "PRIMARY")
+            candidateSequence = 0;
+        if (await HasBlockingReversedSaleCorrectionsAsync(context.Db, context.CompanyCode,
+                context.BranchCode, itemCodes, context.Posting.EffectiveAt, candidateSequence, cancellationToken))
+            throw LedgerError(StockLedgerErrorCodes.BackdatedStockEvent,
+                "This stock transaction has an existing reversed-sale cost correction that needs replay.");
+    }
+
+    internal static async Task<bool> HasBlockingReversedSaleCorrectionsAsync(
+        AppDbContext db, string company, string branch, IReadOnlyCollection<string> itemCodes,
+        DateTime effectiveAt, long candidateSequence, CancellationToken cancellationToken)
+    {
+        var values = await db.StockValuationFacts.AsNoTracking().Where(f =>
+                f.CompanyCode == company && f.BranchCode == branch && itemCodes.Contains(f.ItemCode)
+                && f.EffectiveAt >= effectiveAt
+                && f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue
+                && f.ReversesValuationFactId == null && f.StockPosting!.SealedAtUtc != null)
+            .Select(f => new { f.EffectiveAt, f.StockPostingId, f.OriginalValuationFactId })
+            .ToArrayAsync(cancellationToken);
+        if (values.Length == 0)
+            return false;
+        if (values.Any(f => f.EffectiveAt > effectiveAt || f.OriginalValuationFactId is not > 0)
+            || candidateSequence <= 0)
+            return true;
+
+        // At equal effective time, an ordinary event follows earlier owners by
+        // their original posting sequence. Verify the whole pair before using
+        // those owner sequences; a root's later write sequence is not its key.
+        var roots = values.Select(f => f.StockPostingId).Distinct().ToArray();
+        if (!await StockValuationSnapshotBuilder.ValidateReversedSaleCorrectionsAsync(
+                db, company, branch, roots, cancellationToken))
+            return true;
+        var sourceIds = values.Select(f => f.OriginalValuationFactId!.Value).Distinct().ToArray();
+        var sourceSequences = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => sourceIds.Contains(f.Id))
+            .Select(f => new { f.Id, f.StockPosting!.PostingSequence }).ToArrayAsync(cancellationToken);
+        return sourceSequences.Length != sourceIds.Length
+            || sourceSequences.Any(source => source.PostingSequence >= candidateSequence);
     }
 
     internal readonly record struct BackdatedBlocker(
@@ -2061,6 +2118,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
                         && x.BranchCode == context.BranchCode
                         && x.ItemCode == itemCode
                         && x.Direction == -1
+                        && x.BaseQty > 0m
                         && x.SourceDocumentType == ownerType
                         && x.SourceDocumentNo == ownerNo
                         && x.SourceDocumentLine == ownerLine

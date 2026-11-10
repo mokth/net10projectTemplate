@@ -41,6 +41,10 @@ public sealed partial class IvInventoryPostingService
                 .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode
                     && itemCodes.Contains(s.ItemCode) && s.CostMethod == StockCostMethods.MovingAverage)
                 .Select(s => s.ItemCode).ToArrayAsync(cancellationToken);
+            if (wacItems.Length != 0 && await HasUnresolvedReversedSaleValueAsync(
+                    db, companyCode, branchCode, wacItems, batch.TrxDtTime, cancellationToken, rollback))
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    "This receipt has an existing reversed-sale cost correction that needs replay.");
             if (wacItems.Length != 0 && await HasReversedSalesAfterAsync(
                     db, companyCode, branchCode, wacItems, batch.TrxDtTime, cancellationToken))
                 return IvInventoryPostingBatchResult.Fail(batchNo,
