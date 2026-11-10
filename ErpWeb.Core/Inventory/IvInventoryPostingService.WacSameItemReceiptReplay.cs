@@ -90,7 +90,7 @@ public sealed partial class IvInventoryPostingService
                 var multi = await StockReplayWacMultiPileReceiptPlanner.BuildInsertionAsync(
                     read, company, branch, itemLines, ct);
                 if (multi.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                        read, multi.Tail.LaterEvents, batch.TrxDtTime, ct) is string unsupportedMulti)
+                        read, multi.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string unsupportedMulti)
                     return IvInventoryPostingBatchResult.Fail(batchNo, unsupportedMulti);
                 multiPiles.Add(group.Key, multi);
                 continue;
@@ -106,7 +106,7 @@ public sealed partial class IvInventoryPostingService
             if (financial.Tail.LaterEvents.Count == 0 && physical.LaterEvents.Count != 0)
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has a later movement without valuation.");
             if (financial.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    read, financial.Tail.LaterEvents, batch.TrxDtTime, ct) is string unsupported)
+                    read, financial.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string unsupported)
                 return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
             plans.Add(group.Key, financial);
         }
@@ -138,11 +138,11 @@ public sealed partial class IvInventoryPostingService
         }
         foreach (var financial in plans.Values)
             if (financial.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    write, financial.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+                    write, financial.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         foreach (var multi in multiPiles.Values)
             if (multi.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    write, multi.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+                    write, multi.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         var ledger = await BeginStandaloneLedgerAsync(write, company, branch, batchNo, reversal: false, ct);
         await using var scope = new StockPostingAbortScope(_coordinator, ledger.Context);
@@ -207,7 +207,7 @@ public sealed partial class IvInventoryPostingService
                 var multi = await StockReplayWacMultiPileReceiptPlanner.BuildRemovalAsync(
                     read, company, branch, originals, owner, ct);
                 if (multi.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                        read, multi.Tail.LaterEvents, batch.TrxDtTime, ct) is string unsupportedMulti)
+                        read, multi.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string unsupportedMulti)
                     return IvInventoryPostingBatchResult.Fail(batchNo, unsupportedMulti);
                 multiPiles.Add(group.Key, multi);
                 continue;
@@ -222,7 +222,7 @@ public sealed partial class IvInventoryPostingService
             if (plan.Combined.Tail.LaterEvents.Count == 0 && plan.Combined.PhysicalPlan.LaterEvents.Count != 0)
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has a later movement without valuation.");
             if (plan.Combined.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    read, plan.Combined.Tail.LaterEvents, batch.TrxDtTime, ct) is string unsupported)
+                    read, plan.Combined.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string unsupported)
                 return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
             plans.Add(group.Key, plan);
         }
@@ -268,11 +268,11 @@ public sealed partial class IvInventoryPostingService
         if (qaRestore is not null) return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         foreach (var plan in plans.Values)
             if (plan.Combined.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    write, plan.Combined.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+                    write, plan.Combined.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         foreach (var multi in multiPiles.Values)
             if (multi.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    write, multi.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+                    write, multi.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         var ledger = await BeginStandaloneLedgerAsync(write, company, branch, batchNo, reversal: true, ct);
         await using var scope = new StockPostingAbortScope(_coordinator, ledger.Context);
@@ -363,9 +363,9 @@ public sealed partial class IvInventoryPostingService
             var hasMulti = refreshedMulti.TryGetValue(item, out var multi);
             var tail = hasMulti
                 ? await StockReplayWacTailRepricingWriter.AppendPreparedMultiPileReceiptRemovalAsync(
-                    context, permits[item], multi!, nextLine, ct)
+                    context, permits[item], multi!, nextLine, ct, allowSalesReturn: true)
                 : await StockReplayWacTailRepricingWriter.AppendPreparedRemovalTailAsync(
-                    context, permits[item], refreshedPlans[item].Combined, nextLine, ct);
+                    context, permits[item], refreshedPlans[item].Combined, nextLine, ct, allowSalesReturn: true);
             required.AddRange(tail.RepricedHistoryIds);
             nextLine = checked(nextLine + 2 * (hasMulti ? multi!.Tail.LaterEvents.Count
                 : refreshedPlans[item].Combined.Tail.LaterEvents.Count));

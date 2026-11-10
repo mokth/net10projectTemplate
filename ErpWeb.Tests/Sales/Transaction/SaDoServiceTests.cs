@@ -1280,8 +1280,25 @@ public class SaDoServiceTests : IAsyncLifetime
     [InlineData(false, 11)]
     [InlineData(false, 12)]
     [InlineData(false, 13)]
-    public async Task Backdated_wac_receipt_reprices_do_and_both_can_roll_back(
-        bool rollbackDoFirst, int returnAllocationStage)
+    public Task Backdated_wac_receipt_reprices_do_and_both_can_roll_back(
+        bool rollbackDoFirst, int returnAllocationStage) =>
+        ExerciseBackdatedWacReceiptBeforeDoAsync(rollbackDoFirst, returnAllocationStage, receiptShape: 0);
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(0, 2)]
+    [InlineData(2, 1)]
+    [InlineData(2, 2)]
+    [InlineData(5, 1)]
+    [InlineData(5, 2)]
+    [InlineData(6, 1)]
+    [InlineData(6, 2)]
+    public Task Backdated_multiline_wac_receipt_reprices_do_and_both_can_roll_back(
+        int returnAllocationStage, int receiptShape) =>
+        ExerciseBackdatedWacReceiptBeforeDoAsync(false, returnAllocationStage, receiptShape);
+
+    private async Task ExerciseBackdatedWacReceiptBeforeDoAsync(
+        bool rollbackDoFirst, int returnAllocationStage, int receiptShape)
     {
         var balId = await SeedBalLocAsync(15m, FixedToday.AddDays(-5));
         await using (var db = await _factory.CreateDbContextAsync())
@@ -1290,6 +1307,15 @@ public class SaDoServiceTests : IAsyncLifetime
             await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
             await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
             await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 15m, 3m);
+            if (receiptShape == 2)
+            {
+                db.IvLocations.Add(new IvLocation { CompanyCode = "DEMO", BranchCode = "HQ",
+                    WarehouseCode = "MAIN", LocCode = "BIN2", IsActive = true });
+                db.IvBalLocs.Add(new IvBalLoc { CompanyCode = "DEMO", BranchCode = "HQ", ICode = "A100",
+                    WhCode = "MAIN", LocCode = "BIN2", LotNo = "", IStatus = "ACTIVE", StdQty = 0m,
+                    StdUom = "EA", TransDate = FixedToday.AddDays(-5) });
+                await db.SaveChangesAsync();
+            }
         }
         var delivery = CreateSut(withLedger: true);
         var savedDo = await delivery.SaveNewAsync(Request(qty: 4m, price: 10m));
@@ -1301,16 +1327,22 @@ public class SaDoServiceTests : IAsyncLifetime
 
         var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(
             _factory, FixedToday, enableBackdatedReplay: true);
+        IvMiscReceiptLineRequest ReceiptLine(string location, decimal quantity) => new()
+        {
+            ICode = "A100", ToWarehouse = "MAIN", ToLocation = location,
+            Quantity = quantity, UnitPrice = 10m, PriceConfirmed = true,
+            Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ"
+        };
+        IReadOnlyList<IvMiscReceiptLineRequest> receiptLines = receiptShape switch
+        {
+            1 => [ReceiptLine("BIN1", 2m), ReceiptLine("BIN1", 3m)],
+            2 => [ReceiptLine("BIN1", 2m), ReceiptLine("BIN2", 3m)],
+            _ => [ReceiptLine("BIN1", 5m)]
+        };
         var savedReceipt = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday.AddDays(-1), RefNo = "AUTO",
-            Lines = [new IvMiscReceiptLineRequest
-            {
-                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
-                Quantity = 5m, UnitPrice = 10m, PriceConfirmed = true,
-                Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE",
-                Reason = "ADJ"
-            }]
+            Lines = receiptLines
         });
         Assert.True(savedReceipt.Succeeded, savedReceipt.ErrorMessage);
         async Task AddReturnAllocationAsync()
@@ -1398,7 +1430,7 @@ public class SaDoServiceTests : IAsyncLifetime
                 db, "DEMO", "HQ", [history]))[history.Id];
             Assert.Equal(19m, active.Sum(f => f.CostAmount));
             Assert.All(active, f => Assert.Equal("SA_DO", f.SourceDocumentType));
-            Assert.Equal(16m, (await db.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+            Assert.Equal(receiptShape == 2 ? 13m : 16m, (await db.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
             Assert.Equal(76m, (await db.StockCostStates.SingleAsync()).InventoryValue);
         }
 
@@ -1413,7 +1445,7 @@ public class SaDoServiceTests : IAsyncLifetime
             Assert.Contains(returnAllocationStage == 12 ? "credit/debit note" : "return allocation", rejected.ErrorMessage,
                 StringComparison.OrdinalIgnoreCase);
             await using var unchanged = await _factory.CreateDbContextAsync();
-            Assert.Equal(16m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+            Assert.Equal(receiptShape == 2 ? 13m : 16m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
             Assert.Equal(76m, (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
             Assert.Equal(IvBatchStatuses.Posted, (await unchanged.IvTrxBatches
                 .SingleAsync(b => b.BatchNo == savedReceipt.BatchNo)).BatchStatus);
@@ -1475,6 +1507,8 @@ public class SaDoServiceTests : IAsyncLifetime
             Assert.Equal(1, await finalBilled.IvTrxHistories.CountAsync(h =>
                 h.TrxType == IvTrxTypes.SalesOut && h.EntryRole == "ORIGINAL"));
             Assert.Equal(15m, (await finalBilled.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+            if (receiptShape == 2)
+                Assert.Equal(0m, (await finalBilled.IvBalLocs.SingleAsync(b => b.ICode == "A100" && b.LocCode == "BIN2")).StdQty);
             Assert.Equal(45m, (await finalBilled.StockCostStates.SingleAsync()).InventoryValue);
             return;
         }
@@ -1550,6 +1584,8 @@ public class SaDoServiceTests : IAsyncLifetime
         }
         await using var final = await _factory.CreateDbContextAsync();
         Assert.Equal(15m, (await final.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+        if (receiptShape == 2)
+            Assert.Equal(0m, (await final.IvBalLocs.SingleAsync(b => b.ICode == "A100" && b.LocCode == "BIN2")).StdQty);
         Assert.Equal(45m, (await final.StockCostStates.SingleAsync()).InventoryValue);
     }
 

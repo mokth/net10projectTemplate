@@ -19,24 +19,26 @@ public static class StockReplayWacTailRepricingWriter
 {
     internal static Task<StockReplayWacTailRepricingResult> AppendPreparedMultiPileReceiptInsertionAsync(
         StockPostingContext context, StockReplayWacWritePermit permit,
-        StockReplayWacMultiPileReceiptInsertionPlan plan, int firstLine, CancellationToken ct)
+        StockReplayWacMultiPileReceiptInsertionPlan plan, int firstLine, CancellationToken ct,
+        bool allowSalesReturn = false)
     {
         StockReplayWacMultiPileReceiptPlanner.ValidatePreparedInsertion(plan);
         ValidateMultiPileReceiptPermit(context, permit, plan.Item, plan.Hash,
             plan.Piles.ToDictionary(p => p.BalLocId, p => p.Projection.FinalQuantity), firstLine);
         return AppendTailAsync(context, permit, plan.Tail.LaterEvents, plan.Projection.LaterSteps,
-            firstLine, null, null, ct);
+            firstLine, null, null, ct, allowSalesReturn);
     }
 
     internal static Task<StockReplayWacTailRepricingResult> AppendPreparedMultiPileReceiptRemovalAsync(
         StockPostingContext context, StockReplayWacWritePermit permit,
-        StockReplayWacMultiPileReceiptRemovalPlan plan, int firstLine, CancellationToken ct)
+        StockReplayWacMultiPileReceiptRemovalPlan plan, int firstLine, CancellationToken ct,
+        bool allowSalesReturn = false)
     {
         StockReplayWacMultiPileReceiptPlanner.ValidatePreparedRemoval(plan);
         ValidateMultiPileReceiptPermit(context, permit, plan.Anchor.ItemCode, plan.Hash,
             plan.Piles.ToDictionary(p => p.BalLocId, p => p.Projection.FinalQuantity), firstLine);
         return AppendTailAsync(context, permit, plan.Tail.LaterEvents, plan.Projection.LaterSteps,
-            firstLine, null, null, ct);
+            firstLine, null, null, ct, allowSalesReturn);
     }
 
     private static void ValidateMultiPileReceiptPermit(StockPostingContext context, StockReplayWacWritePermit permit,

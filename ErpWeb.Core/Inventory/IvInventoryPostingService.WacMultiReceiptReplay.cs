@@ -84,7 +84,7 @@ public sealed partial class IvInventoryPostingService
             if (financial.Tail.LaterEvents.Count == 0 && physical.LaterEvents.Count != 0)
                 return IvInventoryPostingBatchResult.Fail(batchNo, $"Line {detail.TrxLineNo} has a later movement without valuation.");
             if (financial.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    read, financial.Tail.LaterEvents, batch.TrxDtTime, ct) is string unsupported)
+                    read, financial.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string unsupported)
                 return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
             lines.Add(new(authority, financial));
         }
@@ -114,7 +114,7 @@ public sealed partial class IvInventoryPostingService
             if (current != line.Authority)
                 return IvInventoryPostingBatchResult.Fail(batchNo, "An approved receipt line changed. Retry posting.");
             if (line.Financial!.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    write, line.Financial!.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+                    write, line.Financial!.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         }
         var ledger = await BeginStandaloneLedgerAsync(write, company, branch, batchNo, reversal: false, ct);
@@ -315,9 +315,9 @@ public sealed partial class IvInventoryPostingService
             var hasMulti = multiPiles.TryGetValue(groups[i][0].Authority.ItemCode, out var multi);
             var tail = hasMulti
                 ? await StockReplayWacTailRepricingWriter.AppendPreparedMultiPileReceiptInsertionAsync(
-                    context, permits[i], multi!, nextLine, ct)
+                    context, permits[i], multi!, nextLine, ct, allowSalesReturn: true)
                 : await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
-                    context, permits[i], groups[i][0].Financial!, nextLine, ct);
+                    context, permits[i], groups[i][0].Financial!, nextLine, ct, allowSalesReturn: true);
             required.AddRange(tail.RepricedHistoryIds);
             nextLine = checked(nextLine + 2 * (hasMulti ? multi!.Tail.LaterEvents.Count
                 : groups[i][0].Financial!.Tail.LaterEvents.Count));
@@ -379,7 +379,7 @@ public sealed partial class IvInventoryPostingService
             if (financial.Tail.LaterEvents.Count == 0 && physical.LaterEvents.Count != 0)
                 return IvInventoryPostingBatchResult.Fail(batchNo, $"Receipt line {detail.TrxLineNo} has a later movement without valuation.");
             if (financial.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    read, financial.Tail.LaterEvents, batch.TrxDtTime, ct) is string unsupported)
+                    read, financial.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string unsupported)
                 return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
             lines.Add(new(original, financial));
         }
@@ -409,7 +409,7 @@ public sealed partial class IvInventoryPostingService
         if (qaRestore is not null) return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         foreach (var line in lines)
             if (line.Financial.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    write, line.Financial.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+                    write, line.Financial.Tail.LaterEvents, batch.TrxDtTime, ct, allowBoundedSales: true) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         var ledger = await BeginStandaloneLedgerAsync(write, company, branch, batchNo, reversal: true, ct);
         await using var scope = new StockPostingAbortScope(_coordinator, ledger.Context);
@@ -461,7 +461,7 @@ public sealed partial class IvInventoryPostingService
         for (var i = 0; i < lines.Count; i++)
         {
             var tail = await StockReplayWacTailRepricingWriter.AppendPreparedRemovalTailAsync(
-                context, permits[i], lines[i].Financial, nextLine, ct);
+                context, permits[i], lines[i].Financial, nextLine, ct, allowSalesReturn: true);
             required.AddRange(tail.RepricedHistoryIds);
             nextLine = checked(nextLine + 2 * lines[i].Financial.Tail.LaterEvents.Count);
             await StockReplayWacCostStateWriter.ApplyAsync(context, permits[i], ct);
