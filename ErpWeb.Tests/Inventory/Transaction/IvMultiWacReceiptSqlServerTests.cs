@@ -38,6 +38,9 @@ public sealed class IvMultiWacReceiptSqlServerTests
         RunAsync(sameItem: false, repeatFirstItem: true);
 
     [MultiWacReceiptSqlFact]
+    public Task Multi_item_receipt_rejects_draft_edit_after_planning() => RunAsync(sameItem: false, editRace: true);
+
+    [MultiWacReceiptSqlFact]
     public Task Same_item_receipt_rejects_draft_edit_after_planning() => RunAsync(sameItem: true, editRace: true);
 
     [MultiWacReceiptSqlFact]
@@ -223,7 +226,8 @@ public sealed class IvMultiWacReceiptSqlServerTests
             }
             var retried = await first.PostAsync([receipt.BatchNo]);
             Assert.True(retried.Succeeded, retried.ErrorMessage);
-            await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, 57.6m, 38.4m,
+            await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m,
+                sameItem || repeatFirstItem ? 57.6m : 54m, sameItem || repeatFirstItem ? 38.4m : 36m,
                 sameItem ? 6m : 11m, sameItem ? 24m : 66m, sameItem ? 16m : 24m, "PRIMARY");
             var rolledBack = await first.RollbackAsync([receipt.BatchNo]);
             Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);

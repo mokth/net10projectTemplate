@@ -24,7 +24,7 @@ public sealed partial class IvInventoryPostingService
         && details.Select(d => d.DocumentRevision).Distinct().Count() == 1
         && details.Select(d => d.ICode!).Distinct(StringComparer.OrdinalIgnoreCase).Count() < details.Length;
 
-    private static string SameItemMrDraftFingerprint(IvTrxBatch batch, IReadOnlyList<IvTrxBatchDetail> details)
+    private static string MultiWacMrDraftFingerprint(IvTrxBatch batch, IReadOnlyList<IvTrxBatchDetail> details)
     {
         var evidence = StockPostingFingerprint.Create(new
         {
@@ -61,7 +61,7 @@ public sealed partial class IvInventoryPostingService
         if (!IsRepeatedItemWacMrShape(batch, details)
             || !await HasOnlyWacPoolsAsync(read, company, branch, details, ct))
             return null;
-        var draftFingerprint = SameItemMrDraftFingerprint(batch, details);
+        var draftFingerprint = MultiWacMrDraftFingerprint(batch, details);
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, company, branch, batch.TrxDtTime, ct) is string closed)
             return IvInventoryPostingBatchResult.Fail(batchNo, closed);
         if (FuturePostDateError(batch) is string future)
@@ -114,7 +114,7 @@ public sealed partial class IvInventoryPostingService
             .OrderBy(d => d.TrxLineNo).ToArrayAsync(ct);
         if (!IsRepeatedItemWacMrShape(locked, currentDetails)
             || !currentDetails.Select(d => d.Id).SequenceEqual(details.Select(d => d.Id))
-            || SameItemMrDraftFingerprint(locked, currentDetails) != draftFingerprint
+            || MultiWacMrDraftFingerprint(locked, currentDetails) != draftFingerprint
             || !await HasOnlyWacPoolsAsync(write, company, branch, currentDetails, ct)
             || await HasReversedOutgoingAfterAsync(write, company, branch, items, batch.TrxDtTime, ct))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt or its dependencies changed. Retry posting.");

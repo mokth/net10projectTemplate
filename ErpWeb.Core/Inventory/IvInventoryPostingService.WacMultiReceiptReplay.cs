@@ -57,6 +57,7 @@ public sealed partial class IvInventoryPostingService
             .OrderBy(d => d.TrxLineNo).ToArrayAsync(ct);
         if (!IsMultiWacMrShape(batch, details) || !await HasOnlyWacPoolsAsync(read, company, branch, details, ct))
             return null;
+        var draftFingerprint = MultiWacMrDraftFingerprint(batch, details);
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, company, branch, batch.TrxDtTime, ct) is string closed)
             return IvInventoryPostingBatchResult.Fail(batchNo, closed);
         if (FuturePostDateError(batch) is string future)
@@ -99,6 +100,7 @@ public sealed partial class IvInventoryPostingService
             .OrderBy(d => d.TrxLineNo).ToArrayAsync(ct);
         if (!IsMultiWacMrShape(locked, currentDetails)
             || !currentDetails.Select(d => d.Id).SequenceEqual(details.Select(d => d.Id))
+            || MultiWacMrDraftFingerprint(locked, currentDetails) != draftFingerprint
             || !await HasOnlyWacPoolsAsync(write, company, branch, currentDetails, ct)
             || await HasReversedOutgoingAfterAsync(write, company, branch, items, batch.TrxDtTime, ct))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt or its dependencies changed. Retry posting.");
