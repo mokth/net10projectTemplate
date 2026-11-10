@@ -8,7 +8,7 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
-    private async Task<IvInventoryPostingBatchResult> PostTwoPileWacMrAsync(
+    private async Task<IvInventoryPostingBatchResult> PostMultiPileWacMrAsync(
         AppDbContext read, IvTrxBatch batch, IvTrxBatchDetail[] details,
         IReadOnlyList<StockReplayFifoMrReceiptAuthority> authorities, string draftFingerprint,
         string company, string branch, int batchNo, CancellationToken ct)
@@ -58,7 +58,7 @@ public sealed partial class IvInventoryPostingService
         return IvInventoryPostingBatchResult.Ok(batchNo, locked.PostingOperationId ?? Guid.Empty);
     }
 
-    private async Task<IvInventoryPostingBatchResult> RollBackTwoPileWacMrAsync(
+    private async Task<IvInventoryPostingBatchResult> RollBackMultiPileWacMrAsync(
         AppDbContext read, IvTrxBatch batch, IvTrxBatchDetail[] details, IvTrxHistory[] histories,
         StockPosting owner, string company, string branch, string userId, int batchNo, CancellationToken ct)
     {

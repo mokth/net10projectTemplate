@@ -83,9 +83,8 @@ public sealed partial class IvInventoryPostingService
         if (authorities.GroupBy(a => a.ItemCode, StringComparer.OrdinalIgnoreCase)
             .Any(g => g.Select(a => a.BalLocId).Distinct().Count() != 1))
         {
-            if (authorities.Count == 2 && items.Length == 1
-                && authorities.Select(a => a.BalLocId).Distinct().Count() == 2)
-                return await PostTwoPileWacMrAsync(read, batch, details, authorities,
+            if (items.Length == 1)
+                return await PostMultiPileWacMrAsync(read, batch, details, authorities,
                     draftFingerprint, company, branch, batchNo, ct);
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Repeated lines for one item currently need the same destination pile for replay.");
@@ -197,9 +196,8 @@ public sealed partial class IvInventoryPostingService
         if (histories.GroupBy(h => h.ICode, StringComparer.OrdinalIgnoreCase)
             .Any(g => g.Select(h => h.ToBalLocId).Distinct().Count() != 1))
         {
-            if (histories.Length == 2 && items.Length == 1
-                && histories.Select(h => h.ToBalLocId).Distinct().Count() == 2)
-                return await RollBackTwoPileWacMrAsync(read, batch, details, histories, owner,
+            if (items.Length == 1)
+                return await RollBackMultiPileWacMrAsync(read, batch, details, histories, owner,
                     company, branch, userId, batchNo, ct);
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Repeated lines for one item currently need the same destination pile for rollback.");

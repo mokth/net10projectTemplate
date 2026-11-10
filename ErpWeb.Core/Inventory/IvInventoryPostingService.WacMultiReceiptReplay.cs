@@ -156,14 +156,15 @@ public sealed partial class IvInventoryPostingService
                 || g[0].Financial!.Candidate.ReplaySignedQuantity != IvQty.Round(g.Sum(l => l.Authority.Quantity))
                 || g[0].Financial!.Candidate.FixedSignedValue != StockLedgerPrecision.Money(g.Sum(l => l.Authority.Value))
                 || g[0].Financial!.Projection.Candidate.SignedValue != StockLedgerPrecision.Money(g.Sum(l => l.Authority.Value))))
-            || multiPile is not null && (lines.Count != 2 || groups.Length != 1
+            || multiPile is not null && (lines.Count is < 2 or > 10 || groups.Length != 1
                 || multiPile.Item != groups[0][0].Authority.ItemCode
                 || multiPile.Candidate.Key.OriginalPostingSequence != context.Posting.PostingSequence
                 || multiPile.Candidate.ReplaySignedQuantity != IvQty.Round(lines.Sum(l => l.Authority.Quantity))
                 || multiPile.Candidate.FixedSignedValue != StockLedgerPrecision.Money(lines.Sum(l => l.Authority.Value))
                 || multiPile.Projection.Candidate.SignedValue != StockLedgerPrecision.Money(lines.Sum(l => l.Authority.Value))
-                || lines.Any(l => !multiPile.Piles.Any(p => p.BalLocId == l.Authority.BalLocId
-                    && p.Candidate.SignedDelta == l.Authority.Quantity))))
+                || multiPile.Piles.Count != lines.Select(l => l.Authority.BalLocId).Distinct().Count()
+                || lines.GroupBy(l => l.Authority.BalLocId).Any(g => !multiPile.Piles.Any(p =>
+                    p.BalLocId == g.Key && p.Candidate.SignedDelta == IvQty.Round(g.Sum(l => l.Authority.Quantity))))))
             throw MultiWacError("The multi-line receipt differs from its approved replay plan.");
 
         var db = context.Db;
