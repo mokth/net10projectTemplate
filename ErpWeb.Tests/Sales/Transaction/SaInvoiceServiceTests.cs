@@ -5075,8 +5075,16 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     public Task Backdated_multiline_wac_receipt_rolls_back_after_invoice(int receiptShape, int dependencyStage) =>
         ExerciseBackdatedWacReceiptBeforeInvoiceAsync(true, dependencyStage, receiptShape);
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public Task Backdated_multiline_wac_receipt_reprices_two_invoices(int receiptShape) =>
+        ExerciseBackdatedWacReceiptBeforeInvoiceAsync(false, 0, receiptShape, secondInvoice: true);
+
     private async Task ExerciseBackdatedWacReceiptBeforeInvoiceAsync(
-        bool rollbackInvoiceFirst, int dependencyStage, int receiptShape)
+        bool rollbackInvoiceFirst, int dependencyStage, int receiptShape, bool secondInvoice = false)
     {
         var balId = await SeedBalLocAsync(15m, FixedToday.AddDays(-5));
         await using (var db = await _factory.CreateDbContextAsync())
@@ -5113,6 +5121,16 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.True((await ShipAsync(invoice, savedInvoice.InvNo!)).Succeeded);
         var postedInvoice = await invoice.PostAsync([savedInvoice.InvNo!]);
         Assert.True(postedInvoice.Succeeded, postedInvoice.ErrorMessage);
+        string? secondInvoiceNo = null;
+        if (secondInvoice)
+        {
+            var savedSecond = await invoice.SaveNewAsync(Request(qty: 2m, price: 10m));
+            Assert.True(savedSecond.Succeeded, savedSecond.ErrorMessage);
+            secondInvoiceNo = savedSecond.InvNo!;
+            Assert.True((await ShipAsync(invoice, secondInvoiceNo)).Succeeded);
+            var postedSecond = await invoice.PostAsync([secondInvoiceNo]);
+            Assert.True(postedSecond.Succeeded, postedSecond.ErrorMessage);
+        }
 
         var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(
             _factory, FixedToday, enableBackdatedReplay: true);
@@ -5225,6 +5243,13 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.Equal("SA_INVOICE", row.CogsOwnerType);
         Assert.Equal(19m, row.Cogs);
         Assert.Equal(21m, row.GrossProfit);
+        if (secondInvoiceNo is not null)
+        {
+            var secondRow = Assert.Single((await inquiry.SearchAsync(
+                new SalesGrossProfitInquiryQuery { InvoiceNo = secondInvoiceNo })).Rows);
+            Assert.True(secondRow.CogsResolved);
+            Assert.Equal(9.5m, secondRow.Cogs);
+        }
         if (receiptShape is 3 or 4)
         {
             await using var db = await _factory.CreateDbContextAsync();
@@ -5312,6 +5337,15 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 new SalesGrossProfitInquiryQuery { InvoiceNo = savedInvoice.InvNo })).Rows);
             Assert.True(restored.CogsResolved);
             Assert.Equal(12m, restored.Cogs);
+            if (secondInvoiceNo is not null)
+            {
+                var secondRestored = Assert.Single((await inquiry.SearchAsync(
+                    new SalesGrossProfitInquiryQuery { InvoiceNo = secondInvoiceNo })).Rows);
+                Assert.True(secondRestored.CogsResolved);
+                Assert.Equal(6m, secondRestored.Cogs);
+                var secondRollback = await invoice.RollbackAsync([secondInvoiceNo]);
+                Assert.True(secondRollback.Succeeded, secondRollback.ErrorMessage);
+            }
             var invoiceRollback = await invoice.RollbackAsync([savedInvoice.InvNo!]);
             Assert.True(invoiceRollback.Succeeded, invoiceRollback.ErrorMessage);
         }
