@@ -1297,6 +1297,12 @@ public class SaDoServiceTests : IAsyncLifetime
         int returnAllocationStage, int receiptShape) =>
         ExerciseBackdatedWacReceiptBeforeDoAsync(false, returnAllocationStage, receiptShape);
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public Task Backdated_multiline_wac_receipt_rolls_back_after_do(int receiptShape) =>
+        ExerciseBackdatedWacReceiptBeforeDoAsync(true, 0, receiptShape);
+
     private async Task ExerciseBackdatedWacReceiptBeforeDoAsync(
         bool rollbackDoFirst, int returnAllocationStage, int receiptShape)
     {
@@ -1536,7 +1542,7 @@ public class SaDoServiceTests : IAsyncLifetime
             {
                 Assert.Equal(SaDoStatuses.Posted,
                     (await unchanged.SaDos.SingleAsync()).Status);
-                Assert.Equal(15m, (await unchanged.IvBalLocs.SingleAsync(b =>
+                Assert.Equal(receiptShape == 2 ? 12m : 15m, (await unchanged.IvBalLocs.SingleAsync(b =>
                     b.Id == balId)).StdQty);
                 Assert.Equal(71.25m,
                     (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
@@ -1546,7 +1552,7 @@ public class SaDoServiceTests : IAsyncLifetime
                 Keyed(savedDo.DoNo!, GetRowVersion(savedDo.DoNo!))]);
             Assert.True(doRollbackFirst.Succeeded, doRollbackFirst.ErrorMessage);
             await using var afterDo = await _factory.CreateDbContextAsync();
-            Assert.Equal(20m, (await afterDo.IvBalLocs.SingleAsync(b =>
+            Assert.Equal(receiptShape == 2 ? 17m : 20m, (await afterDo.IvBalLocs.SingleAsync(b =>
                 b.Id == balId)).StdQty);
             Assert.Equal(95m, (await afterDo.StockCostStates.SingleAsync()).InventoryValue);
             var reversal = await afterDo.StockValuationFacts.AsNoTracking()
