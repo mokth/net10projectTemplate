@@ -1,6 +1,7 @@
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Inventory;
@@ -57,16 +58,30 @@ internal static class StockReplayInventoryRouteSelector
                 && f.ReversesValuationFactId == null
                 && !db.StockValuationFacts.Any(r =>
                     r.ReversesValuationFactId == f.Id), cancellationToken);
-        // A reversed Production issue has no active net valuation, but a
-        // receipt before it can still change both historical issue costs.
+        // A reversed issue has no active net valuation, but a receipt before
+        // it can still change its historical stock availability and cost.
         if (!laterValuation && itemCodes.Length > 0
             && expectedTrxType is (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive))
+        {
             laterValuation = await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                 h.CompanyCode == companyCode && h.BranchCode == branchCode
                 && h.TrxType == IvTrxTypes.IssueToProduction && h.EntryRole == "ORIGINAL"
                 && h.BatchStatus == IvBatchStatuses.Posted && itemCodes.Contains(h.ICode)
                 && h.TrxDtTime > batch.TrxDtTime
                 && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id), cancellationToken);
+            if (!laterValuation)
+            {
+                var wacItems = await db.StockCostStates.AsNoTracking().Where(s =>
+                        s.CompanyCode == companyCode && s.BranchCode == branchCode
+                        && itemCodes.Contains(s.ItemCode) && s.CostMethod == StockCostMethods.MovingAverage)
+                    .Select(s => s.ItemCode).ToArrayAsync(cancellationToken);
+                laterValuation = wacItems.Length != 0 && await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
+                    h.CompanyCode == companyCode && h.BranchCode == branchCode
+                    && h.TrxType == IvTrxTypes.SalesOut && h.EntryRole == "ORIGINAL"
+                    && wacItems.Contains(h.ICode) && h.TrxDtTime >= batch.TrxDtTime
+                    && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id), cancellationToken);
+            }
+        }
 
         var laterPileDate = false;
         var laterPhysical = false;
@@ -117,6 +132,22 @@ internal static class StockReplayInventoryRouteSelector
             .ToDictionaryAsync(p => p.Id, cancellationToken);
         if (owners.Count != ownerIds.Length)
             return new(true, false, false);
+
+        if (expectedTrxType is IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+        {
+            var itemCodes = originals.Where(h => !string.IsNullOrWhiteSpace(h.ICode))
+                .Select(h => h.ICode!).Distinct().ToArray();
+            var wacItems = await db.StockCostStates.AsNoTracking().Where(s =>
+                    s.CompanyCode == companyCode && s.BranchCode == branchCode
+                    && itemCodes.Contains(s.ItemCode) && s.CostMethod == StockCostMethods.MovingAverage)
+                .Select(s => s.ItemCode).ToArrayAsync(cancellationToken);
+            if (wacItems.Length != 0 && await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
+                    h.CompanyCode == companyCode && h.BranchCode == branchCode
+                    && h.TrxType == IvTrxTypes.SalesOut && h.EntryRole == "ORIGINAL"
+                    && wacItems.Contains(h.ICode) && h.TrxDtTime >= batch.TrxDtTime
+                    && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id), cancellationToken))
+                return new(false, true, false);
+        }
 
         var lastKeyByPile = new Dictionary<int, StockReplayEventKey>();
         foreach (var history in originals)

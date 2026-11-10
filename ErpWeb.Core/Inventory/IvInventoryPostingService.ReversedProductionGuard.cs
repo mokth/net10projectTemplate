@@ -13,7 +13,8 @@ public sealed partial class IvInventoryPostingService
     // remain correct. The caller holds the branch lock.
     private async Task<IvInventoryPostingBatchResult?> RejectReversedProductionReceiptAsync(
         AppDbContext db, string companyCode, string branchCode, int batchNo,
-        string receiptType, bool rollback, CancellationToken cancellationToken)
+        string receiptType, bool rollback, CancellationToken cancellationToken,
+        bool allowProvenReversedSale = false)
     {
         // A WAC issue can depend on a receipt on another pile even when replay
         // is disabled. In that case the pile-date guard alone cannot protect
@@ -33,6 +34,18 @@ public sealed partial class IvInventoryPostingService
             .Select(d => d.ICode!).Distinct().ToArrayAsync(cancellationToken);
         if (itemCodes.Length == 0)
             return null;
+
+        if (!allowProvenReversedSale)
+        {
+            var wacItems = await db.StockCostStates.AsNoTracking()
+                .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode
+                    && itemCodes.Contains(s.ItemCode) && s.CostMethod == StockCostMethods.MovingAverage)
+                .Select(s => s.ItemCode).ToArrayAsync(cancellationToken);
+            if (wacItems.Length != 0 && await HasReversedSalesAfterAsync(
+                    db, companyCode, branchCode, wacItems, batch.TrxDtTime, cancellationToken))
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    "This receipt has a later reversed sale that needs verified stock and cost replay.");
+        }
 
         if (rollback && !await FifoReceiptChangePreservesReversedIssuesAsync(db,
                 companyCode, branchCode, batch, itemCodes, cancellationToken))

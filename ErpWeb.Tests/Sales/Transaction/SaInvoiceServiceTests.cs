@@ -3575,6 +3575,21 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 Assert.True(deletedBeforeInvoice.Succeeded, deletedBeforeInvoice.ErrorMessage);
                 var invoiceBeforeReceipt = await invoice.RollbackAsync([savedInvoice.InvNo!]);
                 Assert.True(invoiceBeforeReceipt.Succeeded, invoiceBeforeReceipt.ErrorMessage);
+                // Removing the receipt would change the already-reversed sale's
+                // historical cost. Until both legs can be corrected, keep it posted.
+                var blocked = await RunReceiptAsync(rollback: true);
+                Assert.False(blocked.Succeeded);
+                await using var unchanged = await _factory.CreateDbContextAsync();
+                Assert.Equal(IvBatchStatuses.Posted, (await unchanged.IvTrxBatches
+                    .SingleAsync(b => b.BatchNo == receiptBatchNo)).BatchStatus);
+                var state = await unchanged.StockCostStates.SingleAsync();
+                Assert.Equal((20m, 95m), (state.OnHandBaseQty, state.InventoryValue));
+                Assert.Equal(receiptShape == 2 ? 17m : 20m,
+                    (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+                Assert.Equal(19m, (await unchanged.StockValuationFacts.SingleAsync(f =>
+                    f.SourceDocumentType == "SA_INVOICE" && f.MovementCode == "SALE_OUT_REVERSAL"
+                    && f.StockPosting!.PostingRole == "REVERSAL")).CostAmount);
+                return;
             }
             var rolledBackReceipt = await RunReceiptAsync(rollback: true);
             Assert.True(rolledBackReceipt.Succeeded, rolledBackReceipt.ErrorMessage);
@@ -5355,6 +5370,126 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         bool postReceiptFirst, bool changesSaleCost, bool damageReversal, bool insufficientDuringSale) =>
         ExerciseReversedSaleWithLaterIssueAsync(postReceiptFirst, changesSaleCost, damageReversal, insufficientDuringSale);
 
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    public Task Backdated_singleline_wac_receipt_with_reversed_sale_and_later_issue(
+        bool postReceiptFirst, bool changesSaleCost, bool insufficientDuringSale) =>
+        ExerciseReversedSaleWithLaterIssueAsync(postReceiptFirst, changesSaleCost, false, insufficientDuringSale,
+            singleLine: true);
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public Task Backdated_singleline_wac_receipt_with_reversed_sale_and_no_later_issue(
+        bool postReceiptFirst, bool changesSaleCost) =>
+        ExerciseReversedSaleWithLaterIssueAsync(postReceiptFirst, changesSaleCost, false, false,
+            singleLine: true, noLaterIssue: true);
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public Task Backdated_multiline_wac_receipt_with_reversed_sale_and_no_later_issue(
+        bool postReceiptFirst, bool changesSaleCost) =>
+        ExerciseReversedSaleWithLaterIssueAsync(postReceiptFirst, changesSaleCost, false, false,
+            noLaterIssue: true);
+
+    [Fact]
+    public Task Backdated_receipt_with_reversed_sale_is_blocked_when_replay_is_disabled() =>
+        ExerciseReversedSaleWithLaterIssueAsync(false, false, false, false,
+            singleLine: true, noLaterIssue: true, replayEnabled: false);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Backdated_goods_receipt_with_reversed_sale_is_blocked_without_cost_replay(bool receiptFirst)
+    {
+        DateTime today;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedCompanyAsync(db);
+            await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            today = (await StockBusinessTime.NowAsync(db, "DEMO")).Date;
+        }
+        if (today.Day == 1)
+            throw Xunit.Sdk.SkipException.ForSkip("This scenario needs an earlier day in the current open month.");
+        var balId = await SeedBalLocAsync(15m, today.AddDays(-5));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 15m, 3m);
+            db.PoOrders.Add(new PoOrder
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-TEST", PoRelNo = 1,
+                PoDate = today.AddDays(-2), Status = "NEW", VendCode = "SUP01", CurCode = "MYR", RowVersion = [1],
+                Details = [new PoOrderDetail
+                {
+                    CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-TEST", PoRelNo = 1,
+                    Line = 1, ICode = "A100", PoQty = 10m, PoPurQty = 10m, PoUnitPrice = 10m,
+                    NetAmount = 100m, PurchaseUom = "EA", StdUom = "EA", PackSz = 1m,
+                    CurCode = "MYR", ToWarehouse = "MAIN"
+                }]
+            });
+            await db.SaveChangesAsync();
+        }
+        var invoice = CreateSut(posting: InventoryLedgerTestFixture.CreateInventoryPosting(
+            _factory, enableBackdatedReplay: true), currentDate: new FixedCurrentDateService(today));
+        var savedInvoice = await invoice.SaveNewAsync(Request(qty: 4m, price: 10m, date: today));
+        Assert.True(savedInvoice.Succeeded, savedInvoice.ErrorMessage);
+        Assert.True((await ShipAsync(invoice, savedInvoice.InvNo!)).Succeeded);
+        Assert.True((await invoice.PostAsync([savedInvoice.InvNo!])).Succeeded);
+
+        var goods = new IvGoodsReceiptService(_factory, InventoryTenantTestHelper.CreateTenantContext(),
+            Access().Object, new RunningNumberService(), new FixedCurrentDateService(today),
+            new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+            new IvStockTransactionRepository(), new IvStockPostingRepository(),
+            InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true),
+            NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
+        var saved = await goods.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive, TrxDate = today.AddDays(-1),
+            Lines = [new IvGoodsReceiptLineRequest
+            {
+                PoNo = "PO-TEST", PoRelNo = 1, PoLineNo = 1,
+                ToWarehouse = "MAIN", ToLocation = "BIN1", ToRecvQty = 5m
+            }]
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        if (receiptFirst)
+        {
+            var posted = await goods.PostAsync([saved.BatchNo]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+        }
+        var saleRollback = await invoice.RollbackAsync([savedInvoice.InvNo!]);
+        Assert.True(saleRollback.Succeeded, saleRollback.ErrorMessage);
+        (decimal Quantity, decimal Value, decimal Physical, decimal Received, string Status, int Postings) before;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var state = await db.StockCostStates.SingleAsync();
+            before = (state.OnHandBaseQty, state.InventoryValue,
+                (await db.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty,
+                (await db.PoOrderDetails.SingleAsync()).RecvQty,
+                (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == saved.BatchNo)).BatchStatus,
+                await db.StockPostings.CountAsync());
+        }
+        var rejected = receiptFirst ? await goods.RollbackAsync([saved.BatchNo]) : await goods.PostAsync([saved.BatchNo]);
+        Assert.False(rejected.Succeeded);
+        await using var unchanged = await _factory.CreateDbContextAsync();
+        var unchangedState = await unchanged.StockCostStates.SingleAsync();
+        Assert.Equal(before, (unchangedState.OnHandBaseQty, unchangedState.InventoryValue,
+            (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty,
+            (await unchanged.PoOrderDetails.SingleAsync()).RecvQty,
+            (await unchanged.IvTrxBatches.SingleAsync(b => b.BatchNo == saved.BatchNo)).BatchStatus,
+            await unchanged.StockPostings.CountAsync()));
+    }
+
     [MultiWacReceiptSqlFact]
     [Trait(TestCategories.Name, TestCategories.SqlServer)]
     public async Task SqlServer_backdated_receipt_with_reversed_sale_and_later_issue()
@@ -5382,10 +5517,21 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         await AssertSqlReceiptPostedAndRolledBackOnceAsync();
     }
 
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, TestCategories.SqlServer)]
+    public async Task SqlServer_singleline_receipt_with_reversed_sale_waits_safely()
+    {
+        var barrier = await PrepareSqlReceiptFixtureAsync();
+        await ExerciseReversedSaleWithLaterIssueAsync(false, false, false, false, barrier,
+            invoiceLockHeld: true, singleLine: true);
+        await AssertSqlReceiptPostedAndRolledBackOnceAsync();
+    }
+
     private async Task ExerciseReversedSaleWithLaterIssueAsync(
         bool postReceiptFirst, bool changesSaleCost, bool damageReversal, bool insufficientDuringSale,
         IvMultiWacReceiptSqlServerTests.ReceiptBatchLockBarrier? contentionBarrier = null,
-        bool editAfterPlanning = false, bool invoiceLockHeld = false)
+        bool editAfterPlanning = false, bool invoiceLockHeld = false, bool singleLine = false,
+        bool noLaterIssue = false, bool replayEnabled = true)
     {
         DateTime today;
         await using (var db = await _factory.CreateDbContextAsync())
@@ -5410,7 +5556,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.True((await ShipAsync(invoice, savedInvoice.InvNo!)).Succeeded);
         Assert.True((await invoice.PostAsync([savedInvoice.InvNo!])).Succeeded);
 
-        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, today, enableBackdatedReplay: true);
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, today, enableBackdatedReplay: replayEnabled);
         IvMiscReceiptLineRequest ReceiptLine(decimal quantity) => new()
         {
             ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = quantity,
@@ -5420,7 +5566,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         var savedReceipt = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = today.AddDays(-1), RefNo = "AUTO",
-            Lines = [ReceiptLine(2m), ReceiptLine(3m)]
+            Lines = singleLine ? [ReceiptLine(5m)] : [ReceiptLine(2m), ReceiptLine(3m)]
         });
         Assert.True(savedReceipt.Succeeded, savedReceipt.ErrorMessage);
         var checkedStaleEdit = false;
@@ -5517,19 +5663,25 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.True(saleRollback.Succeeded, saleRollback.ErrorMessage);
         var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, today,
             enableBackdatedReplay: true);
-        var savedIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        int? issueBatchNo = null;
+        if (!noLaterIssue)
         {
-            TrxDate = today,
-            Lines = [new IvMiscIssueLineRequest
+            var savedIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
             {
-                FromBalLocId = balId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
-                FrLotNo = string.Empty, Quantity = 2m, Uom = "EA", IClassCode = "RAW",
-                IStatus = "ACTIVE", UnitPrice = 3m
-            }]
-        });
-        Assert.True(savedIssue.Succeeded, savedIssue.ErrorMessage);
-        var postedIssue = await issue.PostAsync([savedIssue.BatchNo]);
-        Assert.True(postedIssue.Succeeded, postedIssue.ErrorMessage);
+                TrxDate = today,
+                Lines = [new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = balId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = 2m, Uom = "EA", IClassCode = "RAW",
+                    IStatus = "ACTIVE", UnitPrice = 3m
+                }]
+            });
+            Assert.True(savedIssue.Succeeded, savedIssue.ErrorMessage);
+            issueBatchNo = savedIssue.BatchNo;
+            var postedIssue = await issue.PostAsync([savedIssue.BatchNo]);
+            Assert.True(postedIssue.Succeeded, postedIssue.ErrorMessage);
+        }
+        var quantityAfterIssue = openingQty - (noLaterIssue ? 0m : 2m);
         if (damageReversal)
         {
             await using var corrupt = await _factory.CreateDbContextAsync();
@@ -5538,7 +5690,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             await corrupt.StockValuationFacts.Where(f => f.Id == reversal.Id)
                 .ExecuteUpdateAsync(update => update.SetProperty(f => f.CostAmount, reversal.CostAmount + 1m));
         }
-        var shouldReject = changesSaleCost || damageReversal || insufficientDuringSale;
+        var shouldReject = changesSaleCost || damageReversal || insufficientDuringSale || !replayEnabled;
         if (!postReceiptFirst)
         {
             var posted = await RunReceiptAsync(rollback: false);
@@ -5547,9 +5699,9 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 Assert.False(posted.Succeeded);
                 await using var unchanged = await _factory.CreateDbContextAsync();
                 Assert.Equal(IvBatchStatuses.New, (await unchanged.IvTrxBatches.SingleAsync(b => b.BatchNo == savedReceipt.BatchNo)).BatchStatus);
-                Assert.Equal((13m, 39m), ((await unchanged.StockCostStates.SingleAsync()).OnHandBaseQty,
+                Assert.Equal((quantityAfterIssue, quantityAfterIssue * 3m), ((await unchanged.StockCostStates.SingleAsync()).OnHandBaseQty,
                     (await unchanged.StockCostStates.SingleAsync()).InventoryValue));
-                Assert.Equal(13m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+                Assert.Equal(quantityAfterIssue, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
                 Assert.False(await unchanged.StockPostings.AnyAsync(p => p.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
                     && p.SourceDocumentNo == savedReceipt.BatchNo.ToString()));
                 return;
@@ -5560,11 +5712,14 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         {
             await using var posted = await _factory.CreateDbContextAsync();
             var state = await posted.StockCostStates.SingleAsync();
-            Assert.Equal((18m, 54m), (state.OnHandBaseQty, state.InventoryValue));
-            Assert.Equal(18m, (await posted.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
-            var issueHistory = await posted.IvTrxHistories.SingleAsync(h => h.BatchNo == savedIssue.BatchNo && h.EntryRole == "ORIGINAL");
-            var issueFacts = await StockReplayValuationGenerationResolver.ResolveAsync(posted, "DEMO", "HQ", [issueHistory]);
-            Assert.Equal(6m, Assert.Single(issueFacts[issueHistory.Id]).CostAmount);
+            Assert.Equal((quantityAfterIssue + 5m, (quantityAfterIssue + 5m) * 3m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(quantityAfterIssue + 5m, (await posted.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+            if (issueBatchNo is int issuedBatch)
+            {
+                var issueHistory = await posted.IvTrxHistories.SingleAsync(h => h.BatchNo == issuedBatch && h.EntryRole == "ORIGINAL");
+                var issueFacts = await StockReplayValuationGenerationResolver.ResolveAsync(posted, "DEMO", "HQ", [issueHistory]);
+                Assert.Equal(6m, Assert.Single(issueFacts[issueHistory.Id]).CostAmount);
+            }
         }
         var rolledBackReceipt = await RunReceiptAsync(rollback: true);
         if (shouldReject)
@@ -5573,9 +5728,11 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             await using var unchanged = await _factory.CreateDbContextAsync();
             Assert.Equal(IvBatchStatuses.Posted, (await unchanged.IvTrxBatches.SingleAsync(b => b.BatchNo == savedReceipt.BatchNo)).BatchStatus);
             var state = await unchanged.StockCostStates.SingleAsync();
-            Assert.Equal(insufficientDuringSale ? (7m, 21m) : changesSaleCost ? (18m, 85.5m) : (18m, 54m),
+            Assert.Equal(insufficientDuringSale ? (7m, 21m) : changesSaleCost
+                    ? noLaterIssue ? (20m, 95m) : (18m, 85.5m)
+                    : (quantityAfterIssue + 5m, (quantityAfterIssue + 5m) * 3m),
                 (state.OnHandBaseQty, state.InventoryValue));
-            Assert.Equal(insufficientDuringSale ? 7m : 18m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+            Assert.Equal(quantityAfterIssue + 5m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
             Assert.False(await unchanged.StockPostings.AnyAsync(p => p.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
                 && p.SourceDocumentNo == savedReceipt.BatchNo.ToString() && p.PostingRole == "REVERSAL"));
             return;
@@ -5584,11 +5741,14 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         await using (var restored = await _factory.CreateDbContextAsync())
         {
             var state = await restored.StockCostStates.SingleAsync();
-            Assert.Equal((13m, 39m), (state.OnHandBaseQty, state.InventoryValue));
-            Assert.Equal(13m, (await restored.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+            Assert.Equal((quantityAfterIssue, quantityAfterIssue * 3m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(quantityAfterIssue, (await restored.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
         }
-        var issueRollback = await issue.RollbackAsync([savedIssue.BatchNo]);
-        Assert.True(issueRollback.Succeeded, issueRollback.ErrorMessage);
+        if (issueBatchNo is int batchToRollBack)
+        {
+            var issueRollback = await issue.RollbackAsync([batchToRollBack]);
+            Assert.True(issueRollback.Succeeded, issueRollback.ErrorMessage);
+        }
         await using var final = await _factory.CreateDbContextAsync();
         Assert.Equal(15m, (await final.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
         Assert.Equal(45m, (await final.StockCostStates.SingleAsync()).InventoryValue);
@@ -5839,6 +5999,19 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                     .ExecuteUpdateAsync(update => update.SetProperty(f => f.CostAmount,
                         reversal.CostAmount));
             }
+            var blocked = await receipt.RollbackAsync([savedReceipt.BatchNo]);
+            Assert.False(blocked.Succeeded);
+            await using var afterBlockedReceipt = await _factory.CreateDbContextAsync();
+            Assert.Equal(IvBatchStatuses.Posted, (await afterBlockedReceipt.IvTrxBatches
+                .SingleAsync(b => b.BatchNo == savedReceipt.BatchNo)).BatchStatus);
+            var state = await afterBlockedReceipt.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal((20m, 95m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(receiptShape == 2 ? 17m : 20m,
+                (await afterBlockedReceipt.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+            Assert.Equal(19m, (await afterBlockedReceipt.StockValuationFacts.SingleAsync(f =>
+                f.SourceDocumentType == "SA_INVOICE" && f.MovementCode == "SALE_OUT_REVERSAL"
+                && f.StockPosting!.PostingRole == "REVERSAL")).CostAmount);
+            return;
         }
         var receiptRollback = await receipt.RollbackAsync([savedReceipt.BatchNo]);
         Assert.True(receiptRollback.Succeeded, receiptRollback.ErrorMessage);

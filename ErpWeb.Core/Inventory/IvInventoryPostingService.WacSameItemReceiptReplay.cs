@@ -25,6 +25,13 @@ public sealed partial class IvInventoryPostingService
         IReadOnlyList<StockReplayWacEvent> WacLater, IReadOnlyList<StockReplayWacStep> WacSteps,
         decimal WacFinalQty, decimal WacFinalValue);
 
+    private static Task<bool> HasReversedSalesAfterAsync(
+        AppDbContext db, string company, string branch, string[] items, DateTime receiptAt, CancellationToken ct) =>
+        db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.CompanyCode == company && h.BranchCode == branch
+            && h.TrxType == IvTrxTypes.SalesOut && h.ICode != null && items.Contains(h.ICode)
+            && h.LedgerVersion == 2 && h.EntryRole == "ORIGINAL" && h.TrxDtTime >= receiptAt
+            && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id), ct);
+
     // The ordinary active tail omits an original/reversal pair. Admit an
     // isolated reversed direct sale only when replaying both physical legs
     // proves availability and both WAC simulations produce the same values.
@@ -35,7 +42,7 @@ public sealed partial class IvInventoryPostingService
         var issues = await db.IvTrxHistories.AsNoTracking().Where(h =>
             h.CompanyCode == company && h.BranchCode == branch && h.ICode == plan.ItemCode
             && h.LedgerVersion == 2 && h.EntryRole == "ORIGINAL"
-            && h.TrxDtTime >= receipt.TrxDtTime && h.FromBalLocId != null && h.FrStdQty > 0m
+            && h.TrxDtTime >= receipt.TrxDtTime
             && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id)).ToArrayAsync(ct);
         if (issues.Length != 1)
             return null;
@@ -371,7 +378,8 @@ public sealed partial class IvInventoryPostingService
                 company, branch, locked, NeutralSaleCandidate(plans[items[0]]), ct, lockSalesEvidence: true))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed sale changed. Retry posting.");
         if (await RejectReversedProductionReceiptAsync(write, company, branch, batchNo,
-                IvTrxTypes.MiscellaneousReceipt, rollback: false, ct) is { } rejected)
+                IvTrxTypes.MiscellaneousReceipt, rollback: false, ct,
+                allowProvenReversedSale: reversedSaleProof is not null) is { } rejected)
             return rejected;
         foreach (var authority in authorities)
         {
@@ -477,7 +485,7 @@ public sealed partial class IvInventoryPostingService
                     NeutralSaleCandidate(salePlan.Combined), ct);
             if (reversedSaleProof is null)
                 return IvInventoryPostingBatchResult.Fail(batchNo,
-                    "This receipt has a later reversed issue that needs additional replay before rollback.");
+                    "This receipt has a later cost dependency from a reversed issue that needs additional replay before rollback.");
         }
 
         var fingerprint = MultiWacMrDraftFingerprint(batch, details);
@@ -518,7 +526,8 @@ public sealed partial class IvInventoryPostingService
                 company, branch, locked, NeutralSaleCandidate(plans[items[0]].Combined), ct, lockSalesEvidence: true))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed sale changed. Retry rollback.");
         if (await RejectReversedProductionReceiptAsync(write, company, branch, batchNo,
-                IvTrxTypes.MiscellaneousReceipt, rollback: true, ct) is { } rejected)
+                IvTrxTypes.MiscellaneousReceipt, rollback: true, ct,
+                allowProvenReversedSale: reversedSaleProof is not null) is { } rejected)
             return rejected;
         var qaRestore = await _qaPhysical.RestoreStockOutAsync(write, company, branch, batchNo, ct);
         if (qaRestore is not null) return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
