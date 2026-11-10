@@ -1,8 +1,11 @@
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Core.Sales;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Inventory;
@@ -13,6 +16,235 @@ public sealed partial class IvInventoryPostingService
         StockReplayWacRemovalPlan Anchor,
         StockReplayWacRemovalPlan Combined,
         IReadOnlyDictionary<int, StockReplayWacEvent> SourceEvents);
+
+    private sealed record NeutralReversedSaleCandidate(
+        string ItemCode, int BalLocId, long EpochId, bool Removal,
+        decimal PhysicalCurrent, StockReplayPhysicalEvent PhysicalAnchor,
+        IReadOnlyList<StockReplayPhysicalEvent> PhysicalLater, decimal PhysicalFinal,
+        decimal WacCurrentQty, decimal WacCurrentValue, StockReplayWacEvent WacAnchor,
+        IReadOnlyList<StockReplayWacEvent> WacLater, IReadOnlyList<StockReplayWacStep> WacSteps,
+        decimal WacFinalQty, decimal WacFinalValue);
+
+    // The ordinary active tail omits an original/reversal pair. Admit an
+    // isolated reversed direct sale only when replaying both physical legs
+    // proves availability and both WAC simulations produce the same values.
+    private static async Task<string?> ProveNeutralReversedSaleAsync(
+        AppDbContext db, string company, string branch, IvTrxBatch receipt,
+        NeutralReversedSaleCandidate plan, CancellationToken ct, bool lockSalesEvidence = false)
+    {
+        var issues = await db.IvTrxHistories.AsNoTracking().Where(h =>
+            h.CompanyCode == company && h.BranchCode == branch && h.ICode == plan.ItemCode
+            && h.LedgerVersion == 2 && h.EntryRole == "ORIGINAL"
+            && h.TrxDtTime >= receipt.TrxDtTime && h.FromBalLocId != null && h.FrStdQty > 0m
+            && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id)).ToArrayAsync(ct);
+        if (issues.Length != 1)
+            return null;
+        var sale = issues[0];
+        if (sale.TrxType != IvTrxTypes.SalesOut || sale.FromBalLocId != plan.BalLocId
+            || sale.ToBalLocId is not null || sale.FrStdQty is not > 0m
+            || sale.TrxDtTime <= receipt.TrxDtTime || sale.TrxDtTime.Year != receipt.TrxDtTime.Year
+            || sale.TrxDtTime.Month != receipt.TrxDtTime.Month
+            || sale.LedgerEpochId != plan.EpochId || sale.StockPostingId is not > 0
+            || sale.SoLineNo is not > 0 || !string.IsNullOrWhiteSpace(sale.DoNo)
+            || string.IsNullOrWhiteSpace(sale.InvNo))
+            return null;
+        var businessDate = (await StockBusinessTime.NowAsync(db, company, ct)).Date;
+        var reversals = await db.IvTrxHistories.AsNoTracking()
+            .Where(h => h.ReversesHistoryId == sale.Id).ToArrayAsync(ct);
+        if (reversals.Length != 1 || reversals[0].StockPostingId is not > 0)
+            return null;
+        var reverse = reversals[0];
+        if (reverse.InvNo != sale.InvNo || reverse.DoNo != sale.DoNo || reverse.SoLineNo != sale.SoLineNo)
+            return null;
+        var owner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == sale.StockPostingId, ct);
+        var reverseOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == reverse.StockPostingId, ct);
+        var saleBatch = await db.IvTrxBatches.AsNoTracking().SingleOrDefaultAsync(b =>
+            b.CompanyCode == company && b.BranchCode == branch && b.BatchNo == sale.BatchNo, ct);
+        if (owner is null || reverseOwner is null || saleBatch is null
+            || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.SalesOut
+            || owner.CommandType != $"IV_POST_{IvTrxTypes.SalesOut}"
+            || reverseOwner.CommandType != $"IV_ROLLBACK_{IvTrxTypes.SalesOut}"
+            || owner.SourceDocumentId != saleBatch.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            || owner.SourceDocumentNo != sale.BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            || saleBatch.TrxType != IvTrxTypes.SalesOut || saleBatch.BatchStatus != IvBatchStatuses.New
+            || saleBatch.RefNo != sale.InvNo || reverse.TrxDtTime.Year != receipt.TrxDtTime.Year
+            || reverse.TrxDtTime.Month != receipt.TrxDtTime.Month
+            || sale.TrxDtTime.Date > businessDate || reverse.TrxDtTime.Date > businessDate
+            || await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, sale.TrxDtTime, ct) is not null
+            || await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, reverse.TrxDtTime, ct) is not null)
+            return null;
+        var saleKey = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+            owner.PostingSequence, $"H{sale.Id:D10}", 0);
+        var reverseKey = new StockReplayEventKey(reverseOwner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+            reverseOwner.PostingSequence, $"H{reverse.Id:D10}", 0);
+        if (saleKey.CompareTo(plan.PhysicalAnchor.Key) <= 0 || reverseKey.CompareTo(saleKey) <= 0)
+            return null;
+        SaInvoice? invoice;
+        SaInvoiceDetail[] invoiceLines;
+        bool hasNotes;
+        if (lockSalesEvidence && db.Database.IsSqlServer())
+        {
+            if (db.Database.CurrentTransaction is null)
+                throw new InvalidOperationException("Sales evidence must be locked inside the replay transaction.");
+            try
+            {
+                // Sales posting locks its invoice before the branch. Do not wait here while
+                // holding the branch lock; a busy invoice means the receipt must be retried.
+                invoice = await db.SaInvoices.FromSqlInterpolated($@"SELECT * FROM dbo.SaInvoice WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                    WHERE CompanyCode = {company} AND BranchCode = {branch} AND InvNo = {sale.InvNo}")
+                    .AsNoTracking().SingleOrDefaultAsync(ct);
+                invoiceLines = await db.SaInvoiceDetails.FromSqlInterpolated($@"SELECT * FROM dbo.SaInvoiceDetail WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                    WHERE CompanyCode = {company} AND BranchCode = {branch} AND InvNo = {sale.InvNo}")
+                    .AsNoTracking().ToArrayAsync(ct);
+                var notes = await db.SaCdns.FromSqlInterpolated($@"SELECT * FROM dbo.SaCDN WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                    WHERE CompanyCode = {company} AND BranchCode = {branch} AND InvNo = {sale.InvNo}")
+                    .AsNoTracking().ToArrayAsync(ct);
+                hasNotes = notes.Length != 0;
+            }
+            catch (SqlException error) when (error.Number == 1222)
+            {
+                return null;
+            }
+        }
+        else
+        {
+            invoice = await db.SaInvoices.AsNoTracking().SingleOrDefaultAsync(i =>
+                i.CompanyCode == company && i.BranchCode == branch && i.InvNo == sale.InvNo, ct);
+            invoiceLines = await db.SaInvoiceDetails.AsNoTracking().Where(l =>
+                l.CompanyCode == company && l.BranchCode == branch && l.InvNo == sale.InvNo).ToArrayAsync(ct);
+            hasNotes = await db.SaCdns.AsNoTracking().AnyAsync(c => c.CompanyCode == company
+                && c.BranchCode == branch && c.InvNo == sale.InvNo, ct);
+        }
+        if (invoice is null || invoice.Status != SaInvoiceStatuses.New || invoice.DeletedAtUtc is not null
+            || invoice.RollbackDate is null || invoice.InvDate.Date != sale.TrxDtTime.Date
+            || invoiceLines.Length != 1 || invoiceLines[0] is not { } line
+            || !line.StockControl || line.LinkDo || line.Line != sale.SoLineNo || line.ICode != sale.ICode
+            || line.StdQty != sale.FrStdQty || line.StdUom != sale.FrStdUom
+            || hasNotes)
+            return null;
+        var saleFacts = await db.StockValuationFacts.AsNoTracking().Where(f =>
+            f.InventoryHistoryId == sale.Id).ToArrayAsync(ct);
+        var reverseFacts = await db.StockValuationFacts.AsNoTracking().Where(f =>
+            f.InventoryHistoryId == reverse.Id).ToArrayAsync(ct);
+        if (saleFacts.Length != 1 || reverseFacts.Length != 1)
+            return null;
+        var fact = saleFacts[0];
+        var inverse = reverseFacts[0];
+        var lineText = sale.SoLineNo.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (fact.CompanyCode != company || fact.BranchCode != branch || fact.ItemCode != plan.ItemCode
+            || fact.LedgerEpochId != plan.EpochId || fact.StockPostingId != owner.Id
+            || fact.SourceDocumentType != "SA_INVOICE" || fact.SourceDocumentId != sale.InvNo
+            || fact.SourceDocumentNo != sale.InvNo || fact.SourceDocumentLine != lineText
+            || fact.EffectiveAt != owner.EffectiveAt || fact.BusinessDate != owner.BusinessDate || fact.PeriodKey != owner.PeriodKey
+            || fact.MovementCode != "SALE_OUT" || fact.Direction != -1 || fact.BaseQty != sale.FrStdQty
+            || fact.FromBalLocId != plan.BalLocId || fact.CostMethod != StockCostMethods.MovingAverage
+            || fact.BaseUom != sale.FrStdUom || fact.ItemStatus != sale.IStatus
+            || fact.LotId != sale.FromLotId || (fact.LotNo ?? string.Empty) != (sale.FrLotNo ?? string.Empty)
+            || fact.PostingLineNo != sale.PostingLineNo
+            || fact.ValuationStatus != StockValuationStatuses.Valued
+            || fact.ValuationSource != StockValuationSources.MovingAverage
+            || fact.CostAmount < 0m || fact.BaseCostAmount != fact.CostAmount
+            || fact.OriginalValuationFactId is not null || fact.ReversesValuationFactId is not null
+            || inverse.CompanyCode != company || inverse.BranchCode != branch || inverse.ItemCode != fact.ItemCode
+            || inverse.LedgerEpochId != fact.LedgerEpochId || inverse.StockPostingId != reverseOwner.Id
+            || inverse.SourceDocumentType != fact.SourceDocumentType || inverse.SourceDocumentId != fact.SourceDocumentId
+            || inverse.SourceDocumentNo != fact.SourceDocumentNo || inverse.SourceDocumentLine != fact.SourceDocumentLine
+            || inverse.EffectiveAt != reverseOwner.EffectiveAt || inverse.BusinessDate != reverseOwner.BusinessDate
+            || inverse.PeriodKey != reverseOwner.PeriodKey || inverse.PostingLineNo != reverse.PostingLineNo
+            || inverse.MovementCode != "SALE_OUT_REVERSAL" || inverse.Direction != 1
+            || inverse.ToBalLocId != plan.BalLocId || inverse.BaseQty != fact.BaseQty
+            || inverse.CostMethod != fact.CostMethod || inverse.UnitCost != fact.UnitCost
+            || inverse.CostAmount != fact.CostAmount || inverse.BaseCostAmount != fact.BaseCostAmount
+            || inverse.BaseUom != fact.BaseUom || inverse.BaseCurrency != fact.BaseCurrency
+            || inverse.TransactionCurrency != fact.TransactionCurrency
+            || inverse.TransactionCostAmount != fact.TransactionCostAmount || inverse.ExchangeRate != fact.ExchangeRate
+            || inverse.ValuationStatus != StockValuationStatuses.Reversed
+            || inverse.ValuationSource != StockValuationSources.OriginalReversal
+            || inverse.OriginalValuationFactId != fact.Id || inverse.ReversesValuationFactId != fact.Id
+            || await db.StockValuationFacts.AsNoTracking().CountAsync(f => f.ReversesValuationFactId == fact.Id, ct) != 1
+            || await db.StockValuationFacts.AsNoTracking().AnyAsync(f => f.OriginalValuationFactId == fact.Id && f.Id != inverse.Id, ct)
+            || await db.SalesReturnCostAllocations.AsNoTracking().AnyAsync(a => a.OriginalValuationFactId == fact.Id
+                || a.CompanyCode == company && a.BranchCode == branch && a.OriginalOwnerType == "SA_INVOICE"
+                    && a.OriginalOwnerDocumentNo == sale.InvNo, ct)
+            || await db.StockReplayEffects.AsNoTracking().AnyAsync(e =>
+                e.AffectedEntityType == StockReplayEffectTypes.InventoryHistory
+                    && (e.AffectedEntityId == sale.Id || e.AffectedEntityId == reverse.Id
+                        || e.OriginalEntityId == sale.Id || e.OriginalEntityId == reverse.Id)
+                || e.AffectedEntityType == StockReplayEffectTypes.StockValuationFact
+                    && (e.AffectedEntityId == fact.Id || e.AffectedEntityId == inverse.Id
+                        || e.OriginalEntityId == fact.Id || e.OriginalEntityId == inverse.Id), ct))
+            return null;
+
+        try
+        {
+            // This reader verifies the exact sealed business-owner and physical
+            // reversal pair, including a reversal that crosses the sale key.
+            await StockReplayPhysicalAsOfReader.ReadAtKeyAsync(db, company, branch,
+                [plan.BalLocId], saleKey, ct);
+            var physical = plan.PhysicalLater.Concat([
+                new StockReplayPhysicalEvent(sale.Id, saleKey, -fact.BaseQty),
+                new StockReplayPhysicalEvent(reverse.Id, reverseKey, fact.BaseQty)]).ToArray();
+            var physicalFinal = plan.Removal
+                ? StockReplayPhysicalSimulator.SimulateRemoval(plan.PhysicalCurrent, plan.PhysicalAnchor, physical).FinalQuantity
+                : StockReplayPhysicalSimulator.Simulate(plan.PhysicalCurrent, plan.PhysicalAnchor, physical).FinalQuantity;
+            var financial = plan.WacLater.Concat([
+                new StockReplayWacEvent(sale.Id, saleKey, -fact.BaseQty, -fact.CostAmount, -fact.BaseQty),
+                new StockReplayWacEvent(reverse.Id, reverseKey, fact.BaseQty, fact.CostAmount, fact.BaseQty, fact.CostAmount)]).ToArray();
+            IReadOnlyList<StockReplayWacStep> steps;
+            decimal finalQty, finalValue;
+            if (plan.Removal)
+            {
+                var projected = StockReplayWacSimulator.SimulateRemoval(plan.WacCurrentQty, plan.WacCurrentValue,
+                    plan.WacAnchor, financial);
+                steps = projected.LaterSteps; finalQty = projected.FinalQuantity; finalValue = projected.FinalValue;
+            }
+            else
+            {
+                var projected = StockReplayWacSimulator.SimulateInsertion(plan.WacCurrentQty, plan.WacCurrentValue,
+                    plan.WacAnchor, financial);
+                steps = projected.LaterSteps; finalQty = projected.FinalQuantity; finalValue = projected.FinalValue;
+            }
+            if (physicalFinal != plan.PhysicalFinal || finalQty != plan.WacFinalQty || finalValue != plan.WacFinalValue
+                || steps.Single(s => s.EventId == sale.Id).SignedValue != -fact.CostAmount
+                || steps.Single(s => s.EventId == reverse.Id).SignedValue != fact.CostAmount
+                || plan.WacSteps.Any(expected => steps.Count(s => s.EventId == expected.EventId
+                    && s.SignedQuantity == expected.SignedQuantity && s.SignedValue == expected.SignedValue) != 1))
+                return null;
+            return StockPostingFingerprint.Create(new { ReceiptId = receipt.Id, SaleId = sale.Id, ReverseId = reverse.Id, plan.Removal }, new
+            {
+                SaleFact = fact.Id, ReverseFact = inverse.Id, fact.BaseQty, fact.CostAmount,
+                Owner = owner.Id, owner.PostingSequence, owner.EffectiveAt,
+                owner.SealedAtUtc, OwnerRequest = owner.RequestFingerprint, OwnerSnapshot = owner.SourceSnapshotHash,
+                ReverseOwner = reverseOwner.Id, ReverseSequence = reverseOwner.PostingSequence, ReverseAt = reverseOwner.EffectiveAt,
+                ReverseSeal = reverseOwner.SealedAtUtc, ReverseRequest = reverseOwner.RequestFingerprint,
+                ReverseSnapshot = reverseOwner.SourceSnapshotHash,
+                invoice.InvNo, invoice.Status, invoice.RollbackDate, RowVersion = Convert.ToHexString(invoice.RowVersion ?? []),
+                InvoiceLine = line.Line, line.ICode, line.StdQty, line.StdUom, line.StockControl, line.LinkDo,
+                sale.FromBalLocId, sale.FrStdQty, sale.FrStdUom, sale.IStatus, sale.FromLotId, sale.FrLotNo,
+                fact.BaseCurrency, fact.TransactionCurrency, fact.TransactionCostAmount, fact.ExchangeRate,
+                plan.PhysicalCurrent, plan.PhysicalFinal, plan.WacCurrentQty, plan.WacCurrentValue,
+                plan.WacFinalQty, plan.WacFinalValue
+            }).SourceSnapshotHash;
+        }
+        catch (Exception error) when (error is StockLedgerException or ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static NeutralReversedSaleCandidate NeutralSaleCandidate(StockReplayWacInsertionPlan plan) =>
+        new(plan.ItemCode, plan.PhysicalPlan.BalLocId, plan.PhysicalPlan.LedgerEpochId, false,
+            plan.PhysicalPlan.CurrentQuantity, plan.PhysicalPlan.Candidate, plan.PhysicalPlan.LaterEvents,
+            plan.PhysicalPlan.Projection.FinalQuantity, plan.Tail.CurrentQuantity, plan.Tail.CurrentValue,
+            plan.Candidate, plan.Tail.LaterEvents, plan.Projection.LaterSteps,
+            plan.Projection.FinalQuantity, plan.Projection.FinalValue);
+
+    private static NeutralReversedSaleCandidate NeutralSaleCandidate(StockReplayWacRemovalPlan plan) =>
+        new(plan.ItemCode, plan.PhysicalPlan.BalLocId, plan.PhysicalPlan.LedgerEpochId, true,
+            plan.PhysicalPlan.CurrentQuantity, plan.PhysicalPlan.RemovedActiveEvent, plan.PhysicalPlan.LaterEvents,
+            plan.PhysicalPlan.Projection.FinalQuantity, plan.Tail.CurrentQuantity, plan.Tail.CurrentValue,
+            plan.RemovedActiveEvent, plan.Tail.LaterEvents, plan.Projection.LaterSteps,
+            plan.Projection.FinalQuantity, plan.Projection.FinalValue);
 
     private static bool IsRepeatedItemWacMrShape(IvTrxBatch batch, IvTrxBatchDetail[] details) =>
         details.Length is >= 2 and <= 10
@@ -67,9 +299,7 @@ public sealed partial class IvInventoryPostingService
         if (FuturePostDateError(batch) is string future)
             return IvInventoryPostingBatchResult.Fail(batchNo, future);
         var items = details.Select(d => d.ICode!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (await HasReversedOutgoingAfterAsync(read, company, branch, items, batch.TrxDtTime, ct))
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "This receipt has a later reversed issue that needs additional replay.");
+        var hasReversedOutgoing = await HasReversedOutgoingAfterAsync(read, company, branch, items, batch.TrxDtTime, ct);
 
         var authorities = new List<StockReplayFifoMrReceiptAuthority>(details.Length);
         foreach (var detail in details)
@@ -111,6 +341,17 @@ public sealed partial class IvInventoryPostingService
             plans.Add(group.Key, financial);
         }
 
+        string? reversedSaleProof = null;
+        if (hasReversedOutgoing)
+        {
+            if (items.Length == 1 && multiPiles.Count == 0 && plans.TryGetValue(items[0], out var salePlan))
+                reversedSaleProof = await ProveNeutralReversedSaleAsync(read, company, branch, batch,
+                    NeutralSaleCandidate(salePlan), ct);
+            if (reversedSaleProof is null)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    "This receipt has a later reversed issue that needs additional replay.");
+        }
+
         await using var write = await _dbFactory.CreateDbContextAsync(ct);
         await using var tx = await write.Database.BeginTransactionAsync(ct);
         await new BranchStockTransactionLock().AcquireAsync(write, company, branch, ct);
@@ -124,8 +365,11 @@ public sealed partial class IvInventoryPostingService
             || !currentDetails.Select(d => d.Id).SequenceEqual(details.Select(d => d.Id))
             || MultiWacMrDraftFingerprint(locked, currentDetails) != draftFingerprint
             || !await HasOnlyWacPoolsAsync(write, company, branch, currentDetails, ct)
-            || await HasReversedOutgoingAfterAsync(write, company, branch, items, batch.TrxDtTime, ct))
+            || await HasReversedOutgoingAfterAsync(write, company, branch, items, batch.TrxDtTime, ct) != hasReversedOutgoing)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt or its dependencies changed. Retry posting.");
+        if (hasReversedOutgoing && reversedSaleProof != await ProveNeutralReversedSaleAsync(write,
+                company, branch, locked, NeutralSaleCandidate(plans[items[0]]), ct, lockSalesEvidence: true))
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed sale changed. Retry posting.");
         if (await RejectReversedProductionReceiptAsync(write, company, branch, batchNo,
                 IvTrxTypes.MiscellaneousReceipt, rollback: false, ct) is { } rejected)
             return rejected;
@@ -176,9 +420,7 @@ public sealed partial class IvInventoryPostingService
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, company, branch, batch.TrxDtTime, ct) is string closed)
             return IvInventoryPostingBatchResult.Fail(batchNo, closed);
         var items = details.Select(d => d.ICode!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (await HasReversedOutgoingAfterAsync(read, company, branch, items, batch.TrxDtTime, ct))
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "This receipt has a later reversed issue that needs additional replay before rollback.");
+        var hasReversedOutgoing = await HasReversedOutgoingAfterAsync(read, company, branch, items, batch.TrxDtTime, ct);
         var histories = (await _posting.LoadHistoryForBatchAsync(read, company, branch, batchNo, ct))
             .OrderBy(h => h.Id).ToArray();
         if (histories.Length != details.Length || histories.Select(h => h.StockPostingId).Distinct().Count() != 1
@@ -227,6 +469,17 @@ public sealed partial class IvInventoryPostingService
             plans.Add(group.Key, plan);
         }
 
+        string? reversedSaleProof = null;
+        if (hasReversedOutgoing)
+        {
+            if (items.Length == 1 && multiPiles.Count == 0 && plans.TryGetValue(items[0], out var salePlan))
+                reversedSaleProof = await ProveNeutralReversedSaleAsync(read, company, branch, batch,
+                    NeutralSaleCandidate(salePlan.Combined), ct);
+            if (reversedSaleProof is null)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    "This receipt has a later reversed issue that needs additional replay before rollback.");
+        }
+
         var fingerprint = MultiWacMrDraftFingerprint(batch, details);
         await using var write = await _dbFactory.CreateDbContextAsync(ct);
         await using var tx = await write.Database.BeginTransactionAsync(ct);
@@ -259,8 +512,11 @@ public sealed partial class IvInventoryPostingService
             || currentOwner.EffectiveAt != owner.EffectiveAt || currentOwner.SealedAtUtc != owner.SealedAtUtc
             || currentOwner.RequestFingerprint != owner.RequestFingerprint || currentOwner.SourceSnapshotHash != owner.SourceSnapshotHash
             || !await HasOnlyWacPoolsAsync(write, company, branch, currentDetails, ct)
-            || await HasReversedOutgoingAfterAsync(write, company, branch, items, batch.TrxDtTime, ct))
+            || await HasReversedOutgoingAfterAsync(write, company, branch, items, batch.TrxDtTime, ct) != hasReversedOutgoing)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt or its dependencies changed. Retry rollback.");
+        if (hasReversedOutgoing && reversedSaleProof != await ProveNeutralReversedSaleAsync(write,
+                company, branch, locked, NeutralSaleCandidate(plans[items[0]].Combined), ct, lockSalesEvidence: true))
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed sale changed. Retry rollback.");
         if (await RejectReversedProductionReceiptAsync(write, company, branch, batchNo,
                 IvTrxTypes.MiscellaneousReceipt, rollback: true, ct) is { } rejected)
             return rejected;

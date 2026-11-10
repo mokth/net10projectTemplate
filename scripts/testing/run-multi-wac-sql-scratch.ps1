@@ -11,7 +11,10 @@ param(
     [switch]$InjectFailure,
     [switch]$SalesReturn,
     [switch]$SalesReturnRolledBack,
-    [switch]$SalesReturnFailure
+    [switch]$SalesReturnFailure,
+    [switch]$ReversedSale,
+    [switch]$ReversedSaleEdit,
+    [switch]$ReversedSaleBusy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,8 +24,8 @@ if ($MixedLocations -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $Mor
 if ($BothItems -and (-not $MixedLocations -or $EditRace -or $InjectFailure)) { throw 'The both-item concurrency case requires only -MixedLocations.' }
 if ($MoreLines -and -not $TwoPiles) { throw 'The multi-line case requires -TwoPiles.' }
 if ($InjectFailure -and ($EditRace -or -not ($RepeatedAndOther -or $TwoPiles -or $MixedLocations))) { throw 'Choose a receipt shape for failure injection.' }
-if (@($SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure).Where({ $_ }).Count -gt 1) { throw 'Choose one Sales return case.' }
-if (($SalesReturn -or $SalesReturnRolledBack -or $SalesReturnFailure) -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines -or $MixedLocations -or $BothItems -or $EditRace -or $InjectFailure)) { throw 'Choose the Sales return case on its own.' }
+if (@($SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy).Where({ $_ }).Count -gt 1) { throw 'Choose one Sales case.' }
+if (($SalesReturn -or $SalesReturnRolledBack -or $SalesReturnFailure -or $ReversedSale -or $ReversedSaleEdit -or $ReversedSaleBusy) -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines -or $MixedLocations -or $BothItems -or $EditRace -or $InjectFailure)) { throw 'Choose the Sales case on its own.' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $scratch = 'Codex_ReplayNeutral_Test_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 if ($scratch -cnotmatch '^Codex_ReplayNeutral_Test_[0-9a-f]{12}$') {
@@ -50,7 +53,10 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($SalesReturnFailure) { 'SqlServer_backdated_receipt_sales_return_is_atomic_on_failure' }
+    $testName = if ($ReversedSaleBusy) { 'SqlServer_backdated_reversed_sale_does_not_wait_for_invoice_lock' }
+        elseif ($ReversedSaleEdit) { 'SqlServer_backdated_reversed_sale_rejects_changed_invoice' }
+        elseif ($ReversedSale) { 'SqlServer_backdated_receipt_with_reversed_sale_and_later_issue' }
+        elseif ($SalesReturnFailure) { 'SqlServer_backdated_receipt_sales_return_is_atomic_on_failure' }
         elseif ($SalesReturnRolledBack) { 'SqlServer_backdated_receipt_after_rolled_back_return' }
         elseif ($SalesReturn) { 'SqlServer_backdated_receipt_reprices_two_sales_and_one_return' }
         elseif ($BothItems) { 'Concurrent_both_item_locations_receipt_posts_and_rolls_back_once' }

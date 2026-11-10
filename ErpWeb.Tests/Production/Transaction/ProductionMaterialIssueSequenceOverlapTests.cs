@@ -17,6 +17,7 @@ using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using ErpWeb.Tests.Inventory.Transaction;
+using ErpWeb.Tests.Procurement.Transaction;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -1103,7 +1104,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                     new IvStockCommonRepository(_factory), new IvStockTransactionRepository(),
                     new IvStockPostingRepository(), InventoryLedgerTestFixture.CreateInventoryPosting(
                         _factory, enableBackdatedReplay: consumeAt is not (110 or 112 or 114), qaPhysical: earlierQaPhysical),
-                    NullLogger<IvGoodsReceiptService>.Instance);
+                    NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
                 var saved = await earlierGoods.SaveNewAsync(new IvGoodsReceiptSaveRequest
                 {
                     TrxType = IvTrxTypes.GoodsReceive, TrxDate = new DateTime(2026, 10, 2),
@@ -1450,7 +1451,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 new IvStockTransactionRepository(), new IvStockPostingRepository(),
                 InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: consumeAt is not (124 or 126 or 127),
                     qaReceipt: qaReceipt, qaPhysical: qaPhysical),
-                NullLogger<IvGoodsReceiptService>.Instance);
+                NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
             var saved = await goods.SaveNewAsync(new IvGoodsReceiptSaveRequest
             {
                 TrxType = IvTrxTypes.GoodsReceive, TrxDate = receiptDate,
@@ -4940,7 +4941,8 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 new FixedCurrentDateService(receiptBusinessDate), new IvStockMasterRepository(_factory),
                 new IvStockCommonRepository(_factory), new IvStockTransactionRepository(),
                 new IvStockPostingRepository(), InventoryLedgerTestFixture.CreateInventoryPosting(
-                    _factory, enableBackdatedReplay: scenario != 52), NullLogger<IvGoodsReceiptService>.Instance);
+                    _factory, enableBackdatedReplay: scenario != 52), NullLogger<IvGoodsReceiptService>.Instance,
+                approval: TestDisabledProcurementApprovalGuard.Instance);
             var source = await sourceGoods.SaveNewAsync(new IvGoodsReceiptSaveRequest
             {
                 TrxType = IvTrxTypes.GoodsReceive, TrxDate = new DateTime(2026, 10, 1),
@@ -5050,7 +5052,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 new IvStockTransactionRepository(), new IvStockPostingRepository(),
                 InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: scenario != 55,
                     qaReceipt: qaReceipt, qaPhysical: qaPhysical),
-                NullLogger<IvGoodsReceiptService>.Instance);
+                NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
             var saved = await goods.SaveNewAsync(new IvGoodsReceiptSaveRequest
             {
                 TrxType = IvTrxTypes.GoodsReceive, TrxDate = receiptDate,
