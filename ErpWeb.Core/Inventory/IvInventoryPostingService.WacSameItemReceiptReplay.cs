@@ -80,22 +80,21 @@ public sealed partial class IvInventoryPostingService
             authorities.Add(await StockReplayFifoMrReceiptAuthorityReader.ReadLineAsync(
                 read, company, branch, batchNo, pile.Value, detail.Id, ct));
         }
-        if (authorities.GroupBy(a => a.ItemCode, StringComparer.OrdinalIgnoreCase)
-            .Any(g => g.Select(a => a.BalLocId).Distinct().Count() != 1))
-        {
-            if (items.Length == 1)
-                return await PostMultiPileWacMrAsync(read, batch, details, authorities,
-                    draftFingerprint, company, branch, batchNo, ct);
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Repeated lines for one item currently need the same destination pile for replay.");
-        }
         var plans = new Dictionary<string, StockReplayWacInsertionPlan>(StringComparer.OrdinalIgnoreCase);
+        var multiPiles = new Dictionary<string, StockReplayWacMultiPileReceiptInsertionPlan>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in authorities.GroupBy(a => a.ItemCode, StringComparer.OrdinalIgnoreCase))
         {
             var itemLines = group.ToArray();
             if (itemLines.Select(a => a.BalLocId).Distinct().Count() != 1)
-                return IvInventoryPostingBatchResult.Fail(batchNo,
-                    "Repeated lines for one item currently need the same destination pile for replay.");
+            {
+                var multi = await StockReplayWacMultiPileReceiptPlanner.BuildInsertionAsync(
+                    read, company, branch, itemLines, ct);
+                if (multi.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
+                        read, multi.Tail.LaterEvents, batch.TrxDtTime, ct) is string unsupportedMulti)
+                    return IvInventoryPostingBatchResult.Fail(batchNo, unsupportedMulti);
+                multiPiles.Add(group.Key, multi);
+                continue;
+            }
             var quantity = IvQty.Round(itemLines.Sum(a => a.Quantity));
             var value = StockLedgerPrecision.Money(itemLines.Sum(a => a.Value));
             var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(read, company, branch,
@@ -141,12 +140,17 @@ public sealed partial class IvInventoryPostingService
             if (financial.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
                     write, financial.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
+        foreach (var multi in multiPiles.Values)
+            if (multi.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
+                    write, multi.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+                return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         var ledger = await BeginStandaloneLedgerAsync(write, company, branch, batchNo, reversal: false, ct);
         await using var scope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null) return ledger.Fail;
         var context = ledger.Context ?? throw MultiWacError("The receipt replay needs an active stock ledger.");
-        var lines = authorities.Select(a => new MultiWacMrInsertLine(a, plans[a.ItemCode])).ToArray();
-        var required = await WriteMultiWacMrAsync(context, lines, ct);
+        var lines = authorities.Select(a => new MultiWacMrInsertLine(a,
+            multiPiles.ContainsKey(a.ItemCode) ? null : plans[a.ItemCode])).ToArray();
+        var required = await WriteMultiWacMrAsync(context, lines, ct, multiPiles);
         await _coordinator!.CompleteReplayInTransactionAsync(context, required, ct);
         scope.MarkCompleted();
         await tx.CommitAsync(ct);
@@ -193,20 +197,21 @@ public sealed partial class IvInventoryPostingService
                 || h.DocumentRevision != owner.DocumentRevision))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has no exact sealed owner.");
 
-        if (histories.GroupBy(h => h.ICode, StringComparer.OrdinalIgnoreCase)
-            .Any(g => g.Select(h => h.ToBalLocId).Distinct().Count() != 1))
-        {
-            if (items.Length == 1)
-                return await RollBackMultiPileWacMrAsync(read, batch, details, histories, owner,
-                    company, branch, userId, batchNo, ct);
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Repeated lines for one item currently need the same destination pile for rollback.");
-        }
-
         var plans = new Dictionary<string, SameItemWacRemovalPlan>(StringComparer.OrdinalIgnoreCase);
+        var multiPiles = new Dictionary<string, StockReplayWacMultiPileReceiptRemovalPlan>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in histories.GroupBy(h => h.ICode!, StringComparer.OrdinalIgnoreCase))
         {
             var originals = group.OrderBy(h => h.Id).ToArray();
+            if (originals.Select(h => h.ToBalLocId).Distinct().Count() > 1)
+            {
+                var multi = await StockReplayWacMultiPileReceiptPlanner.BuildRemovalAsync(
+                    read, company, branch, originals, owner, ct);
+                if (multi.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
+                        read, multi.Tail.LaterEvents, batch.TrxDtTime, ct) is string unsupportedMulti)
+                    return IvInventoryPostingBatchResult.Fail(batchNo, unsupportedMulti);
+                multiPiles.Add(group.Key, multi);
+                continue;
+            }
             var first = originals[0];
             var key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
                 owner.PostingSequence, $"H{first.Id:D10}", 0);
@@ -222,6 +227,7 @@ public sealed partial class IvInventoryPostingService
             plans.Add(group.Key, plan);
         }
 
+        var fingerprint = MultiWacMrDraftFingerprint(batch, details);
         await using var write = await _dbFactory.CreateDbContextAsync(ct);
         await using var tx = await write.Database.BeginTransactionAsync(ct);
         await new BranchStockTransactionLock().AcquireAsync(write, company, branch, ct);
@@ -236,6 +242,7 @@ public sealed partial class IvInventoryPostingService
         var currentOwner = await write.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == owner.Id, ct);
         if (!IsRepeatedItemWacMrShape(locked, currentDetails) || currentHistories.Length != histories.Length
             || !currentDetails.Select(d => d.Id).SequenceEqual(details.Select(d => d.Id))
+            || MultiWacMrDraftFingerprint(locked, currentDetails) != fingerprint
             || !currentHistories.Select(h => h.Id).SequenceEqual(histories.Select(h => h.Id))
             || currentDetails.Any(d => currentHistories.Count(h => h.TrxLineNo == d.TrxLineNo
                 && MultiWacMrHistoryMatches(d, h)) != 1)
@@ -263,6 +270,10 @@ public sealed partial class IvInventoryPostingService
             if (plan.Combined.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
                     write, plan.Combined.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
+        foreach (var multi in multiPiles.Values)
+            if (multi.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
+                    write, multi.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+                return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         var ledger = await BeginStandaloneLedgerAsync(write, company, branch, batchNo, reversal: true, ct);
         await using var scope = new StockPostingAbortScope(_coordinator, ledger.Context);
         if (ledger.Fail is not null) return ledger.Fail;
@@ -275,12 +286,22 @@ public sealed partial class IvInventoryPostingService
             || context.Posting.EffectiveAt != owner.EffectiveAt)
             throw MultiWacError("The rollback root does not reverse its receipt owner.");
         var refreshedPlans = new Dictionary<string, SameItemWacRemovalPlan>(StringComparer.OrdinalIgnoreCase);
+        var refreshedMulti = new Dictionary<string, StockReplayWacMultiPileReceiptRemovalPlan>(StringComparer.OrdinalIgnoreCase);
         var permits = new Dictionary<string, StockReplayWacWritePermit>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (item, plan) in plans)
+        foreach (var item in items)
         {
-            await StockReplayWacRemovalPlanner.ValidateWithinRootAsync(context, plan.Anchor, ct);
             var originals = currentHistories.Where(h => string.Equals(h.ICode, item, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(h => h.Id).ToArray();
+            if (multiPiles.TryGetValue(item, out var multi))
+            {
+                var (refreshedMultiPlan, multiPermit) = await StockReplayWacMultiPileReceiptPlanner.PrepareRemovalAsync(
+                    context, multi, originals, owner, ct);
+                refreshedMulti.Add(item, refreshedMultiPlan);
+                permits.Add(item, multiPermit);
+                continue;
+            }
+            var plan = plans[item];
+            await StockReplayWacRemovalPlanner.ValidateWithinRootAsync(context, plan.Anchor, ct);
             var refreshed = ComposeReceiptItemRemoval(plan.Anchor, originals, owner);
             if (refreshed.Combined.PlanHash != plan.Combined.PlanHash)
                 throw MultiWacError("The receipt removal plan changed after planning.");
@@ -309,12 +330,21 @@ public sealed partial class IvInventoryPostingService
             if (pile.StdQty != combined.PhysicalPlan.Projection.FinalQuantity)
                 throw MultiWacError("The receipt rollback does not reconcile with its destination pile.");
         }
+        foreach (var multi in refreshedMulti.Values)
+            foreach (var pilePlan in multi.Piles)
+            {
+                var pile = await write.IvBalLocs.AsNoTracking().SingleAsync(b => b.Id == pilePlan.BalLocId
+                    && b.CompanyCode == company && b.BranchCode == branch, ct);
+                if (pile.StdQty != pilePlan.Projection.FinalQuantity)
+                    throw MultiWacError("The receipt rollback does not reconcile with its destination pile.");
+            }
         for (var i = 0; i < currentHistories.Length; i++)
         {
             var original = currentHistories[i];
             var reversal = reversals.SingleOrDefault(h => h.ReversesHistoryId == original.Id);
             var facts = activeFacts[original.Id];
-            var source = refreshedPlans[original.ICode!].SourceEvents[original.Id];
+            var source = refreshedMulti.TryGetValue(original.ICode!, out var multi)
+                ? multi.SourceEvents[original.Id] : refreshedPlans[original.ICode!].SourceEvents[original.Id];
             if (reversal is null || reversal.FromBalLocId != original.ToBalLocId
                 || reversal.FrStdQty != original.ToStdQty || reversal.FromLotId != original.ToLotId
                 || facts.Count != 1 || facts[0].CostMethod != StockCostMethods.MovingAverage
@@ -328,13 +358,17 @@ public sealed partial class IvInventoryPostingService
         }
         var required = new List<int>();
         var nextLine = currentHistories.Length + 1;
-        foreach (var (item, refreshed) in refreshedPlans)
+        foreach (var item in items)
         {
-            var combined = refreshed.Combined;
-            var tail = await StockReplayWacTailRepricingWriter.AppendPreparedRemovalTailAsync(
-                context, permits[item], combined, nextLine, ct);
+            var hasMulti = refreshedMulti.TryGetValue(item, out var multi);
+            var tail = hasMulti
+                ? await StockReplayWacTailRepricingWriter.AppendPreparedMultiPileReceiptRemovalAsync(
+                    context, permits[item], multi!, nextLine, ct)
+                : await StockReplayWacTailRepricingWriter.AppendPreparedRemovalTailAsync(
+                    context, permits[item], refreshedPlans[item].Combined, nextLine, ct);
             required.AddRange(tail.RepricedHistoryIds);
-            nextLine = checked(nextLine + 2 * combined.Tail.LaterEvents.Count);
+            nextLine = checked(nextLine + 2 * (hasMulti ? multi!.Tail.LaterEvents.Count
+                : refreshedPlans[item].Combined.Tail.LaterEvents.Count));
             await StockReplayWacCostStateWriter.ApplyAsync(context, permits[item], ct);
         }
         await _coordinator!.CompleteReplayInTransactionAsync(context, required, ct);

@@ -45,6 +45,14 @@ public sealed class IvMultiWacReceiptSqlServerTests
         RunAsync(sameItem: false, twoPiles: true, extraLines: 2);
 
     [MultiWacReceiptSqlFact]
+    public Task Concurrent_mixed_item_location_receipt_posts_and_rolls_back_once() =>
+        RunAsync(sameItem: false, twoPiles: true, mixedLocations: true);
+
+    [MultiWacReceiptSqlFact]
+    public Task Concurrent_both_item_locations_receipt_posts_and_rolls_back_once() =>
+        RunAsync(sameItem: false, twoPiles: true, mixedLocations: true, bothItemsMultiPile: true);
+
+    [MultiWacReceiptSqlFact]
     public Task Multi_item_receipt_rejects_draft_edit_after_planning() => RunAsync(sameItem: false, editRace: true);
 
     [MultiWacReceiptSqlFact]
@@ -63,6 +71,10 @@ public sealed class IvMultiWacReceiptSqlServerTests
         RunAsync(sameItem: false, editRace: true, twoPiles: true, extraLines: 2);
 
     [MultiWacReceiptSqlFact]
+    public Task Mixed_item_location_receipt_rejects_draft_edit_after_planning() =>
+        RunAsync(sameItem: false, editRace: true, twoPiles: true, mixedLocations: true);
+
+    [MultiWacReceiptSqlFact]
     public Task Repeated_and_other_items_roll_back_database_failures_atomically() =>
         RunAsync(sameItem: false, repeatFirstItem: true, injectFailure: true);
 
@@ -74,8 +86,13 @@ public sealed class IvMultiWacReceiptSqlServerTests
     public Task Multi_line_multi_pile_receipt_rolls_back_database_failures_atomically() =>
         RunAsync(sameItem: false, twoPiles: true, extraLines: 2, injectFailure: true);
 
+    [MultiWacReceiptSqlFact]
+    public Task Mixed_item_location_receipt_rolls_back_database_failures_atomically() =>
+        RunAsync(sameItem: false, twoPiles: true, mixedLocations: true, injectFailure: true);
+
     private static async Task RunAsync(bool sameItem, bool editRace = false,
-        bool repeatFirstItem = false, bool injectFailure = false, bool twoPiles = false, int extraLines = 0)
+        bool repeatFirstItem = false, bool injectFailure = false, bool twoPiles = false,
+        int extraLines = 0, bool mixedLocations = false, bool bothItemsMultiPile = false)
     {
         var connectionString = Environment.GetEnvironmentVariable(ConnectionEnvironment)
             ?? throw new InvalidOperationException("An isolated SQL Server connection is required.");
@@ -113,11 +130,13 @@ public sealed class IvMultiWacReceiptSqlServerTests
                 new IvStockMaster { CompanyCode = "DEMO", ICode = "B100", IDesc = "Item B", IClassCode = "RAW", StdUom = "EA", IsActive = true });
             db.IvBalLocs.AddRange(
                 new IvBalLoc { CompanyCode = "DEMO", BranchCode = "HQ", ICode = "A100", WhCode = "MAIN", LocCode = "BIN1", IStatus = "ACTIVE", StdQty = 15m, StdUom = "EA", TransDate = Today.AddDays(-5) },
-                new IvBalLoc { CompanyCode = "DEMO", BranchCode = "HQ", ICode = "B100", WhCode = "MAIN", LocCode = "BIN1", IStatus = "ACTIVE", StdQty = 10m, StdUom = "EA", TransDate = Today.AddDays(-5) });
+                new IvBalLoc { CompanyCode = "DEMO", BranchCode = "HQ", ICode = "B100", WhCode = "MAIN", LocCode = "BIN1", IStatus = "ACTIVE", StdQty = bothItemsMultiPile ? 7m : 10m, StdUom = "EA", TransDate = Today.AddDays(-5) });
             if (twoPiles)
             {
                 db.IvLocations.Add(new IvLocation { CompanyCode = "DEMO", BranchCode = "HQ", WarehouseCode = "MAIN", LocCode = "BIN2", IsActive = true });
                 db.IvBalLocs.Add(new IvBalLoc { CompanyCode = "DEMO", BranchCode = "HQ", ICode = "A100", WhCode = "MAIN", LocCode = "BIN2", IStatus = "ACTIVE", StdQty = 5m, StdUom = "EA", TransDate = Today.AddDays(-5) });
+                if (bothItemsMultiPile)
+                    db.IvBalLocs.Add(new IvBalLoc { CompanyCode = "DEMO", BranchCode = "HQ", ICode = "B100", WhCode = "MAIN", LocCode = "BIN2", IStatus = "ACTIVE", StdQty = 3m, StdUom = "EA", TransDate = Today.AddDays(-5) });
             }
             await db.SaveChangesAsync();
             await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", twoPiles ? 20m : 15m, 3m);
@@ -146,7 +165,17 @@ public sealed class IvMultiWacReceiptSqlServerTests
 
         var first = InventoryLedgerTestFixture.CreateMiscReceipt(factory, Today, enableBackdatedReplay: true);
         var second = InventoryLedgerTestFixture.CreateMiscReceipt(factory, Today, enableBackdatedReplay: true);
-        IReadOnlyList<IvMiscReceiptLineRequest> receiptLines = twoPiles
+        IReadOnlyList<IvMiscReceiptLineRequest> receiptLines = mixedLocations
+            ? [
+                new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    Quantity = 2m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
+                new IvMiscReceiptLineRequest { ICode = "B100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    Quantity = bothItemsMultiPile ? 2m : 5m, UnitPrice = bothItemsMultiPile ? 4m : 10m,
+                    PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
+                new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN2",
+                    Quantity = 3m, UnitPrice = 11m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }
+              ]
+            : twoPiles
             ? [
                 new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
                     Quantity = 2m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
@@ -175,6 +204,9 @@ public sealed class IvMultiWacReceiptSqlServerTests
                 new IvMiscReceiptLineRequest { ICode = "B100", ToWarehouse = "MAIN", ToLocation = "BIN1",
                     Quantity = 5m, UnitPrice = 10m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }
               ];
+        if (bothItemsMultiPile)
+            receiptLines = receiptLines.Concat([new IvMiscReceiptLineRequest { ICode = "B100", ToWarehouse = "MAIN", ToLocation = "BIN2",
+                Quantity = 3m, UnitPrice = 10m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }]).ToArray();
         if (extraLines > 0)
         {
             var additional = new[]
@@ -196,13 +228,13 @@ public sealed class IvMultiWacReceiptSqlServerTests
         var postedAValue = twoPiles ? extraLines == 0 ? 75.48m : extraLines == 1 ? 81m : 85.5m
             : sameItem || repeatFirstItem ? 57.6m : 54m;
         var postedIssueA = twoPiles ? extraLines == 0 ? 35.52m : 36m : sameItem || repeatFirstItem ? 38.4m : 36m;
-        var postedBQuantity = sameItem || twoPiles ? 6m : 11m;
-        var postedBValue = sameItem || twoPiles ? 24m : 66m;
-        var postedIssueB = sameItem || twoPiles ? 16m : 24m;
+        var postedBQuantity = sameItem || twoPiles && !mixedLocations ? 6m : 11m;
+        var postedBValue = bothItemsMultiPile ? 57.2m : sameItem || twoPiles && !mixedLocations ? 24m : 66m;
+        var postedIssueB = bothItemsMultiPile ? 20.8m : sameItem || twoPiles && !mixedLocations ? 16m : 24m;
 
         if (injectFailure)
         {
-            var rejectedLine = twoPiles
+            var rejectedLine = twoPiles && !mixedLocations
                 ? "[ItemCode] <> N'A100' OR [MovementCode] <> N'RECEIPT_IN' OR [PostingLineNo] <> 2"
                 : "[ItemCode] <> N'B100' OR [MovementCode] <> N'RECEIPT_IN'";
             await using (var db = await factory.CreateDbContextAsync())
@@ -266,7 +298,7 @@ public sealed class IvMultiWacReceiptSqlServerTests
                 Assert.True(reached == barrier.Reached, "The draft-edit checkpoint was not reached.");
                 await using var editor = await factory.CreateDbContextAsync();
                 var query = editor.IvTrxBatchDetails.Where(d => d.BatchNo == receipt.BatchNo);
-                var detail = extraLines > 0 ? await query.OrderByDescending(d => d.TrxLineNo).FirstAsync()
+                var detail = extraLines > 0 || mixedLocations ? await query.OrderByDescending(d => d.TrxLineNo).FirstAsync()
                     : await query.OrderBy(d => d.TrxLineNo).FirstAsync();
                 detail.Remarks = "Edited after replay planning";
                 await editor.SaveChangesAsync();
@@ -366,7 +398,10 @@ public sealed class IvMultiWacReceiptSqlServerTests
             Assert.Equal(qtyA - secondPileQty, (await db.IvBalLocs.SingleAsync(b => b.Id == piles["A100"])).StdQty);
             if (twoPiles)
                 Assert.Equal(secondPileQty, (await db.IvBalLocs.SingleAsync(b => b.ICode == "A100" && b.LocCode == "BIN2")).StdQty);
-            Assert.Equal(qtyB, (await db.IvBalLocs.SingleAsync(b => b.Id == piles["B100"])).StdQty);
+            var secondBPileQty = bothItemsMultiPile ? postingRole == "PRIMARY" ? 6m : 3m : 0m;
+            Assert.Equal(qtyB - secondBPileQty, (await db.IvBalLocs.SingleAsync(b => b.Id == piles["B100"])).StdQty);
+            if (bothItemsMultiPile)
+                Assert.Equal(secondBPileQty, (await db.IvBalLocs.SingleAsync(b => b.ICode == "B100" && b.LocCode == "BIN2")).StdQty);
             var issueA = issueBatches["A100"];
             var issueB = issueBatches["B100"];
             var issueHistories = await db.IvTrxHistories.Where(h => h.EntryRole == "ORIGINAL"
@@ -380,7 +415,7 @@ public sealed class IvMultiWacReceiptSqlServerTests
                 && p.PostingRole == postingRole).ToArrayAsync());
             Assert.NotNull(root.SealedAtUtc);
             var role = postingRole == "PRIMARY" ? "ORIGINAL" : "REVERSAL";
-            Assert.Equal(twoPiles ? 2 + extraLines : repeatFirstItem ? 3 : 2,
+            Assert.Equal(bothItemsMultiPile ? 4 : mixedLocations ? 3 : twoPiles ? 2 + extraLines : repeatFirstItem ? 3 : 2,
                 await db.IvTrxHistories.CountAsync(h => h.StockPostingId == root.Id && h.EntryRole == role));
         }
     }

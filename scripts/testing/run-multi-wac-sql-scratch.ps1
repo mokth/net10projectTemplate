@@ -5,6 +5,8 @@ param(
     [switch]$RepeatedAndOther,
     [switch]$TwoPiles,
     [switch]$MoreLines,
+    [switch]$MixedLocations,
+    [switch]$BothItems,
     [switch]$EditRace,
     [switch]$InjectFailure
 )
@@ -12,8 +14,10 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($SameItem -and $RepeatedAndOther) { throw 'Choose one receipt shape.' }
 if ($TwoPiles -and ($SameItem -or $RepeatedAndOther)) { throw 'Two-pile tests use their own receipt shape.' }
+if ($MixedLocations -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines)) { throw 'Mixed-location tests use their own receipt shape.' }
+if ($BothItems -and (-not $MixedLocations -or $EditRace -or $InjectFailure)) { throw 'The both-item concurrency case requires only -MixedLocations.' }
 if ($MoreLines -and -not $TwoPiles) { throw 'The multi-line case requires -TwoPiles.' }
-if ($InjectFailure -and ($EditRace -or -not ($RepeatedAndOther -or $TwoPiles))) { throw 'Choose a receipt shape for failure injection.' }
+if ($InjectFailure -and ($EditRace -or -not ($RepeatedAndOther -or $TwoPiles -or $MixedLocations))) { throw 'Choose a receipt shape for failure injection.' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $scratch = 'Codex_ReplayNeutral_Test_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 if ($scratch -cnotmatch '^Codex_ReplayNeutral_Test_[0-9a-f]{12}$') {
@@ -41,7 +45,11 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($MoreLines -and $InjectFailure) { 'Multi_line_multi_pile_receipt_rolls_back_database_failures_atomically' }
+    $testName = if ($BothItems) { 'Concurrent_both_item_locations_receipt_posts_and_rolls_back_once' }
+        elseif ($MixedLocations -and $InjectFailure) { 'Mixed_item_location_receipt_rolls_back_database_failures_atomically' }
+        elseif ($MixedLocations -and $EditRace) { 'Mixed_item_location_receipt_rejects_draft_edit_after_planning' }
+        elseif ($MixedLocations) { 'Concurrent_mixed_item_location_receipt_posts_and_rolls_back_once' }
+        elseif ($MoreLines -and $InjectFailure) { 'Multi_line_multi_pile_receipt_rolls_back_database_failures_atomically' }
         elseif ($MoreLines -and $EditRace) { 'Multi_line_multi_pile_receipt_rejects_draft_edit_after_planning' }
         elseif ($MoreLines) { 'Concurrent_multi_line_multi_pile_receipt_posts_and_rolls_back_once' }
         elseif ($TwoPiles -and $InjectFailure) { 'Two_pile_receipt_rolls_back_database_failures_atomically' }

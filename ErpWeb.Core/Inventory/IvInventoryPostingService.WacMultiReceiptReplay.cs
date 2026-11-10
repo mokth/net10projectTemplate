@@ -130,12 +130,13 @@ public sealed partial class IvInventoryPostingService
 
     private static async Task<IReadOnlyList<int>> WriteMultiWacMrAsync(StockPostingContext context,
         IReadOnlyList<MultiWacMrInsertLine> lines, CancellationToken ct,
-        StockReplayWacMultiPileReceiptInsertionPlan? multiPile = null)
+        IReadOnlyDictionary<string, StockReplayWacMultiPileReceiptInsertionPlan>? multiPiles = null)
     {
         context.EnsureUnsealed();
+        multiPiles ??= new Dictionary<string, StockReplayWacMultiPileReceiptInsertionPlan>(StringComparer.OrdinalIgnoreCase);
         var groups = lines.GroupBy(l => l.Authority.ItemCode, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.ToArray()).ToArray();
-        if (context.CostMethod != StockCostMethods.MovingAverage || lines.Count < 2
+        if (context.CostMethod != StockCostMethods.MovingAverage || lines.Count is < 2 or > 10
             || context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
             || context.Posting.PostingRole != "PRIMARY"
@@ -145,34 +146,49 @@ public sealed partial class IvInventoryPostingService
                     != context.Posting.SourceDocumentNo
                 || l.Authority.DocumentRevision != context.Posting.DocumentRevision
                 || l.Authority.EffectiveAt != context.Posting.EffectiveAt)
-            || multiPile is null && (lines.Any(l => l.Financial is null)
-                || groups.Select(g => g[0].Authority.BalLocId).Distinct().Count() != groups.Length
-                || lines.Any(l => l.Financial!.PhysicalPlan.Candidate.Key.OriginalPostingSequence != context.Posting.PostingSequence
-                    || l.Financial!.ItemCode != l.Authority.ItemCode)
-                || groups.Any(g => g.Any(l => !ReferenceEquals(l.Financial, g[0].Financial)
-                    || l.Authority.BalLocId != g[0].Authority.BalLocId)
-                || g[0].Financial!.PhysicalPlan.BalLocId != g[0].Authority.BalLocId
-                || g[0].Financial!.PhysicalPlan.Candidate.SignedDelta != IvQty.Round(g.Sum(l => l.Authority.Quantity))
-                || g[0].Financial!.Candidate.ReplaySignedQuantity != IvQty.Round(g.Sum(l => l.Authority.Quantity))
-                || g[0].Financial!.Candidate.FixedSignedValue != StockLedgerPrecision.Money(g.Sum(l => l.Authority.Value))
-                || g[0].Financial!.Projection.Candidate.SignedValue != StockLedgerPrecision.Money(g.Sum(l => l.Authority.Value))))
-            || multiPile is not null && (lines.Count is < 2 or > 10 || groups.Length != 1
-                || multiPile.Item != groups[0][0].Authority.ItemCode
-                || multiPile.Candidate.Key.OriginalPostingSequence != context.Posting.PostingSequence
-                || multiPile.Candidate.ReplaySignedQuantity != IvQty.Round(lines.Sum(l => l.Authority.Quantity))
-                || multiPile.Candidate.FixedSignedValue != StockLedgerPrecision.Money(lines.Sum(l => l.Authority.Value))
-                || multiPile.Projection.Candidate.SignedValue != StockLedgerPrecision.Money(lines.Sum(l => l.Authority.Value))
-                || multiPile.Piles.Count != lines.Select(l => l.Authority.BalLocId).Distinct().Count()
-                || lines.GroupBy(l => l.Authority.BalLocId).Any(g => !multiPile.Piles.Any(p =>
-                    p.BalLocId == g.Key && p.Candidate.SignedDelta == IvQty.Round(g.Sum(l => l.Authority.Quantity))))))
+            || lines.GroupBy(l => l.Authority.BalLocId).Any(g =>
+                g.Select(l => l.Authority.ItemCode).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
+            || multiPiles.Keys.Any(item => !groups.Any(g => string.Equals(
+                g[0].Authority.ItemCode, item, StringComparison.OrdinalIgnoreCase))))
             throw MultiWacError("The multi-line receipt differs from its approved replay plan.");
+
+        foreach (var group in groups)
+        {
+            var item = group[0].Authority.ItemCode;
+            var quantity = IvQty.Round(group.Sum(l => l.Authority.Quantity));
+            var value = StockLedgerPrecision.Money(group.Sum(l => l.Authority.Value));
+            if (multiPiles.TryGetValue(item, out var multi))
+            {
+                if (group.Any(l => l.Financial is not null || l.Authority.ItemCode != item) || multi.Item != item
+                    || multi.Candidate.Key.OriginalPostingSequence != context.Posting.PostingSequence
+                    || multi.Candidate.ReplaySignedQuantity != quantity || multi.Candidate.FixedSignedValue != value
+                    || multi.Projection.Candidate.SignedValue != value
+                    || multi.Piles.Count != group.Select(l => l.Authority.BalLocId).Distinct().Count()
+                    || group.GroupBy(l => l.Authority.BalLocId).Any(g => !multi.Piles.Any(p =>
+                        p.BalLocId == g.Key && p.Candidate.SignedDelta == IvQty.Round(g.Sum(l => l.Authority.Quantity)))))
+                    throw MultiWacError("A receipt item differs from its multi-location replay plan.");
+            }
+            else
+            {
+                var financial = group[0].Financial;
+                if (financial is null || group.Any(l => !ReferenceEquals(l.Financial, financial)
+                        || l.Authority.ItemCode != item || l.Authority.BalLocId != group[0].Authority.BalLocId)
+                    || financial.ItemCode != item
+                    || financial.PhysicalPlan.Candidate.Key.OriginalPostingSequence != context.Posting.PostingSequence
+                    || financial.PhysicalPlan.BalLocId != group[0].Authority.BalLocId
+                    || financial.PhysicalPlan.Candidate.SignedDelta != quantity
+                    || financial.Candidate.ReplaySignedQuantity != quantity || financial.Candidate.FixedSignedValue != value
+                    || financial.Projection.Candidate.SignedValue != value)
+                    throw MultiWacError("A receipt item differs from its replay plan.");
+            }
+        }
 
         var db = context.Db;
         var permits = new List<StockReplayWacWritePermit>(groups.Length);
         foreach (var group in groups)
-            permits.Add(multiPile is null
-                ? await StockReplayWacInsertionPlanner.PrepareWithinRootAsync(context, group[0].Financial!, ct)
-                : await StockReplayWacMultiPileReceiptPlanner.PrepareInsertionAsync(context, multiPile, ct));
+            permits.Add(multiPiles.TryGetValue(group[0].Authority.ItemCode, out var multi)
+                ? await StockReplayWacMultiPileReceiptPlanner.PrepareInsertionAsync(context, multi, ct)
+                : await StockReplayWacInsertionPlanner.PrepareWithinRootAsync(context, group[0].Financial!, ct));
         var batchId = lines[0].Authority.BatchId;
         var batch = await db.IvTrxBatches.SingleAsync(b => b.Id == batchId, ct);
         var lineIds = lines.Select(l => l.Authority.DetailId).ToArray();
@@ -197,8 +213,9 @@ public sealed partial class IvInventoryPostingService
             var group = groupedPile.ToArray();
             var authority = group[0].Authority;
             var balance = balances[authority.BalLocId];
-            var physical = multiPile is null ? group[0].Financial!.PhysicalPlan
-                : multiPile.Piles.Single(p => p.BalLocId == authority.BalLocId);
+            var physical = multiPiles.TryGetValue(authority.ItemCode, out var multi)
+                ? multi.Piles.Single(p => p.BalLocId == authority.BalLocId)
+                : group[0].Financial!.PhysicalPlan;
             if (balance.StdQty != physical.CurrentQuantity || !balance.RowVersion.SequenceEqual(physical.BalanceRowVersion)
                 || group.Any(l => balance.LotId != l.Authority.LotId
                     || !string.Equals(balance.LotNo ?? "", l.Authority.LotNo ?? "", StringComparison.OrdinalIgnoreCase)
@@ -295,14 +312,15 @@ public sealed partial class IvInventoryPostingService
         var nextLine = checked(lines.Count + 1);
         for (var i = 0; i < groups.Length; i++)
         {
-            var tail = multiPile is null
-                ? await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
-                    context, permits[i], groups[i][0].Financial!, nextLine, ct)
-                : await StockReplayWacTailRepricingWriter.AppendPreparedMultiPileReceiptInsertionAsync(
-                    context, permits[i], multiPile, nextLine, ct);
+            var hasMulti = multiPiles.TryGetValue(groups[i][0].Authority.ItemCode, out var multi);
+            var tail = hasMulti
+                ? await StockReplayWacTailRepricingWriter.AppendPreparedMultiPileReceiptInsertionAsync(
+                    context, permits[i], multi!, nextLine, ct)
+                : await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
+                    context, permits[i], groups[i][0].Financial!, nextLine, ct);
             required.AddRange(tail.RepricedHistoryIds);
-            nextLine = checked(nextLine + 2 * (multiPile?.Tail.LaterEvents.Count
-                ?? groups[i][0].Financial!.Tail.LaterEvents.Count));
+            nextLine = checked(nextLine + 2 * (hasMulti ? multi!.Tail.LaterEvents.Count
+                : groups[i][0].Financial!.Tail.LaterEvents.Count));
             await StockReplayWacCostStateWriter.ApplyAsync(context, permits[i], ct);
         }
         return required.Distinct().ToArray();
