@@ -34,9 +34,22 @@ public sealed class IvMultiWacReceiptSqlServerTests
     public Task Concurrent_same_item_post_and_rollback_apply_each_line_once() => RunAsync(sameItem: true);
 
     [MultiWacReceiptSqlFact]
+    public Task Concurrent_repeated_and_other_items_post_and_rollback_apply_each_line_once() =>
+        RunAsync(sameItem: false, repeatFirstItem: true);
+
+    [MultiWacReceiptSqlFact]
     public Task Same_item_receipt_rejects_draft_edit_after_planning() => RunAsync(sameItem: true, editRace: true);
 
-    private static async Task RunAsync(bool sameItem, bool editRace = false)
+    [MultiWacReceiptSqlFact]
+    public Task Repeated_and_other_items_reject_draft_edit_after_planning() =>
+        RunAsync(sameItem: false, editRace: true, repeatFirstItem: true);
+
+    [MultiWacReceiptSqlFact]
+    public Task Repeated_and_other_items_roll_back_database_failures_atomically() =>
+        RunAsync(sameItem: false, repeatFirstItem: true, injectFailure: true);
+
+    private static async Task RunAsync(bool sameItem, bool editRace = false,
+        bool repeatFirstItem = false, bool injectFailure = false)
     {
         var connectionString = Environment.GetEnvironmentVariable(ConnectionEnvironment)
             ?? throw new InvalidOperationException("An isolated SQL Server connection is required.");
@@ -102,7 +115,16 @@ public sealed class IvMultiWacReceiptSqlServerTests
 
         var first = InventoryLedgerTestFixture.CreateMiscReceipt(factory, Today, enableBackdatedReplay: true);
         var second = InventoryLedgerTestFixture.CreateMiscReceipt(factory, Today, enableBackdatedReplay: true);
-        IReadOnlyList<IvMiscReceiptLineRequest> receiptLines = sameItem
+        IReadOnlyList<IvMiscReceiptLineRequest> receiptLines = repeatFirstItem
+            ? [
+                new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    Quantity = 2m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
+                new IvMiscReceiptLineRequest { ICode = "B100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    Quantity = 5m, UnitPrice = 10m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
+                new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    Quantity = 3m, UnitPrice = 11m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }
+              ]
+            : sameItem
             ? [
                 new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
                     Quantity = 2m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
@@ -121,6 +143,49 @@ public sealed class IvMultiWacReceiptSqlServerTests
             Lines = receiptLines
         });
         Assert.True(receipt.Succeeded, receipt.ErrorMessage);
+
+        if (injectFailure)
+        {
+            await using (var db = await factory.CreateDbContextAsync())
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE [StockValuationFact] ADD CONSTRAINT [TestRejectMixedPost] "
+                    + "CHECK ([ItemCode] <> N'B100' OR [MovementCode] <> N'RECEIPT_IN')");
+            var rejectedPost = await first.PostAsync([receipt.BatchNo]);
+            Assert.False(rejectedPost.Succeeded);
+            await using (var db = await factory.CreateDbContextAsync())
+            {
+                Assert.Equal(IvBatchStatuses.New, (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == receipt.BatchNo)).BatchStatus);
+                Assert.Empty(await db.IvTrxHistories.Where(h => h.BatchNo == receipt.BatchNo).ToArrayAsync());
+                Assert.Empty(await db.StockPostings.Where(p => p.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+                    && p.SourceDocumentNo == receipt.BatchNo.ToString()).ToArrayAsync());
+                var stateA = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+                var stateB = await db.StockCostStates.SingleAsync(s => s.ItemCode == "B100");
+                Assert.Equal((7m, 21m), (stateA.OnHandBaseQty, stateA.InventoryValue));
+                Assert.Equal((6m, 24m), (stateB.OnHandBaseQty, stateB.InventoryValue));
+                Assert.Equal(7m, (await db.IvBalLocs.SingleAsync(b => b.Id == piles["A100"])).StdQty);
+                Assert.Equal(6m, (await db.IvBalLocs.SingleAsync(b => b.Id == piles["B100"])).StdQty);
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE [StockValuationFact] DROP CONSTRAINT [TestRejectMixedPost]");
+            }
+            var posted = await first.PostAsync([receipt.BatchNo]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, 57.6m, 38.4m, 11m, 66m, 24m, "PRIMARY");
+            await using (var db = await factory.CreateDbContextAsync())
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE [StockValuationFact] ADD CONSTRAINT [TestRejectMixedRollback] "
+                    + "CHECK ([ItemCode] <> N'B100' OR [MovementCode] <> N'RECEIPT_IN' OR [ValuationStatus] <> N'REVERSED')");
+            var rejectedRollback = await first.RollbackAsync([receipt.BatchNo]);
+            Assert.False(rejectedRollback.Succeeded);
+            await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, 57.6m, 38.4m, 11m, 66m, 24m, "PRIMARY");
+            await using (var db = await factory.CreateDbContextAsync())
+            {
+                Assert.Empty(await db.IvTrxHistories.Where(h => h.BatchNo == receipt.BatchNo && h.EntryRole == "REVERSAL").ToArrayAsync());
+                Assert.Empty(await db.StockPostings.Where(p => p.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+                    && p.SourceDocumentNo == receipt.BatchNo.ToString() && p.PostingRole == "REVERSAL").ToArrayAsync());
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE [StockValuationFact] DROP CONSTRAINT [TestRejectMixedRollback]");
+            }
+            var rolledBack = await first.RollbackAsync([receipt.BatchNo]);
+            Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);
+            await AssertReceiptStateAsync(IvBatchStatuses.New, 7m, 21m, 24m, 6m, 24m, 16m, "REVERSAL");
+            return;
+        }
 
         if (editRace)
         {
@@ -158,7 +223,8 @@ public sealed class IvMultiWacReceiptSqlServerTests
             }
             var retried = await first.PostAsync([receipt.BatchNo]);
             Assert.True(retried.Succeeded, retried.ErrorMessage);
-            await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, 57.6m, 38.4m, 6m, 24m, 16m, "PRIMARY");
+            await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, 57.6m, 38.4m,
+                sameItem ? 6m : 11m, sameItem ? 24m : 66m, sameItem ? 16m : 24m, "PRIMARY");
             var rolledBack = await first.RollbackAsync([receipt.BatchNo]);
             Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);
             await AssertReceiptStateAsync(IvBatchStatuses.New, 7m, 21m, 24m, 6m, 24m, 16m, "REVERSAL");
@@ -168,8 +234,8 @@ public sealed class IvMultiWacReceiptSqlServerTests
         var posts = await RunContendedAsync(
             () => first.PostAsync([receipt.BatchNo]), () => second.PostAsync([receipt.BatchNo]));
         Assert.Contains(posts, result => result.Succeeded);
-        await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, sameItem ? 57.6m : 54m,
-            sameItem ? 38.4m : 36m, sameItem ? 6m : 11m, sameItem ? 24m : 66m,
+        await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, sameItem || repeatFirstItem ? 57.6m : 54m,
+            sameItem || repeatFirstItem ? 38.4m : 36m, sameItem ? 6m : 11m, sameItem ? 24m : 66m,
             sameItem ? 16m : 24m, "PRIMARY");
 
         var rollbacks = await RunContendedAsync(
@@ -243,7 +309,8 @@ public sealed class IvMultiWacReceiptSqlServerTests
                 && p.PostingRole == postingRole).ToArrayAsync());
             Assert.NotNull(root.SealedAtUtc);
             var role = postingRole == "PRIMARY" ? "ORIGINAL" : "REVERSAL";
-            Assert.Equal(2, await db.IvTrxHistories.CountAsync(h => h.StockPostingId == root.Id && h.EntryRole == role));
+            Assert.Equal(repeatFirstItem ? 3 : 2,
+                await db.IvTrxHistories.CountAsync(h => h.StockPostingId == root.Id && h.EntryRole == role));
         }
     }
 

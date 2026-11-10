@@ -9,8 +9,8 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
-    // One line per item keeps each WAC pool independent. All lines still share
-    // one document, branch transaction, posting root, and rollback operation.
+    // Each item has its own WAC plan, while all lines share one document,
+    // branch transaction, posting root, and rollback operation.
     private sealed record MultiWacMrInsertLine(
         StockReplayFifoMrReceiptAuthority Authority, StockReplayWacInsertionPlan Financial);
 
@@ -30,7 +30,7 @@ public sealed partial class IvInventoryPostingService
     private static async Task<bool> HasOnlyWacPoolsAsync(AppDbContext db, string company, string branch,
         IvTrxBatchDetail[] details, CancellationToken ct)
     {
-        var items = details.Select(d => d.ICode!).ToArray();
+        var items = details.Select(d => d.ICode!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var states = await db.StockCostStates.AsNoTracking().Where(s => s.CompanyCode == company
             && s.BranchCode == branch && items.Contains(s.ItemCode)).ToArrayAsync(ct);
         return states.Length == items.Length && items.All(item => states.Count(s =>

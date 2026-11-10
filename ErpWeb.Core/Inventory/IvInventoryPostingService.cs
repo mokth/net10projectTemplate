@@ -496,7 +496,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (needsReplay
             && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
             && _coordinator is not null
-            && await TryPostBackdatedSameItemWacMrAsync(companyCode, branchCode,
+            && await TryPostBackdatedRepeatedItemWacMrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } sameItemReplay)
             return sameItemReplay;
         if (needsReplay
@@ -866,7 +866,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (_openPeriodBackdatedReplayEnabled
             && expectedTrxType == IvTrxTypes.MiscellaneousReceipt
             && _coordinator is not null
-            && await TryRollBackBackdatedSameItemWacMrAsync(companyCode, branchCode,
+            && await TryRollBackBackdatedRepeatedItemWacMrAsync(companyCode, branchCode,
                 userId, batchNo, cancellationToken) is { } sameItemReplay)
             return sameItemReplay;
         if (_openPeriodBackdatedReplayEnabled
