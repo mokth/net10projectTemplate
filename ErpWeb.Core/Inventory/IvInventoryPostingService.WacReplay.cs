@@ -205,10 +205,8 @@ public sealed partial class IvInventoryPostingService
             return IvInventoryPostingBatchResult.Fail(batchNo, future);
         var pileId = await StockReplayInventoryReceiptPileLocator.FindUniqueAsync(
             read, companyCode, branchCode, details[0], cancellationToken);
-        if (await HasReversedSalesAfterAsync(read, companyCode, branchCode, [itemCode],
-                batch.TrxDtTime, cancellationToken))
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "This goods receipt has a later reversed sale that needs verified stock and cost replay.");
+        var hasReversedSale = await HasReversedSalesAfterAsync(read, companyCode, branchCode, [itemCode],
+            batch.TrxDtTime, cancellationToken);
         if (pileId is not > 0)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated WAC GR needs one existing destination pile.");
@@ -222,6 +220,9 @@ public sealed partial class IvInventoryPostingService
         if (invoiceCheck.Error is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo, invoiceCheck.Error);
         var replayInvoice = invoiceCheck.Invoice;
+        if (hasReversedSale && replayInvoice is not null)
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "This goods receipt cannot yet replay both a reversed sale and a purchase invoice settlement.");
         var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, authority.BalLocId,
             authority.EffectiveAt, authority.Quantity, cancellationToken);
@@ -239,6 +240,13 @@ public sealed partial class IvInventoryPostingService
                 read, companyCode, branchCode, itemCode, physical, receiptEvent, reversedIssuePlan, cancellationToken)
             : await StockReplayWacInsertionPlanner.BuildAsync(
                 read, companyCode, branchCode, itemCode, physical, receiptEvent, cancellationToken);
+        var reversedSaleProof = hasReversedSale
+            ? await ProveNeutralReversedSaleAsync(read, companyCode, branchCode, batch,
+                NeutralSaleCandidate(financial), cancellationToken)
+            : null;
+        if (hasReversedSale && reversedSaleProof is null)
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "This goods receipt has a later reversed sale that needs verified stock and cost replay.");
         if (reversedIssuePlan is not null && financial.Tail.LaterEvents.Count != 0)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "The reversed Production issue has additional valuation dependencies.");
@@ -273,8 +281,11 @@ public sealed partial class IvInventoryPostingService
             || lockedBatch.BatchStatus != IvBatchStatuses.New)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The goods receipt changed. Retry posting.");
         if (await HasReversedSalesAfterAsync(write, companyCode, branchCode, [itemCode],
-                batch.TrxDtTime, cancellationToken))
-            return IvInventoryPostingBatchResult.Fail(batchNo, "The goods receipt has a later reversed sale. Retry posting after reconciliation.");
+                batch.TrxDtTime, cancellationToken) != hasReversedSale
+            || hasReversedSale && reversedSaleProof != await ProveNeutralReversedSaleAsync(
+                write, companyCode, branchCode, lockedBatch, NeutralSaleCandidate(financial),
+                cancellationToken, lockSalesEvidence: true))
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed sale changed. Retry posting.");
         await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
             financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, productionPlan, cancellationToken,
             insertingReceiptBatchId: batch.Id);
@@ -324,7 +335,8 @@ public sealed partial class IvInventoryPostingService
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed Production issue changed. Retry posting.");
         }
         else if (await RejectReversedProductionReceiptAsync(write, companyCode, branchCode,
-                batchNo, IvTrxTypes.GoodsReceive, rollback: false, cancellationToken) is { } reversedProduction)
+                batchNo, IvTrxTypes.GoodsReceive, rollback: false, cancellationToken,
+                allowProvenReversedSale: reversedSaleProof is not null) is { } reversedProduction)
             return reversedProduction;
         var qaClaim = await _qaReceipt.ClaimGoodsReceiptAsync(
             write, companyCode, branchCode, IvTrxTypes.GoodsReceive,
@@ -583,9 +595,6 @@ public sealed partial class IvInventoryPostingService
             or IvTrxTypes.GoodsReceive;
         var hasReversedSale = isReceipt && await HasReversedSalesAfterAsync(read,
             companyCode, branchCode, [original.ICode], batch.TrxDtTime, cancellationToken);
-        if (hasReversedSale && trxType != IvTrxTypes.MiscellaneousReceipt)
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "This goods receipt has a later reversed sale that needs verified stock and cost replay.");
         var reversedIssuePlan = isReceipt
             ? await PlanIsolatedWacReversedIssueAsync(read, companyCode, branchCode,
                 batch, [original.ICode], rollback: true, cancellationToken, requireTransaction: false)
@@ -633,6 +642,9 @@ public sealed partial class IvInventoryPostingService
                     invoiceCheck.Error);
             replayInvoice = invoiceCheck.Invoice;
         }
+        if (hasReversedSale && replayInvoice is not null)
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "This goods receipt cannot yet replay both a reversed sale and a purchase invoice settlement.");
         if (reversedIssuePlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "This rollback cannot yet replay both a reversed Production issue and an invoice settlement.");

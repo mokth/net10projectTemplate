@@ -78,8 +78,9 @@ internal static class StockReplayInventoryRouteSelector
                 laterValuation = wacItems.Length != 0 && await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                     h.CompanyCode == companyCode && h.BranchCode == branchCode
                     && h.TrxType == IvTrxTypes.SalesOut && h.EntryRole == "ORIGINAL"
-                    && wacItems.Contains(h.ICode) && h.TrxDtTime >= batch.TrxDtTime
-                    && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id), cancellationToken);
+                    && wacItems.Contains(h.ICode)
+                    && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id
+                        && (h.TrxDtTime >= batch.TrxDtTime || r.TrxDtTime >= batch.TrxDtTime)), cancellationToken);
             }
         }
 
@@ -144,8 +145,9 @@ internal static class StockReplayInventoryRouteSelector
             if (wacItems.Length != 0 && await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
                     h.CompanyCode == companyCode && h.BranchCode == branchCode
                     && h.TrxType == IvTrxTypes.SalesOut && h.EntryRole == "ORIGINAL"
-                    && wacItems.Contains(h.ICode) && h.TrxDtTime >= batch.TrxDtTime
-                    && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id), cancellationToken))
+                    && wacItems.Contains(h.ICode)
+                    && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id
+                        && (h.TrxDtTime >= batch.TrxDtTime || r.TrxDtTime >= batch.TrxDtTime)), cancellationToken))
                 return new(false, true, false);
         }
 

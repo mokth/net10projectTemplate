@@ -29,8 +29,9 @@ public sealed partial class IvInventoryPostingService
         AppDbContext db, string company, string branch, string[] items, DateTime receiptAt, CancellationToken ct) =>
         db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.CompanyCode == company && h.BranchCode == branch
             && h.TrxType == IvTrxTypes.SalesOut && h.ICode != null && items.Contains(h.ICode)
-            && h.LedgerVersion == 2 && h.EntryRole == "ORIGINAL" && h.TrxDtTime >= receiptAt
-            && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id), ct);
+            && h.LedgerVersion == 2 && h.EntryRole == "ORIGINAL"
+            && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id
+                && (h.TrxDtTime >= receiptAt || r.TrxDtTime >= receiptAt)), ct);
 
     // The ordinary active tail omits an original/reversal pair. Admit an
     // isolated reversed direct sale only when replaying both physical legs
@@ -42,8 +43,8 @@ public sealed partial class IvInventoryPostingService
         var issues = await db.IvTrxHistories.AsNoTracking().Where(h =>
             h.CompanyCode == company && h.BranchCode == branch && h.ICode == plan.ItemCode
             && h.LedgerVersion == 2 && h.EntryRole == "ORIGINAL"
-            && h.TrxDtTime >= receipt.TrxDtTime
-            && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id)).ToArrayAsync(ct);
+            && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id
+                && (h.TrxDtTime >= receipt.TrxDtTime || r.TrxDtTime >= receipt.TrxDtTime))).ToArrayAsync(ct);
         if (issues.Length != 1)
             return null;
         var sale = issues[0];
@@ -62,6 +63,16 @@ public sealed partial class IvInventoryPostingService
             return null;
         var reverse = reversals[0];
         if (reverse.InvNo != sale.InvNo || reverse.DoNo != sale.DoNo || reverse.SoLineNo != sale.SoLineNo)
+            return null;
+        // The active WAC tail omits reversed value adjustments. Their temporary
+        // value can affect the sale between its issue and reversal, so do not
+        // treat the pair as neutral while any such adjustment overlaps it.
+        if (await db.StockValuationFacts.AsNoTracking().AnyAsync(f =>
+                f.CompanyCode == company && f.BranchCode == branch && f.ItemCode == plan.ItemCode
+                && f.InventoryHistoryId == null && f.BaseQty == 0m && f.ReversesValuationFactId == null
+                && f.EffectiveAt <= reverse.TrxDtTime
+                && db.StockValuationFacts.Any(r => r.ReversesValuationFactId == f.Id
+                    && r.EffectiveAt >= receipt.TrxDtTime), ct))
             return null;
         var owner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == sale.StockPostingId, ct);
         var reverseOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == reverse.StockPostingId, ct);
