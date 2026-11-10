@@ -28,7 +28,15 @@ public sealed class IvMultiWacReceiptSqlServerTests
     private static readonly DateTime Today = new(2026, 8, 26);
 
     [MultiWacReceiptSqlFact]
-    public async Task Concurrent_multi_item_post_and_rollback_apply_each_line_once()
+    public Task Concurrent_multi_item_post_and_rollback_apply_each_line_once() => RunAsync(sameItem: false);
+
+    [MultiWacReceiptSqlFact]
+    public Task Concurrent_same_item_post_and_rollback_apply_each_line_once() => RunAsync(sameItem: true);
+
+    [MultiWacReceiptSqlFact]
+    public Task Same_item_receipt_rejects_draft_edit_after_planning() => RunAsync(sameItem: true, editRace: true);
+
+    private static async Task RunAsync(bool sameItem, bool editRace = false)
     {
         var connectionString = Environment.GetEnvironmentVariable(ConnectionEnvironment)
             ?? throw new InvalidOperationException("An isolated SQL Server connection is required.");
@@ -94,22 +102,75 @@ public sealed class IvMultiWacReceiptSqlServerTests
 
         var first = InventoryLedgerTestFixture.CreateMiscReceipt(factory, Today, enableBackdatedReplay: true);
         var second = InventoryLedgerTestFixture.CreateMiscReceipt(factory, Today, enableBackdatedReplay: true);
-        var receipt = await first.SaveNewAsync(new IvMiscReceiptSaveRequest
-        {
-            TrxDate = Today.AddDays(-2),
-            Lines = [
+        IReadOnlyList<IvMiscReceiptLineRequest> receiptLines = sameItem
+            ? [
+                new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    Quantity = 2m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
+                new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    Quantity = 3m, UnitPrice = 11m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }
+              ]
+            : [
                 new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
                     Quantity = 5m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
                 new IvMiscReceiptLineRequest { ICode = "B100", ToWarehouse = "MAIN", ToLocation = "BIN1",
                     Quantity = 5m, UnitPrice = 10m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }
-            ]
+              ];
+        var receipt = await first.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = Today.AddDays(-2),
+            Lines = receiptLines
         });
         Assert.True(receipt.Succeeded, receipt.ErrorMessage);
+
+        if (editRace)
+        {
+            barrier.Arm();
+            var pending = first.PostAsync([receipt.BatchNo]);
+            try
+            {
+                var reached = await Task.WhenAny(barrier.Reached, pending, Task.Delay(TimeSpan.FromSeconds(30)));
+                if (reached == pending)
+                {
+                    var ended = await pending;
+                    Assert.Fail($"The request ended before the draft-edit checkpoint: {ended.ErrorMessage}");
+                }
+                Assert.True(reached == barrier.Reached, "The draft-edit checkpoint was not reached.");
+                await using var editor = await factory.CreateDbContextAsync();
+                var detail = await editor.IvTrxBatchDetails.Where(d => d.BatchNo == receipt.BatchNo)
+                    .OrderBy(d => d.TrxLineNo).FirstAsync();
+                detail.Remarks = "Edited after replay planning";
+                await editor.SaveChangesAsync();
+            }
+            finally
+            {
+                barrier.Release();
+            }
+            var stale = await pending;
+            Assert.False(stale.Succeeded);
+            Assert.Contains("changed", stale.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            await using (var unchanged = await factory.CreateDbContextAsync())
+            {
+                Assert.Equal(IvBatchStatuses.New, (await unchanged.IvTrxBatches.SingleAsync(b => b.BatchNo == receipt.BatchNo)).BatchStatus);
+                Assert.Empty(await unchanged.IvTrxHistories.Where(h => h.BatchNo == receipt.BatchNo).ToArrayAsync());
+                var state = await unchanged.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+                Assert.Equal((7m, 21m), (state.OnHandBaseQty, state.InventoryValue));
+                Assert.Equal(7m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == piles["A100"])).StdQty);
+            }
+            var retried = await first.PostAsync([receipt.BatchNo]);
+            Assert.True(retried.Succeeded, retried.ErrorMessage);
+            await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, 57.6m, 38.4m, 6m, 24m, 16m, "PRIMARY");
+            var rolledBack = await first.RollbackAsync([receipt.BatchNo]);
+            Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);
+            await AssertReceiptStateAsync(IvBatchStatuses.New, 7m, 21m, 24m, 6m, 24m, 16m, "REVERSAL");
+            return;
+        }
 
         var posts = await RunContendedAsync(
             () => first.PostAsync([receipt.BatchNo]), () => second.PostAsync([receipt.BatchNo]));
         Assert.Contains(posts, result => result.Succeeded);
-        await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, 54m, 36m, 11m, 66m, 24m, "PRIMARY");
+        await AssertReceiptStateAsync(IvBatchStatuses.Posted, 12m, sameItem ? 57.6m : 54m,
+            sameItem ? 38.4m : 36m, sameItem ? 6m : 11m, sameItem ? 24m : 66m,
+            sameItem ? 16m : 24m, "PRIMARY");
 
         var rollbacks = await RunContendedAsync(
             () => first.RollbackAsync([receipt.BatchNo]), () => second.RollbackAsync([receipt.BatchNo]));

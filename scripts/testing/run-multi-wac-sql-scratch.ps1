@@ -1,9 +1,12 @@
 param(
     [string]$Server = '.\SQLEXPRESS',
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$SameItem,
+    [switch]$EditRace
 )
 
 $ErrorActionPreference = 'Stop'
+if ($EditRace -and -not $SameItem) { throw 'The draft-edit race requires -SameItem.' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $scratch = 'Codex_ReplayNeutral_Test_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 if ($scratch -cnotmatch '^Codex_ReplayNeutral_Test_[0-9a-f]{12}$') {
@@ -31,8 +34,11 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
+    $testName = if ($EditRace) { 'Same_item_receipt_rejects_draft_edit_after_planning' }
+        elseif ($SameItem) { 'Concurrent_same_item_post_and_rollback_apply_each_line_once' }
+        else { 'Concurrent_multi_item_post_and_rollback_apply_each_line_once' }
     $arguments = @('test', 'ErpWeb.Tests\ErpWeb.Tests.csproj', '--no-restore', '-m:1', '-clp:ErrorsOnly',
-        '--filter', 'FullyQualifiedName~Concurrent_multi_item_post_and_rollback_apply_each_line_once',
+        '--filter', "FullyQualifiedName~$testName",
         '--logger', "trx;LogFileName=$resultName", '--results-directory', $resultDirectory)
     if ($NoBuild) { $arguments += '--no-build' }
     & dotnet @arguments
