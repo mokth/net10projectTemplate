@@ -420,7 +420,7 @@ public sealed class IvMultiWacReceiptSqlServerTests
         }
     }
 
-    private sealed class ReceiptBatchLockBarrier : DbCommandInterceptor
+    internal sealed class ReceiptBatchLockBarrier : DbCommandInterceptor
     {
         private int _armed;
         private TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);

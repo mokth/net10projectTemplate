@@ -1206,12 +1206,16 @@ public sealed partial class IvInventoryPostingService
         SalesReturnPermit? permittedReturn = null;
         if (returnIds.Length > 0)
         {
-            if (!allowBoundedSales || salesIds.Length != 1 || returnIds.Length != 1)
+            var returnEvent = eventById[returnIds[0]];
+            if (!allowBoundedSales || returnIds.Length != 1
+                || returnEvent.ReturnOfSaleEventId is not long returnedSaleId
+                || returnedSaleId <= 0 || returnedSaleId > int.MaxValue
+                || !salesIds.Contains((int)returnedSaleId))
                 return "Backdated WAC receipt needs one exact sale and stock-return credit note.";
             var salesAndReturn = await db.IvTrxHistories.AsNoTracking()
-                .Where(h => salesIds.Contains(h.Id) || returnIds.Contains(h.Id))
+                .Where(h => h.Id == (int)returnedSaleId || h.Id == returnIds[0])
                 .ToArrayAsync(cancellationToken);
-            var sale = salesAndReturn.SingleOrDefault(h => h.Id == salesIds[0]);
+            var sale = salesAndReturn.SingleOrDefault(h => h.Id == (int)returnedSaleId);
             if (sale?.ICode is null || salesAndReturn.Length != 2)
                 return "Backdated WAC receipt has inconsistent Sales return history.";
             var checkedReturn = await CheckPostedSalesReturnAsync(db,
@@ -1221,21 +1225,27 @@ public sealed partial class IvInventoryPostingService
             if (checkedReturn.Error is not null || checkedReturn.Permit is null)
                 return checkedReturn.Error ?? "Backdated WAC receipt has inconsistent Sales return evidence.";
             permittedReturn = checkedReturn.Permit;
-            var returnEvent = eventById[returnIds[0]];
-            if (returnEvent.ReturnOfSaleEventId != salesIds[0]
+            if (permittedReturn.SaleHistoryId != returnedSaleId
                 || returnEvent.SalesReturnAllocationId != permittedReturn.AllocationId)
                 return "Backdated WAC receipt has inconsistent Sales return cost authority.";
         }
-        else if (allowBoundedSales && salesIds.Length == 1)
+        else if (allowBoundedSales && salesIds.Length is >= 1 and <= 2)
         {
-            var sale = await db.IvTrxHistories.AsNoTracking()
-                .SingleAsync(h => h.Id == salesIds[0], cancellationToken);
-            permittedReturn = await CheckRolledBackSalesReturnAsync(db, sale,
-                StockCostMethods.MovingAverage, cancellationToken);
+            var sales = await db.IvTrxHistories.AsNoTracking()
+                .Where(h => salesIds.Contains(h.Id)).ToArrayAsync(cancellationToken);
+            foreach (var sale in sales)
+            {
+                var rolledBackReturn = await CheckRolledBackSalesReturnAsync(db, sale,
+                    StockCostMethods.MovingAverage, cancellationToken);
+                if (rolledBackReturn is not null && permittedReturn is not null)
+                    return "Backdated WAC receipt needs at most one verified rolled-back Sales return.";
+                permittedReturn ??= rolledBackReturn;
+            }
         }
         if (salesIds.Length > 0
             && await CheckSalesReceiptTailAsync(db, salesIds,
-                StockCostMethods.MovingAverage, cancellationToken, permittedReturn) is string salesError)
+                StockCostMethods.MovingAverage, cancellationToken, permittedReturn,
+                allowAdditionalSales: permittedReturn is not null && salesIds.Length > 1) is string salesError)
             return salesError;
         return null;
     }
@@ -1244,7 +1254,8 @@ public sealed partial class IvInventoryPostingService
         ErpWeb.Model.Data.AppDbContext db, int[] historyIds,
         string costMethod,
         CancellationToken cancellationToken,
-        SalesReturnPermit? permittedReturn = null)
+        SalesReturnPermit? permittedReturn = null,
+        bool allowAdditionalSales = false)
     {
         const string unsupported = "Backdated receipt replay requires a single posted delivery order with supported billing and no customer return.";
         var histories = await db.IvTrxHistories.AsNoTracking()
@@ -1252,16 +1263,18 @@ public sealed partial class IvInventoryPostingService
         if (histories.Length != historyIds.Length)
             return unsupported;
         if (permittedReturn is not null
-            && (costMethod != permittedReturn.CostMethod || histories.Length != 1
-                || histories[0].Id != permittedReturn.SaleHistoryId))
+            && (costMethod != permittedReturn.CostMethod
+                || !allowAdditionalSales && histories.Length != 1
+                || histories.Count(h => h.Id == permittedReturn.SaleHistoryId) != 1))
             return unsupported + " Customer-return ownership is inconsistent.";
 
         foreach (var history in histories)
         {
+            var historyReturn = history.Id == permittedReturn?.SaleHistoryId ? permittedReturn : null;
             if (string.IsNullOrWhiteSpace(history.DoNo))
             {
                 if (await CheckDirectSalesInvoiceAsync(db, history,
-                        costMethod, cancellationToken, permittedReturn) is string invoiceError)
+                        costMethod, cancellationToken, historyReturn) is string invoiceError)
                     return invoiceError;
                 continue;
             }
@@ -1327,7 +1340,7 @@ public sealed partial class IvInventoryPostingService
                 && invoiceLines.Length == 1 && allocations.Length == 1)
             {
                 var linked = invoiceLines[0];
-                var permittedNoteNo = permittedReturn?.NoteNo;
+                var permittedNoteNo = historyReturn?.NoteNo;
                 var invoice = await db.SaInvoices.AsNoTracking().Include(i => i.Details)
                     .SingleOrDefaultAsync(i => i.CompanyCode == history.CompanyCode
                         && i.BranchCode == history.BranchCode
@@ -1367,9 +1380,9 @@ public sealed partial class IvInventoryPostingService
 
             if (!await HasUnreturnedSaleFactsAsync(db, history,
                     "SA_DO", doNo, costMethod, cancellationToken,
-                    permittedReturn?.AllocationId,
-                    permittedReturn?.ReversedWacAllocation == true,
-                    permittedReturn?.AllocationIds))
+                    historyReturn?.AllocationId,
+                    historyReturn?.ReversedWacAllocation == true,
+                    historyReturn?.AllocationIds))
                 return unsupported + " Shipment valuation or return allocation is inconsistent.";
         }
         return null;

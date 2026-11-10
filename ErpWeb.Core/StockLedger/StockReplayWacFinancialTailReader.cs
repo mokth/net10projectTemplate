@@ -329,15 +329,11 @@ public static class StockReplayWacFinancialTailReader
     {
         var sales = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut).ToArray();
         var returns = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn).ToArray();
-        if (sales.Length != 1 || returns.Length != 1
-            || activeFacts[sales[0].Id].Count != 1
-            || activeFacts[returns[0].Id].Count != 1)
+        if (returns.Length != 1 || activeFacts[returns[0].Id].Count != 1)
             return;
-        var sale = activeFacts[sales[0].Id][0];
         var returned = activeFacts[returns[0].Id][0];
-        if (sale.Direction != -1 || sale.MovementCode != "SALE_OUT" || sale.BaseQty <= 0m
-            || returned.Direction != 1 || returned.MovementCode != "SALE_RETURN_IN"
-            || returned.BaseQty <= 0m || returned.BaseQty > sale.BaseQty)
+        if (returned.Direction != 1 || returned.MovementCode != "SALE_RETURN_IN"
+            || returned.BaseQty <= 0m)
             return;
         var allocations = await db.SalesReturnCostAllocations.AsNoTracking()
             .Where(a => a.CompanyCode == companyCode && a.BranchCode == branchCode
@@ -345,19 +341,28 @@ public static class StockReplayWacFinancialTailReader
                 && a.ReversesAllocationId == null
                 && !db.SalesReturnCostAllocations.Any(r => r.ReversesAllocationId == a.Id))
             .ToArrayAsync(cancellationToken);
-        if (allocations.Length != 1 || allocations[0].OriginalValuationFactId != sale.Id
+        if (allocations.Length != 1)
+            return;
+        var matchingSales = sales.Where(h => activeFacts[h.Id].Count == 1
+            && activeFacts[h.Id][0].Id == allocations[0].OriginalValuationFactId).ToArray();
+        if (matchingSales.Length != 1)
+            return;
+        var saleHistory = matchingSales[0];
+        var sale = activeFacts[saleHistory.Id][0];
+        if (sale.Direction != -1 || sale.MovementCode != "SALE_OUT" || sale.BaseQty <= 0m
+            || returned.BaseQty > sale.BaseQty
             || allocations[0].ReturnedBaseQty != returned.BaseQty
             || allocations[0].ReturnedCostAmount != returned.CostAmount
             || allocations[0].ReturnedCostAmount != StockLedgerPrecision.Money(
                 sale.CostAmount * returned.BaseQty / sale.BaseQty))
             return;
-        var saleIndex = Array.FindIndex(events, e => e.EventId == sales[0].Id);
+        var saleIndex = Array.FindIndex(events, e => e.EventId == saleHistory.Id);
         var returnIndex = Array.FindIndex(events, e => e.EventId == returns[0].Id);
         if (saleIndex < 0 || returnIndex <= saleIndex)
             return;
         events[returnIndex] = events[returnIndex] with
         {
-            ReturnOfSaleEventId = sales[0].Id,
+            ReturnOfSaleEventId = saleHistory.Id,
             SalesReturnAllocationId = allocations[0].Id
         };
     }

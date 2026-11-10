@@ -8,7 +8,10 @@ param(
     [switch]$MixedLocations,
     [switch]$BothItems,
     [switch]$EditRace,
-    [switch]$InjectFailure
+    [switch]$InjectFailure,
+    [switch]$SalesReturn,
+    [switch]$SalesReturnRolledBack,
+    [switch]$SalesReturnFailure
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +21,8 @@ if ($MixedLocations -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $Mor
 if ($BothItems -and (-not $MixedLocations -or $EditRace -or $InjectFailure)) { throw 'The both-item concurrency case requires only -MixedLocations.' }
 if ($MoreLines -and -not $TwoPiles) { throw 'The multi-line case requires -TwoPiles.' }
 if ($InjectFailure -and ($EditRace -or -not ($RepeatedAndOther -or $TwoPiles -or $MixedLocations))) { throw 'Choose a receipt shape for failure injection.' }
+if (@($SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure).Where({ $_ }).Count -gt 1) { throw 'Choose one Sales return case.' }
+if (($SalesReturn -or $SalesReturnRolledBack -or $SalesReturnFailure) -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines -or $MixedLocations -or $BothItems -or $EditRace -or $InjectFailure)) { throw 'Choose the Sales return case on its own.' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $scratch = 'Codex_ReplayNeutral_Test_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 if ($scratch -cnotmatch '^Codex_ReplayNeutral_Test_[0-9a-f]{12}$') {
@@ -45,7 +50,10 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($BothItems) { 'Concurrent_both_item_locations_receipt_posts_and_rolls_back_once' }
+    $testName = if ($SalesReturnFailure) { 'SqlServer_backdated_receipt_sales_return_is_atomic_on_failure' }
+        elseif ($SalesReturnRolledBack) { 'SqlServer_backdated_receipt_after_rolled_back_return' }
+        elseif ($SalesReturn) { 'SqlServer_backdated_receipt_reprices_two_sales_and_one_return' }
+        elseif ($BothItems) { 'Concurrent_both_item_locations_receipt_posts_and_rolls_back_once' }
         elseif ($MixedLocations -and $InjectFailure) { 'Mixed_item_location_receipt_rolls_back_database_failures_atomically' }
         elseif ($MixedLocations -and $EditRace) { 'Mixed_item_location_receipt_rejects_draft_edit_after_planning' }
         elseif ($MixedLocations) { 'Concurrent_mixed_item_location_receipt_posts_and_rolls_back_once' }
