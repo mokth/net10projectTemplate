@@ -12,7 +12,7 @@ public sealed partial class IvInventoryPostingService
     // Each item has its own WAC plan, while all lines share one document,
     // branch transaction, posting root, and rollback operation.
     private sealed record MultiWacMrInsertLine(
-        StockReplayFifoMrReceiptAuthority Authority, StockReplayWacInsertionPlan Financial);
+        StockReplayFifoMrReceiptAuthority Authority, StockReplayWacInsertionPlan? Financial);
 
     private sealed record MultiWacMrRemovalLine(
         IvTrxHistory Original, StockReplayWacRemovalPlan Financial);
@@ -113,8 +113,8 @@ public sealed partial class IvInventoryPostingService
                 batchNo, line.Authority.BalLocId, line.Authority.DetailId, ct);
             if (current != line.Authority)
                 return IvInventoryPostingBatchResult.Fail(batchNo, "An approved receipt line changed. Retry posting.");
-            if (line.Financial.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
-                    write, line.Financial.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
+            if (line.Financial!.Tail.LaterEvents.Count > 0 && await CheckSimpleWacTailAsync(
+                    write, line.Financial!.Tail.LaterEvents, batch.TrxDtTime, ct) is string changed)
                 return IvInventoryPostingBatchResult.Fail(batchNo, changed);
         }
         var ledger = await BeginStandaloneLedgerAsync(write, company, branch, batchNo, reversal: false, ct);
@@ -129,7 +129,8 @@ public sealed partial class IvInventoryPostingService
     }
 
     private static async Task<IReadOnlyList<int>> WriteMultiWacMrAsync(StockPostingContext context,
-        IReadOnlyList<MultiWacMrInsertLine> lines, CancellationToken ct)
+        IReadOnlyList<MultiWacMrInsertLine> lines, CancellationToken ct,
+        StockReplayWacMultiPileReceiptInsertionPlan? multiPile = null)
     {
         context.EnsureUnsealed();
         var groups = lines.GroupBy(l => l.Authority.ItemCode, StringComparer.OrdinalIgnoreCase)
@@ -138,39 +139,50 @@ public sealed partial class IvInventoryPostingService
             || context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
             || context.Posting.PostingRole != "PRIMARY"
-            || groups.Select(g => g[0].Authority.BalLocId).Distinct().Count() != groups.Length
             || lines.Any(l => l.Authority.BatchId.ToString(System.Globalization.CultureInfo.InvariantCulture)
                     != context.Posting.SourceDocumentId
                 || l.Authority.BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture)
                     != context.Posting.SourceDocumentNo
                 || l.Authority.DocumentRevision != context.Posting.DocumentRevision
-                || l.Authority.EffectiveAt != context.Posting.EffectiveAt
-                || l.Financial.PhysicalPlan.Candidate.Key.OriginalPostingSequence != context.Posting.PostingSequence
-                || l.Financial.ItemCode != l.Authority.ItemCode)
-            || groups.Any(g => g.Any(l => !ReferenceEquals(l.Financial, g[0].Financial)
+                || l.Authority.EffectiveAt != context.Posting.EffectiveAt)
+            || multiPile is null && (lines.Any(l => l.Financial is null)
+                || groups.Select(g => g[0].Authority.BalLocId).Distinct().Count() != groups.Length
+                || lines.Any(l => l.Financial!.PhysicalPlan.Candidate.Key.OriginalPostingSequence != context.Posting.PostingSequence
+                    || l.Financial!.ItemCode != l.Authority.ItemCode)
+                || groups.Any(g => g.Any(l => !ReferenceEquals(l.Financial, g[0].Financial)
                     || l.Authority.BalLocId != g[0].Authority.BalLocId)
-                || g[0].Financial.PhysicalPlan.BalLocId != g[0].Authority.BalLocId
-                || g[0].Financial.PhysicalPlan.Candidate.SignedDelta != IvQty.Round(g.Sum(l => l.Authority.Quantity))
-                || g[0].Financial.Candidate.ReplaySignedQuantity != IvQty.Round(g.Sum(l => l.Authority.Quantity))
-                || g[0].Financial.Candidate.FixedSignedValue != StockLedgerPrecision.Money(g.Sum(l => l.Authority.Value))
-                || g[0].Financial.Projection.Candidate.SignedValue != StockLedgerPrecision.Money(g.Sum(l => l.Authority.Value))))
+                || g[0].Financial!.PhysicalPlan.BalLocId != g[0].Authority.BalLocId
+                || g[0].Financial!.PhysicalPlan.Candidate.SignedDelta != IvQty.Round(g.Sum(l => l.Authority.Quantity))
+                || g[0].Financial!.Candidate.ReplaySignedQuantity != IvQty.Round(g.Sum(l => l.Authority.Quantity))
+                || g[0].Financial!.Candidate.FixedSignedValue != StockLedgerPrecision.Money(g.Sum(l => l.Authority.Value))
+                || g[0].Financial!.Projection.Candidate.SignedValue != StockLedgerPrecision.Money(g.Sum(l => l.Authority.Value))))
+            || multiPile is not null && (lines.Count != 2 || groups.Length != 1
+                || multiPile.Item != groups[0][0].Authority.ItemCode
+                || multiPile.Candidate.Key.OriginalPostingSequence != context.Posting.PostingSequence
+                || multiPile.Candidate.ReplaySignedQuantity != IvQty.Round(lines.Sum(l => l.Authority.Quantity))
+                || multiPile.Candidate.FixedSignedValue != StockLedgerPrecision.Money(lines.Sum(l => l.Authority.Value))
+                || multiPile.Projection.Candidate.SignedValue != StockLedgerPrecision.Money(lines.Sum(l => l.Authority.Value))
+                || lines.Any(l => !multiPile.Piles.Any(p => p.BalLocId == l.Authority.BalLocId
+                    && p.Candidate.SignedDelta == l.Authority.Quantity))))
             throw MultiWacError("The multi-line receipt differs from its approved replay plan.");
 
         var db = context.Db;
         var permits = new List<StockReplayWacWritePermit>(groups.Length);
         foreach (var group in groups)
-            permits.Add(await StockReplayWacInsertionPlanner.PrepareWithinRootAsync(context, group[0].Financial, ct));
+            permits.Add(multiPile is null
+                ? await StockReplayWacInsertionPlanner.PrepareWithinRootAsync(context, group[0].Financial!, ct)
+                : await StockReplayWacMultiPileReceiptPlanner.PrepareInsertionAsync(context, multiPile, ct));
         var batchId = lines[0].Authority.BatchId;
         var batch = await db.IvTrxBatches.SingleAsync(b => b.Id == batchId, ct);
         var lineIds = lines.Select(l => l.Authority.DetailId).ToArray();
         var details = await db.IvTrxBatchDetails.Where(d => lineIds.Contains(d.Id)).ToDictionaryAsync(d => d.Id, ct);
-        var pileIds = groups.Select(g => g[0].Authority.BalLocId).ToArray();
+        var pileIds = lines.Select(l => l.Authority.BalLocId).Distinct().ToArray();
         var balances = await db.IvBalLocs.Where(b => pileIds.Contains(b.Id)
                 && b.CompanyCode == context.CompanyCode && b.BranchCode == context.BranchCode)
             .ToDictionaryAsync(b => b.Id, ct);
         db.ChangeTracker.DetectChanges();
         if (batch.BatchStatus != IvBatchStatuses.New || db.Entry(batch).State != EntityState.Unchanged
-            || details.Count != lines.Count || balances.Count != groups.Length
+            || details.Count != lines.Count || balances.Count != pileIds.Length
             || details.Values.Any(d => db.Entry(d).State != EntityState.Unchanged)
             || await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.CompanyCode == context.CompanyCode
                 && h.BranchCode == context.BranchCode && ((h.BatchNo == lines[0].Authority.BatchNo
@@ -179,11 +191,13 @@ public sealed partial class IvInventoryPostingService
 
         var now = DateTime.UtcNow;
         var user = context.UserId.Length > 10 ? context.UserId[..10] : context.UserId;
-        foreach (var group in groups)
+        foreach (var groupedPile in lines.GroupBy(l => l.Authority.BalLocId))
         {
+            var group = groupedPile.ToArray();
             var authority = group[0].Authority;
             var balance = balances[authority.BalLocId];
-            var physical = group[0].Financial.PhysicalPlan;
+            var physical = multiPile is null ? group[0].Financial!.PhysicalPlan
+                : multiPile.Piles.Single(p => p.BalLocId == authority.BalLocId);
             if (balance.StdQty != physical.CurrentQuantity || !balance.RowVersion.SequenceEqual(physical.BalanceRowVersion)
                 || group.Any(l => balance.LotId != l.Authority.LotId
                     || !string.Equals(balance.LotNo ?? "", l.Authority.LotNo ?? "", StringComparison.OrdinalIgnoreCase)
@@ -280,10 +294,14 @@ public sealed partial class IvInventoryPostingService
         var nextLine = checked(lines.Count + 1);
         for (var i = 0; i < groups.Length; i++)
         {
-            var tail = await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
-                context, permits[i], groups[i][0].Financial, nextLine, ct);
+            var tail = multiPile is null
+                ? await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
+                    context, permits[i], groups[i][0].Financial!, nextLine, ct)
+                : await StockReplayWacTailRepricingWriter.AppendPreparedMultiPileReceiptInsertionAsync(
+                    context, permits[i], multiPile, nextLine, ct);
             required.AddRange(tail.RepricedHistoryIds);
-            nextLine = checked(nextLine + 2 * groups[i][0].Financial.Tail.LaterEvents.Count);
+            nextLine = checked(nextLine + 2 * (multiPile?.Tail.LaterEvents.Count
+                ?? groups[i][0].Financial!.Tail.LaterEvents.Count));
             await StockReplayWacCostStateWriter.ApplyAsync(context, permits[i], ct);
         }
         return required.Distinct().ToArray();

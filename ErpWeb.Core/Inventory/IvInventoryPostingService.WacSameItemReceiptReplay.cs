@@ -80,6 +80,16 @@ public sealed partial class IvInventoryPostingService
             authorities.Add(await StockReplayFifoMrReceiptAuthorityReader.ReadLineAsync(
                 read, company, branch, batchNo, pile.Value, detail.Id, ct));
         }
+        if (authorities.GroupBy(a => a.ItemCode, StringComparer.OrdinalIgnoreCase)
+            .Any(g => g.Select(a => a.BalLocId).Distinct().Count() != 1))
+        {
+            if (authorities.Count == 2 && items.Length == 1
+                && authorities.Select(a => a.BalLocId).Distinct().Count() == 2)
+                return await PostTwoPileWacMrAsync(read, batch, details, authorities,
+                    draftFingerprint, company, branch, batchNo, ct);
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "Repeated lines for one item currently need the same destination pile for replay.");
+        }
         var plans = new Dictionary<string, StockReplayWacInsertionPlan>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in authorities.GroupBy(a => a.ItemCode, StringComparer.OrdinalIgnoreCase))
         {
@@ -173,10 +183,6 @@ public sealed partial class IvInventoryPostingService
                 || h.TrxType != IvTrxTypes.MiscellaneousReceipt || h.ValuationStatus != StockValuationStatuses.Valued)
             || details.Any(d => histories.Count(h => h.TrxLineNo == d.TrxLineNo && MultiWacMrHistoryMatches(d, h)) != 1))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has incomplete or changed posted history.");
-        if (histories.GroupBy(h => h.ICode, StringComparer.OrdinalIgnoreCase)
-            .Any(g => g.Select(h => h.ToBalLocId).Distinct().Count() != 1))
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Repeated lines for one item currently need the same destination pile for rollback.");
         var owner = await read.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == histories[0].StockPostingId, ct);
         if (owner is null || owner.CompanyCode != company || owner.BranchCode != branch || owner.SealedAtUtc is null
             || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
@@ -187,6 +193,17 @@ public sealed partial class IvInventoryPostingService
             || histories.Any(h => h.LedgerEpochId != owner.LedgerEpochId || h.TrxDtTime != owner.EffectiveAt
                 || h.DocumentRevision != owner.DocumentRevision))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has no exact sealed owner.");
+
+        if (histories.GroupBy(h => h.ICode, StringComparer.OrdinalIgnoreCase)
+            .Any(g => g.Select(h => h.ToBalLocId).Distinct().Count() != 1))
+        {
+            if (histories.Length == 2 && items.Length == 1
+                && histories.Select(h => h.ToBalLocId).Distinct().Count() == 2)
+                return await RollBackTwoPileWacMrAsync(read, batch, details, histories, owner,
+                    company, branch, userId, batchNo, ct);
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "Repeated lines for one item currently need the same destination pile for rollback.");
+        }
 
         var plans = new Dictionary<string, SameItemWacRemovalPlan>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in histories.GroupBy(h => h.ICode!, StringComparer.OrdinalIgnoreCase))

@@ -3,13 +3,15 @@ param(
     [switch]$NoBuild,
     [switch]$SameItem,
     [switch]$RepeatedAndOther,
+    [switch]$TwoPiles,
     [switch]$EditRace,
     [switch]$InjectFailure
 )
 
 $ErrorActionPreference = 'Stop'
 if ($SameItem -and $RepeatedAndOther) { throw 'Choose one receipt shape.' }
-if ($InjectFailure -and (-not $RepeatedAndOther -or $EditRace)) { throw 'Failure injection requires only -RepeatedAndOther.' }
+if ($TwoPiles -and ($SameItem -or $RepeatedAndOther)) { throw 'Two-pile tests use their own receipt shape.' }
+if ($InjectFailure -and ($EditRace -or -not ($RepeatedAndOther -or $TwoPiles))) { throw 'Choose a receipt shape for failure injection.' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $scratch = 'Codex_ReplayNeutral_Test_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 if ($scratch -cnotmatch '^Codex_ReplayNeutral_Test_[0-9a-f]{12}$') {
@@ -37,7 +39,10 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($InjectFailure) { 'Repeated_and_other_items_roll_back_database_failures_atomically' }
+    $testName = if ($TwoPiles -and $InjectFailure) { 'Two_pile_receipt_rolls_back_database_failures_atomically' }
+        elseif ($TwoPiles -and $EditRace) { 'Two_pile_receipt_rejects_draft_edit_after_planning' }
+        elseif ($TwoPiles) { 'Concurrent_two_pile_receipt_posts_and_rolls_back_once' }
+        elseif ($InjectFailure) { 'Repeated_and_other_items_roll_back_database_failures_atomically' }
         elseif ($EditRace -and $RepeatedAndOther) { 'Repeated_and_other_items_reject_draft_edit_after_planning' }
         elseif ($EditRace -and $SameItem) { 'Same_item_receipt_rejects_draft_edit_after_planning' }
         elseif ($EditRace) { 'Multi_item_receipt_rejects_draft_edit_after_planning' }

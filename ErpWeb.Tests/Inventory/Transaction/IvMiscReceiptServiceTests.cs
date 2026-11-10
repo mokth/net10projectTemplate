@@ -1488,8 +1488,13 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         }
     }
 
-    [Fact]
-    public async Task Backdated_same_item_receipt_in_different_piles_is_refused_without_mutation()
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public async Task Backdated_same_item_receipt_in_different_piles_posts_and_rolls_back(
+        bool injectFailure, bool withTransfer, bool useLots)
     {
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -1498,49 +1503,217 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
             db.IvLocations.Add(new IvLocation { CompanyCode = "DEMO", BranchCode = "HQ",
                 WarehouseCode = "MAIN", LocCode = "BIN2", IsActive = true });
+            IvLot? lot1 = null, lot2 = null;
+            if (useLots)
+            {
+                (await db.IvStockMasters.SingleAsync(s => s.CompanyCode == "DEMO" && s.ICode == "A100")).LotControl = true;
+                lot1 = new IvLot { CompanyCode = "DEMO", ICode = "A100", LotNo = "LOT-A1",
+                    ExpiryDate = FixedToday.AddDays(30), IsActive = true };
+                lot2 = new IvLot { CompanyCode = "DEMO", ICode = "A100", LotNo = "LOT-A2",
+                    ExpiryDate = FixedToday.AddDays(30), IsActive = true };
+                db.IvLots.AddRange(lot1, lot2);
+                await db.SaveChangesAsync();
+            }
             db.IvBalLocs.AddRange(
                 new IvBalLoc { CompanyCode = "DEMO", BranchCode = "HQ", ICode = "A100", WhCode = "MAIN",
-                    LocCode = "BIN1", LotNo = string.Empty, IStatus = "ACTIVE", StdQty = 15m, StdUom = "EA", TransDate = FixedToday.AddDays(-5) },
+                    LocCode = "BIN1", LotId = lot1?.Id, LotNo = lot1?.LotNo ?? string.Empty,
+                    IStatus = "ACTIVE", StdQty = 15m, StdUom = "EA", TransDate = FixedToday.AddDays(-5) },
                 new IvBalLoc { CompanyCode = "DEMO", BranchCode = "HQ", ICode = "A100", WhCode = "MAIN",
-                    LocCode = "BIN2", LotNo = string.Empty, IStatus = "ACTIVE", StdQty = 5m, StdUom = "EA", TransDate = FixedToday.AddDays(-5) });
+                    LocCode = "BIN2", LotId = lot2?.Id, LotNo = lot2?.LotNo ?? string.Empty,
+                    IStatus = "ACTIVE", StdQty = 5m, StdUom = "EA", TransDate = FixedToday.AddDays(-5) });
             await db.SaveChangesAsync();
             await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 20m, 3m);
         }
-        int pileId;
+        int pileId, secondPileId;
         await using (var db = await _factory.CreateDbContextAsync())
+        {
             pileId = await db.IvBalLocs.Where(b => b.LocCode == "BIN1").Select(b => b.Id).SingleAsync();
+            secondPileId = await db.IvBalLocs.Where(b => b.LocCode == "BIN2").Select(b => b.Id).SingleAsync();
+        }
         var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
         var later = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
         {
             TrxDate = FixedToday,
             Lines = [new IvMiscIssueLineRequest { FromBalLocId = pileId, ICode = "A100",
-                FrWarehouse = "MAIN", FrLocation = "BIN1", FrLotNo = string.Empty,
+                FrWarehouse = "MAIN", FrLocation = "BIN1", FrLotNo = useLots ? "LOT-A1" : string.Empty,
                 Quantity = 8m, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m }]
         });
         Assert.True(later.Succeeded, later.ErrorMessage);
         Assert.True((await issue.PostAsync([later.BatchNo])).Succeeded);
+        int? transferBatch = null;
+        if (withTransfer)
+        {
+            var transfer = InventoryLedgerTestFixture.CreateStockTransfer(_factory, FixedToday);
+            var moved = await transfer.SaveNewAsync(new IvStockTransferSaveRequest
+            {
+                TrxDate = FixedToday,
+                Lines = [new IvStockTransferLineRequest { FromBalLocId = pileId, ICode = "A100",
+                    FrWarehouse = "MAIN", FrLocation = "BIN1", FrLotNo = string.Empty,
+                    ToWarehouse = "MAIN", ToLocation = "BIN2", Quantity = 2m, Uom = "EA",
+                    IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m }]
+            });
+            Assert.True(moved.Succeeded, moved.ErrorMessage);
+            Assert.True((await transfer.PostAsync([moved.BatchNo])).Succeeded);
+            transferBatch = moved.BatchNo;
+        }
         var receipt = CreateSut(withLedger: true, enableBackdatedReplay: true);
         var saved = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
         {
             TrxDate = FixedToday.AddDays(-2),
             Lines = [
                 new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    ToLotNo = useLots ? "LOT-A1" : string.Empty, ExpiryDate = useLots ? FixedToday.AddDays(30) : null,
                     Quantity = 2m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
                 new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN2",
+                    ToLotNo = useLots ? "LOT-A2" : string.Empty, ExpiryDate = useLots ? FixedToday.AddDays(30) : null,
                     Quantity = 3m, UnitPrice = 11m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }
             ]
         });
         Assert.True(saved.Succeeded, saved.ErrorMessage);
-        var rejected = await receipt.PostAsync([saved.BatchNo]);
-        Assert.False(rejected.Succeeded);
-        Assert.Contains("same destination pile", rejected.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-        await using var unchanged = await _factory.CreateDbContextAsync();
-        Assert.Equal(IvBatchStatuses.New, (await unchanged.IvTrxBatches.SingleAsync(b => b.BatchNo == saved.BatchNo)).BatchStatus);
-        Assert.Empty(await unchanged.IvTrxHistories.Where(h => h.BatchNo == saved.BatchNo).ToArrayAsync());
-        Assert.Equal(7m, (await unchanged.IvBalLocs.SingleAsync(b => b.LocCode == "BIN1")).StdQty);
-        Assert.Equal(5m, (await unchanged.IvBalLocs.SingleAsync(b => b.LocCode == "BIN2")).StdQty);
-        var state = await unchanged.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
-        Assert.Equal((12m, 36m), (state.OnHandBaseQty, state.InventoryValue));
+        if (!injectFailure && !withTransfer && !useLots)
+        {
+            var disabled = await CreateSut(withLedger: true).PostAsync([saved.BatchNo]);
+            Assert.False(disabled.Succeeded);
+            await AssertStateAsync(IvBatchStatuses.New, 7m, 5m, 12m, 36m, 24m);
+        }
+        if (injectFailure)
+        {
+            await SetPeriodClosedAsync(true);
+            var closed = await receipt.PostAsync([saved.BatchNo]);
+            Assert.False(closed.Succeeded);
+            Assert.Contains("closed", closed.ErrorMessage ?? "", StringComparison.OrdinalIgnoreCase);
+            await SetPeriodClosedAsync(false);
+            await using (var db = await _factory.CreateDbContextAsync())
+                await db.Database.ExecuteSqlRawAsync("CREATE TRIGGER TestRejectTwoPilePost BEFORE INSERT ON StockValuationFact "
+                    + "WHEN NEW.ItemCode = 'A100' AND NEW.MovementCode = 'RECEIPT_IN' AND NEW.PostingLineNo = 2 "
+                    + "BEGIN SELECT RAISE(ABORT, 'injected two-pile receipt failure'); END;");
+            Assert.False((await receipt.PostAsync([saved.BatchNo])).Succeeded);
+            await AssertStateAsync(IvBatchStatuses.New, 7m, 5m, 12m, 36m, 24m);
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                Assert.Empty(await db.IvTrxHistories.Where(h => h.BatchNo == saved.BatchNo).ToArrayAsync());
+                await db.Database.ExecuteSqlRawAsync("DROP TRIGGER TestRejectTwoPilePost");
+            }
+        }
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var posted = await receipt.PostAsync([saved.BatchNo]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertStateAsync(IvBatchStatuses.Posted, withTransfer ? 7m : 9m, withTransfer ? 10m : 8m,
+                17m, 75.48m, 35.52m);
+            if (injectFailure && cycle == 0)
+            {
+                await SetPeriodClosedAsync(true);
+                var closed = await receipt.RollbackAsync([saved.BatchNo]);
+                Assert.False(closed.Succeeded);
+                Assert.Contains("closed", closed.ErrorMessage ?? "", StringComparison.OrdinalIgnoreCase);
+                await SetPeriodClosedAsync(false);
+                var qa = new Mock<IQaPhysicalHoldAuthorization>();
+                qa.Setup(x => x.RestoreStockOutAsync(It.IsAny<AppDbContext>(), "DEMO", "HQ",
+                    saved.BatchNo, It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+                qa.Setup(x => x.AssertRemainingCoversHoldsAsync(It.IsAny<AppDbContext>(), "DEMO", "HQ",
+                    It.IsAny<int>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+                qa.Setup(x => x.AssertRemainingCoversHoldsAsync(It.IsAny<AppDbContext>(), "DEMO", "HQ",
+                    secondPileId, It.IsAny<decimal>(), It.IsAny<CancellationToken>())).ReturnsAsync("QA hold prevents rollback.");
+                var heldReceipt = CreateSut(withLedger: true, enableBackdatedReplay: true, qaPhysical: qa.Object);
+                var held = await heldReceipt.RollbackAsync([saved.BatchNo]);
+                Assert.False(held.Succeeded);
+                Assert.Contains("QA hold", held.ErrorMessage ?? "", StringComparison.OrdinalIgnoreCase);
+                await AssertStateAsync(IvBatchStatuses.Posted, 9m, 8m, 17m, 75.48m, 35.52m);
+                await using (var db = await _factory.CreateDbContextAsync())
+                    await db.Database.ExecuteSqlRawAsync("CREATE TRIGGER TestRejectTwoPileRollback BEFORE INSERT ON StockValuationFact "
+                        + "WHEN NEW.ItemCode = 'A100' AND NEW.MovementCode = 'RECEIPT_IN' AND NEW.PostingLineNo = 2 "
+                        + "AND NEW.ValuationStatus = 'REVERSED' BEGIN SELECT RAISE(ABORT, 'injected two-pile rollback failure'); END;");
+                Assert.False((await receipt.RollbackAsync([saved.BatchNo])).Succeeded);
+                await AssertStateAsync(IvBatchStatuses.Posted, 9m, 8m, 17m, 75.48m, 35.52m);
+                await using (var db = await _factory.CreateDbContextAsync())
+                {
+                    Assert.Empty(await db.IvTrxHistories.Where(h => h.BatchNo == saved.BatchNo && h.EntryRole == "REVERSAL").ToArrayAsync());
+                    await db.Database.ExecuteSqlRawAsync("DROP TRIGGER TestRejectTwoPileRollback");
+                }
+            }
+            var rolledBack = await receipt.RollbackAsync([saved.BatchNo]);
+            Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);
+            await AssertStateAsync(IvBatchStatuses.New, withTransfer ? 5m : 7m, withTransfer ? 7m : 5m,
+                12m, 36m, 24m);
+        }
+        if (injectFailure)
+        {
+            Assert.True((await receipt.PostAsync([saved.BatchNo])).Succeeded);
+            var extra = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+            {
+                TrxDate = FixedToday,
+                Lines = [new IvMiscIssueLineRequest { FromBalLocId = secondPileId, ICode = "A100",
+                    FrWarehouse = "MAIN", FrLocation = "BIN2", FrLotNo = string.Empty,
+                    Quantity = 6m, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 4.44m }]
+            });
+            Assert.True(extra.Succeeded, extra.ErrorMessage);
+            Assert.True((await issue.PostAsync([extra.BatchNo])).Succeeded);
+            var rejected = await receipt.RollbackAsync([saved.BatchNo]);
+            Assert.False(rejected.Succeeded);
+            await AssertStateAsync(IvBatchStatuses.Posted, 9m, 2m, 11m, 48.84m, 35.52m);
+        }
+        if (!injectFailure && !withTransfer && !useLots)
+        {
+            var unsupported = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+            {
+                TrxDate = FixedToday.AddDays(-2),
+                Lines = [
+                    new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                        Quantity = 1m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
+                    new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN2",
+                        Quantity = 1m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" },
+                    new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                        Quantity = 1m, UnitPrice = 9m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }
+                ]
+            });
+            Assert.True(unsupported.Succeeded, unsupported.ErrorMessage);
+            var rejected = await receipt.PostAsync([unsupported.BatchNo]);
+            Assert.False(rejected.Succeeded);
+            Assert.Contains("same destination pile", rejected.ErrorMessage ?? "", StringComparison.OrdinalIgnoreCase);
+            await AssertStateAsync(IvBatchStatuses.New, 7m, 5m, 12m, 36m, 24m);
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Empty(await db.IvTrxHistories.Where(h => h.BatchNo == unsupported.BatchNo).ToArrayAsync());
+        }
+
+        async Task SetPeriodClosedAsync(bool closed)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var from = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+            var period = await db.IvPeriodCloseHdrs.SingleOrDefaultAsync(p =>
+                p.CompanyCode == "DEMO" && p.BranchCode == "HQ" && p.PeriodFrom == from);
+            if (period is null)
+            {
+                period = new IvPeriodCloseHdr { CompanyCode = "DEMO", BranchCode = "HQ",
+                    PeriodFrom = from, PeriodTo = from.AddMonths(1).AddDays(-1),
+                    ClosedBy = "admin", ClosedOn = FixedToday };
+                db.IvPeriodCloseHdrs.Add(period);
+            }
+            period.Status = closed ? IvPeriodCloseStatuses.Closed : IvPeriodCloseStatuses.Reopened;
+            await db.SaveChangesAsync();
+        }
+
+        async Task AssertStateAsync(string status, decimal bin1, decimal bin2,
+            decimal quantity, decimal value, decimal issueValue)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(status, (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == saved.BatchNo)).BatchStatus);
+            Assert.Equal(bin1, (await db.IvBalLocs.SingleAsync(b => b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(bin2, (await db.IvBalLocs.SingleAsync(b => b.LocCode == "BIN2")).StdQty);
+            var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal((quantity, value), (state.OnHandBaseQty, state.InventoryValue));
+            var issueHistory = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == later.BatchNo && h.EntryRole == "ORIGINAL");
+            var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [issueHistory]);
+            Assert.Equal(issueValue, active[issueHistory.Id].Sum(f => f.CostAmount));
+            if (transferBatch is int transferNo)
+            {
+                var transferHistory = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == transferNo && h.EntryRole == "ORIGINAL");
+                var transferFacts = (await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [transferHistory]))[transferHistory.Id];
+                var transferValue = status == IvBatchStatuses.Posted ? 8.88m : 6m;
+                Assert.Equal(transferValue, transferFacts.Where(f => f.Direction < 0).Sum(f => f.CostAmount));
+                Assert.Equal(transferValue, transferFacts.Where(f => f.Direction > 0).Sum(f => f.CostAmount));
+            }
+        }
     }
 
     [Fact]
