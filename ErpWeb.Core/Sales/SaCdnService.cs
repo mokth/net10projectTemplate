@@ -1344,13 +1344,14 @@ public sealed class SaCdnService : ISaCdnService
             StdCustPsize = 0m,
             StdUom = d.StdUom,
             UnitPrice = d.UnitPrice,
-            // The invoice's provenance is inherited by the credit note: the price is copied, and so is
-            // the explanation of where it came from. Phase 4 extends this to the override record, so an
-            // overridden invoice line billed back does not silently lose the fact it was overridden.
+            // The invoice's provenance is inherited by the credit note: the agreed price and the
+            // explanation of where it came from. The invoice override is NOT re-declared here —
+            // copying OriginalUnitPrice would demand PRICE_OVERRIDE from a billing clerk who never
+            // made that decision. Invoice/source-line identity remains on InvNo + SourceInvLine.
             PricingSource = d.PricingSource,
             PricingRef = d.PricingRef,
-            OriginalUnitPrice = d.OriginalUnitPrice,
-            OverrideReason = d.OverrideReason,
+            OriginalUnitPrice = null,
+            OverrideReason = null,
             Amount = d.Amount,
             ItemDiscount = d.ItemDiscount,
             ItemDiscount2 = d.ItemDiscount2,
@@ -1405,7 +1406,12 @@ public sealed class SaCdnService : ISaCdnService
             Lines = lines
         };
 
-        return SaCdnOperationResult.OkDocument(draft);
+        var droppedSecondAmount = invoice.Details.Any(d => d.ItemDiscAmount1 != 0m);
+        return SaCdnOperationResult.OkDocument(
+            draft,
+            droppedSecondAmount
+                ? "This invoice has a second amount discount that credit notes cannot store. Review the credit amount before posting."
+                : null);
     }
 
     // ─────────────────────────── PostOneAsync ───────────────────────────

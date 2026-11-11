@@ -109,6 +109,7 @@ public class QaNonGoodGrantTests : IAsyncLifetime
     [Fact]
     public async Task Approve_is_record_only_without_grant_valued_lots_or_cost()
     {
+        var outputId = await SeedNonGoodOutputAsync(4m);
         var cases = new QaCaseService(_factory, _tenant.Object, _access.Object, new RunningNumberService());
         var saved = await cases.SaveDraftAsync(new QaCaseSaveCommand
         {
@@ -116,6 +117,7 @@ public class QaNonGoodGrantTests : IAsyncLifetime
             SourceType = QaSourceTypes.ProductionOutputNonGood,
             SourceDocType = "WI",
             SourceDocNo = "DP00000099",
+            SourceHeaderId = outputId,
             WorkOrderNo = "WO1",
             Lines =
             [
@@ -252,6 +254,31 @@ public class QaNonGoodGrantTests : IAsyncLifetime
         RejectQty = qty >= 3m ? 1m : 0m,
         HoldQty = Math.Max(0m, qty - 3m)
     };
+
+    private async Task<long> SeedNonGoodOutputAsync(decimal qty)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+        var output = new ProductionOutput
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            DocumentNo = "DP00000099",
+            Status = ProductionOutputStatuses.Posted,
+            ProductionDate = DateTime.Today,
+            ScrapQty = qty,
+            OutputUom = "PCS",
+            OutputItemCode = "FG1",
+            OutputLotNo = "L1",
+            CreateRequestId = Guid.NewGuid().ToString("N"),
+            CreateRequestFingerprint = "qa-nongood",
+            CreatedBy = "tester",
+            CreatedDate = DateTime.UtcNow
+        };
+        db.ProductionOutputs.Add(output);
+        await db.SaveChangesAsync();
+        return output.Uid;
+    }
 
     private static QaReviewCommand Review(QaCaseDto value) => new()
     {

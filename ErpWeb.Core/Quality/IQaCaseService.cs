@@ -6,6 +6,10 @@ public interface IQaCaseService
 
     Task<QaResult> GetInquiryAsync(QaInquiryQuery query, CancellationToken cancellationToken = default);
 
+    Task<QaResult> GetWorkloadAsync(CancellationToken cancellationToken = default);
+
+    Task<QaResult> ExportInquiryAsync(QaInquiryQuery query, CancellationToken cancellationToken = default);
+
     Task<QaResult> GetAsync(string caseNo, CancellationToken cancellationToken = default);
 
     Task<QaResult> SaveDraftAsync(QaCaseSaveCommand command, CancellationToken cancellationToken = default);
@@ -31,4 +35,16 @@ public interface IQaCaseService
     Task<QaResult> DeleteDraftAsync(QaReviewCommand command, CancellationToken cancellationToken = default);
 
     Task<QaResult> SearchSourcesAsync(QaSourceQuery query, CancellationToken cancellationToken = default);
+
+    Task<QaResult> SaveActionAsync(QaActionSaveCommand command, CancellationToken cancellationToken = default);
+
+    Task<QaResult> StartActionAsync(QaActionUpdateCommand command, CancellationToken cancellationToken = default);
+
+    Task<QaResult> ReassignActionAsync(QaActionUpdateCommand command, CancellationToken cancellationToken = default);
+
+    Task<QaResult> CompleteActionAsync(QaActionUpdateCommand command, CancellationToken cancellationToken = default);
+
+    Task<QaResult> CancelActionAsync(QaActionUpdateCommand command, CancellationToken cancellationToken = default);
+
+    Task<QaResult> ReinspectAsync(QaReviewCommand command, CancellationToken cancellationToken = default);
 }

@@ -6,6 +6,7 @@ using ErpWeb.Core.Authentication;
 using ErpWeb.Core.Menus;
 using ErpWeb.Inventory;
 using ErpWeb.Purchase;
+using ErpWeb.Quality;
 using ErpWeb.Sales;
 using ErpWeb.Model;
 using ErpWeb.UI;
@@ -217,6 +218,7 @@ try
     app.MapSaPriceMaintenanceExportEndpoints();
     app.MapSaPriceChangeHistoryExportEndpoints();
     app.MapPoInquiryExportEndpoints();
+    app.MapQaInquiryExportEndpoints();
     app.MapPoProcurementKpiEndpoints();
     app.MapSaItemFamilyExportEndpoints();
     app.MapPoSupplierAttachmentEndpoints();

@@ -22,6 +22,7 @@ public partial class QaCaseEntry : PageBase
     [SupplyParameterFromQuery(Name = "lotId")] public long? QueryLotId { get; set; }
     [SupplyParameterFromQuery(Name = "outputId")] public long? QueryOutputId { get; set; }
     [SupplyParameterFromQuery(Name = "sourceHeaderId")] public long? QuerySourceHeaderId { get; set; }
+    [SupplyParameterFromQuery(Name = "sourceDocNo")] public string? QuerySourceDocNo { get; set; }
 
     [Inject] private IQaCaseService Cases { get; set; } = default!;
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
@@ -32,11 +33,16 @@ public partial class QaCaseEntry : PageBase
     protected bool LinePopupVisible;
     protected bool SourcePopupVisible;
     protected bool ConfirmDiscardVisible;
+    protected bool ConfirmCancelCaseVisible;
+    protected bool ConfirmPassAllVisible;
+    protected bool ConfirmReinspectVisible;
     protected bool HelpVisible;
     protected bool CanAdd;
     protected bool CanEdit;
+    protected bool CanDeletePermission;
     protected bool CanSubmitPermission;
     protected bool CanApprovePermission;
+    protected bool CanRejectPermission;
     protected bool CanOpenGrn;
     protected bool CanOpenFg;
     protected bool CanOpenVendorReturn;
@@ -60,19 +66,46 @@ public partial class QaCaseEntry : PageBase
     protected bool CanEditFromView => CanEdit && QaCaseStatuses.CanEdit(Header.Status);
     protected bool CanInspect =>
         IsViewMode
+        && CanEdit
         && (string.Equals(Header.Status, QaCaseStatuses.Submitted, StringComparison.OrdinalIgnoreCase)
             || string.Equals(Header.Status, QaCaseStatuses.InInspection, StringComparison.OrdinalIgnoreCase));
     protected bool CanSubmit => IsViewMode && string.Equals(Header.Status, QaCaseStatuses.Draft, StringComparison.OrdinalIgnoreCase) && CanSubmitPermission;
     protected bool CanStartInspection => IsViewMode && string.Equals(Header.Status, QaCaseStatuses.Submitted, StringComparison.OrdinalIgnoreCase) && CanEdit;
     protected bool CanSubmitReview => IsViewMode && string.Equals(Header.Status, QaCaseStatuses.InInspection, StringComparison.OrdinalIgnoreCase) && CanSubmitPermission;
     protected bool CanApprove => IsViewMode && string.Equals(Header.Status, QaCaseStatuses.PendingReview, StringComparison.OrdinalIgnoreCase) && CanApprovePermission;
+    protected bool CanReject =>
+        IsViewMode
+        && CanRejectPermission
+        && (string.Equals(Header.Status, QaCaseStatuses.PendingReview, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Header.Status, QaCaseStatuses.Submitted, StringComparison.OrdinalIgnoreCase));
+    protected bool CanCancelCase =>
+        IsViewMode
+        && CanDeletePermission
+        && (string.Equals(Header.Status, QaCaseStatuses.Draft, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Header.Status, QaCaseStatuses.Submitted, StringComparison.OrdinalIgnoreCase));
     protected bool CanCloseCase =>
         IsViewMode
         && Header.HeldQty <= 0m
         && Header.PhysicalHeldQty <= 0m
+        && Header.OpenActionCount == 0
         && (string.Equals(Header.Status, QaCaseStatuses.Approved, StringComparison.OrdinalIgnoreCase)
             || string.Equals(Header.Status, QaCaseStatuses.Rejected, StringComparison.OrdinalIgnoreCase))
         && CanEdit;
+    protected bool CanManageActions =>
+        IsViewMode
+        && CanEdit
+        && Header.FollowUpReady
+        && (string.Equals(Header.Status, QaCaseStatuses.Approved, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Header.Status, QaCaseStatuses.Rejected, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Header.Status, QaCaseStatuses.InInspection, StringComparison.OrdinalIgnoreCase));
+    protected bool CanReinspect =>
+        IsViewMode
+        && CanEdit
+        && Header.FollowUpReady
+        && Header.HeldQty <= 0m
+        && Header.PhysicalHeldQty <= 0m
+        && (string.Equals(Header.Status, QaCaseStatuses.Approved, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Header.Status, QaCaseStatuses.Rejected, StringComparison.OrdinalIgnoreCase));
     protected bool CanReleaseHold =>
         IsViewMode
         && (Header.HeldQty > 0m || Header.PhysicalHeldQty > 0m)
@@ -88,19 +121,30 @@ public partial class QaCaseEntry : PageBase
     protected string PhaseChip =>
         Header.HeldQty > 0m || Header.PhysicalHeldQty > 0m
             ? "QA reserved"
-            : IsIncoming && string.Equals(Header.Status, QaCaseStatuses.Approved, StringComparison.OrdinalIgnoreCase)
-                ? "Accepted for GRN"
-                : IsIncoming && Header.PostedQty > 0m
-                    ? "GRN posted"
-                    : IsFgStaging && string.Equals(Header.Status, QaCaseStatuses.Approved, StringComparison.OrdinalIgnoreCase)
-                        ? "Accepted for FG receipt"
-                        : IsFgStaging && Header.PostedQty > 0m
-                            ? "FG posted"
-                            : "Record-only";
+            : Header.PostedQty > 0m && IsIncoming
+                ? "GRN posted"
+                : Header.PostedQty > 0m && IsFgStaging
+                    ? "FG posted"
+                    : string.Equals(Header.Status, QaCaseStatuses.Approved, StringComparison.OrdinalIgnoreCase)
+                        ? "Inspection approved"
+                        : "Record-only";
     protected string PageHeading => IsNewMode ? "New quality case" : $"Quality case {CaseNoDisplay}";
-    protected string ModeChip => Mode.ToUpperInvariant();
+    protected string ModeChip => IsNewMode ? "New" : IsViewMode ? "View" : "Edit";
     protected string CaseNoDisplay => string.IsNullOrWhiteSpace(Header.CaseNo) ? "New" : Header.CaseNo;
+    protected string StatusDisplay => QaLabels.Status(Header.Status);
+    protected string NextActionHint => QaLabels.NextAction(Header.Status);
+    protected string WorkflowStep => QaLabels.WorkflowStep(Header.Status);
     protected string LineCountLabel => Lines.Count == 1 ? "1 line" : $"{Lines.Count} lines";
+    protected IReadOnlyList<QaNamedOption> SourceTypeOptions => QaLabels.SourceOptions;
+    protected IReadOnlyList<QaNamedOption> ResultOptions => QaLabels.ResultOptions;
+    protected IReadOnlyList<QaNamedOption> ActionTypeOptions => QaLabels.ActionTypeOptions;
+    protected int DraftActionLineNo { get; set; } = 1;
+    protected string DraftActionType { get; set; } = QaActionTypes.FollowUp;
+    protected decimal DraftActionQty { get; set; }
+    protected string? DraftActionAssignedTo { get; set; }
+    protected string? DraftActionReason { get; set; }
+    protected DateTime? DraftActionDueDate { get; set; }
+    protected string? ReinspectReason { get; set; }
     protected string SupplierDisplay => string.Join(" · ", new[] { Header.SupplierCode, Header.SupplierName }.Where(x => !string.IsNullOrWhiteSpace(x)));
     protected string LinePopupTitle => CanInspect && !CanEditDocument ? "Inspect line" : "Case line";
 
@@ -136,8 +180,10 @@ public partial class QaCaseEntry : PageBase
     {
         CanAdd = await AccessRights.CanAsync(MenuCodes.QualityWorkbench, PermissionCodes.Add);
         CanEdit = await AccessRights.CanAsync(MenuCodes.QualityWorkbench, PermissionCodes.Edit);
+        CanDeletePermission = await AccessRights.CanAsync(MenuCodes.QualityWorkbench, PermissionCodes.Delete);
         CanSubmitPermission = await AccessRights.CanAsync(MenuCodes.QualityWorkbench, PermissionCodes.Submit);
         CanApprovePermission = await AccessRights.CanAsync(MenuCodes.QualityWorkbench, PermissionCodes.Approve);
+        CanRejectPermission = await AccessRights.CanAsync(MenuCodes.QualityWorkbench, PermissionCodes.Reject);
         CanOpenGrn = await AccessRights.CanAsync(MenuCodes.InventoryGoodsReceipt, PermissionCodes.Access);
         CanOpenFg = await AccessRights.CanAsync(MenuCodes.PlanningFinishedGoodReceipt, PermissionCodes.Access);
         CanOpenVendorReturn = await AccessRights.CanAsync(MenuCodes.InventoryVendorReturn, PermissionCodes.Access);
@@ -201,6 +247,211 @@ public partial class QaCaseEntry : PageBase
     protected async Task OnRejectAsync() => await RunReviewAsync(Cases.RejectAsync);
     protected async Task OnCloseCaseAsync() => await RunReviewAsync(Cases.CloseAsync);
     protected async Task OnReleaseHoldAsync() => await RunReviewAsync(Cases.ReleaseHoldAsync);
+    protected void OnReinspect() => ConfirmReinspectVisible = true;
+
+    protected async Task ConfirmReinspectAsync()
+    {
+        IsSubmitting = true;
+        var result = await Cases.ReinspectAsync(new QaReviewCommand
+        {
+            CaseNo = Header.CaseNo,
+            RowVersion = RowVersion,
+            Remarks = ReinspectReason
+        });
+        IsSubmitting = false;
+        if (!result.Succeeded || result.Case is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        ConfirmReinspectVisible = false;
+        LoadCase(result.Case);
+        ReinspectReason = null;
+        StatusMessage = "Reinspection started on the same source. Stock was not changed.";
+    }
+
+    protected async Task SaveFollowUpAsync()
+    {
+        IsSubmitting = true;
+        var result = await Cases.SaveActionAsync(new QaActionSaveCommand
+        {
+            CaseNo = Header.CaseNo,
+            RowVersion = RowVersion,
+            LineNo = DraftActionLineNo,
+            ActionType = DraftActionType,
+            Qty = DraftActionQty,
+            AssignedTo = DraftActionAssignedTo,
+            Reason = DraftActionReason,
+            DueDate = DraftActionDueDate
+        });
+        IsSubmitting = false;
+        if (!result.Succeeded || result.Case is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        LoadCase(result.Case);
+        DraftActionReason = null;
+        DraftActionQty = 0m;
+        StatusMessage = "Follow-up task saved. This is not a stock posting.";
+    }
+
+    protected async Task CompleteFollowUpAsync(QaActionDto action)
+    {
+        await MutateFollowUpAsync(action, Cases.CompleteActionAsync);
+    }
+
+    protected async Task StartFollowUpAsync(QaActionDto action)
+    {
+        await MutateFollowUpAsync(action, Cases.StartActionAsync);
+    }
+
+    protected async Task CancelFollowUpAsync(QaActionDto action)
+    {
+        await MutateFollowUpAsync(action, Cases.CancelActionAsync, "Cancelled from the quality case.");
+    }
+
+    private async Task MutateFollowUpAsync(
+        QaActionDto action,
+        Func<QaActionUpdateCommand, CancellationToken, Task<QaResult>> mutate,
+        string? reason = null)
+    {
+        IsSubmitting = true;
+        var result = await mutate(new QaActionUpdateCommand
+        {
+            CaseNo = Header.CaseNo,
+            RowVersion = RowVersion,
+            ActionNo = action.ActionNo,
+            Reason = reason,
+            CompletionEvidence = reason is null ? "Recorded in Quality. No stock was posted." : null
+        }, CancellationToken.None);
+        IsSubmitting = false;
+        if (!result.Succeeded || result.Case is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        LoadCase(result.Case);
+        StatusMessage = "Follow-up updated. Stock was not changed.";
+    }
+
+    protected void OnCancelCase() => ConfirmCancelCaseVisible = true;
+
+    protected async Task ConfirmCancelCaseAsync()
+    {
+        ConfirmCancelCaseVisible = false;
+        await RunReviewAsync(Cases.CancelAsync);
+    }
+
+    protected string StepClass(string step)
+    {
+        var current = WorkflowStep;
+        if (string.Equals(step, current, StringComparison.OrdinalIgnoreCase))
+        {
+            return "qa-steps__item is-current";
+        }
+
+        var order = new[] { "source", "inspect", "review", "followup" };
+        var stepIndex = Array.IndexOf(order, step);
+        var currentIndex = Array.IndexOf(order, current);
+        return stepIndex >= 0 && currentIndex > stepIndex ? "qa-steps__item is-done" : "qa-steps__item";
+    }
+
+    protected static decimal PendingQty(LineEditor line) => Math.Max(0m, line.Qty - line.InspectedQty);
+
+    protected static string? LineInspectError(LineEditor line)
+    {
+        if (line.InspectedQty <= 0m)
+        {
+            return null;
+        }
+
+        if (line.InspectedQty > line.Qty)
+        {
+            return "Inspected qty cannot exceed case qty.";
+        }
+
+        var sum = line.AcceptQty + line.RejectQty + line.ReworkQty + line.HoldQty;
+        return sum == line.InspectedQty
+            ? null
+            : "Accept + reject + rework + hold must equal inspected qty.";
+    }
+
+    protected void BeginPassAll()
+    {
+        if (Lines.Count == 0)
+        {
+            ErrorMessage = "Add lines before recording inspection.";
+            return;
+        }
+
+        ConfirmPassAllVisible = true;
+    }
+
+    protected async Task ConfirmPassAllAsync()
+    {
+        ConfirmPassAllVisible = false;
+        foreach (var line in Lines)
+        {
+            PassFullAmount(line);
+        }
+
+        await SaveAllInspectionsAsync();
+    }
+
+    protected static void PassFullAmount(LineEditor line)
+    {
+        line.InspectedQty = line.Qty;
+        line.AcceptQty = line.Qty;
+        line.RejectQty = 0m;
+        line.ReworkQty = 0m;
+        line.HoldQty = 0m;
+        line.Result = QaInspectionResults.Pass;
+    }
+
+    protected async Task SaveAllInspectionsAsync()
+    {
+        var lines = Lines.Where(x => x.InspectedQty > 0m).ToList();
+        if (lines.Count == 0)
+        {
+            ErrorMessage = "Enter at least one inspection result.";
+            return;
+        }
+
+        var firstError = lines.Select(LineInspectError).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+        if (firstError is not null)
+        {
+            ErrorMessage = firstError;
+            return;
+        }
+
+        IsSubmitting = true;
+        var result = await Cases.SaveInspectionAsync(new QaInspectionSaveCommand
+        {
+            CaseNo = Header.CaseNo,
+            RowVersion = RowVersion,
+            Lines = lines.Select(x => new QaInspectionLineCommand
+            {
+                LineNo = x.LineNo,
+                Result = x.Result,
+                InspectedQty = x.InspectedQty,
+                Notes = x.Notes,
+                Dispositions = x.ToDispositions()
+            }).ToList()
+        });
+        IsSubmitting = false;
+        if (!result.Succeeded || result.Case is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        LoadCase(result.Case);
+        StatusMessage = "Inspection saved. Stock was not changed.";
+    }
 
     protected Task OnCloseAsync()
     {
@@ -438,9 +689,14 @@ public partial class QaCaseEntry : PageBase
         var result = await Cases.SearchSourcesAsync(new QaSourceQuery
         {
             SourceType = Header.SourceType,
-            SearchText = search,
+            SearchText = query.SourceHeaderId is > 0 || query.LotId is > 0 || query.OutputId is > 0
+                ? null
+                : search,
+            ExactSourceHeaderId = QuerySourceHeaderId,
+            ExactLotId = QueryLotId,
+            ExactOutputId = QueryOutputId,
             Skip = 0,
-            Take = 200
+            Take = 500
         });
         if (!result.Succeeded)
         {
@@ -449,6 +705,21 @@ public partial class QaCaseEntry : PageBase
         }
 
         var matches = QaSourcePrefill.Matching(result.SourcePage?.Rows ?? [], query);
+        if (matches.Count == 0 && QuerySourceHeaderId is > 0)
+        {
+            var byDisplay = await Cases.SearchSourcesAsync(new QaSourceQuery
+            {
+                SourceType = Header.SourceType,
+                SearchText = QuerySourceDocNo ?? QuerySourceHeaderId.Value.ToString(),
+                Skip = 0,
+                Take = 100
+            });
+            var displayKey = (QuerySourceDocNo ?? QuerySourceHeaderId.Value.ToString()).Trim();
+            matches = (byDisplay.SourcePage?.Rows ?? [])
+                .Where(x => string.Equals(x.SourceDocNo, displayKey, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
         if (matches.Count == 0)
         {
             StatusMessage = "The source item was not loaded automatically. Use Lookup to pick it from the source document.";
@@ -468,10 +739,10 @@ public partial class QaCaseEntry : PageBase
     protected string DispositionSummary(LineEditor line)
     {
         var parts = new List<string>();
-        if (line.AcceptQty > 0) parts.Add($"A {line.AcceptQty:n4}");
-        if (line.RejectQty > 0) parts.Add($"R {line.RejectQty:n4}");
-        if (line.ReworkQty > 0) parts.Add($"W {line.ReworkQty:n4}");
-        if (line.HoldQty > 0) parts.Add($"H {line.HoldQty:n4}");
+        if (line.AcceptQty > 0) parts.Add($"Accept {line.AcceptQty:n4}");
+        if (line.RejectQty > 0) parts.Add($"Reject {line.RejectQty:n4}");
+        if (line.ReworkQty > 0) parts.Add($"Rework {line.ReworkQty:n4}");
+        if (line.HoldQty > 0) parts.Add($"Hold {line.HoldQty:n4}");
         return parts.Count == 0 ? "—" : string.Join(" · ", parts);
     }
 
@@ -490,11 +761,7 @@ public partial class QaCaseEntry : PageBase
         }
 
         LoadCase(result.Case);
-        StatusMessage = IsIncoming && string.Equals(result.Case.Status, QaCaseStatuses.Approved, StringComparison.OrdinalIgnoreCase)
-            ? $"Case is now {result.Case.Status}. Accepted quantity may be posted as a goods receipt. Rejected quantity is not inventory."
-            : IsFgStaging && string.Equals(result.Case.Status, QaCaseStatuses.Approved, StringComparison.OrdinalIgnoreCase)
-                ? $"Case is now {result.Case.Status}. Accepted quantity may be posted as a finished-good receipt. Rejected quantity stays in FG staging."
-                : $"Case is now {result.Case.Status}. Record-only — stock was not changed.";
+        StatusMessage = $"Case is now {QaLabels.Status(result.Case.Status)}. Inspection record only — stock was not changed.";
     }
 
     private async Task SaveInspectionLineAsync()
@@ -575,18 +842,18 @@ public partial class QaCaseEntry : PageBase
             Header.SourceDocNo ??= Header.WorkOrderNo;
         }
 
-        if (QuerySourceHeaderId is > 0)
+        if (!string.IsNullOrWhiteSpace(QuerySourceDocNo))
         {
-            Header.SourceHeaderId = QuerySourceHeaderId;
-            Header.SourceDocNo ??= QuerySourceHeaderId.Value.ToString();
-            if (string.Equals(Header.SourceType, QaSourceTypes.PostedGrn, StringComparison.OrdinalIgnoreCase))
-            {
-                Header.SourceDocType = "GR";
-            }
-            else if (string.Equals(Header.SourceType, QaSourceTypes.InventoryStock, StringComparison.OrdinalIgnoreCase))
-            {
-                Header.SourceDocType = "MR";
-            }
+            Header.SourceDocNo = QuerySourceDocNo.Trim();
+        }
+
+        if (string.Equals(Header.SourceType, QaSourceTypes.PostedGrn, StringComparison.OrdinalIgnoreCase))
+        {
+            Header.SourceDocType = "GR";
+        }
+        else if (string.Equals(Header.SourceType, QaSourceTypes.InventoryStock, StringComparison.OrdinalIgnoreCase))
+        {
+            Header.SourceDocType = "MR";
         }
 
         if (QueryOutputId is > 0)
@@ -628,6 +895,10 @@ public partial class QaCaseEntry : PageBase
         Header = CaseEditor.From(value);
         RowVersion = value.RowVersion;
         Lines = value.Lines.Select(LineEditor.From).ToList();
+        if (Lines.Count > 0 && Lines.All(x => x.LineNo != DraftActionLineNo))
+        {
+            DraftActionLineNo = Lines[0].LineNo;
+        }
     }
 
     private static void CopyLine(LineEditor from, LineEditor to)
@@ -672,6 +943,12 @@ public partial class QaCaseEntry : PageBase
         public decimal PhysicalHeldQty { get; set; }
         public IReadOnlyList<QaAuditEventDto> Audit { get; set; } = [];
         public IReadOnlyList<QaDestinationDto> Destinations { get; set; } = [];
+        public IReadOnlyList<QaActionDto> Actions { get; set; } = [];
+        public IReadOnlyList<QaAttemptDto> Attempts { get; set; } = [];
+        public string? SourceCheckNote { get; set; }
+        public bool FollowUpReady { get; set; }
+        public int OpenActionCount { get; set; }
+        public string AttachmentsNote { get; set; } = QaCaseMessages.AttachmentsDeferred;
 
         public static CaseEditor New() => new();
 
@@ -703,7 +980,13 @@ public partial class QaCaseEntry : PageBase
             HeldQty = value.HeldQty,
             PhysicalHeldQty = value.PhysicalHeldQty,
             Audit = value.Audit,
-            Destinations = value.Destinations
+            Destinations = value.Destinations,
+            Actions = value.Actions,
+            Attempts = value.Attempts,
+            SourceCheckNote = value.SourceCheckNote,
+            FollowUpReady = value.FollowUpReady,
+            OpenActionCount = value.OpenActionCount,
+            AttachmentsNote = value.AttachmentsNote
         };
     }
 

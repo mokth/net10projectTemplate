@@ -37,6 +37,7 @@ public partial class IvMiscReceipt : PageBase
     private bool _lookupsLoaded;
     private string? _loadedKey;
     private bool _isDirty;
+    private int? _batchId;
     private readonly InventoryLotEntryState _lotEntry = new();
 
     protected IvMiscReceiptHeaderVm Header { get; set; } = CreateHeader();
@@ -123,6 +124,7 @@ public partial class IvMiscReceipt : PageBase
         {
             if (IsNewMode)
             {
+                _batchId = null;
                 Header = CreateHeader();
                 Lines = [];
                 BatchStatusDisplay = IvBatchStatuses.New;
@@ -166,6 +168,7 @@ public partial class IvMiscReceipt : PageBase
 
     private void ApplyDocument(IvMiscReceiptDocument doc)
     {
+        _batchId = doc.Id;
         BatchNoDisplay = doc.BatchNo.ToString();
         BatchStatusDisplay = doc.BatchStatus;
         Header = new IvMiscReceiptHeaderVm
@@ -561,7 +564,8 @@ public partial class IvMiscReceipt : PageBase
             : "/inventory/misc-receipt/new";
         var href =
             $"/quality/cases/new?source={Uri.EscapeDataString(QaSourceTypes.InventoryStock)}"
-            + $"&sourceHeaderId={BatchNo}"
+            + (_batchId is > 0 ? $"&sourceHeaderId={_batchId.Value}" : string.Empty)
+            + (BatchNo is > 0 ? $"&sourceDocNo={Uri.EscapeDataString(BatchNo.Value.ToString())}" : string.Empty)
             + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
         Navigation.NavigateTo(href);
     }

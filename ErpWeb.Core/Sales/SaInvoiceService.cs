@@ -2292,14 +2292,6 @@ public sealed class SaInvoiceService : ISaInvoiceService
                         {
                             errors[$"Lines[{lineNo - 1}].SoLine"] = $"Sales Order {soNo} line {soLine.Value} was not found.";
                         }
-                        else if (sellingUom is not null
-                            && !string.Equals(
-                                NormalizeOptional(soDetail.SellingUom),
-                                NormalizeOptional(sellingUom),
-                                StringComparison.OrdinalIgnoreCase))
-                        {
-                            errors[$"Lines[{lineNo - 1}].SoNo"] = $"Sales Order {soNo} line {soLine.Value} UOM does not match.";
-                        }
                         else
                         {
                             linkedSoDetail = soDetail;

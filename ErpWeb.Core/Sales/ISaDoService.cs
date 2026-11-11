@@ -568,8 +568,30 @@ public sealed class SaDoBillableLineDto
     public string? OverrideReason { get; init; }
 
     public string? SellingUom { get; init; }
+
+    /// <summary>
+    /// Source standard UOM for display/price inquiry only. Invoice preparation must not use this
+    /// to replace frozen pack / StdQty.
+    /// </summary>
+    public string? StdUom { get; init; }
+
     public string? FrWarehouse { get; init; }
     public bool StockControl { get; init; }
+
+    public decimal ItemDiscount { get; init; }
+    public decimal ItemDiscount2 { get; init; }
+    public decimal ItemDiscount3 { get; init; }
+    public decimal ItemDiscount4 { get; init; }
+    public decimal ItemDiscount5 { get; init; }
+    public decimal ItemDiscount6 { get; init; }
+    public decimal ItemDiscAmount { get; init; }
+    public decimal ItemDiscAmount1 { get; init; }
+    public bool IsInclusive { get; init; }
+
+    /// <summary>DO line tax group (<c>SaDoDetail.TaxGroup</c>). Mapped to invoice <c>TaxGrCode</c>.</summary>
+    public string? TaxGroup { get; init; }
+
+    public string? OrderType { get; init; }
 }
 
 public interface ISaDoService

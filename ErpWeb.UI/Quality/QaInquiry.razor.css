@@ -3,6 +3,25 @@
     font-size: 0.85rem;
 }
 
+.qa-empty {
+    text-align: center;
+    color: var(--muted, #667085);
+    padding: 36px 16px;
+}
+
+.qa-empty h3 {
+    margin: 0 0 8px;
+    color: var(--text, #1c2430);
+    font-size: 1.1rem;
+}
+
 .iv-list-compact a.iv-list-compact__item {
     text-decoration: none;
+}
+
+.qa-pager {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
 }

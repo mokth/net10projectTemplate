@@ -43,6 +43,19 @@ public class SaItemFamilyResolutionServiceTests : IAsyncLifetime
     {
         await using var db = await _factory.CreateDbContextAsync();
 
+        db.Companies.Add(new Company
+        {
+            CompanyCode = "DEMO",
+            CompanyName = "Demo company",
+            CurrencyCode = "MYR"
+        });
+        db.Companies.Add(new Company
+        {
+            CompanyCode = "OTHER",
+            CompanyName = "Other company",
+            CurrencyCode = "MYR"
+        });
+
         db.IvStockMasters.Add(new IvStockMaster
         {
             CompanyCode = "DEMO",
@@ -233,35 +246,40 @@ public class SaItemFamilyResolutionServiceTests : IAsyncLifetime
     [Fact]
     public async Task PriceResolution_UsesTheCompanyPricePriority_AndIgnoresCustomerItemDataWhenExcluded()
     {
-        await using (var db = await _factory.CreateDbContextAsync())
+        try
         {
-            db.Companies.Add(new Company
+            await using (var db = await _factory.CreateDbContextAsync())
             {
-                CompanyCode = "DEMO",
-                CompanyName = "Demo company",
-                CurrencyCode = "MYR",
-                SalesPriceMethod = SaCompanyPriceMethod.ItemDefaultOnly
-            });
-            db.SaItemCusts.Add(new SaItemCust
-            {
-                CompanyCode = "DEMO",
-                CustCode = "CUST1",
-                ICode = "I1",
-                SellingUOM = "PCS",
-                MOQ = 0,
-                CustICode = "CUST-I1",
-                UnitPrice = 1d,
-                Status = "NEW",
-                RowVersion = [0, 0, 0, 0, 0, 0, 0, 19]
-            });
+                var company = await db.Companies.SingleAsync(x => x.CompanyCode == "DEMO");
+                company.SalesPriceMethod = SaCompanyPriceMethod.ItemDefaultOnly;
+                db.SaItemCusts.Add(new SaItemCust
+                {
+                    CompanyCode = "DEMO",
+                    CustCode = "CUST1",
+                    ICode = "I1",
+                    SellingUOM = "PCS",
+                    MOQ = 0,
+                    CustICode = "CUST-I1",
+                    UnitPrice = 1d,
+                    Status = "NEW",
+                    RowVersion = [0, 0, 0, 0, 0, 0, 0, 19]
+                });
+                await db.SaveChangesAsync();
+            }
+
+            var result = await CreateSut().ResolveItemPriceAsync(PriceRequest("CUST1", "I1", "PCS"));
+
+            Assert.True(result.Succeeded, result.Message);
+            Assert.Equal(14m, result.Data!.UnitPrice);
+            Assert.Equal(SaPriceSource.ItemDefault, result.Data.PricingSource);
+        }
+        finally
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var company = await db.Companies.SingleAsync(x => x.CompanyCode == "DEMO");
+            company.SalesPriceMethod = null;
             await db.SaveChangesAsync();
         }
-
-        var result = await CreateSut().ResolveItemPriceAsync(PriceRequest("CUST1", "I1", "PCS"));
-
-        Assert.True(result.Succeeded, result.Message);
-        Assert.Equal(14m, result.Data!.UnitPrice);
-        Assert.Equal(SaPriceSource.ItemDefault, result.Data.PricingSource);
     }
 
     [Fact]

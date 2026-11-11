@@ -92,8 +92,17 @@ public sealed class SaItemFamilyPriceRequest
     /// <summary><c>SaCust.CustPriceCode</c> — the price-list assignment (§11.2).</summary>
     public string? CustPriceCode { get; init; }
 
-    /// <summary>Document currency; a candidate price list is base-currency only (D8).</summary>
+    /// <summary>
+    /// Document currency as declared on the sales header. Blank/NULL is not a wildcard: the resolver
+    /// treats it as <see cref="CompanyBaseCurrency"/>.
+    /// </summary>
     public string? DocumentCurrency { get; init; }
+
+    /// <summary>
+    /// Company base currency (<c>Company.CurrencyCode</c>), loaded server-side. Blank candidate prices
+    /// and the item default are this currency. The live orchestrator never accepts this from the client.
+    /// </summary>
+    public string? CompanyBaseCurrency { get; init; }
 
     /// <summary>
     /// The customer's GROUP price list (<c>SaCustGroup.CustPriceCode</c>). Because the walk order is
@@ -420,11 +429,12 @@ public static class SaItemFamilyPriceResolver
         }
 
         // §7.1 D8 — a currency mismatch fails closed rather than silently using another source.
-        if (!CurrencyMatches(row.Currency, request.DocumentCurrency))
+        if (!CurrencyMatches(row.Currency, request.DocumentCurrency, request.CompanyBaseCurrency))
         {
             return SaPriceSourceResult.Blocked(
                 SaPriceSource.CustomerItem,
-                $"The customer-item price for item {iCode} is stored in {row.Currency} but this "
+                $"The customer-item price for item {iCode} is stored in "
+                + $"{DescribeCurrency(row.Currency, request.CompanyBaseCurrency)} but this "
                 + "document is in a different currency. Correct the customer-item price or the document "
                 + "currency; conversion is not implicit.");
         }
@@ -479,13 +489,16 @@ public static class SaItemFamilyPriceResolver
 
         // Currency is part of the MATCH: an exact match, or a blank line (= company base). A list that
         // only holds a different currency blocks, so a foreign price is never applied as if it were local.
-        var usable = banded.Where(x => CurrencyMatches(x.Currency, request.DocumentCurrency)).ToList();
+        var usable = banded
+            .Where(x => CurrencyMatches(x.Currency, request.DocumentCurrency, request.CompanyBaseCurrency))
+            .ToList();
         if (usable.Count == 0)
         {
             return SaPriceSourceResult.Blocked(
                 source,
                 $"Price list {code} holds a price for item {iCode} / UOM {uom}, but it is stored in "
-                + $"{banded[0].Currency} while this document is in {request.DocumentCurrency}. "
+                + $"{DescribeCurrency(banded[0].Currency, request.CompanyBaseCurrency)} while this document is in "
+                + $"{DescribeCurrency(request.DocumentCurrency, request.CompanyBaseCurrency)}. "
                 + "Conversion is not implicit.");
         }
 
@@ -493,7 +506,8 @@ public static class SaItemFamilyPriceResolver
             // An EXPLICIT currency match outranks a blank (base-currency) line: blank stays usable
             // because legacy data is sparse, but a price deliberately labelled in the document's
             // currency is the better answer when both are present.
-            .OrderByDescending(x => ExactCurrencyMatch(x.Currency, request.DocumentCurrency) ? 1 : 0)
+            .OrderByDescending(x => ExactCurrencyMatch(
+                x.Currency, request.DocumentCurrency, request.CompanyBaseCurrency) ? 1 : 0)
             .ThenByDescending(x => x.MinQty ?? 0m)
             .ThenByDescending(x => x.ValidFrom ?? DateTime.MinValue)
             .ThenBy(x => x.ICode, StringComparer.OrdinalIgnoreCase)
@@ -552,6 +566,17 @@ public static class SaItemFamilyPriceResolver
                 $"Item {iCode} sells in {sellingUom} but this line is {uom}; there is no UOM conversion.");
         }
 
+        // Item default is company-base priced. A USD document must not receive a MYR selling price.
+        if (!CurrencyMatches(null, request.DocumentCurrency, request.CompanyBaseCurrency))
+        {
+            return SaPriceSourceResult.Blocked(
+                SaPriceSource.ItemDefault,
+                $"The item default price is in company currency "
+                + $"{DescribeCurrency(null, request.CompanyBaseCurrency)} but this document is in "
+                + $"{DescribeCurrency(request.DocumentCurrency, request.CompanyBaseCurrency)}. "
+                + "Conversion is not implicit.");
+        }
+
         return SaPriceSourceResult.Ok(SaPriceSource.ItemDefault, item.SellingPrice!.Value, null);
     }
 
@@ -577,20 +602,64 @@ public static class SaItemFamilyPriceResolver
         return maxQty is null ? $"QTY {floor:0.####}+" : $"QTY {floor:0.####}-{maxQty.Value:0.####}";
     }
 
-    /// <summary>Blank on either side means "not declared", which is not a mismatch (legacy data is sparse).</summary>
-    private static bool CurrencyMatches(string? candidateCurrency, string? documentCurrency) =>
-        string.IsNullOrWhiteSpace(candidateCurrency) ||
-        string.IsNullOrWhiteSpace(documentCurrency) ||
-        string.Equals(Normalize(candidateCurrency), Normalize(documentCurrency), StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Effective-currency equality. Blank candidate = company base; blank document = company base
+    /// (not a wildcard). Missing company base cannot be proven and fails closed. No FX conversion.
+    /// </summary>
+    private static bool CurrencyMatches(
+        string? candidateCurrency,
+        string? documentCurrency,
+        string? companyBaseCurrency)
+    {
+        var basis = Normalize(companyBaseCurrency);
+        if (basis.Length == 0)
+        {
+            return false;
+        }
+
+        return string.Equals(
+            EffectiveCurrency(candidateCurrency, basis),
+            EffectiveCurrency(documentCurrency, basis),
+            StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
-    /// Both sides declare a currency and they are the same. Used only to RANK candidates: an explicit
-    /// match beats a blank line, but a blank line is never rejected (it means "company base").
+    /// The candidate itself declares the (effective) document currency. Used only to RANK candidates:
+    /// an explicit match beats a blank (base-currency) line. Blank document currency is treated as
+    /// company base so Price Inquiry "base currency" still prefers an explicit MYR row.
     /// </summary>
-    private static bool ExactCurrencyMatch(string? candidateCurrency, string? documentCurrency) =>
-        !string.IsNullOrWhiteSpace(candidateCurrency) &&
-        !string.IsNullOrWhiteSpace(documentCurrency) &&
-        string.Equals(Normalize(candidateCurrency), Normalize(documentCurrency), StringComparison.OrdinalIgnoreCase);
+    private static bool ExactCurrencyMatch(
+        string? candidateCurrency,
+        string? documentCurrency,
+        string? companyBaseCurrency)
+    {
+        if (string.IsNullOrWhiteSpace(candidateCurrency))
+        {
+            return false;
+        }
+
+        var document = EffectiveCurrency(documentCurrency, companyBaseCurrency);
+        return document.Length > 0
+            && string.Equals(Normalize(candidateCurrency), document, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EffectiveCurrency(string? declared, string? companyBaseCurrency)
+    {
+        var value = Normalize(declared);
+        return value.Length > 0 ? value : Normalize(companyBaseCurrency);
+    }
+
+    private static string DescribeCurrency(string? declared, string? companyBaseCurrency)
+    {
+        var value = Normalize(declared);
+        if (value.Length > 0)
+        {
+            return value;
+        }
+
+        var basis = Normalize(companyBaseCurrency);
+        return basis.Length == 0 ? "(undeclared)" : $"{basis} (company base)";
+    }
 
     private static string Normalize(string? value) => value?.Trim() ?? string.Empty;
 }
@@ -675,8 +744,28 @@ public static class SaItemFamilyRuleMatch
         string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Runtime apply is directional: a blank rule is a wildcard; a class-specific rule matches only a
+    /// non-blank actual <c>IClassCode</c> (trim, ordinal-ignore-case). Save-time overlap stays
+    /// <see cref="ClassesOverlap"/>.
+    /// </summary>
+    public static bool RuleMatchesActualClass(string? ruleClass, string? actualClass)
+    {
+        if (string.IsNullOrWhiteSpace(ruleClass))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(actualClass))
+        {
+            return false;
+        }
+
+        return string.Equals(ruleClass.Trim(), actualClass.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Does this rule apply to the request? The item must match, the band and window must contain the
-    /// quantity/date, and a class-specific rule must match the item's class (blank = all classes).
+    /// quantity/date, and a class-specific rule must match the item's actual class (blank = all classes).
     /// </summary>
     public static bool Applies(SaItemFamilyDiscountRule rule, SaItemFamilyDiscountRequest request) =>
         rule is not null &&
@@ -684,7 +773,7 @@ public static class SaItemFamilyRuleMatch
         string.Equals(rule.ICode?.Trim(), request.ICode?.Trim(), StringComparison.OrdinalIgnoreCase) &&
         BandContains(rule.QtyFr, rule.QtyTo, request.Qty) &&
         WindowsOverlap(rule.DateFr, rule.DateTo, request.DocDate, request.DocDate) &&
-        ClassesOverlap(rule.IClass, request.IClass);
+        RuleMatchesActualClass(rule.IClass, request.IClass);
 }
 
 /// <summary>

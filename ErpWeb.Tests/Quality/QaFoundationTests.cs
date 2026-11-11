@@ -473,9 +473,9 @@ public class QaFoundationTests : IAsyncLifetime
     private static QaCaseSaveCommand GoodDraft() => new()
     {
         CaseDate = DateTime.Today,
-        SourceType = QaSourceTypes.ProductionOutputGood,
-        SourceDocNo = "DP00000001",
-        WorkOrderNo = "WO1",
+        SourceType = QaSourceTypes.IncomingPreGrn,
+        DeliveryNote = "DN-TEST",
+        SourceDocNo = "DN-TEST",
         Lines =
         [
             new QaCaseLineSaveCommand
@@ -484,8 +484,7 @@ public class QaFoundationTests : IAsyncLifetime
                 ItemCode = "FG1",
                 ItemName = "Finished",
                 Uom = "PCS",
-                Qty = 5m,
-                LotNo = "L1"
+                Qty = 5m
             }
         ]
     };

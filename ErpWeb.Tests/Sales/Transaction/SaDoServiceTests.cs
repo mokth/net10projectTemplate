@@ -2855,6 +2855,95 @@ public class SaDoServiceTests : IAsyncLifetime
         Assert.Null(get.Document.Lines[0].PricingRef);
     }
 
+    [Fact]
+    public async Task Billable_lines_project_source_commercial_slots_per_do()
+    {
+        var sut = CreateSut();
+        var first = await sut.SaveNewAsync(new SaDoSaveRequest
+        {
+            DoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesRep = "SM1",
+            Lines =
+            [
+                new SaDoLineRequest
+                {
+                    ICode = "SVC1",
+                    Qty = 40m,
+                    UnitPrice = 10m,
+                    ItemDiscount = 10m,
+                    ItemDiscount2 = 5m,
+                    ItemDiscount3 = 1m,
+                    ItemDiscount4 = 2m,
+                    ItemDiscount5 = 3m,
+                    ItemDiscount6 = 4m,
+                    IsInclusive = true,
+                    TaxGrCode = "SR",
+                    OrderType = "STD",
+                    OriginalUnitPrice = 12m,
+                    OverrideReason = "promo"
+                }
+            ]
+        });
+        Assert.True(first.Succeeded, first.ErrorMessage);
+        Assert.True((await sut.PostAsync([Keyed(first.DoNo!, first.Document!.RowVersion)])).Succeeded);
+
+        var second = await sut.SaveNewAsync(new SaDoSaveRequest
+        {
+            DoDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesRep = "SM1",
+            Lines =
+            [
+                new SaDoLineRequest
+                {
+                    ICode = "SVC1",
+                    Qty = 15m,
+                    UnitPrice = 12m,
+                    ItemDiscAmount = 1m,
+                    ItemDiscAmount1 = 2m,
+                    TaxGrCode = "ZR",
+                    OrderType = "EXP"
+                }
+            ]
+        });
+        Assert.True(second.Succeeded, second.ErrorMessage);
+        Assert.True((await sut.PostAsync([Keyed(second.DoNo!, second.Document!.RowVersion)])).Succeeded);
+
+        var billable = await sut.GetBillableLinesAsync("CUST01", "MYR");
+        Assert.True(billable.Succeeded, billable.ErrorMessage);
+        var a = Assert.Single(billable.BillableLines, x => x.DoNo == first.DoNo);
+        var b = Assert.Single(billable.BillableLines, x => x.DoNo == second.DoNo);
+
+        Assert.Equal(10m, a.UnitPrice);
+        Assert.Equal(10m, a.ItemDiscount);
+        Assert.Equal(5m, a.ItemDiscount2);
+        Assert.Equal(1m, a.ItemDiscount3);
+        Assert.Equal(2m, a.ItemDiscount4);
+        Assert.Equal(3m, a.ItemDiscount5);
+        Assert.Equal(4m, a.ItemDiscount6);
+        Assert.Equal(0m, a.ItemDiscAmount);
+        Assert.Equal(0m, a.ItemDiscAmount1);
+        Assert.True(a.IsInclusive);
+        Assert.Equal("SR", a.TaxGroup);
+        Assert.Equal("STD", a.OrderType);
+        Assert.Equal(12m, a.OriginalUnitPrice);
+        Assert.Equal("promo", a.OverrideReason);
+
+        Assert.Equal(12m, b.UnitPrice);
+        Assert.Equal(0m, b.ItemDiscount);
+        Assert.Equal(1m, b.ItemDiscAmount);
+        Assert.Equal(2m, b.ItemDiscAmount1);
+        Assert.Equal("ZR", b.TaxGroup);
+        Assert.Equal("EXP", b.OrderType);
+        Assert.NotEqual(a.UnitPrice, b.UnitPrice);
+        Assert.NotEqual(a.ItemDiscount, b.ItemDiscount);
+    }
+
     private static SaDoSaveRequest Request(
         decimal qty,
         decimal price,

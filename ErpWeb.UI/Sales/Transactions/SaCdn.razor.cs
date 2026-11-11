@@ -666,6 +666,7 @@ public partial class SaCdn : PageBase, IDisposable
         if (!CanMutateLines) return;
 
         _editingLine = null;
+        Interlocked.Increment(ref _priceApplySeq);
         Popup = new SaCdnLineVm
         {
             // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
@@ -685,6 +686,7 @@ public partial class SaCdn : PageBase, IDisposable
         if (!CanMutateLines) return;
 
         _editingLine = line;
+        Interlocked.Increment(ref _priceApplySeq);
         Popup = line.Clone();
 
         // Phase 4: as SaSo — adopt the loaded price as the override baseline when no engine price was ever
@@ -726,6 +728,7 @@ public partial class SaCdn : PageBase, IDisposable
         Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.StdUom = item.StdUom;
+        Popup.SellingUom = item.SellingUom;
         Popup.StockControl = item.StockControl;
         Popup.Classification = item.Classification;
         if (!string.IsNullOrWhiteSpace(item.TaxGroup)
@@ -753,23 +756,42 @@ public partial class SaCdn : PageBase, IDisposable
     protected async Task OnPopupQuantityChangedAsync(decimal qty)
     {
         Popup.Qty = qty;
-        await ResolvePopupPriceAsync(assignDiscountSlots: true);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: true);
     }
 
     /// <summary>
     /// Toggling the basis changes the STORED price, so the price is re-resolved. The discount slots are
     /// left untouched: the document engine recomputes the effective discount from the slots anyway.
+    /// Source-inherited and already-saved lines keep UnitPrice; RecalcDocument still updates amounts.
     /// </summary>
     protected async Task OnPopupBasisChangedAsync(bool inclusive)
     {
         Popup.IsInclusive = inclusive;
-        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
     }
 
     protected async Task OnPopupTaxChangedAsync(string? taxGrCode)
     {
         Popup.TaxGrCode = taxGrCode;
-        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
+    }
+
+    /// <summary>
+    /// Quantity, tax group, and tax basis are not live-price triggers for invoice-copied,
+    /// already-saved, or manually overridden lines. Item-code change still resolves.
+    /// </summary>
+    private async Task ResolvePopupPriceOnQtyTaxOrBasisAsync(bool assignDiscountSlots)
+    {
+        if (!SaLinePricingTrigger.AllowLiveResolve(
+                isEditingExistingLine: _editingLine is not null,
+                hasInheritedSource: SaLinePricingTrigger.HasInheritedSource(InvNo, Popup.SourceInvLine),
+                isManualOverride: IsPriceOverridden()))
+        {
+            Interlocked.Increment(ref _priceApplySeq);
+            return;
+        }
+
+        await ResolvePopupPriceAsync(assignDiscountSlots);
     }
 
     /// <summary>
@@ -791,7 +813,7 @@ public partial class SaCdn : PageBase, IDisposable
             {
                 CustCode = CustCode!,
                 ICode = Popup.ICode,
-                UOM = Popup.StdUom ?? string.Empty,
+                UOM = SaLinePricingTrigger.CommercialUom(Popup.SellingUom, Popup.StdUom),
                 Qty = Popup.Qty,
                 DocDate = DocDate,
                 DocumentCurrency = Currency,
@@ -1072,8 +1094,11 @@ public partial class SaCdn : PageBase, IDisposable
             Lines = doc.Lines.Select(SaCdnLineVm.FromDto).ToList();
             Renumber();
             RecalcDocument();
+            Interlocked.Increment(ref _priceApplySeq);
             MarkDirty();
-            StatusMessage = $"Copied {Lines.Count} line(s) from invoice {row.InvNo}. Review and save to confirm.";
+            StatusMessage = string.IsNullOrWhiteSpace(result.WarningMessage)
+                ? $"Copied {Lines.Count} line(s) from invoice {row.InvNo}. Review and save to confirm."
+                : $"Copied {Lines.Count} line(s) from invoice {row.InvNo}. {result.WarningMessage}";
         }
         finally
         {
@@ -1215,7 +1240,8 @@ public partial class SaCdn : PageBase, IDisposable
         CustCode = CustCode ?? string.Empty,
         ItemCode = line.ICode,
         ItemDescription = line.IDesc,
-        Uom = line.StdUom ?? string.Empty,
+        Uom = SaLinePricingTrigger.CommercialUom(line.SellingUom, line.StdUom),
+        StockUom = line.StdUom,
         Qty = line.Qty,
         DocDate = DocDate,
         Currency = Currency,
@@ -1224,6 +1250,13 @@ public partial class SaCdn : PageBase, IDisposable
         PricingRef = line.PricingRef,
         OriginalUnitPrice = line.OriginalUnitPrice,
         OverrideReason = line.OverrideReason,
+        ItemDiscount = line.ItemDiscount,
+        ItemDiscount2 = line.ItemDiscount2,
+        ItemDiscount3 = line.ItemDiscount3,
+        ItemDiscount4 = line.ItemDiscount4,
+        ItemDiscount5 = line.ItemDiscount5,
+        ItemDiscount6 = line.ItemDiscount6,
+        ItemDiscAmount = line.ItemDiscAmount,
         IsInclusive = line.IsInclusive,
         TaxPercent = ResolveTaxPercent(line.TaxGrCode),
         SourceDocumentType = string.IsNullOrWhiteSpace(InvNo) ? null : "Invoice",
@@ -1265,6 +1298,8 @@ public sealed class SaCdnLineVm
     public string? IDesc { get; set; }
     public decimal Qty { get; set; } = 1m;
     public string? StdUom { get; set; }
+    /// <summary>Commercial selling UOM for live price lookup only.</summary>
+    public string? SellingUom { get; set; }
     public decimal UnitPrice { get; set; }
 
     /// <summary>The engine's pricing provenance for this line (plan Phase 2); stored, never re-derived.</summary>
@@ -1312,6 +1347,7 @@ public sealed class SaCdnLineVm
         IDesc = IDesc,
         Qty = Qty,
         StdUom = StdUom,
+        SellingUom = SellingUom,
         UnitPrice = UnitPrice,
         PricingSource = PricingSource,
         PricingRef = PricingRef,

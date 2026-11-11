@@ -7,6 +7,7 @@ using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Quality;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace ErpWeb.Core.Quality;
 
@@ -151,126 +152,72 @@ public sealed class QaCaseService : IQaCaseService
             return schemaError;
         }
 
-        var rows = db.QaCases.AsNoTracking()
-            .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode);
+        var followUpReady = (await QaSchemaReadiness.EvaluateAsync(db, cancellationToken)).CanQueryFollowUp;
+        var take = Math.Clamp(query.Take <= 0 ? 50 : query.Take, 1, QaInquiryLimits.MaxPageTake);
+        return QaResult.OkInquiry(await LoadInquiryPageAsync(
+            db, scope, query, followUpReady, take, cancellationToken));
+    }
 
-        if (!string.IsNullOrWhiteSpace(query.Status)
-            && !string.Equals(query.Status, "all", StringComparison.OrdinalIgnoreCase))
+    public async Task<QaResult> GetWorkloadAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = RequireBranch();
+        if (scope is null)
         {
-            var status = query.Status.Trim().ToUpperInvariant();
-            rows = rows.Where(x => x.Status == status);
+            return QaResult.Fail("Not authorized.");
         }
 
-        if (!string.IsNullOrWhiteSpace(query.SourceType)
-            && !string.Equals(query.SourceType, "all", StringComparison.OrdinalIgnoreCase))
+        if (!await CanAsync(PermissionCodes.Access, cancellationToken))
         {
-            var source = query.SourceType.Trim().ToUpperInvariant();
-            rows = rows.Where(x => x.SourceType == source);
+            return QaResult.Fail("Not authorized.");
         }
 
-        if (query.DateFrom is not null)
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
         {
-            var from = query.DateFrom.Value.Date;
-            rows = rows.Where(x => x.CaseDate >= from);
+            return schemaError;
         }
 
-        if (query.DateTo is not null)
+        var followUpReady = (await QaSchemaReadiness.EvaluateAsync(db, cancellationToken)).CanQueryFollowUp;
+        return QaResult.OkInquiry(await LoadInquiryPageAsync(
+            db, scope, new QaInquiryQuery(), followUpReady, take: 0, cancellationToken));
+    }
+
+    public async Task<QaResult> ExportInquiryAsync(QaInquiryQuery query, CancellationToken cancellationToken = default)
+    {
+        var scope = RequireBranch();
+        if (scope is null)
         {
-            var to = query.DateTo.Value.Date.AddDays(1);
-            rows = rows.Where(x => x.CaseDate < to);
+            return QaResult.Fail("Not authorized.");
         }
 
-        if (!string.IsNullOrWhiteSpace(query.SearchText))
+        if (!await _accessRights.CanAsync(MenuCodes.QualityInquiry, PermissionCodes.Export, cancellationToken)
+            || !await _accessRights.CanAsync(MenuCodes.QualityInquiry, PermissionCodes.Access, cancellationToken))
         {
-            var text = query.SearchText.Trim();
-            rows = rows.Where(x =>
-                x.CaseNo.Contains(text)
-                || (x.SourceDocNo != null && x.SourceDocNo.Contains(text))
-                || (x.SupplierName != null && x.SupplierName.Contains(text))
-                || (x.WorkOrderNo != null && x.WorkOrderNo.Contains(text))
-                || (x.DeliveryNote != null && x.DeliveryNote.Contains(text)));
+            return QaResult.Fail("Not authorized.");
         }
 
-        var entities = await rows
-            .Include(x => x.Lines)
-            .ThenInclude(x => x.Dispositions)
-            .Include(x => x.Inspections)
-            .Include(x => x.Grants)
-            .ThenInclude(x => x.Allocations)
-            .Include(x => x.FgGrants)
-            .ThenInclude(x => x.Allocations)
-            .Include(x => x.LogicalHolds)
-            .Include(x => x.PhysicalHolds)
-            .ThenInclude(x => x.Allocations)
-            .Include(x => x.NonGoodGrants)
-            .ThenInclude(x => x.Allocations)
-            .OrderByDescending(x => x.CaseDate)
-            .ThenByDescending(x => x.CaseNo)
-            .ToListAsync(cancellationToken);
-
-        var today = DateTime.Today;
-        var inquiryRows = entities.Select(entity =>
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await SchemaErrorAsync(db, cancellationToken) is { } schemaError)
         {
-            var destinations = QaDestinationComposer.Compose(entity);
-            var rejected = QaDestinationComposer.RejectedQty(entity);
-            var accepted = IvQty.Round(
-                entity.Grants.Sum(x => x.AcceptedQty)
-                + entity.FgGrants.Sum(x => x.AcceptedQty)
-                + entity.NonGoodGrants.Sum(x => x.AcceptedQty));
-            if (accepted == 0m)
-            {
-                accepted = IvQty.Round(entity.Lines.SelectMany(x => x.Dispositions)
-                    .Where(x => string.Equals(x.Kind, QaDispositionKinds.Accept, StringComparison.OrdinalIgnoreCase))
-                    .Sum(x => x.Qty));
-            }
+            return schemaError;
+        }
 
-            var posted = IvQty.Round(
-                entity.Grants.SelectMany(x => x.Allocations)
-                    .Where(x => x.Status == QaReceiptAllocationStatuses.Posted)
-                    .Sum(x => x.Qty)
-                + entity.FgGrants.SelectMany(x => x.Allocations)
-                    .Where(x => x.Status == QaReceiptAllocationStatuses.Posted)
-                    .Sum(x => x.Qty)
-                + entity.NonGoodGrants.SelectMany(x => x.Allocations)
-                    .Where(x => x.Status == QaReceiptAllocationStatuses.Posted)
-                    .Sum(x => x.Qty));
-            return new QaInquiryRow
-            {
-                CaseNo = entity.CaseNo,
-                CaseDate = entity.CaseDate,
-                Status = entity.Status,
-                SourceType = entity.SourceType,
-                SourceDocNo = entity.SourceDocNo,
-                SupplierName = entity.SupplierName,
-                WorkOrderNo = entity.WorkOrderNo,
-                AcceptedQty = accepted,
-                RejectedQty = rejected,
-                PostedQty = posted,
-                AgingDays = QaDestinationComposer.AgingDays(entity, today),
-                DestinationSummary = QaDestinationComposer.Summary(destinations),
-                Destinations = destinations
-            };
-        }).ToList();
-
-        var inspectedCount = entities.Count(QaDestinationComposer.ReachedInspection);
-        var firstPassCount = entities.Count(QaDestinationComposer.IsFirstPass);
-        var take = Math.Clamp(query.Take <= 0 ? 50 : query.Take, 1, 100);
-        var skip = Math.Max(0, query.Skip);
-        return QaResult.OkInquiry(new QaInquiryPage
+        var followUpReady = (await QaSchemaReadiness.EvaluateAsync(db, cancellationToken)).CanQueryFollowUp;
+        query.Skip = 0;
+        query.Take = QaInquiryLimits.MaxExportRows;
+        var filtered = QaInquiryQuerying.Filter(
+            db.QaCases.AsNoTracking(), scope.CompanyCode, scope.BranchCode!, query, followUpReady);
+        var total = await filtered.CountAsync(cancellationToken);
+        if (total > QaInquiryLimits.MaxExportRows)
         {
-            CaseCount = inquiryRows.Count,
-            PendingReviewCount = inquiryRows.Count(x =>
-                string.Equals(x.Status, QaCaseStatuses.PendingReview, StringComparison.OrdinalIgnoreCase)),
-            OpenDestinationCount = inquiryRows.Count(x => x.Destinations.Any(d =>
-                d.Status is QaDestinationStatuses.Suggested or QaDestinationStatuses.LinkedUnverified)),
-            InspectedCount = inspectedCount,
-            FirstPassCount = firstPassCount,
-            FirstPassYield = inspectedCount == 0 ? 0m : IvQty.Round((decimal)firstPassCount / inspectedCount),
-            FirstPassYieldNote =
-                "First-pass yield is approved cases with zero rejected qty, divided by cases that reached inspection.",
-            Rows = inquiryRows.Skip(skip).Take(take).ToList(),
-            TotalCount = inquiryRows.Count
-        });
+            return QaResult.Fail(QaCaseMessages.ExportTooLarge);
+        }
+
+        var page = await LoadInquiryPageAsync(
+            db, scope, query, followUpReady, QaInquiryLimits.MaxExportRows, cancellationToken);
+        return QaResult.OkFile(
+            QaInquiryCsv.Build(page, query, DateTime.UtcNow),
+            $"QaInquiry_{DateTime.UtcNow:yyMMddHHmmss}.csv");
     }
 
     public async Task<QaResult> GetAsync(string caseNo, CancellationToken cancellationToken = default)
@@ -293,7 +240,14 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         var entity = await LoadCaseAsync(db, scope, caseNo, cancellationToken);
-        return entity is null ? QaResult.Fail("Quality case was not found.") : QaResult.OkCase(Map(entity));
+        if (entity is null)
+        {
+            return QaResult.Fail("Quality case was not found.");
+        }
+
+        var sourceNote = await QaSourceResolver.RevalidateCaseAsync(db, entity, cancellationToken);
+        var followUp = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        return QaResult.OkCase(Map(entity, followUp.CanQueryFollowUp, sourceNote));
     }
 
     public async Task<QaResult> SaveDraftAsync(QaCaseSaveCommand command, CancellationToken cancellationToken = default)
@@ -360,7 +314,7 @@ public sealed class QaCaseService : IQaCaseService
 
             if (Stale(entity, command.RowVersion))
             {
-                return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+                return QaResult.Fail(QaCaseMessages.ChangedReload);
             }
         }
 
@@ -379,8 +333,7 @@ public sealed class QaCaseService : IQaCaseService
         entity.ModifiedDate = DateTime.UtcNow;
         entity.ModifiedBy = TruncateUser(scope.UserId);
         AddAudit(entity, isNew ? QaAuditEvents.Created : QaAuditEvents.Saved, scope.UserId, entity.SourceType);
-        await db.SaveChangesAsync(cancellationToken);
-        return QaResult.OkCase(Map(entity));
+        return await CommitCaseAsync(db, entity, cancellationToken);
     }
 
     public Task<QaResult> SubmitAsync(QaReviewCommand command, CancellationToken cancellationToken = default) =>
@@ -422,7 +375,7 @@ public sealed class QaCaseService : IQaCaseService
 
         if (Stale(entity, command.RowVersion))
         {
-            return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
         }
 
         var sourceError = await QaSourceResolver.RevalidateInspectionAsync(db, entity, command.Lines, cancellationToken);
@@ -436,6 +389,7 @@ public sealed class QaCaseService : IQaCaseService
             return QaResult.Fail("Enter at least one inspection result.");
         }
 
+        var followUpReady = (await QaSchemaReadiness.EvaluateAsync(db, cancellationToken)).CanQueryFollowUp;
         foreach (var lineCommand in command.Lines)
         {
             var line = entity.Lines.FirstOrDefault(x => x.LineNo == lineCommand.LineNo);
@@ -476,7 +430,20 @@ public sealed class QaCaseService : IQaCaseService
             inspection.Notes = TrimTo(lineCommand.Notes, 500);
             inspection.MeasuredValues = TrimTo(lineCommand.MeasuredValues, 500);
 
-            ReplaceDispositions(entity, line, lineCommand.Dispositions);
+            ReplaceDispositions(db, entity, line, lineCommand.Dispositions);
+            if (followUpReady)
+            {
+                QaFollowUp.AppendAttempt(
+                    entity,
+                    line,
+                    TruncateUser(scope.UserId),
+                    inspected,
+                    lineCommand.Result,
+                    lineCommand.Dispositions,
+                    TrimTo(lineCommand.Notes, 500),
+                    TrimTo(lineCommand.MeasuredValues, 500),
+                    TrimTo(command.ReinspectionReason, 250));
+            }
         }
 
         entity.Status = QaCaseStatuses.InInspection;
@@ -485,8 +452,7 @@ public sealed class QaCaseService : IQaCaseService
         entity.ModifiedDate = DateTime.UtcNow;
         entity.ModifiedBy = TruncateUser(scope.UserId);
         AddAudit(entity, QaAuditEvents.Inspected, scope.UserId, null);
-        await db.SaveChangesAsync(cancellationToken);
-        return QaResult.OkCase(Map(entity));
+        return await CommitCaseAsync(db, entity, cancellationToken);
     }
 
     public async Task<QaResult> SubmitForReviewAsync(QaReviewCommand command, CancellationToken cancellationToken = default)
@@ -521,20 +487,21 @@ public sealed class QaCaseService : IQaCaseService
 
         if (Stale(entity, command.RowVersion))
         {
-            return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
         }
 
-        if (entity.Lines.Any(x => x.Inspections.Count == 0))
+        if (entity.Lines.Any(x =>
+                x.Inspections.Count == 0
+                || IvQty.Round(x.InspectedQty) != IvQty.Round(x.Qty)))
         {
-            return QaResult.Fail("Inspect every line before submitting for review.");
+            return QaResult.Fail(QaCaseMessages.InspectFullQuantity);
         }
 
         entity.Status = QaCaseStatuses.PendingReview;
         entity.ModifiedDate = DateTime.UtcNow;
         entity.ModifiedBy = TruncateUser(scope.UserId);
         AddAudit(entity, QaAuditEvents.ReviewSubmitted, scope.UserId, command.Remarks);
-        await db.SaveChangesAsync(cancellationToken);
-        return QaResult.OkCase(Map(entity));
+        return await CommitCaseAsync(db, entity, cancellationToken);
     }
 
     public async Task<QaResult> ApproveAsync(QaReviewCommand command, CancellationToken cancellationToken = default)
@@ -570,13 +537,11 @@ public sealed class QaCaseService : IQaCaseService
 
         if (Stale(entity, command.RowVersion))
         {
-            return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
         }
 
         var policy = await QaPolicyService.LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
-        if ((policy?.InspectorApproverSeparation ?? true)
-            && !string.IsNullOrWhiteSpace(entity.InspectedBy)
-            && string.Equals(entity.InspectedBy, TruncateUser(scope.UserId), StringComparison.OrdinalIgnoreCase))
+        if (InspectorMayNotReview(entity, scope.UserId, policy))
         {
             return QaResult.Fail("The inspector cannot approve this case. Another user must review it.");
         }
@@ -605,6 +570,15 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         entity.EligibilityNote = QaEligibilityNotes.ForSource(entity.SourceType);
+        var followUp = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        if (followUp.CanQueryFollowUp)
+        {
+            QaFollowUp.EnsureApprovedActions(entity, TruncateUser(scope.UserId));
+            if (entity.CorrectiveActions.Any(x => x.Uid == 0))
+            {
+                AddAudit(entity, QaAuditEvents.ActionCreated, scope.UserId, "Follow-up tasks were created from reject, rework, and hold quantities.");
+            }
+        }
 
         if (_logicalHolds is not null)
         {
@@ -639,9 +613,7 @@ public sealed class QaCaseService : IQaCaseService
         }
 
         AddAudit(entity, QaAuditEvents.Approved, scope.UserId, entity.EligibilityNote);
-        await db.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-        return QaResult.OkCase(Map(entity));
+        return await CommitCaseAsync(db, entity, cancellationToken, tx);
     }
 
     public async Task<QaResult> ReleaseHoldAsync(QaReviewCommand command, CancellationToken cancellationToken = default)
@@ -682,7 +654,7 @@ public sealed class QaCaseService : IQaCaseService
 
         if (Stale(entity, command.RowVersion))
         {
-            return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
         }
 
         if (_branchLock is not null && !string.IsNullOrWhiteSpace(scope.BranchCode))
@@ -726,9 +698,7 @@ public sealed class QaCaseService : IQaCaseService
 
         entity.ModifiedDate = DateTime.UtcNow;
         entity.ModifiedBy = TruncateUser(scope.UserId);
-        await db.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-        return QaResult.OkCase(Map(entity));
+        return await CommitCaseAsync(db, entity, cancellationToken, tx);
     }
 
     public async Task<QaResult> RejectAsync(QaReviewCommand command, CancellationToken cancellationToken = default)
@@ -764,7 +734,13 @@ public sealed class QaCaseService : IQaCaseService
 
         if (Stale(entity, command.RowVersion))
         {
-            return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
+        }
+
+        var rejectPolicy = await QaPolicyService.LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
+        if (InspectorMayNotReview(entity, scope.UserId, rejectPolicy))
+        {
+            return QaResult.Fail("The inspector cannot reject this case. Another user must review it.");
         }
 
         entity.Status = QaCaseStatuses.Rejected;
@@ -775,8 +751,146 @@ public sealed class QaCaseService : IQaCaseService
         entity.ModifiedDate = DateTime.UtcNow;
         entity.ModifiedBy = TruncateUser(scope.UserId);
         AddAudit(entity, QaAuditEvents.Rejected, scope.UserId, command.Remarks);
-        await db.SaveChangesAsync(cancellationToken);
-        return QaResult.OkCase(Map(entity));
+        return await CommitCaseAsync(db, entity, cancellationToken);
+    }
+
+    public async Task<QaResult> SaveActionAsync(QaActionSaveCommand command, CancellationToken cancellationToken = default)
+    {
+        var scope = RequireWrite();
+        if (scope is null)
+        {
+            return QaResult.Fail("Not authorized.");
+        }
+
+        if (!await CanAsync(PermissionCodes.Edit, cancellationToken))
+        {
+            return QaResult.Fail("Not authorized.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await FollowUpSchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
+        var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
+        if (entity is null)
+        {
+            return QaResult.Fail("Quality case was not found.");
+        }
+
+        if (Stale(entity, command.RowVersion))
+        {
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
+        }
+
+        if (command.RequestId is { } requestId)
+        {
+            var existing = entity.CorrectiveActions.FirstOrDefault(x => x.RequestId == requestId);
+            if (existing is not null)
+            {
+                return QaResult.OkCase(Map(entity, followUpReady: true));
+            }
+        }
+
+        if (!QaActionTypes.IsKnown(command.ActionType))
+        {
+            return QaResult.Fail("Select a follow-up type.");
+        }
+
+        var line = entity.Lines.FirstOrDefault(x => x.LineNo == command.LineNo);
+        if (line is null)
+        {
+            return QaResult.Fail($"Line {command.LineNo} was not found.");
+        }
+
+        var qtyError = QaFollowUp.ValidateNewQty(entity, line, command.ActionType, command.Qty);
+        if (qtyError is not null)
+        {
+            return QaResult.Fail(qtyError);
+        }
+
+        if (string.IsNullOrWhiteSpace(command.Reason))
+        {
+            return QaResult.Fail("Enter a reason for this follow-up task.");
+        }
+
+        QaFollowUp.AddAction(
+            entity,
+            line,
+            command.ActionType,
+            command.Qty,
+            TruncateUser(scope.UserId),
+            TrimTo(command.Reason, 250),
+            TrimTo(command.AssignedTo, 20),
+            TrimTo(command.AssignedDepartment, 30),
+            command.DueDate,
+            TrimTo(command.Remarks, 500),
+            command.RequestId);
+        entity.ModifiedDate = DateTime.UtcNow;
+        entity.ModifiedBy = TruncateUser(scope.UserId);
+        AddAudit(entity, QaAuditEvents.ActionCreated, scope.UserId, command.Reason);
+        return await CommitCaseAsync(db, entity, cancellationToken);
+    }
+
+    public Task<QaResult> StartActionAsync(QaActionUpdateCommand command, CancellationToken cancellationToken = default) =>
+        MutateActionAsync(command, QaActionStatuses.InProgress, QaAuditEvents.ActionStarted, requireReason: false, cancellationToken);
+
+    public Task<QaResult> ReassignActionAsync(QaActionUpdateCommand command, CancellationToken cancellationToken = default) =>
+        MutateActionAsync(command, null, QaAuditEvents.ActionReassigned, requireReason: true, cancellationToken);
+
+    public Task<QaResult> CompleteActionAsync(QaActionUpdateCommand command, CancellationToken cancellationToken = default) =>
+        MutateActionAsync(command, QaActionStatuses.Done, QaAuditEvents.ActionCompleted, requireReason: false, cancellationToken);
+
+    public Task<QaResult> CancelActionAsync(QaActionUpdateCommand command, CancellationToken cancellationToken = default) =>
+        MutateActionAsync(command, QaActionStatuses.Cancelled, QaAuditEvents.ActionCancelled, requireReason: true, cancellationToken);
+
+    public async Task<QaResult> ReinspectAsync(QaReviewCommand command, CancellationToken cancellationToken = default)
+    {
+        var scope = RequireWrite();
+        if (scope is null)
+        {
+            return QaResult.Fail("Not authorized.");
+        }
+
+        if (!await CanAsync(PermissionCodes.Edit, cancellationToken))
+        {
+            return QaResult.Fail("Not authorized.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await FollowUpSchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
+        var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
+        if (entity is null)
+        {
+            return QaResult.Fail("Quality case was not found.");
+        }
+
+        if (Stale(entity, command.RowVersion))
+        {
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
+        }
+
+        if (!QaFollowUp.CanReinspect(entity))
+        {
+            return QaResult.Fail(QaCaseMessages.ReinspectionBlocked);
+        }
+
+        if (string.IsNullOrWhiteSpace(command.Remarks))
+        {
+            return QaResult.Fail("Enter a reason to reinspect the same source. Quality will not create a second delivery.");
+        }
+
+        entity.Status = QaCaseStatuses.InInspection;
+        entity.ReviewDecision = null;
+        entity.ModifiedDate = DateTime.UtcNow;
+        entity.ModifiedBy = TruncateUser(scope.UserId);
+        AddAudit(entity, QaAuditEvents.ReinspectionStarted, scope.UserId, command.Remarks);
+        return await CommitCaseAsync(db, entity, cancellationToken);
     }
 
     public Task<QaResult> CloseAsync(QaReviewCommand command, CancellationToken cancellationToken = default) =>
@@ -829,16 +943,33 @@ public sealed class QaCaseService : IQaCaseService
 
         if (Stale(entity, command.RowVersion))
         {
-            return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
         }
 
         db.QaAuditEvents.RemoveRange(entity.AuditEvents);
         db.QaDispositionLines.RemoveRange(entity.Dispositions);
         db.QaInspections.RemoveRange(entity.Inspections);
+        if (entity.CorrectiveActions.Count > 0)
+        {
+            db.QaCorrectiveActions.RemoveRange(entity.CorrectiveActions);
+        }
+
+        if (entity.InspectionAttempts.Count > 0)
+        {
+            db.QaInspectionAttempts.RemoveRange(entity.InspectionAttempts);
+        }
+
         db.QaCaseLines.RemoveRange(entity.Lines);
         db.QaCases.Remove(entity);
-        await db.SaveChangesAsync(cancellationToken);
-        return new QaResult { Succeeded = true };
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return new QaResult { Succeeded = true };
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
+        }
     }
 
     public async Task<QaResult> SearchSourcesAsync(QaSourceQuery query, CancellationToken cancellationToken = default)
@@ -859,8 +990,11 @@ public sealed class QaCaseService : IQaCaseService
             return QaResult.Fail("Select a quality source type.");
         }
 
-        var take = Math.Clamp(query.Take <= 0 ? 20 : query.Take, 1, 100);
-        var skip = Math.Max(0, query.Skip);
+        var exact = query.ExactSourceHeaderId is > 0 || query.ExactLotId is > 0 || query.ExactOutputId is > 0;
+        var take = exact
+            ? Math.Clamp(query.Take <= 0 ? 500 : query.Take, 1, 500)
+            : Math.Clamp(query.Take <= 0 ? 20 : query.Take, 1, 100);
+        var skip = exact ? 0 : Math.Max(0, query.Skip);
         var text = (query.SearchText ?? string.Empty).Trim();
         var sourceType = query.SourceType.Trim().ToUpperInvariant();
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
@@ -868,12 +1002,12 @@ public sealed class QaCaseService : IQaCaseService
         return sourceType switch
         {
             QaSourceTypes.IncomingPreGrn => await SearchIncomingAsync(db, scope, text, skip, take, cancellationToken),
-            QaSourceTypes.PostedGrn => await SearchPostedInventoryAsync(db, scope, IvTrxTypes.GoodsReceive, QaSourceTypes.PostedGrn, text, skip, take, cancellationToken),
-            QaSourceTypes.InventoryStock => await SearchPostedInventoryAsync(db, scope, IvTrxTypes.MiscellaneousReceipt, QaSourceTypes.InventoryStock, text, skip, take, cancellationToken),
-            QaSourceTypes.ProductionOutputGood => await SearchOutputAsync(db, scope, goodOnly: true, text, skip, take, cancellationToken),
-            QaSourceTypes.ProductionOutputNonGood => await SearchOutputAsync(db, scope, goodOnly: false, text, skip, take, cancellationToken),
-            QaSourceTypes.ProductionWipLot => await SearchLotsAsync(db, scope, "PROCESS_WIP", QaSourceTypes.ProductionWipLot, text, skip, take, cancellationToken),
-            QaSourceTypes.FgStagingLot => await SearchLotsAsync(db, scope, "FG_STAGING", QaSourceTypes.FgStagingLot, text, skip, take, cancellationToken),
+            QaSourceTypes.PostedGrn => await SearchPostedInventoryAsync(db, scope, IvTrxTypes.GoodsReceive, QaSourceTypes.PostedGrn, text, skip, take, query.ExactSourceHeaderId, cancellationToken),
+            QaSourceTypes.InventoryStock => await SearchPostedInventoryAsync(db, scope, IvTrxTypes.MiscellaneousReceipt, QaSourceTypes.InventoryStock, text, skip, take, query.ExactSourceHeaderId, cancellationToken),
+            QaSourceTypes.ProductionOutputGood => await SearchOutputAsync(db, scope, goodOnly: true, text, skip, take, query.ExactOutputId ?? query.ExactSourceHeaderId, cancellationToken),
+            QaSourceTypes.ProductionOutputNonGood => await SearchOutputAsync(db, scope, goodOnly: false, text, skip, take, query.ExactOutputId ?? query.ExactSourceHeaderId, cancellationToken),
+            QaSourceTypes.ProductionWipLot => await SearchLotsAsync(db, scope, "PROCESS_WIP", QaSourceTypes.ProductionWipLot, text, skip, take, query.ExactLotId, cancellationToken),
+            QaSourceTypes.FgStagingLot => await SearchLotsAsync(db, scope, "FG_STAGING", QaSourceTypes.FgStagingLot, text, skip, take, query.ExactLotId, cancellationToken),
             _ => QaResult.Fail("Select a quality source type.")
         };
     }
@@ -925,7 +1059,7 @@ public sealed class QaCaseService : IQaCaseService
 
         if (Stale(entity, command.RowVersion))
         {
-            return QaResult.Fail("This case was changed by someone else. Reload and try again.");
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
         }
 
         if (string.Equals(toStatus, QaCaseStatuses.Closed, StringComparison.OrdinalIgnoreCase))
@@ -942,6 +1076,11 @@ public sealed class QaCaseService : IQaCaseService
             if (logicalActive || physicalRemaining > 0m)
             {
                 return QaResult.Fail("Release the quality hold before closing this case.");
+            }
+
+            if (QaFollowUp.HasOpenActions(entity))
+            {
+                return QaResult.Fail(QaCaseMessages.OpenActionsRemain);
             }
         }
 
@@ -961,8 +1100,7 @@ public sealed class QaCaseService : IQaCaseService
         entity.ModifiedDate = DateTime.UtcNow;
         entity.ModifiedBy = TruncateUser(scope.UserId);
         AddAudit(entity, audit, scope.UserId, command.Remarks);
-        await db.SaveChangesAsync(cancellationToken);
-        return QaResult.OkCase(Map(entity));
+        return await CommitCaseAsync(db, entity, cancellationToken);
     }
 
     private async Task<QaResult> SearchIncomingAsync(
@@ -1024,6 +1162,7 @@ public sealed class QaCaseService : IQaCaseService
         string text,
         int skip,
         int take,
+        long? exactHeaderId,
         CancellationToken cancellationToken)
     {
         var details = from d in db.IvTrxBatchDetails.AsNoTracking()
@@ -1035,7 +1174,12 @@ public sealed class QaCaseService : IQaCaseService
                             && b.DeletedAtUtc == null
                       select new { d, b };
 
-        if (!string.IsNullOrWhiteSpace(text))
+        if (exactHeaderId is > 0 and <= int.MaxValue)
+        {
+            var batchId = (int)exactHeaderId.Value;
+            details = details.Where(x => x.b.Id == batchId);
+        }
+        else if (!string.IsNullOrWhiteSpace(text))
         {
             var batchNo = int.TryParse(text, out var parsed) ? parsed : (int?)null;
             details = details.Where(x =>
@@ -1090,6 +1234,7 @@ public sealed class QaCaseService : IQaCaseService
         string text,
         int skip,
         int take,
+        long? exactOutputId,
         CancellationToken cancellationToken)
     {
         var sourceType = goodOnly ? QaSourceTypes.ProductionOutputGood : QaSourceTypes.ProductionOutputNonGood;
@@ -1108,7 +1253,11 @@ public sealed class QaCaseService : IQaCaseService
                 && x.ScrapQty + x.RejectQty + x.HoldQty > 0);
         }
 
-        if (!string.IsNullOrWhiteSpace(text))
+        if (exactOutputId is > 0)
+        {
+            rows = rows.Where(x => x.Uid == exactOutputId);
+        }
+        else if (!string.IsNullOrWhiteSpace(text))
         {
             var outputId = long.TryParse(text, out var parsed) ? parsed : (long?)null;
             rows = rows.Where(x =>
@@ -1152,6 +1301,7 @@ public sealed class QaCaseService : IQaCaseService
         string text,
         int skip,
         int take,
+        long? exactLotId,
         CancellationToken cancellationToken)
     {
         var rows = db.ProductionBalLots.AsNoTracking()
@@ -1159,7 +1309,11 @@ public sealed class QaCaseService : IQaCaseService
                         && x.BranchCode == scope.BranchCode
                         && x.BalanceStage == stage
                         && x.BaseQty > 0);
-        if (!string.IsNullOrWhiteSpace(text))
+        if (exactLotId is > 0)
+        {
+            rows = rows.Where(x => x.Uid == exactLotId);
+        }
+        else if (!string.IsNullOrWhiteSpace(text))
         {
             var lotId = long.TryParse(text, out var parsed) ? parsed : (long?)null;
             rows = rows.Where(x =>
@@ -1198,6 +1352,224 @@ public sealed class QaCaseService : IQaCaseService
         return QaResult.OkSources(new QaSourceListPage { Rows = page, TotalCount = total });
     }
 
+    private async Task<QaInquiryPage> LoadInquiryPageAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        QaInquiryQuery query,
+        bool followUpReady,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var filtered = QaInquiryQuerying.Filter(
+            db.QaCases.AsNoTracking(), scope.CompanyCode, scope.BranchCode!, query, followUpReady);
+        var kpis = await ComputeInquiryKpisAsync(filtered, followUpReady, cancellationToken);
+        var skip = Math.Max(0, query.Skip);
+        var pageIds = take <= 0
+            ? []
+            : await filtered
+                .OrderByDescending(x => x.CaseDate)
+                .ThenByDescending(x => x.CaseNo)
+                .Skip(skip)
+                .Take(take)
+                .Select(x => x.Uid)
+                .ToListAsync(cancellationToken);
+
+        IReadOnlyList<QaInquiryRow> inquiryRows = [];
+        if (pageIds.Count > 0)
+        {
+            IQueryable<QaCase> graph = db.QaCases.AsNoTracking()
+                .Where(x => pageIds.Contains(x.Uid))
+                .Include(x => x.Lines)
+                .ThenInclude(x => x.Dispositions)
+                .Include(x => x.Inspections)
+                .Include(x => x.Grants)
+                .ThenInclude(x => x.Allocations)
+                .Include(x => x.FgGrants)
+                .ThenInclude(x => x.Allocations)
+                .Include(x => x.LogicalHolds)
+                .Include(x => x.PhysicalHolds)
+                .ThenInclude(x => x.Allocations)
+                .Include(x => x.NonGoodGrants)
+                .ThenInclude(x => x.Allocations);
+            if (followUpReady)
+            {
+                graph = graph.Include(x => x.CorrectiveActions);
+            }
+
+            var entities = await graph.ToListAsync(cancellationToken);
+            var byId = entities.ToDictionary(x => x.Uid);
+            var today = DateTime.Today;
+            inquiryRows = pageIds
+                .Where(byId.ContainsKey)
+                .Select(id => MapInquiryRow(byId[id], today, followUpReady))
+                .ToList();
+        }
+
+        return new QaInquiryPage
+        {
+            CaseCount = kpis.TotalCount,
+            OpenCaseCount = kpis.OpenCaseCount,
+            PendingInspectionCount = kpis.PendingInspectionCount,
+            PendingReviewCount = kpis.PendingReviewCount,
+            OpenDestinationCount = kpis.OpenDestinationCount,
+            RejectedDecisionQty = kpis.RejectedDecisionQty,
+            OverdueActionCount = kpis.OverdueActionCount,
+            CompletedActionCount = kpis.CompletedActionCount,
+            AverageCloseDays = kpis.AverageCloseDays,
+            MedianCloseDays = kpis.MedianCloseDays,
+            InspectedCount = kpis.InspectedCount,
+            FirstPassCount = kpis.ApprovedWithoutRejectCount,
+            ApprovedWithoutRejectCount = kpis.ApprovedWithoutRejectCount,
+            FirstPassYield = kpis.InspectedCount == 0
+                ? 0m
+                : IvQty.Round((decimal)kpis.ApprovedWithoutRejectCount / kpis.InspectedCount),
+            FirstPassYieldNote = QaCaseMessages.ApprovedWithoutRejectNote,
+            RecordOnlyNote = QaCaseMessages.InquiryRecordOnly,
+            FollowUpReady = followUpReady,
+            Rows = inquiryRows,
+            TotalCount = kpis.TotalCount
+        };
+    }
+
+    private static async Task<InquiryKpis> ComputeInquiryKpisAsync(
+        IQueryable<QaCase> filtered,
+        bool followUpReady,
+        CancellationToken cancellationToken)
+    {
+        var rejectKind = QaDispositionKinds.Reject;
+        var total = await filtered.CountAsync(cancellationToken);
+        var open = await filtered.CountAsync(
+            x => x.Status != QaCaseStatuses.Closed && x.Status != QaCaseStatuses.Cancelled,
+            cancellationToken);
+        var pendingInspection = await filtered.CountAsync(
+            x => x.Status == QaCaseStatuses.Submitted || x.Status == QaCaseStatuses.InInspection,
+            cancellationToken);
+        var pendingReview = await filtered.CountAsync(
+            x => x.Status == QaCaseStatuses.PendingReview,
+            cancellationToken);
+        var inspected = await filtered.CountAsync(
+            x => x.InspectedAtUtc != null
+                || x.Status == QaCaseStatuses.InInspection
+                || x.Status == QaCaseStatuses.PendingReview
+                || x.Status == QaCaseStatuses.Approved
+                || x.Status == QaCaseStatuses.Rejected
+                || x.Status == QaCaseStatuses.Closed,
+            cancellationToken);
+        var approvedWithoutReject = await filtered.CountAsync(
+            x => (x.Status == QaCaseStatuses.Approved || x.Status == QaCaseStatuses.Closed)
+                && !x.Dispositions.Any(d => d.Kind == rejectKind && d.Qty > 0m),
+            cancellationToken);
+        var openDestinations = await filtered.CountAsync(
+            x => (x.Status == QaCaseStatuses.Approved || x.Status == QaCaseStatuses.Rejected)
+                && x.Dispositions.Any(d => d.Kind == rejectKind && d.Qty > 0m),
+            cancellationToken);
+        var rejectedQty = await filtered
+            .SelectMany(x => x.Dispositions)
+            .Where(d => d.Kind == rejectKind)
+            .SumAsync(d => (decimal?)d.Qty, cancellationToken) ?? 0m;
+
+        var overdueActions = 0;
+        var completedActions = 0;
+        if (followUpReady)
+        {
+            var today = DateTime.Today;
+            overdueActions = await filtered
+                .SelectMany(x => x.CorrectiveActions)
+                .CountAsync(
+                    a => (a.Status == QaActionStatuses.Open || a.Status == QaActionStatuses.InProgress)
+                        && a.DueDate != null
+                        && a.DueDate < today,
+                    cancellationToken);
+            completedActions = await filtered
+                .SelectMany(x => x.CorrectiveActions)
+                .CountAsync(a => a.Status == QaActionStatuses.Done, cancellationToken);
+        }
+
+        var closed = await filtered
+            .Where(x => x.Status == QaCaseStatuses.Closed)
+            .Select(x => new { x.CreatedDate, ClosedAt = x.ModifiedDate ?? x.CreatedDate })
+            .ToListAsync(cancellationToken);
+        var closeDays = closed
+            .Select(x => Math.Max(0, (x.ClosedAt.Date - x.CreatedDate.Date).Days))
+            .ToList();
+
+        return new InquiryKpis(
+            total,
+            open,
+            pendingInspection,
+            pendingReview,
+            openDestinations,
+            IvQty.Round(rejectedQty),
+            overdueActions,
+            completedActions,
+            closeDays.Count == 0 ? null : Math.Round((decimal)closeDays.Average(), 2),
+            QaInquiryQuerying.Median(closeDays),
+            inspected,
+            approvedWithoutReject);
+    }
+
+    private static QaInquiryRow MapInquiryRow(QaCase entity, DateTime today, bool followUpReady)
+    {
+        var destinations = QaDestinationComposer.Compose(entity);
+        var rejected = QaDestinationComposer.RejectedQty(entity);
+        var accepted = IvQty.Round(
+            entity.Grants.Sum(x => x.AcceptedQty)
+            + entity.FgGrants.Sum(x => x.AcceptedQty)
+            + entity.NonGoodGrants.Sum(x => x.AcceptedQty));
+        if (accepted == 0m)
+        {
+            accepted = IvQty.Round(entity.Lines.SelectMany(x => x.Dispositions)
+                .Where(x => string.Equals(x.Kind, QaDispositionKinds.Accept, StringComparison.OrdinalIgnoreCase))
+                .Sum(x => x.Qty));
+        }
+
+        var posted = IvQty.Round(
+            entity.Grants.SelectMany(x => x.Allocations)
+                .Where(x => x.Status == QaReceiptAllocationStatuses.Posted)
+                .Sum(x => x.Qty)
+            + entity.FgGrants.SelectMany(x => x.Allocations)
+                .Where(x => x.Status == QaReceiptAllocationStatuses.Posted)
+                .Sum(x => x.Qty)
+            + entity.NonGoodGrants.SelectMany(x => x.Allocations)
+                .Where(x => x.Status == QaReceiptAllocationStatuses.Posted)
+                .Sum(x => x.Qty));
+        return new QaInquiryRow
+        {
+            CaseNo = entity.CaseNo,
+            CaseDate = entity.CaseDate,
+            Status = entity.Status,
+            SourceType = entity.SourceType,
+            SourceDocNo = entity.SourceDocNo,
+            SupplierName = entity.SupplierName,
+            WorkOrderNo = entity.WorkOrderNo,
+            Inspector = entity.InspectedBy,
+            Reviewer = entity.ReviewedBy,
+            AcceptedQty = accepted,
+            RejectedQty = rejected,
+            PostedQty = posted,
+            AgingDays = QaDestinationComposer.AgingDays(entity, today),
+            OpenActionCount = followUpReady
+                ? entity.CorrectiveActions.Count(x => QaActionStatuses.IsOpen(x.Status))
+                : 0,
+            DestinationSummary = QaDestinationComposer.Summary(destinations),
+            Destinations = destinations
+        };
+    }
+
+    private readonly record struct InquiryKpis(
+        int TotalCount,
+        int OpenCaseCount,
+        int PendingInspectionCount,
+        int PendingReviewCount,
+        int OpenDestinationCount,
+        decimal RejectedDecisionQty,
+        int OverdueActionCount,
+        int CompletedActionCount,
+        decimal? AverageCloseDays,
+        decimal? MedianCloseDays,
+        int InspectedCount,
+        int ApprovedWithoutRejectCount);
+
     private InventoryTenantScope? RequireBranch()
     {
         var scope = _tenant.TryBranchScope() ?? _tenant.TryWriteScope();
@@ -1231,7 +1603,7 @@ public sealed class QaCaseService : IQaCaseService
             return null;
         }
 
-        return await db.QaCases
+        IQueryable<QaCase> query = db.QaCases
             .Include(x => x.Lines)
             .ThenInclude(x => x.Inspections)
             .Include(x => x.Lines)
@@ -1247,10 +1619,119 @@ public sealed class QaCaseService : IQaCaseService
             .Include(x => x.PhysicalHolds)
             .ThenInclude(x => x.Allocations)
             .Include(x => x.NonGoodGrants)
-            .ThenInclude(x => x.Allocations)
-            .FirstOrDefaultAsync(
-                x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.CaseNo == no,
-                cancellationToken);
+            .ThenInclude(x => x.Allocations);
+        var ready = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        if (ready.CanQueryFollowUp)
+        {
+            query = query
+                .Include(x => x.Lines)
+                .ThenInclude(x => x.CorrectiveActions)
+                .Include(x => x.Lines)
+                .ThenInclude(x => x.InspectionAttempts)
+                .Include(x => x.CorrectiveActions)
+                .Include(x => x.InspectionAttempts);
+        }
+
+        return await query.FirstOrDefaultAsync(
+            x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.CaseNo == no,
+            cancellationToken);
+    }
+
+    private static async Task<QaResult?> FollowUpSchemaErrorAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        if (await SchemaErrorAsync(db, cancellationToken) is { } graphError)
+        {
+            return graphError;
+        }
+
+        var ready = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+        return ready.CanQueryFollowUp ? null : QaResult.Fail(QaCaseMessages.FollowUpNotInstalled);
+    }
+
+    private async Task<QaResult> MutateActionAsync(
+        QaActionUpdateCommand command,
+        string? toStatus,
+        string audit,
+        bool requireReason,
+        CancellationToken cancellationToken)
+    {
+        var scope = RequireWrite();
+        if (scope is null)
+        {
+            return QaResult.Fail("Not authorized.");
+        }
+
+        if (!await CanAsync(PermissionCodes.Edit, cancellationToken))
+        {
+            return QaResult.Fail("Not authorized.");
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await FollowUpSchemaErrorAsync(db, cancellationToken) is { } schemaError)
+        {
+            return schemaError;
+        }
+
+        var entity = await LoadCaseAsync(db, scope, command.CaseNo, cancellationToken);
+        if (entity is null)
+        {
+            return QaResult.Fail("Quality case was not found.");
+        }
+
+        if (Stale(entity, command.RowVersion))
+        {
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
+        }
+
+        var action = entity.CorrectiveActions.FirstOrDefault(x => x.ActionNo == command.ActionNo);
+        if (action is null)
+        {
+            return QaResult.Fail("Follow-up task was not found.");
+        }
+
+        if (requireReason && string.IsNullOrWhiteSpace(command.Reason) && string.IsNullOrWhiteSpace(command.Remarks))
+        {
+            return QaResult.Fail("Enter a reason.");
+        }
+
+        if (toStatus is QaActionStatuses.InProgress or QaActionStatuses.Done or QaActionStatuses.Cancelled
+            && !QaActionStatuses.IsOpen(action.Status))
+        {
+            return QaResult.Fail("This follow-up task is already closed.");
+        }
+
+        if (toStatus == QaActionStatuses.InProgress)
+        {
+            action.Status = QaActionStatuses.InProgress;
+        }
+        else if (toStatus == QaActionStatuses.Done)
+        {
+            action.Status = QaActionStatuses.Done;
+            action.CompletedAtUtc = DateTime.UtcNow;
+            action.CompletedBy = TruncateUser(scope.UserId);
+            action.CompletionEvidence = TrimTo(command.CompletionEvidence, 500);
+        }
+        else if (toStatus == QaActionStatuses.Cancelled)
+        {
+            action.Status = QaActionStatuses.Cancelled;
+            action.CancelledAtUtc = DateTime.UtcNow;
+            action.CancelledBy = TruncateUser(scope.UserId);
+            action.CancelReason = TrimTo(command.Reason ?? command.Remarks, 250);
+        }
+
+        if (!string.IsNullOrWhiteSpace(command.AssignedTo) || audit == QaAuditEvents.ActionReassigned)
+        {
+            action.AssignedTo = TrimTo(command.AssignedTo, 20);
+            action.AssignedDepartment = TrimTo(command.AssignedDepartment, 30);
+        }
+
+        action.Remarks = TrimTo(command.Remarks, 500) ?? action.Remarks;
+        action.ModifiedDate = DateTime.UtcNow;
+        action.ModifiedBy = TruncateUser(scope.UserId);
+        entity.ModifiedDate = DateTime.UtcNow;
+        entity.ModifiedBy = TruncateUser(scope.UserId);
+        AddAudit(entity, audit, scope.UserId, command.Reason ?? command.Remarks);
+        return await CommitCaseAsync(db, entity, cancellationToken);
     }
 
     private async Task<string> AllocateCaseNoAsync(AppDbContext db, string company, CancellationToken cancellationToken)
@@ -1401,25 +1882,54 @@ public sealed class QaCaseService : IQaCaseService
         }
     }
 
-    private static void ReplaceDispositions(QaCase entity, QaCaseLine line, IReadOnlyList<QaDispositionDto> dispositions)
+    private static void ReplaceDispositions(
+        AppDbContext db,
+        QaCase entity,
+        QaCaseLine line,
+        IReadOnlyList<QaDispositionDto> dispositions)
     {
-        var existing = entity.Dispositions.Where(x => ReferenceEquals(x.CaseLine, line) || x.CaseLineId == line.Uid).ToList();
+        var incoming = dispositions
+            .Where(x => IvQty.Round(x.Qty) > 0m)
+            .Select(x => new
+            {
+                Kind = x.Kind.Trim().ToUpperInvariant(),
+                Qty = IvQty.Round(x.Qty),
+                ReasonCode = TrimTo(x.ReasonCode, 30),
+                Remarks = TrimTo(x.Remarks, 500)
+            })
+            .ToList();
+        var existing = entity.Dispositions
+            .Where(x => ReferenceEquals(x.CaseLine, line) || x.CaseLineId == line.Uid)
+            .ToList();
+        var consumed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var row in existing)
         {
-            entity.Dispositions.Remove(row);
-            line.Dispositions.Remove(row);
+            var match = incoming.FirstOrDefault(x => string.Equals(x.Kind, row.Kind, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                db.QaDispositionLines.Remove(row);
+                entity.Dispositions.Remove(row);
+                line.Dispositions.Remove(row);
+                continue;
+            }
+
+            row.Qty = match.Qty;
+            row.ReasonCode = match.ReasonCode;
+            row.Remarks = match.Remarks;
+            consumed.Add(row.Kind);
         }
 
-        foreach (var row in dispositions.Where(x => IvQty.Round(x.Qty) > 0m))
+        foreach (var row in incoming.Where(x => !consumed.Contains(x.Kind)))
         {
             var created = new QaDispositionLine
             {
                 Case = entity,
                 CaseLine = line,
-                Kind = row.Kind.Trim().ToUpperInvariant(),
-                Qty = IvQty.Round(row.Qty),
-                ReasonCode = TrimTo(row.ReasonCode, 30),
-                Remarks = TrimTo(row.Remarks, 500)
+                Kind = row.Kind,
+                Qty = row.Qty,
+                ReasonCode = row.ReasonCode,
+                Remarks = row.Remarks
             };
             entity.Dispositions.Add(created);
             line.Dispositions.Add(created);
@@ -1552,14 +2062,87 @@ public sealed class QaCaseService : IQaCaseService
         });
     }
 
-    private static bool Stale(QaCase entity, byte[]? rowVersion) =>
-        rowVersion is { Length: > 0 }
-        && entity.RowVersion is { Length: > 0 }
-        && !entity.RowVersion.SequenceEqual(rowVersion);
+    private static bool InspectorMayNotReview(QaCase entity, string userId, QaPolicy? policy)
+    {
+        if (!(policy?.InspectorApproverSeparation ?? true))
+        {
+            return false;
+        }
 
-    private static QaCaseDto Map(QaCase entity)
+        var reviewer = TruncateUser(userId);
+        var inspectors = entity.Inspections
+            .Select(x => x.Inspector)
+            .Concat(entity.InspectionAttempts.Select(x => x.Inspector))
+            .Append(entity.InspectedBy)
+            .Where(x => !string.IsNullOrWhiteSpace(x));
+        return inspectors.Any(x => string.Equals(x, reviewer, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<QaResult> CommitCaseAsync(
+        AppDbContext db,
+        QaCase entity,
+        CancellationToken cancellationToken,
+        IDbContextTransaction? transaction = null)
+    {
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+
+            var followUp = await QaSchemaReadiness.EvaluateAsync(db, cancellationToken);
+            return QaResult.OkCase(Map(entity, followUp.CanQueryFollowUp));
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return QaResult.Fail(QaCaseMessages.ChangedReload);
+        }
+    }
+
+    private static bool Stale(QaCase entity, byte[]? rowVersion)
+    {
+        if (entity.RowVersion is not { Length: > 0 })
+        {
+            return false;
+        }
+
+        return rowVersion is not { Length: > 0 }
+            || !entity.RowVersion.SequenceEqual(rowVersion);
+    }
+
+    private static QaCaseDto Map(QaCase entity, bool followUpReady = false, string? sourceCheckNote = null)
     {
         var lines = entity.Lines.OrderBy(x => x.LineNo).Select(l => MapLine(l, entity)).ToList();
+        var actions = entity.CorrectiveActions.OrderBy(x => x.ActionNo).Select(x => new QaActionDto
+        {
+            ActionNo = x.ActionNo,
+            LineNo = entity.Lines.FirstOrDefault(l => l.Uid == x.CaseLineId || ReferenceEquals(l, x.CaseLine))?.LineNo ?? 0,
+            ActionType = x.ActionType,
+            Qty = x.Qty,
+            Status = x.Status,
+            AssignedTo = x.AssignedTo,
+            AssignedDepartment = x.AssignedDepartment,
+            Reason = x.Reason,
+            DueDate = x.DueDate,
+            Remarks = x.Remarks,
+            CompletionEvidence = x.CompletionEvidence,
+            RequestId = x.RequestId,
+            RowVersion = x.RowVersion
+        }).ToList();
+        var attempts = entity.InspectionAttempts.OrderBy(x => x.AttemptNo).Select(x => new QaAttemptDto
+        {
+            LineNo = entity.Lines.FirstOrDefault(l => l.Uid == x.CaseLineId || ReferenceEquals(l, x.CaseLine))?.LineNo ?? 0,
+            AttemptNo = x.AttemptNo,
+            Result = x.Result,
+            Inspector = x.Inspector,
+            InspectedAtUtc = x.InspectedAtUtc,
+            InspectedQty = x.InspectedQty,
+            Notes = x.Notes,
+            DispositionSnapshot = x.DispositionSnapshot,
+            Reason = x.Reason
+        }).ToList();
         return new QaCaseDto
         {
         CaseNo = entity.CaseNo,
@@ -1617,7 +2200,12 @@ public sealed class QaCaseService : IQaCaseService
             ByUser = x.ByUser,
             Payload = x.Payload
         }).ToList(),
-        Destinations = QaDestinationComposer.Compose(entity)
+        Destinations = QaDestinationComposer.Compose(entity),
+        Actions = actions,
+        Attempts = attempts,
+        SourceCheckNote = sourceCheckNote,
+        FollowUpReady = followUpReady,
+        OpenActionCount = actions.Count(x => x.IsOpen)
     };
     }
 

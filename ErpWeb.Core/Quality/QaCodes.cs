@@ -87,6 +87,42 @@ public static class QaAuditEvents
     public const string ReopenedForReissue = "REOPENED_FOR_REISSUE";
     public const string HoldPlaced = "HOLD_PLACED";
     public const string HoldReleased = "HOLD_RELEASED";
+    public const string ActionCreated = "ACTION_CREATED";
+    public const string ActionStarted = "ACTION_STARTED";
+    public const string ActionReassigned = "ACTION_REASSIGNED";
+    public const string ActionCompleted = "ACTION_COMPLETED";
+    public const string ActionCancelled = "ACTION_CANCELLED";
+    public const string ReinspectionStarted = "REINSPECTION_STARTED";
+}
+
+public static class QaActionTypes
+{
+    public const string Reject = "REJECT";
+    public const string Rework = "REWORK";
+    public const string Hold = "HOLD";
+    public const string FollowUp = "FOLLOW_UP";
+
+    public static readonly IReadOnlyList<string> All = [Reject, Rework, Hold, FollowUp];
+
+    public static bool IsKnown(string? value) =>
+        All.Contains((value ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsQuantitative(string? value) =>
+        !string.Equals(value, FollowUp, StringComparison.OrdinalIgnoreCase);
+}
+
+public static class QaActionStatuses
+{
+    public const string Open = "OPEN";
+    public const string InProgress = "IN_PROGRESS";
+    public const string Done = "DONE";
+    public const string Cancelled = "CANCELLED";
+
+    public static readonly IReadOnlyList<string> All = [Open, InProgress, Done, Cancelled];
+
+    public static bool IsOpen(string? value) =>
+        string.Equals(value, Open, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(value, InProgress, StringComparison.OrdinalIgnoreCase);
 }
 
 public static class QaLogicalHoldStatuses
@@ -140,7 +176,7 @@ public static class QaEligibilityNotes
         "Record-only. Approval does not move stock, change WIP, or authorize posting.";
 
     public const string IncomingPreGrn =
-        "Incoming before GRN: delivery note is text only. Approval later issues a goods-receipt allowance for accepted qty.";
+        "Incoming before GRN: delivery note is text only. Inspection approval is a QA record. It does not create or authorize a goods receipt.";
 
     public const string IncomingGrant =
         "Accepted qty may be posted as a goods receipt. Rejected qty is not inventory and is not a vendor return.";
@@ -158,7 +194,7 @@ public static class QaEligibilityNotes
         "Hold qty is reserved on this production lot. Available qty is the lot balance minus reserved qty. Release the hold to make it usable again. This is not a warehouse transfer.";
 
     public const string FgStaging =
-        "FG staging inspection is record-only until approval. Approval later issues a finished-goods receipt allowance for accepted qty.";
+        "FG staging inspection is a QA record. Approval does not issue a finished-goods receipt allowance.";
 
     public const string FgGrant =
         "Accepted qty may be posted as a finished-good receipt. Rejected qty stays in FG staging and is not inventory.";
@@ -178,4 +214,162 @@ public static class QaEligibilityNotes
         QaSourceTypes.PostedGrn or QaSourceTypes.InventoryStock => PostedStock,
         _ => RecordOnly
     };
+}
+
+public static class QaCaseMessages
+{
+    public const string ChangedReload = "This QA case changed; reload.";
+    public const string InspectFullQuantity =
+        "Inspect the full case quantity on every line before submitting for review. Uninspected quantity is not accepted.";
+    public const string PolicyChangedReload = "This policy was changed by someone else. Reload and try again.";
+    public const string OpenActionsRemain =
+        "Complete or cancel open follow-up tasks before closing this case. Follow-up is a QA task, not a stock posting.";
+    public const string FollowUpNotInstalled =
+        "Follow-up tracking is not installed on this database. Inspection records still save. Attachments stay deferred.";
+    public const string AttachmentsDeferred =
+        "Attachments are not enabled. Record completion evidence as text on the follow-up task.";
+    public const string ReinspectionBlocked =
+        "Reinspection is blocked while a quality hold or a sealed linked posting is active.";
+    public const string InquiryRecordOnly =
+        "QA records — no automatic stock posting. Rejected quantity is an inspection decision, not on-hand stock or inventory value.";
+    public const string ApprovedWithoutRejectNote =
+        "Share of inspected cases later approved with no rejected quantity. This is not a true first-pass yield.";
+    public const string ExportTooLarge =
+        "Export is limited to 5,000 cases. Narrow the filters and try again.";
+}
+
+public static class QaInquiryLimits
+{
+    public const int MaxPageTake = 100;
+    public const int MaxExportRows = 5000;
+}
+
+public sealed record QaNamedOption(string Key, string Name);
+
+public static class QaLabels
+{
+    public static IReadOnlyList<QaNamedOption> SourceOptions { get; } =
+        QaSourceTypes.All.Select(x => new QaNamedOption(x, Source(x))).ToArray();
+
+    public static IReadOnlyList<QaNamedOption> StatusOptions { get; } =
+        QaCaseStatuses.All.Select(x => new QaNamedOption(x, Status(x))).ToArray();
+
+    public static IReadOnlyList<QaNamedOption> ResultOptions { get; } =
+        QaInspectionResults.All.Select(x => new QaNamedOption(x, Result(x))).ToArray();
+
+    public static IReadOnlyList<QaNamedOption> ActionTypeOptions { get; } =
+        QaActionTypes.All.Select(x => new QaNamedOption(x, ActionType(x))).ToArray();
+
+    public static string Source(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        QaSourceTypes.IncomingPreGrn => "Incoming delivery (before GRN)",
+        QaSourceTypes.PostedGrn => "Posted goods receipt",
+        QaSourceTypes.ProductionOutputGood => "Daily Production (good)",
+        QaSourceTypes.ProductionOutputNonGood => "Daily Production (non-good)",
+        QaSourceTypes.ProductionWipLot => "WIP process lot",
+        QaSourceTypes.FgStagingLot => "Finished-goods staging",
+        QaSourceTypes.InventoryStock => "Posted miscellaneous receipt",
+        _ => Blank(value)
+    };
+
+    public static string Status(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        QaCaseStatuses.Draft => "Draft",
+        QaCaseStatuses.Submitted => "Submitted",
+        QaCaseStatuses.InInspection => "In inspection",
+        QaCaseStatuses.PendingReview => "Pending review",
+        QaCaseStatuses.Approved => "Approved",
+        QaCaseStatuses.Rejected => "Rejected",
+        QaCaseStatuses.Closed => "Closed",
+        QaCaseStatuses.Cancelled => "Cancelled",
+        _ => Blank(value)
+    };
+
+    public static string Result(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        QaInspectionResults.Pass => "Pass",
+        QaInspectionResults.Fail => "Fail",
+        QaInspectionResults.Conditional => "Conditional",
+        _ => Blank(value)
+    };
+
+    public static string NextAction(string? status) => (status ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        "" or QaCaseStatuses.Draft => "Save the source and lines, then submit.",
+        QaCaseStatuses.Submitted => "Record inspection results, or start inspection first.",
+        QaCaseStatuses.InInspection => "Record every line, then submit for review.",
+        QaCaseStatuses.PendingReview => "Approve or reject this inspection record.",
+        QaCaseStatuses.Approved => "Close the case, or open a suggested follow-up document. Quality does not post stock.",
+        QaCaseStatuses.Rejected => "Close the case. Quality does not post stock.",
+        QaCaseStatuses.Closed => "This case is closed.",
+        QaCaseStatuses.Cancelled => "This case was cancelled.",
+        _ => "Open the case to continue."
+    };
+
+    public static string NextActionShort(string? status) => (status ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        "" or QaCaseStatuses.Draft => "Submit",
+        QaCaseStatuses.Submitted => "Inspect",
+        QaCaseStatuses.InInspection => "Submit for review",
+        QaCaseStatuses.PendingReview => "Approve or reject",
+        QaCaseStatuses.Approved or QaCaseStatuses.Rejected => "Close case",
+        _ => "—"
+    };
+
+    public static string Audit(string? eventType) => (eventType ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        QaAuditEvents.Created => "Created",
+        QaAuditEvents.Saved => "Saved",
+        QaAuditEvents.Submitted => "Submitted",
+        QaAuditEvents.InspectionStarted => "Inspection started",
+        QaAuditEvents.Inspected => "Inspected",
+        QaAuditEvents.Disposed => "Disposition saved",
+        QaAuditEvents.ReviewSubmitted => "Submitted for review",
+        QaAuditEvents.Approved => "Approved",
+        QaAuditEvents.Rejected => "Rejected",
+        QaAuditEvents.Closed => "Closed",
+        QaAuditEvents.Cancelled => "Cancelled",
+        QaAuditEvents.GrantIssued => "Existing posting allowance recorded",
+        QaAuditEvents.AllocationPosted => "Linked document posted",
+        QaAuditEvents.AllocationReversed => "Linked document reversed",
+        QaAuditEvents.ReopenedForReissue => "Reopened for reissue",
+        QaAuditEvents.HoldPlaced => "Hold recorded",
+        QaAuditEvents.HoldReleased => "Hold released",
+        QaAuditEvents.ActionCreated => "Follow-up created",
+        QaAuditEvents.ActionStarted => "Follow-up started",
+        QaAuditEvents.ActionReassigned => "Follow-up reassigned",
+        QaAuditEvents.ActionCompleted => "Follow-up completed",
+        QaAuditEvents.ActionCancelled => "Follow-up cancelled",
+        QaAuditEvents.ReinspectionStarted => "Reinspection started",
+        _ => Blank(eventType)
+    };
+
+    public static string ActionType(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        QaActionTypes.Reject => "Reject follow-up",
+        QaActionTypes.Rework => "Rework follow-up",
+        QaActionTypes.Hold => "Hold follow-up",
+        QaActionTypes.FollowUp => "Follow-up",
+        _ => Blank(value)
+    };
+
+    public static string ActionStatus(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        QaActionStatuses.Open => "Open",
+        QaActionStatuses.InProgress => "In progress",
+        QaActionStatuses.Done => "Done",
+        QaActionStatuses.Cancelled => "Cancelled",
+        _ => Blank(value)
+    };
+
+    public static string WorkflowStep(string? status) => (status ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        QaCaseStatuses.Submitted or QaCaseStatuses.InInspection => "inspect",
+        QaCaseStatuses.PendingReview => "review",
+        QaCaseStatuses.Approved or QaCaseStatuses.Rejected or QaCaseStatuses.Closed or QaCaseStatuses.Cancelled => "followup",
+        _ => "source"
+    };
+
+    private static string Blank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "—" : value.Trim();
 }

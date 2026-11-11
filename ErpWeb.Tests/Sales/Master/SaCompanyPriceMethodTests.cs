@@ -342,6 +342,22 @@ public class SaCompanyPriceMethodTests
     }
 
     [Fact]
+    public void SelectPriceListLine_BlankBaseCurrencyLine_DoesNotPriceAForeignDocument()
+    {
+        var lines = new List<IvCustPriceCandidate>
+        {
+            Line(minQty: 0m, price: 100m)
+        };
+
+        var result = SaItemFamilyPriceResolver.SelectPriceListLine(
+            Request(custPriceCode: "PL1", documentCurrency: "USD"), "PL1", lines, SaPriceSource.CustomerPriceList);
+
+        Assert.False(result.Found);
+        Assert.True(result.IsBlocking);
+        Assert.Contains("Conversion is not implicit", result.BlockingReason!);
+    }
+
+    [Fact]
     public void SelectPriceListLine_NoListAssigned_IsNotABlock()
     {
         var result = SaItemFamilyPriceResolver.SelectPriceListLine(
@@ -500,7 +516,8 @@ public class SaCompanyPriceMethodTests
             DocDate = docDate ?? DocDate,
             CustPriceCode = custPriceCode,
             CompanyPriceMethod = companyMethod,
-            DocumentCurrency = documentCurrency
+            DocumentCurrency = documentCurrency,
+            CompanyBaseCurrency = "MYR"
         };
 
     private static SaItemFamilyPriceCandidates FullCandidates() => new()

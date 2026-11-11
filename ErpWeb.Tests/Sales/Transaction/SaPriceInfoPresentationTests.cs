@@ -65,6 +65,40 @@ public sealed class SaPriceInfoPresentationTests
         var context = WithSource(Context(SaPriceSourceTokens.CustomerPriceList, unitPrice: 85m, originalPrice: null), "Sales Order", "SO000123", 2);
 
         Assert.Equal(SaPriceInfoStatus.Inherited, SaPriceInfoPresentation.Classify(context));
+        Assert.Equal("Inherited from Sales Order SO000123 · Customer Price List", SaPriceInfoPresentation.Tooltip(context));
+    }
+
+    [Fact]
+    public void Tooltip_InheritedFromDeliveryOrderIncludesDocumentNo()
+    {
+        var context = WithSource(Context(null, unitPrice: 10m, originalPrice: null), "Delivery Order", "DO-1", 1);
+
+        Assert.Equal(SaPriceInfoStatus.Inherited, SaPriceInfoPresentation.Classify(context));
+        Assert.Equal("Inherited from Delivery Order DO-1", SaPriceInfoPresentation.Tooltip(context));
+    }
+
+    [Fact]
+    public void Glance_ShowsPriceUomSourceDiscountAndInheritedState()
+    {
+        var context = WithSource(
+            Context(SaPriceSourceTokens.CustomerPriceList, unitPrice: 85m, originalPrice: null, reference: "PL1"),
+            "Invoice",
+            "INV-1",
+            1);
+        context = WithCommercial(context, uom: "BOX", stockUom: "PCS", discount1: 10m, amount1: 1.25m);
+
+        Assert.Equal(SaPriceInfoStatus.Inherited, SaPriceInfoPresentation.Classify(context));
+        Assert.Equal("BOX (stock PCS)", SaPriceInfoPresentation.UomLabel(context));
+        Assert.Equal("10% + 1.25", SaPriceInfoPresentation.DiscountLabel(context));
+        Assert.Equal(
+            "RM 85.0000 / BOX (stock PCS) · Customer Price List · Discount 10% + 1.25 · Inherited from source document",
+            SaPriceInfoPresentation.Glance(context));
+    }
+
+    [Fact]
+    public void DiscountLabel_NoSlotsIsNone()
+    {
+        Assert.Equal("None", SaPriceInfoPresentation.DiscountLabel(Context(null, 10m, null)));
     }
 
     [Fact]
@@ -109,5 +143,27 @@ public sealed class SaPriceInfoPresentationTests
         SourceDocumentType = type,
         SourceDocumentNo = no,
         SourceDocumentLine = line
+    };
+
+    private static SaPriceInfoContext WithCommercial(
+        SaPriceInfoContext context,
+        string uom,
+        string? stockUom,
+        decimal discount1,
+        decimal amount1) => new()
+    {
+        PricingSource = context.PricingSource,
+        PricingRef = context.PricingRef,
+        UnitPrice = context.UnitPrice,
+        OriginalUnitPrice = context.OriginalUnitPrice,
+        OverrideReason = context.OverrideReason,
+        SourceDocumentType = context.SourceDocumentType,
+        SourceDocumentNo = context.SourceDocumentNo,
+        SourceDocumentLine = context.SourceDocumentLine,
+        Currency = "MYR",
+        Uom = uom,
+        StockUom = stockUom,
+        ItemDiscount = discount1,
+        ItemDiscAmount = amount1
     };
 }

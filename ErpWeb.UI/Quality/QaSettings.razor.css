@@ -25,6 +25,18 @@
     gap: 8px;
 }
 
+.qa-settings-help {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--text, #1c2430);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.qa-settings-help code {
+    font-size: 0.82rem;
+}
+
 .qa-setting {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

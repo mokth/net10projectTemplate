@@ -362,6 +362,8 @@ public class AppDbContext : DbContext
     public DbSet<QaPhysicalAllocation> QaPhysicalAllocations => Set<QaPhysicalAllocation>();
     public DbSet<QaNonGoodGrant> QaNonGoodGrants => Set<QaNonGoodGrant>();
     public DbSet<QaNonGoodAllocation> QaNonGoodAllocations => Set<QaNonGoodAllocation>();
+    public DbSet<QaCorrectiveAction> QaCorrectiveActions => Set<QaCorrectiveAction>();
+    public DbSet<QaInspectionAttempt> QaInspectionAttempts => Set<QaInspectionAttempt>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

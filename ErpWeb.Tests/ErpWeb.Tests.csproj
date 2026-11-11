@@ -34,6 +34,9 @@
     <None Include="..\scripts\create-po-approval.sql"
           Link="scripts\create-po-approval.sql"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\scripts\create-qa-followup.sql"
+          Link="scripts\create-qa-followup.sql"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

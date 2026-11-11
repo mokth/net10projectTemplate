@@ -29,6 +29,16 @@
                 <p class="iv-eyebrow">Quality</p>
                 <h1 class="iv-title">Quality Workbench</h1>
                 <div class="iv-chips">
+                    <span class="iv-chip">Open @Workload.OpenCaseCount.ToString("N0")</span>
+                    <span class="iv-chip">Pending inspection @Workload.PendingInspectionCount.ToString("N0")</span>
+                    @if (PendingReviewCount > 0)
+                    {
+                        <span class="iv-chip qa-badge qa-badge--pending">@PendingReviewLabel</span>
+                    }
+                    @if (Workload.FollowUpReady && Workload.OverdueActionCount > 0)
+                    {
+                        <span class="iv-chip">Overdue tasks @Workload.OverdueActionCount.ToString("N0")</span>
+                    }
                     <span class="iv-chip">@TotalCountLabel</span>
                     <span class="iv-chip">Record-only</span>
                     @if (HasActiveFilters)
@@ -66,7 +76,7 @@
                               title="Search quality cases" />
                 </div>
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                          Text="FILTER"
+                          Text="Filter"
                           IconCssClass="fa-solid fa-filter"
                           Click="@OpenFilterPopup" />
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
@@ -81,6 +91,24 @@
                     <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
                     <div class="iv-skeleton__line iv-skeleton__line--md"></div>
                     <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (TotalCount == 0)
+            {
+                <div class="qa-empty">
+                    <h3>@(HasActiveFilters ? "No quality cases match the current filters." : "No quality cases yet.")</h3>
+                    <p>
+                        @(HasActiveFilters
+                            ? "Clear the filters or search for a different case, source, supplier, or work order."
+                            : "Start a case from Request QA on a source document, or create one here and look up the live source.")
+                    </p>
+                    @if (CanAdd && !HasActiveFilters)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="New QA"
+                                  IconCssClass="fas fa-plus"
+                                  Click="@NavigateNew" />
+                    }
                 </div>
             }
             else
@@ -108,28 +136,22 @@
                 </div>
 
                 <div class="iv-list-compact">
-                    @if (CompactRows.Count == 0)
+                    @foreach (var row in CompactRows)
                     {
-                        <p class="text-muted mb-0">No quality cases match the current filters.</p>
-                    }
-                    else
-                    {
-                        @foreach (var row in CompactRows)
-                        {
-                            <button type="button"
-                                    class="iv-list-compact__item"
-                                    @onclick="() => NavigateView(row.CaseNo)">
-                                <span class="iv-list-compact__code">@row.CaseNo</span>
-                                <span class="iv-list-compact__desc">
-                                    @row.SourceType
-                                    · @row.CaseDate.ToString("dd/MM/yyyy")
-                                </span>
-                                <div class="iv-list-compact__meta">
-                                    <span class="iv-status">@row.Status</span>
-                                    <span class="iv-chip">@row.LineCount line(s)</span>
-                                </div>
-                            </button>
-                        }
+                        <button type="button"
+                                class="iv-list-compact__item"
+                                @onclick="() => NavigateView(row.CaseNo)">
+                            <span class="iv-list-compact__code">@row.CaseNo</span>
+                            <span class="iv-list-compact__desc">
+                                @row.SourceTypeLabel
+                                · @row.CaseDate.ToString("dd/MM/yyyy")
+                            </span>
+                            <div class="iv-list-compact__meta">
+                                <span class="iv-status @(row.IsPendingReview ? "qa-badge qa-badge--pending" : null)">@row.StatusLabel</span>
+                                <span class="iv-chip">@row.NextAction</span>
+                                <span class="iv-chip">@row.LineCount line(s)</span>
+                            </div>
+                        </button>
                     }
                 </div>
             }
@@ -140,12 +162,13 @@
              CloseOnOutsideClick="false"
              Width="480px"
              CssClass="common-popup"
+             ShowFooter="true"
              @bind-Visible="@FilterPopupVisible">
-        <Content>
+        <BodyContentTemplate>
             <div class="iv-popup-body">
                 <DxFormLayout SizeMode="SizeMode.Small">
                     <DxFormLayoutItem Caption="Status" ColSpanMd="12">
-                        <Template>
+                        <Template Context="field">
                             <DxComboBox Data="@StatusFilterOptions"
                                         TextFieldName="@nameof(StatusFilterOption.Name)"
                                         ValueFieldName="@nameof(StatusFilterOption.Key)"
@@ -154,7 +177,7 @@
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Source" ColSpanMd="12">
-                        <Template>
+                        <Template Context="field">
                             <DxComboBox Data="@SourceFilterOptions"
                                         TextFieldName="@nameof(StatusFilterOption.Name)"
                                         ValueFieldName="@nameof(StatusFilterOption.Key)"
@@ -163,14 +186,14 @@
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
-                        <Template>
+                        <Template Context="field">
                             <DxDateEdit @bind-Date="@DraftDateFrom"
                                         DisplayFormat="dd/MM/yyyy"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
-                        <Template>
+                        <Template Context="field">
                             <DxDateEdit @bind-Date="@DraftDateTo"
                                         DisplayFormat="dd/MM/yyyy"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
@@ -178,39 +201,40 @@
                     </DxFormLayoutItem>
                 </DxFormLayout>
             </div>
-            <div class="iv-popup-footer">
-                <div class="iv-popup-footer__actions">
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                              Text="Clear"
-                              Click="@ClearFiltersAsync" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                              Text="Apply"
-                              Click="@ApplyFiltersAsync" />
-                </div>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Clear"
+                          Click="@ClearFiltersAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="Apply"
+                          Click="@ApplyFiltersAsync" />
             </div>
-        </Content>
+        </FooterContentTemplate>
     </DxPopup>
 
     <DxPopup HeaderText="Delete draft?"
              CloseOnOutsideClick="false"
              Width="420px"
              CssClass="common-popup"
+             ShowFooter="true"
              @bind-Visible="@ConfirmVisible">
-        <Content>
+        <BodyContentTemplate>
             <p class="iv-confirm__copy">@ConfirmMessage</p>
-            <div class="iv-popup-footer">
-                <div class="iv-popup-footer__actions">
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                              Text="Cancel"
-                              Click="@(() => ConfirmVisible = false)"
-                              Enabled="@(!IsSubmitting)" />
-                    <DxButton RenderStyle="ButtonRenderStyle.Danger"
-                              Text="Delete"
-                              Click="@ConfirmDeleteAsync"
-                              Enabled="@(!IsSubmitting)" />
-                </div>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <div class="iv-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Keep"
+                          Click="@(() => ConfirmVisible = false)"
+                          Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                          Text="Delete"
+                          Click="@ConfirmDeleteAsync"
+                          Enabled="@(!IsSubmitting)" />
             </div>
-        </Content>
+        </FooterContentTemplate>
     </DxPopup>
 
     <QaHowToUsePopup @bind-Visible="@HelpVisible" />

@@ -7,7 +7,6 @@ using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Tests.Infrastructure.Helpers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Moq;
 
 namespace ErpWeb.Tests.Quality;
@@ -44,6 +43,8 @@ public class QaSchemaReadinessTests : IAsyncLifetime
         Assert.Equal(QaSchemaProvenance.PreviouslyDeployed, ready.Provenance);
         Assert.True(ready.CanQueryCaseGraph);
         Assert.True(ready.Incoming.IsReady);
+        Assert.True(ready.FollowUp.IsReady);
+        Assert.True(ready.CanQueryFollowUp);
         Assert.Null(ready.RequireCaseGraph());
     }
 
@@ -143,22 +144,6 @@ public class QaSchemaReadinessTests : IAsyncLifetime
         Assert.Contains("frozen", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact(Skip = "NOT EXECUTED unless ConnectionStrings__SqlServerTestConnection names a scratch database containing 'test'. Remove Skip and run locally.")]
-    [Trait(TestCategories.Name, TestCategories.SqlServer)]
-    public async Task SqlServer_probe_enlists_in_the_current_transaction()
-    {
-        var cs = ScratchSqlServerConnection();
-        Assert.False(string.IsNullOrWhiteSpace(cs));
-
-        var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options;
-        await using var db = new AppDbContext(options);
-        Assert.True(db.Database.CanConnect());
-        await using var tx = await db.Database.BeginTransactionAsync();
-        var ready = await QaSchemaReadiness.EvaluateAsync(db);
-        Assert.False(ready.ProbeFailed);
-        await tx.RollbackAsync();
-    }
-
     private IQaPolicyService CreatePolicyService()
     {
         var tenant = new Mock<IInventoryTenantContext>();
@@ -210,29 +195,5 @@ public class QaSchemaReadinessTests : IAsyncLifetime
         db.IvTrxBatches.Add(batch);
         await db.SaveChangesAsync();
         return (batch, batch.Details.ToList());
-    }
-
-    private static string? ScratchSqlServerConnection()
-    {
-        var config = new ConfigurationBuilder()
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddEnvironmentVariables()
-            .Build();
-        var cs = config.GetConnectionString("SqlServerTestConnection")
-                 ?? Environment.GetEnvironmentVariable("ConnectionStrings__SqlServerTestConnection");
-        if (string.IsNullOrWhiteSpace(cs))
-        {
-            return null;
-        }
-
-        try
-        {
-            var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(cs);
-            return builder.InitialCatalog.Contains("test", StringComparison.OrdinalIgnoreCase) ? cs : null;
-        }
-        catch
-        {
-            return null;
-        }
     }
 }

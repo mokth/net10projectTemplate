@@ -23,19 +23,20 @@ public class QaSourcePrefillTests
     }
 
     [Fact]
-    public void Posted_batch_matches_document_number_when_header_id_is_database_id()
+    public void Posted_batch_matches_database_id_not_displayed_batch_no()
     {
         var rows = new[]
         {
             Row(sourceHeaderId: 9001, sourceDocNo: "42", item: "A", sourceLineId: 1),
             Row(sourceHeaderId: 9001, sourceDocNo: "42", item: "B", sourceLineId: 2),
-            Row(sourceHeaderId: 9002, sourceDocNo: "43", item: "C", sourceLineId: 3)
+            Row(sourceHeaderId: 42, sourceDocNo: "42", item: "C", sourceLineId: 3)
         };
 
         var matches = QaSourcePrefill.Matching(rows, new QaSourcePrefillQuery { SourceHeaderId = 42 });
 
-        Assert.Equal(2, matches.Count);
-        Assert.Equal(["A", "B"], matches.Select(x => x.ItemCode).ToArray());
+        var match = Assert.Single(matches);
+        Assert.Equal("C", match.ItemCode);
+        Assert.Equal(42, match.SourceHeaderId);
     }
 
     [Fact]

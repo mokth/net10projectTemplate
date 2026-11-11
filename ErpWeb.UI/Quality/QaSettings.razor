@@ -55,9 +55,28 @@
         }
         else
         {
+            <section class="qa-settings-group" aria-labelledby="qa-settings-how">
+                <h2 id="qa-settings-how" class="iv-card__title">How QA works</h2>
+                <p class="qa-settings-group__hint">Inspection records only. Stock posting stays on the original documents.</p>
+                <QaHowToUseContent />
+            </section>
+
+            <section class="qa-settings-group" aria-labelledby="qa-settings-support">
+                <h2 id="qa-settings-support" class="iv-card__title">Support and schema</h2>
+                <p class="qa-settings-group__hint">Optional follow-up tables do not change stock, WIP, or costing.</p>
+                <ul class="qa-settings-help">
+                    <li>Record-only release: enable menus QA_WORKBENCH, QA_INQUIRY, and QA_SETTINGS plus the matching rights (ACCESS, ADD, EDIT, SUBMIT, APPROVE, REJECT, DELETE, EXPORT). Do not turn posting gates on.</li>
+                    <li>Companies without Quality menus are unchanged. Enabling QA is menu and role setup only.</li>
+                    <li>Run <code>scripts/create-qa-followup.sql</code> on SQL Server tenants that need corrective-action tracking. Inspection records still save if those tables are absent.</li>
+                    <li>Rollback: remove Quality menus from roles. Do not drop QaCase, follow-up, or audit tables. Inspection history stays.</li>
+                    <li>Frozen posting gates cannot be turned on here. A tenant that already had a gate on keeps that historical obligation.</li>
+                    <li>Attachments stay deferred until secure storage is approved.</li>
+                </ul>
+            </section>
+
             <section class="qa-settings-group" aria-labelledby="qa-settings-inspection">
                 <h2 id="qa-settings-inspection" class="iv-card__title">Posting gates</h2>
-                <p class="qa-settings-group__hint">Not available yet. These switches cannot authorize posting from Settings.</p>
+                <p class="qa-settings-group__hint">Not available yet. These switches cannot authorize posting from Settings. Frozen gates that were already on stay on for those tenants and cannot be turned on here.</p>
                 <div class="qa-settings-list">
                     @foreach (var gate in FrozenGates)
                     {
@@ -82,7 +101,7 @@
                     <div class="qa-setting">
                         <div class="qa-setting__copy">
                             <label class="qa-setting__title" for="qa-separation">Inspector cannot approve own case</label>
-                            <p class="qa-setting__help">The person who inspected a case cannot approve it.</p>
+                            <p class="qa-setting__help">The person who inspected a case cannot approve or reject it. Another user with review rights must do that. This rule applies to the inspection record only.</p>
                         </div>
                         <div class="qa-setting__control">
                             <span class="qa-setting__state @(InspectorApproverSeparation ? "is-on" : "is-off")">@(InspectorApproverSeparation ? "On" : "Off")</span>

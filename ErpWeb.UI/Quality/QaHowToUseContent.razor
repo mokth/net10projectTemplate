@@ -1,0 +1,19 @@
+<div class="qa-help">
+    <p>
+        Quality records an inspection decision. It does not post stock, change WIP, or authorize a goods receipt
+        or finished-good receipt. Those documents still post from their own screens.
+    </p>
+    <ol>
+        <li>Pick the live source. Item, UOM, lot, PO, and work order come from that source — they are not typed.</li>
+        <li>Record inspected quantity and accept, reject, rework, or hold on every line.</li>
+        <li>Submit for review, then approve or reject. That saves the inspection record only.</li>
+        <li>Reject, rework, and hold create follow-up tasks. Completing a task does not post stock.</li>
+        <li>Rejected quantity is not warehouse stock until an existing scrap or vendor-return document posts.</li>
+        <li>A hold on a case is a reservation record. It is not a QA warehouse and not a stock-status change.</li>
+        <li>Inquiry KPIs count QA records. Rejected quantity is a decision, not warehouse stock. “Approved with no reject” is not a first-pass yield.</li>
+    </ol>
+    <p>
+        Settings cannot turn incoming, finished-goods, hold, or non-good posting gates on.
+        Those gates stay frozen until a separate release.
+    </p>
+</div>

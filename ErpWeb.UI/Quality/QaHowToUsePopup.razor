@@ -2,28 +2,19 @@
          CloseOnOutsideClick="true"
          Width="640px"
          CssClass="common-popup"
+         ShowFooter="true"
          Visible="@Visible"
          VisibleChanged="@OnVisibleChanged">
-    <Content>
-        <div class="qa-help">
-            <p>
-                Quality records an inspection decision. Posting approval is not active.
-                Goods receipt, finished-good receipt, Daily Production, scrap, and vendor return still post from their own screens.
-            </p>
-            <ol>
-                <li>Open the source document, then choose Request QA to start a case.</li>
-                <li>Pick the live source. Item, UOM, lot, PO, and work order come from that source — they are not typed.</li>
-                <li>Record inspected quantity and accept / reject / rework / hold.</li>
-                <li>Submit, review, and approve. That saves the inspection record only.</li>
-                <li>Rejected quantity is not warehouse stock until an existing scrap or vendor-return document posts.</li>
-                <li>A hold shown on a case is a reservation record. It is not a QA warehouse and not a QCHOLD status change.</li>
-            </ol>
-            <p>
-                Settings cannot turn incoming, finished-goods, hold, or non-good posting gates on.
-                Those gates stay frozen until a separate release.
-            </p>
+    <BodyContentTemplate>
+        <QaHowToUseContent />
+    </BodyContentTemplate>
+    <FooterContentTemplate>
+        <div class="iv-popup-footer__actions">
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                      Text="Close"
+                      Click="@CloseAsync" />
         </div>
-    </Content>
+    </FooterContentTemplate>
 </DxPopup>
 
 @code {
@@ -31,4 +22,5 @@
     [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
 
     private Task OnVisibleChanged(bool value) => VisibleChanged.InvokeAsync(value);
+    private Task CloseAsync() => VisibleChanged.InvokeAsync(false);
 }

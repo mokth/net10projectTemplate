@@ -46,8 +46,7 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
     {
         await using var db = await _factory.CreateDbContextAsync();
 
-        // No row for DEMO on purpose in most tests: a MISSING company row must behave like NULL
-        // (the full chain), never like "deny everything".
+        // DEMO and OTHER both have a base currency. A5 fails closed when Company.CurrencyCode is blank.
         db.Companies.Add(new Company
         {
             CompanyCode = "DEMO",
@@ -71,6 +70,32 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
         db.IvStockMasters.Add(Item("DEMO", "I4", 900m, "BOX", "C1", active: true, rv: 4));
         // I5 — inactive.
         db.IvStockMasters.Add(Item("DEMO", "I5", 77m, "PCS", "C1", active: false, rv: 5));
+        // I6 — commercial BOX, stock PCS. Price lookup must use BOX without converting StdQty.
+        db.IvStockMasters.Add(new IvStockMaster
+        {
+            CompanyCode = "DEMO",
+            ICode = "I6",
+            IDesc = "Box selling PCS stock",
+            IClassCode = "C1",
+            StdUom = "PCS",
+            SellingUom = "BOX",
+            SellingPrice = 90m,
+            IsActive = true,
+            RowVersion = [0, 0, 0, 0, 0, 0, 0, 6]
+        });
+        // I7 — blank class: class-specific rules must not match.
+        db.IvStockMasters.Add(new IvStockMaster
+        {
+            CompanyCode = "DEMO",
+            ICode = "I7",
+            IDesc = "Blank class item",
+            IClassCode = null,
+            StdUom = "PCS",
+            SellingUom = "PCS",
+            SellingPrice = 20m,
+            IsActive = true,
+            RowVersion = [0, 0, 0, 0, 0, 0, 0, 7]
+        });
 
         db.SaCusts.Add(Customer("DEMO", "CUST1", "Plain customer", rv: 10));
         db.SaCusts.Add(Customer("DEMO", "CUST2", "List customer", rv: 11, custPriceCode: "PL1"));
@@ -705,6 +730,58 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
         Assert.True(result.Succeeded, result.Message);
         Assert.Equal(14m, result.Data!.UnitPrice);
         Assert.Equal(SaPriceSource.ItemDefault, result.Data.PricingSource);
+        Assert.Equal(0m, result.Data.ItemDiscount);
+        Assert.Equal(0m, result.Data.DiscountPerUnit);
+        Assert.Null(result.Data.DiscountRuleId);
+    }
+
+    [Fact]
+    public async Task C03_class_specific_rule_uses_server_IClassCode_not_client_Classification()
+    {
+        await SeedDiscountRuleAsync(ruleId: 21, discountPercent: 7m, iCode: "I2", iClass: "c1");
+
+        var ignoredClientClass = await CreateSut().ResolveLinePricingAsync(
+            Request("CUST1", "I2", qty: 5m, discountMethod: "JOIN", iClass: "C2"));
+
+        Assert.True(ignoredClientClass.Succeeded, ignoredClientClass.Message);
+        Assert.Equal(7m, ignoredClientClass.Data!.ItemDiscount);
+        Assert.Equal(21, ignoredClientClass.Data.DiscountRuleId);
+
+        var noIClass = await CreateSut().ResolveLinePricingAsync(
+            Request("CUST1", "I2", qty: 5m, discountMethod: "JOIN", iClass: null));
+        Assert.Equal(7m, noIClass.Data!.ItemDiscount);
+    }
+
+    [Fact]
+    public async Task C03_class_specific_rule_does_not_match_other_or_blank_actual_class()
+    {
+        await SeedDiscountRuleAsync(ruleId: 22, discountPercent: 9m, iCode: "I1", iClass: "C2");
+        await SeedDiscountRuleAsync(ruleId: 23, discountPercent: 11m, iCode: "I7", iClass: "C1");
+        await SeedDiscountRuleAsync(ruleId: 24, discountPercent: 4m, iCode: "I7", iClass: null);
+
+        var wrongClass = await CreateSut().ResolveLinePricingAsync(
+            Request("CUST1", "I1", qty: 5m, discountMethod: "JOIN", iClass: "C2"));
+        Assert.True(wrongClass.Succeeded, wrongClass.Message);
+        Assert.Equal(0m, wrongClass.Data!.ItemDiscount);
+        Assert.Null(wrongClass.Data.DiscountRuleId);
+
+        var blankActual = await CreateSut().ResolveLinePricingAsync(
+            Request("CUST1", "I7", qty: 5m, discountMethod: "JOIN", iClass: "C1"));
+        Assert.True(blankActual.Succeeded, blankActual.Message);
+        Assert.Equal(4m, blankActual.Data!.ItemDiscount);
+        Assert.Equal(24, blankActual.Data.DiscountRuleId);
+    }
+
+    [Fact]
+    public async Task C05_direct_box_selling_uom_uses_box_price_not_std_uom()
+    {
+        var box = await CreateSut().ResolveLinePricingAsync(Request("CUST1", "I6", uom: "BOX"));
+        var pcs = await CreateSut().ResolveLinePricingAsync(Request("CUST1", "I6", uom: "PCS"));
+
+        Assert.True(box.Succeeded, box.Message);
+        Assert.Equal(90m, box.Data!.UnitPrice);
+        Assert.False(pcs.Succeeded);
+        Assert.Contains("No price found", pcs.Message!);
     }
 
     /// <summary>
@@ -773,6 +850,71 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
         Assert.Equal(5m, result.Data!.UnitPrice);
     }
 
+    [Fact]
+    public async Task C06_UsdDirect_BlankPriceList_BlocksInsteadOfTreatingAsUsd()
+    {
+        var result = await CreateSut().ResolveLinePricingAsync(Request("CUST2", "I1", documentCurrency: "USD"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("Conversion is not implicit", result.Message);
+    }
+
+    [Fact]
+    public async Task C06_UsdDirect_DoesNotUseMyrItemDefault()
+    {
+        var result = await CreateSut().ResolveLinePricingAsync(Request("CUST1", "I1", documentCurrency: "USD"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("USD", result.Message);
+        Assert.Contains("Conversion is not implicit", result.Message);
+    }
+
+    [Fact]
+    public async Task C06_UsdDirect_ExplicitUsdList_Resolves()
+    {
+        var result = await CreateSut().ResolveLinePricingAsync(Request("CUST9", "I1", documentCurrency: "USD"));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(3m, result.Data!.UnitPrice);
+        Assert.Equal(SaPriceSource.CustomerPriceList, result.Data.PricingSource);
+    }
+
+    [Fact]
+    public async Task C06_BlankDocumentCurrency_UsesCompanyBase()
+    {
+        var result = await CreateSut().ResolveLinePricingAsync(Request("CUST1", "I1", documentCurrency: null));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(14m, result.Data!.UnitPrice);
+        Assert.Equal(SaPriceSource.ItemDefault, result.Data.PricingSource);
+    }
+
+    [Fact]
+    public async Task C06_CompanyWithoutCurrency_FailsClosed()
+    {
+        try
+        {
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                var company = await db.Companies.SingleAsync(x => x.CompanyCode == "DEMO");
+                company.CurrencyCode = null;
+                await db.SaveChangesAsync();
+            }
+
+            var result = await CreateSut().ResolveLinePricingAsync(Request("CUST1", "I1"));
+
+            Assert.False(result.Succeeded);
+            Assert.Contains("base currency", result.Message);
+        }
+        finally
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var company = await db.Companies.SingleAsync(x => x.CompanyCode == "DEMO");
+            company.CurrencyCode = "MYR";
+            await db.SaveChangesAsync();
+        }
+    }
+
     /// <summary>
     /// The band that matched is REPORTED, so the provenance can explain a tier price rather than just
     /// naming the list.
@@ -823,6 +965,29 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
         Assert.Equal(13.75m, explanation.Levels[1].UnitPrice);
         Assert.False(explanation.Levels[2].Applied);
         Assert.False(explanation.Levels[3].Applied);
+    }
+
+    [Fact]
+    public async Task C21_ExplainLinePrice_DoesNotRequireViewPrice()
+    {
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, string permission, CancellationToken _) =>
+                Task.FromResult(
+                    !string.Equals(permission, PermissionCodes.ViewPrice, StringComparison.OrdinalIgnoreCase)));
+
+        var tenant = InventoryTenantTestHelper.CreateTenantContext("DEMO", "HQ", "SITE");
+        var sut = new SaSalesRefService(
+            _factory,
+            tenant,
+            access.Object,
+            new FixedCurrentDateService(FixedToday),
+            new SaCustLookupService(_factory, tenant));
+
+        var result = await sut.ExplainLinePriceAsync(Request("CUST1", "I1"));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(14m, result.Data!.UnitPrice);
     }
 
     /// <summary>
@@ -962,7 +1127,9 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
         decimal qty = 1m,
         bool isInclusive = false,
         decimal taxPercent = 0m,
-        string? discountMethod = null) =>
+        string? discountMethod = null,
+        string? iClass = "C1",
+        string? documentCurrency = "MYR") =>
         new()
         {
             CustCode = custCode,
@@ -970,21 +1137,26 @@ public class SaLinePricingConsumerTests : IAsyncLifetime
             UOM = uom,
             Qty = qty,
             DocDate = FixedToday,
-            DocumentCurrency = "MYR",
-            IClass = "C1",
+            DocumentCurrency = documentCurrency,
+            IClass = iClass,
             TaxPercent = taxPercent,
             IsInclusive = isInclusive,
             DiscountMethod = discountMethod
         };
 
-    private async Task SeedDiscountRuleAsync(int ruleId, decimal discountPercent)
+    private async Task SeedDiscountRuleAsync(
+        int ruleId,
+        decimal discountPercent,
+        string iCode = "I2",
+        string? iClass = null)
     {
         await using var db = await _factory.CreateDbContextAsync();
         db.SaDisGroupItems.Add(new SaDisGroupItem
         {
             Id = ruleId,
             CompanyCode = "DEMO",
-            ICode = "I2",
+            ICode = iCode,
+            IClass = iClass,
             QtyFr = 1m,
             QtyTo = 1000m,
             DateFr = new DateTime(2020, 1, 1),

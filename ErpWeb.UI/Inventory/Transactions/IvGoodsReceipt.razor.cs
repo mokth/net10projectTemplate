@@ -53,6 +53,7 @@ public partial class IvGoodsReceipt : PageBase
     private bool _lookupsLoaded;
     private string? _loadedKey;
     private bool _isDirty;
+    private int? _batchId;
 
     protected IvGoodsReceiptHeaderVm Header { get; set; } = CreateHeader();
     protected List<IvGoodsReceiptLineVm> Lines { get; set; } = [];
@@ -136,6 +137,7 @@ public partial class IvGoodsReceipt : PageBase
         {
             if (IsNewMode)
             {
+                _batchId = null;
                 Header = CreateHeader();
                 Lines = [];
                 BatchStatusDisplay = IvBatchStatuses.New;
@@ -180,6 +182,7 @@ public partial class IvGoodsReceipt : PageBase
 
     private void ApplyDocument(IvGoodsReceiptDocument doc)
     {
+        _batchId = doc.Id;
         BatchNoDisplay = doc.BatchNo.ToString();
         BatchStatusDisplay = doc.BatchStatus;
         TrxTypeDisplay = doc.TrxType;
@@ -762,9 +765,13 @@ public partial class IvGoodsReceipt : PageBase
             + (rel is null ? string.Empty : $"&poRelNo={rel.Value}")
             + $"&deliveryNote={Uri.EscapeDataString(Header.RefNo ?? string.Empty)}"
             + $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
-        if (posted && BatchNo is > 0)
+        if (posted && _batchId is > 0)
         {
-            href += $"&sourceHeaderId={BatchNo.Value}";
+            href += $"&sourceHeaderId={_batchId.Value}";
+            if (BatchNo is > 0)
+            {
+                href += $"&sourceDocNo={Uri.EscapeDataString(BatchNo.Value.ToString())}";
+            }
         }
 
         Navigation.NavigateTo(href);

@@ -795,6 +795,7 @@ public partial class SaSo : PageBase, IDisposable
     private void ResetQuickAddDraft()
     {
         _editingLine = null;
+        Interlocked.Increment(ref _priceApplySeq);
         _popupAdvancedExpanded = false;
         Popup = new SaSoLineVm
         {
@@ -886,6 +887,7 @@ public partial class SaSo : PageBase, IDisposable
         }
 
         _editingLine = line;
+        Interlocked.Increment(ref _priceApplySeq);
         _popupAdvancedExpanded = true;
         Popup = line.Clone();
 
@@ -1061,27 +1063,44 @@ public partial class SaSo : PageBase, IDisposable
     protected async Task OnPopupQuantityChangedAsync(decimal qty)
     {
         Popup.OrderQty = qty;
-        ClearPopupPriceBlock();
-        await ResolvePopupPriceAsync(assignDiscountSlots: true);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: true);
     }
 
     /// <summary>
     /// Toggling the basis changes the STORED price, so the price is re-resolved. The discount slots are
     /// left untouched: the user may have edited them, and the document engine recomputes the effective
     /// discount from the slots on every recalculation anyway.
+    /// Source-inherited and already-saved lines keep UnitPrice; RecalcDocument still updates amounts.
     /// </summary>
     protected async Task OnPopupBasisChangedAsync(bool inclusive)
     {
         Popup.IsInclusive = inclusive;
-        ClearPopupPriceBlock();
-        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
     }
 
     protected async Task OnPopupTaxChangedAsync(string? taxGrCode)
     {
         Popup.TaxGrCode = taxGrCode;
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
+    }
+
+    /// <summary>
+    /// Quantity, tax group, and tax basis are not live-price triggers for already-saved or
+    /// manually overridden lines. Item-code change still resolves.
+    /// </summary>
+    private async Task ResolvePopupPriceOnQtyTaxOrBasisAsync(bool assignDiscountSlots)
+    {
+        if (!SaLinePricingTrigger.AllowLiveResolve(
+                isEditingExistingLine: _editingLine is not null,
+                hasInheritedSource: false,
+                isManualOverride: IsPriceOverridden()))
+        {
+            Interlocked.Increment(ref _priceApplySeq);
+            return;
+        }
+
         ClearPopupPriceBlock();
-        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+        await ResolvePopupPriceAsync(assignDiscountSlots);
     }
 
     /// <summary>
@@ -1139,9 +1158,7 @@ public partial class SaSo : PageBase, IDisposable
 
         var seq = Interlocked.Increment(ref _priceApplySeq);
 
-        var uom = !string.IsNullOrWhiteSpace(Popup.SellingUom)
-            ? Popup.SellingUom!
-            : Popup.StdUom ?? string.Empty;
+        var uom = SaLinePricingTrigger.CommercialUom(Popup.SellingUom, Popup.StdUom);
 
         var result = await SalesRefService.ResolveLinePricingAsync(
             new SaLinePricingRequest
@@ -1674,7 +1691,8 @@ public partial class SaSo : PageBase, IDisposable
         CustCode = CustCode ?? string.Empty,
         ItemCode = line.ICode,
         ItemDescription = line.IDesc,
-        Uom = !string.IsNullOrWhiteSpace(line.SellingUom) ? line.SellingUom! : line.StdUom ?? string.Empty,
+        Uom = SaLinePricingTrigger.CommercialUom(line.SellingUom, line.StdUom),
+        StockUom = line.StdUom,
         Qty = line.OrderQty,
         DocDate = SoDate,
         Currency = Currency,
@@ -1683,6 +1701,14 @@ public partial class SaSo : PageBase, IDisposable
         PricingRef = line.PricingRef,
         OriginalUnitPrice = line.OriginalUnitPrice,
         OverrideReason = line.OverrideReason,
+        ItemDiscount = line.ItemDiscount,
+        ItemDiscount2 = line.ItemDiscount2,
+        ItemDiscount3 = line.ItemDiscount3,
+        ItemDiscount4 = line.ItemDiscount4,
+        ItemDiscount5 = line.ItemDiscount5,
+        ItemDiscount6 = line.ItemDiscount6,
+        ItemDiscAmount = line.ItemDiscAmount,
+        ItemDiscAmount1 = line.ItemDiscAmount1,
         IsInclusive = line.IsInclusive,
         TaxPercent = ResolveTaxPercent(line.TaxGrCode)
     };
