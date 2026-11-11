@@ -23,7 +23,8 @@ param(
     [switch]$ReversedSaleLaterReceipt,
     [switch]$ReversedSaleLaterReceipts,
     [switch]$ReversedSaleMixedReceipts,
-    [switch]$ReversedSaleLaterIssue
+    [switch]$ReversedSaleLaterIssue,
+    [switch]$ReversedSaleReceiptFirstIssue
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,8 +34,8 @@ if ($MixedLocations -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $Mor
 if ($BothItems -and (-not $MixedLocations -or $EditRace -or $InjectFailure)) { throw 'The both-item concurrency case requires only -MixedLocations.' }
 if ($MoreLines -and -not $TwoPiles) { throw 'The multi-line case requires -TwoPiles.' }
 if ($InjectFailure -and ($EditRace -or -not ($RepeatedAndOther -or $TwoPiles -or $MixedLocations))) { throw 'Choose a receipt shape for failure injection.' }
-if (@($SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue).Where({ $_ }).Count -gt 1) { throw 'Choose one Sales case.' }
-if (($SalesReturn -or $SalesReturnRolledBack -or $SalesReturnFailure -or $ReversedSale -or $ReversedSaleEdit -or $ReversedSaleBusy -or $ReversedSaleSingle -or $ReversedSaleGoods -or $ReversedSaleCorrection -or $ReversedSaleCycle -or $ReversedSaleLate -or $ReversedSaleLaterReceipt -or $ReversedSaleLaterReceipts -or $ReversedSaleMixedReceipts -or $ReversedSaleLaterIssue) -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines -or $MixedLocations -or $BothItems -or $EditRace -or $InjectFailure)) { throw 'Choose the Sales case on its own.' }
+if (@($SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue).Where({ $_ }).Count -gt 1) { throw 'Choose one Sales case.' }
+if (($SalesReturn -or $SalesReturnRolledBack -or $SalesReturnFailure -or $ReversedSale -or $ReversedSaleEdit -or $ReversedSaleBusy -or $ReversedSaleSingle -or $ReversedSaleGoods -or $ReversedSaleCorrection -or $ReversedSaleCycle -or $ReversedSaleLate -or $ReversedSaleLaterReceipt -or $ReversedSaleLaterReceipts -or $ReversedSaleMixedReceipts -or $ReversedSaleLaterIssue -or $ReversedSaleReceiptFirstIssue) -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines -or $MixedLocations -or $BothItems -or $EditRace -or $InjectFailure)) { throw 'Choose the Sales case on its own.' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $scratch = 'Codex_ReplayNeutral_Test_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 if ($scratch -cnotmatch '^Codex_ReplayNeutral_Test_[0-9a-f]{12}$') {
@@ -62,7 +63,8 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($ReversedSaleLaterIssue) { 'SqlServer_late_receipt_reprices_canceled_sale_and_later_issue_atomically' }
+    $testName = if ($ReversedSaleReceiptFirstIssue) { 'SqlServer_receipt_first_rollback_reprices_canceled_sale_and_later_issue_atomically' }
+        elseif ($ReversedSaleLaterIssue) { 'SqlServer_late_receipt_reprices_canceled_sale_and_later_issue_atomically' }
         elseif ($ReversedSaleMixedReceipts) { 'SqlServer_late_receipt_before_mixed_later_receipts_repeats_atomically' }
         elseif ($ReversedSaleLaterReceipts) { 'SqlServer_late_receipt_before_multiple_later_receipts_repeats_atomically' }
         elseif ($ReversedSaleLaterReceipt) { 'SqlServer_late_receipt_before_later_receipt_repeats_atomically' }

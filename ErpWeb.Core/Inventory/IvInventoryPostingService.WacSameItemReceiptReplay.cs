@@ -384,8 +384,16 @@ public sealed partial class IvInventoryPostingService
             {
                 // Fixed-value receipts and at most one exact Inventory issue
                 // can be replayed after both sale legs. Other tails remain blocked.
-                if (!(cycle is { RootRole: "PRIMARY" } || cycle is null && !plan.Removal)
+                // A correction may start on either the receipt post or its
+                // rollback. Later operations must alternate the verified root
+                // and undo states for that same receipt.
+                var cycleSupportsTail = cycle is null || (plan.Removal
+                    ? cycle is { RootRole: "PRIMARY", ActiveRootId: not null } or { RootRole: "REVERSAL", ActiveRootId: null }
+                    : cycle is { RootRole: "REVERSAL", ActiveRootId: not null } or { RootRole: "PRIMARY", ActiveRootId: null });
+                var receiptFirstCycle = cycle is { RootRole: "REVERSAL" } || cycle is null && plan.Removal;
+                if (!cycleSupportsTail
                     || ReversedSaleTailFingerprint(plan.PhysicalLater, plan.WacLater) is not string tailFingerprint
+                    || receiptFirstCycle && (plan.PhysicalLater.Count != 1 || plan.PhysicalLater[0].SignedDelta >= 0m)
                     || plan.PhysicalLater.Any(e => e.Key.CompareTo(reverseKey) <= 0))
                     return null;
                 var receiptIds = plan.PhysicalLater.Select(e => checked((int)e.EventId)).ToArray();

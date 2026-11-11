@@ -20,6 +20,10 @@ $patterns = @(
     'ProductionPooledCostTraceMathTests', 'ProductionMaterialAllocationTests',
     'ProductionOutputConsumeVarianceTests', 'ProductionDailyOutputCoreTests',
     'Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction',
+    'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
+    'Receipt_first_rollback_with_later_issue_respects_qa_hold',
+    'Receipt_first_repost_with_later_issue_rejects_missing_audit_evidence',
+    'Receipt_first_rollback_rejects_unproven_mixed_issue_tail',
     'Receipt_repost_correction_blocks_close_when_undo_evidence_is_missing',
     'Receipt_repost_rejects_changed_quantity_or_cost',
     'Receipt_repost_rejects_damaged_receipt_reversal_history',
@@ -64,6 +68,10 @@ $required = @(
     'StockReplayStandardSimulatorTests', 'InventoryValuationServiceTests',
     'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
     'ProductionEffectiveCostResolverTests',
+    'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
+    'Receipt_first_rollback_with_later_issue_respects_qa_hold',
+    'Receipt_first_repost_with_later_issue_rejects_missing_audit_evidence',
+    'Receipt_first_rollback_rejects_unproven_mixed_issue_tail',
     'Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts',
     'Backdated_receipt_before_multiple_later_receipts_respects_qa_hold',
     'Backdated_receipt_before_multiple_later_receipts_rejects_multiple_issues',
@@ -124,6 +132,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterIssue
+        & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleReceiptFirstIssue
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleCycle
         Write-Output 'The selected SQL Server replay checks passed in disposable databases.'
     }
