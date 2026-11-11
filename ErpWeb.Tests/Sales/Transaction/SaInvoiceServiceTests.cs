@@ -3,6 +3,7 @@ using ErpWeb.Core.Costing;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
@@ -10,6 +11,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
@@ -5428,6 +5430,33 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             receiptUnitCost: receiptUnitCost, expectedSaleCost: saleCost, expectedSaleCorrection: saleCorrection);
 
     [Theory]
+    [InlineData(10, 19, 7)]
+    [InlineData(1, 10, -2)]
+    public Task Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction(
+        decimal receiptUnitCost, decimal saleCost, decimal saleCorrection) =>
+        ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(repeatReceiptCycle: true,
+            receiptUnitCost: receiptUnitCost, expectedSaleCost: saleCost, expectedSaleCorrection: saleCorrection);
+
+    [Fact]
+    public Task Receipt_repost_correction_blocks_close_when_undo_evidence_is_missing() =>
+        ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(repeatReceiptCycle: true, tamperEvidence: "undo-effect");
+
+    [Theory]
+    [InlineData(6, 10)]
+    [InlineData(5, 11)]
+    public Task Receipt_repost_rejects_changed_quantity_or_cost(decimal quantity, decimal unitCost) =>
+        ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(changedReceiptQuantity: quantity,
+            changedReceiptUnitCost: unitCost);
+
+    [Fact]
+    public Task Receipt_repost_rejects_damaged_receipt_reversal_history() =>
+        ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(tamperReceiptHistory: true);
+
+    [Fact]
+    public Task Receipt_repost_cycle_respects_active_qa_stock_hold() =>
+        ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(repeatReceiptCycle: true, testQaHold: true);
+
+    [Theory]
     [InlineData("effect")]
     [InlineData("currency")]
     [InlineData("source-unit")]
@@ -5443,9 +5472,28 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         await AssertSqlReceiptPostedAndRolledBackOnceAsync();
     }
 
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, TestCategories.SqlServer)]
+    public async Task SqlServer_receipt_repost_reverses_sale_correction_once_and_is_atomic()
+    {
+        var barrier = await PrepareSqlReceiptFixtureAsync();
+        await ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(barrier, injectSqlFailure: true, repeatReceiptCycle: true);
+        await using var db = await _factory.CreateDbContextAsync();
+        var receipt = await db.IvTrxBatches.SingleAsync(b => b.TrxType == IvTrxTypes.MiscellaneousReceipt);
+        var id = receipt.Id.ToString();
+        var roots = await db.StockPostings.Where(p => p.SourceModule == "INVENTORY"
+            && p.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt && p.SourceDocumentId == id).ToArrayAsync();
+        Assert.Equal(3, roots.Count(p => p.PostingRole == "PRIMARY" && p.SealedAtUtc != null));
+        Assert.Equal(3, roots.Count(p => p.PostingRole == "REVERSAL" && p.SealedAtUtc != null));
+        Assert.Equal(6, await db.StockReplayEffects.CountAsync(e => e.EffectKind == "SALES_REVERSAL_VALUE"));
+        Assert.Equal(4, await db.StockReplayEffects.CountAsync(e => e.EffectKind == "SALES_REVERSAL_VALUE_UNDO"));
+    }
+
     private async Task ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(
         IvMultiWacReceiptSqlServerTests.ReceiptBatchLockBarrier? barrier = null,
-        bool injectSqlFailure = false, string? tamperEvidence = null,
+        bool injectSqlFailure = false, string? tamperEvidence = null, bool repeatReceiptCycle = false,
+        decimal? changedReceiptQuantity = null, decimal? changedReceiptUnitCost = null,
+        bool tamperReceiptHistory = false, bool testQaHold = false,
         decimal receiptUnitCost = 10m, decimal expectedSaleCost = 19m, decimal expectedSaleCorrection = 7m)
     {
         DateTime today;
@@ -5597,8 +5645,196 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             .ProveInvoiceCogsAsync(savedInvoice.InvNo!);
         Assert.False(diagnostic.IsFullyProven, "A canceled sale must not pass the COGS diagnostic.");
         Assert.Equal(0m, Assert.Single(diagnostic.Lines).Cogs);
-        var receiptRepost = await receipt.PostAsync([savedReceipt.BatchNo]);
-        Assert.False(receiptRepost.Succeeded, "The receipt was reposted without replaying the existing sale correction.");
+        if (tamperReceiptHistory)
+        {
+            await using var damage = await _factory.CreateDbContextAsync();
+            var historyId = await damage.IvTrxHistories.Where(h => h.BatchNo == savedReceipt.BatchNo
+                && h.TrxType == IvTrxTypes.MiscellaneousReceipt && h.EntryRole == "REVERSAL")
+                .Select(h => h.Id).SingleAsync();
+            Assert.Equal(1, await damage.IvTrxHistories.Where(h => h.Id == historyId)
+                .ExecuteUpdateAsync(update => update.SetProperty(h => h.FrStdQty, 4m)));
+            try
+            {
+                Assert.False((await receipt.PostAsync([savedReceipt.BatchNo])).Succeeded,
+                    "The receipt was reposted with a damaged physical reversal.");
+            }
+            finally
+            {
+                Assert.Equal(1, await damage.IvTrxHistories.Where(h => h.Id == historyId)
+                    .ExecuteUpdateAsync(update => update.SetProperty(h => h.FrStdQty, 5m)));
+            }
+        }
+        if (changedReceiptQuantity is decimal changedQuantity && changedReceiptUnitCost is decimal changedCost)
+        {
+            var edited = await receipt.UpdateAsync(savedReceipt.BatchNo, new IvMiscReceiptSaveRequest
+            {
+                TrxDate = today.AddDays(-1), RefNo = "AUTO",
+                Lines = [new IvMiscReceiptLineRequest
+                {
+                    ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = changedQuantity,
+                    UnitPrice = changedCost, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                    IStatus = "ACTIVE", Reason = "ADJ"
+                }]
+            });
+            Assert.True(edited.Succeeded, edited.ErrorMessage);
+            var changedPost = await receipt.PostAsync([savedReceipt.BatchNo]);
+            Assert.False(changedPost.Succeeded, "A changed receipt bypassed the sale-correction replay.");
+        }
+        if (repeatReceiptCycle)
+        {
+            if (injectSqlFailure)
+            {
+                await using (var db = await _factory.CreateDbContextAsync())
+                    await db.Database.ExecuteSqlRawAsync("ALTER TABLE [StockValuationFact] ADD CONSTRAINT [TestRejectSaleUndo] "
+                        + "CHECK ([MovementCode] <> N'SALES_REVERSAL_REPLAY_VALUE_REVERSAL')");
+                try
+                {
+                    Assert.False((await receipt.PostAsync([savedReceipt.BatchNo])).Succeeded);
+                    await using var unchanged = await _factory.CreateDbContextAsync();
+                    var state = await unchanged.StockCostStates.SingleAsync();
+                    Assert.Equal((15m, 45m), (state.OnHandBaseQty, state.InventoryValue));
+                    Assert.Equal(15m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+                    Assert.Equal(IvBatchStatuses.New, (await unchanged.IvTrxBatches
+                        .SingleAsync(b => b.BatchNo == savedReceipt.BatchNo)).BatchStatus);
+                    Assert.Empty(await unchanged.StockReplayEffects.Where(e =>
+                        e.EffectKind == "SALES_REVERSAL_VALUE_UNDO").ToArrayAsync());
+                    await unchanged.Database.OpenConnectionAsync();
+                    await using var command = unchanged.Database.GetDbConnection().CreateCommand();
+                    command.CommandText = "SELECT SESSION_CONTEXT(N'STOCK_LEDGER_V2_POSTING_ID')";
+                    Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
+                }
+                finally
+                {
+                    await using var db = await _factory.CreateDbContextAsync();
+                    await db.Database.ExecuteSqlRawAsync("ALTER TABLE [StockValuationFact] DROP CONSTRAINT [TestRejectSaleUndo]");
+                }
+            }
+            if (barrier is not null && injectSqlFailure)
+            {
+                var editor = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, today, enableBackdatedReplay: true);
+                IvMiscReceiptSaveRequest ReceiptDraft(decimal unitCost) => new()
+                {
+                    TrxDate = today.AddDays(-1), RefNo = "AUTO",
+                    Lines = [new IvMiscReceiptLineRequest
+                    {
+                        ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = 5m,
+                        UnitPrice = unitCost, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                        IStatus = "ACTIVE", Reason = "ADJ"
+                    }]
+                };
+                barrier.Arm();
+                var pendingPost = receipt.PostAsync([savedReceipt.BatchNo]);
+                try
+                {
+                    var reached = await Task.WhenAny(barrier.Reached, pendingPost, Task.Delay(TimeSpan.FromSeconds(30)));
+                    Assert.True(reached == barrier.Reached, "The receipt did not reach its lock checkpoint.");
+                    var edited = await editor.UpdateAsync(savedReceipt.BatchNo, ReceiptDraft(receiptUnitCost + 1m));
+                    Assert.True(edited.Succeeded, edited.ErrorMessage);
+                }
+                finally
+                {
+                    barrier.Release();
+                }
+                Assert.False((await pendingPost).Succeeded, "A changed draft was posted after replay planning.");
+                await using (var unchanged = await _factory.CreateDbContextAsync())
+                {
+                    var state = await unchanged.StockCostStates.SingleAsync();
+                    Assert.Equal((15m, 45m), (state.OnHandBaseQty, state.InventoryValue));
+                    Assert.Empty(await unchanged.StockReplayEffects.Where(e =>
+                        e.EffectKind == "SALES_REVERSAL_VALUE_UNDO").ToArrayAsync());
+                }
+                var restoredDraft = await editor.UpdateAsync(savedReceipt.BatchNo, ReceiptDraft(receiptUnitCost));
+                Assert.True(restoredDraft.Succeeded, restoredDraft.ErrorMessage);
+            }
+            for (var iteration = 0; iteration < 2; iteration++)
+            {
+                var posted = barrier is not null && iteration == 0
+                    ? await RunContendedReceiptAsync(barrier, receipt, savedReceipt.BatchNo, today, rollback: false)
+                    : await PostReceiptForCycleAsync();
+                Assert.True(posted.Succeeded, posted.ErrorMessage);
+                await using (var reposted = await _factory.CreateDbContextAsync())
+                {
+                    var state = await reposted.StockCostStates.SingleAsync();
+                    Assert.Equal((20m, 45m + 5m * receiptUnitCost), (state.OnHandBaseQty, state.InventoryValue));
+                    Assert.Equal(20m, (await reposted.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+                    Assert.Null(await StockValuationSnapshotBuilder.AppendAsync(reposted, "DEMO", "HQ", firstDay,
+                        firstDay.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
+                    var line = Assert.Single(Assert.Single(reposted.ChangeTracker.Entries<StockValuationPeriodSnapshotHdr>()).Entity.Lines);
+                    Assert.Equal((20m, 45m + 5m * receiptUnitCost), (line.ClosingQty, line.ClosingValue));
+                }
+                if (testQaHold && iteration == 0)
+                {
+                    long holdId;
+                    await using (var qaDb = await _factory.CreateDbContextAsync())
+                    {
+                        var balance = await qaDb.IvBalLocs.SingleAsync(b => b.Id == balId);
+                        qaDb.QaPolicies.Add(new QaPolicy
+                        {
+                            CompanyCode = "DEMO", Version = 1, Enabled = true, IsPublished = true,
+                            PhysicalHoldEnabled = true, CreatedDate = DateTime.UtcNow, CreatedBy = "TEST"
+                        });
+                        var line = new QaCaseLine { LineNo = 1, ItemCode = "A100", Uom = "EA", Qty = 16m };
+                        var qaCase = new QaCase
+                        {
+                            CompanyCode = "DEMO", BranchCode = "HQ", CaseNo = "QA-REPOST-HOLD",
+                            CaseDate = today, Status = QaCaseStatuses.Approved, SourceType = QaSourceTypes.InventoryStock,
+                            CreatedDate = DateTime.UtcNow, CreatedBy = "TEST", Lines = [line]
+                        };
+                        var hold = new QaPhysicalHold
+                        {
+                            CompanyCode = "DEMO", BranchCode = "HQ", CaseLine = line, BalLocId = balId,
+                            ItemCode = balance.ICode, WarehouseCode = balance.WhCode, LocationCode = balance.LocCode,
+                            LotNo = balance.LotNo ?? string.Empty, ItemStatus = balance.IStatus, ReservedBaseQty = 16m,
+                            Status = QaLogicalHoldStatuses.Active, Cause = QaLogicalHoldCauses.KeepHold,
+                            CreatedAtUtc = DateTime.UtcNow
+                        };
+                        qaCase.PhysicalHolds.Add(hold);
+                        qaDb.QaCases.Add(qaCase);
+                        await qaDb.SaveChangesAsync();
+                        holdId = hold.Uid;
+                    }
+                    var qaReceipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, today,
+                        enableBackdatedReplay: true, qaPhysical: new QaPhysicalHoldAuthorizationService());
+                    var blocked = await qaReceipt.RollbackAsync([savedReceipt.BatchNo]);
+                    Assert.False(blocked.Succeeded, "Receipt rollback ignored an active QA stock hold.");
+                    Assert.Contains("Quality holds", blocked.ErrorMessage ?? string.Empty);
+                    await using (var unchanged = await _factory.CreateDbContextAsync())
+                    {
+                        var state = await unchanged.StockCostStates.SingleAsync();
+                        Assert.Equal((20m, 45m + 5m * receiptUnitCost), (state.OnHandBaseQty, state.InventoryValue));
+                        Assert.Equal(20m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+                        Assert.Equal(IvBatchStatuses.Posted, (await unchanged.IvTrxBatches
+                            .SingleAsync(b => b.BatchNo == savedReceipt.BatchNo)).BatchStatus);
+                        Assert.Equal(2, await unchanged.StockReplayEffects.CountAsync(e =>
+                            e.EffectKind == "SALES_REVERSAL_VALUE_UNDO"));
+                        Assert.Equal(1, await unchanged.QaPhysicalHolds.Where(h => h.Uid == holdId)
+                            .ExecuteUpdateAsync(update => update.SetProperty(h => h.Status, QaLogicalHoldStatuses.Released)
+                                .SetProperty(h => h.ReleasedAtUtc, DateTime.UtcNow)));
+                    }
+                }
+                var rerollback = barrier is not null && iteration == 0
+                    ? await RunContendedReceiptAsync(barrier, receipt, savedReceipt.BatchNo, today, rollback: true)
+                    : await RollbackReceiptForCycleAsync();
+                Assert.True(rerollback.Succeeded, rerollback.ErrorMessage);
+                await using var restored = await _factory.CreateDbContextAsync();
+                Assert.Null(await StockValuationSnapshotBuilder.AppendAsync(restored, "DEMO", "HQ", firstDay,
+                    firstDay.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
+                var restoredLine = Assert.Single(Assert.Single(restored.ChangeTracker.Entries<StockValuationPeriodSnapshotHdr>()).Entity.Lines);
+                Assert.Equal((15m, 45m), (restoredLine.ClosingQty, restoredLine.ClosingValue));
+            }
+
+            async Task<(bool Succeeded, string? ErrorMessage)> PostReceiptForCycleAsync()
+            {
+                var result = await receipt.PostAsync([savedReceipt.BatchNo]);
+                return (result.Succeeded, result.ErrorMessage);
+            }
+
+            async Task<(bool Succeeded, string? ErrorMessage)> RollbackReceiptForCycleAsync()
+            {
+                var result = await receipt.RollbackAsync([savedReceipt.BatchNo]);
+                return (result.Succeeded, result.ErrorMessage);
+            }
+        }
         var invoiceRepost = await invoice.PostAsync([savedInvoice.InvNo!]);
         Assert.False(invoiceRepost.Succeeded, "The invoice was reposted across an unresolved historical correction.");
         // A different stock-writing module can reach the shared valuation
@@ -5711,6 +5947,12 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             if (tamperEvidence == "effect")
                 Assert.Equal(1, await corrupt.StockReplayEffects.Where(e => e.EffectKind == "SALES_REVERSAL_VALUE"
                     && e.AffectedEntityId == corrections[0].Id).ExecuteDeleteAsync());
+            else if (tamperEvidence == "undo-effect")
+            {
+                var id = await corrupt.StockReplayEffects.Where(e => e.EffectKind == "SALES_REVERSAL_VALUE_UNDO")
+                    .Select(e => e.Id).FirstAsync();
+                Assert.Equal(1, await corrupt.StockReplayEffects.Where(e => e.Id == id).ExecuteDeleteAsync());
+            }
             else if (tamperEvidence == "currency")
                 Assert.Equal(1, await corrupt.StockValuationFacts.Where(f => f.Id == corrections[0].Id)
                     .ExecuteUpdateAsync(update => update.SetProperty(f => f.TransactionCurrency, "USD")));

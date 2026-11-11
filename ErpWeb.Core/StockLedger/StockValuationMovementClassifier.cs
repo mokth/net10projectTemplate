@@ -14,6 +14,7 @@ public enum StockValuationMovementClass
 public sealed class StockValuationMovementClassifier
 {
     public const string ReversedSaleReplayValue = "SALES_REVERSAL_REPLAY_VALUE";
+    public const string ReversedSaleReplayValueUndo = ReversedSaleReplayValue + "_REVERSAL";
 
     private static readonly IReadOnlySet<string> ValueOnlyCodes = new HashSet<string>(StringComparer.Ordinal)
     {

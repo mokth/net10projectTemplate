@@ -76,6 +76,21 @@ public static class StockReplayWacInsertionPlanner
             new[] { issueId, reverseId }.Order().ToArray(), cancellationToken);
     }
 
+    internal static Task<StockReplayWacInsertionPlan> BuildForReversedSaleAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayPhysicalPlan physicalPlan, StockReplayWacEvent candidate,
+        IvInventoryPostingService.ReversedSaleCycleState cycle, CancellationToken cancellationToken = default)
+    {
+        if (cycle.SaleDeltaId is not long saleId || saleId <= 0
+            || cycle.ReversalDeltaId is not long reverseId || reverseId <= 0 || saleId == reverseId
+            || cycle.ActiveRootId is not > 0 || cycle.ReceiptBalanceId != physicalPlan.BalLocId
+            || cycle.ReceiptQuantity != physicalPlan.Candidate.SignedDelta
+            || cycle.ReceiptValue != candidate.FixedSignedValue)
+            throw Invalid("The reversed sale value pair or receipt differs from its verified replay evidence.");
+        return BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, candidate,
+            new[] { saleId, reverseId }.Order().ToArray(), cancellationToken);
+    }
+
     private static async Task<StockReplayWacInsertionPlan> BuildCoreAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayPhysicalPlan physicalPlan, StockReplayWacEvent candidate,

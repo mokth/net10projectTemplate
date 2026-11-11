@@ -11,4 +11,5 @@ public static class StockReplayEffectTypes
     public const string FinishedGoodReceiptValue = "FG_RECEIPT_VALUE";
     public const string StockValuationFact = "STOCK_VALUATION_FACT";
     public const string SalesReversalValue = "SALES_REVERSAL_VALUE";
+    public const string SalesReversalValueUndo = "SALES_REVERSAL_VALUE_UNDO";
 }

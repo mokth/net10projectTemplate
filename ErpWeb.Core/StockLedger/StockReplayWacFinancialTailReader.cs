@@ -32,7 +32,7 @@ public static class StockReplayWacFinancialTailReader
         ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after, [], cancellationToken);
 
     // Only receipt replay with an independently verified complete isolated
-    // issue/reversal pair may omit its two zero-net value deltas.
+    // issue/reversal or sale/reversal pair may omit its two zero-net deltas.
     internal static Task<StockReplayWacFinancialTail> ReadLaterForReversedIssueAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
@@ -40,7 +40,7 @@ public static class StockReplayWacFinancialTailReader
     {
         if (excludedValueIds.Count != 2 || excludedValueIds.Any(id => id <= 0)
             || excludedValueIds.Distinct().Count() != 2)
-            throw Corrupt("The reversed Production issue value pair is incomplete.");
+            throw Corrupt("The reversed issue or sale value pair is incomplete.");
         return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
             excludedValueIds, cancellationToken);
     }

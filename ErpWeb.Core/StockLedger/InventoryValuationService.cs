@@ -1288,22 +1288,30 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 && f.EffectiveAt >= effectiveAt
                 && f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue
                 && f.ReversesValuationFactId == null && f.StockPosting!.SealedAtUtc != null)
-            .Select(f => new { f.EffectiveAt, f.StockPostingId, f.OriginalValuationFactId })
+            .Select(f => new { f.Id, f.EffectiveAt, f.StockPostingId, f.OriginalValuationFactId })
             .ToArrayAsync(cancellationToken);
         if (values.Length == 0)
             return false;
-        if (values.Any(f => f.EffectiveAt > effectiveAt || f.OriginalValuationFactId is not > 0)
-            || candidateSequence <= 0)
+        var ids = values.Select(f => f.Id).ToArray();
+        var reversed = (await db.StockValuationFacts.AsNoTracking().Where(f =>
+                f.ReversesValuationFactId.HasValue && ids.Contains(f.ReversesValuationFactId.Value))
+            .Select(f => f.ReversesValuationFactId!.Value).ToArrayAsync(cancellationToken)).ToHashSet();
+        var active = values.Where(f => !reversed.Contains(f.Id)).ToArray();
+        if (active.Any(f => f.EffectiveAt > effectiveAt || f.OriginalValuationFactId is not > 0)
+            || active.Length != 0 && candidateSequence <= 0)
             return true;
-
-        // At equal effective time, an ordinary event follows earlier owners by
-        // their original posting sequence. Verify the whole pair before using
-        // those owner sequences; a root's later write sequence is not its key.
+        // Verify retired pairs as well: an incomplete reversal must not make
+        // an earlier stock event appear safe to post.
         var roots = values.Select(f => f.StockPostingId).Distinct().ToArray();
         if (!await StockValuationSnapshotBuilder.ValidateReversedSaleCorrectionsAsync(
                 db, company, branch, roots, cancellationToken))
             return true;
-        var sourceIds = values.Select(f => f.OriginalValuationFactId!.Value).Distinct().ToArray();
+        if (active.Length == 0)
+            return false;
+
+        // At equal effective time, an ordinary event follows earlier owners by
+        // their original posting sequence, not the later correction root.
+        var sourceIds = active.Select(f => f.OriginalValuationFactId!.Value).Distinct().ToArray();
         var sourceSequences = await db.StockValuationFacts.AsNoTracking()
             .Where(f => sourceIds.Contains(f.Id))
             .Select(f => new { f.Id, f.StockPosting!.PostingSequence }).ToArrayAsync(cancellationToken);
