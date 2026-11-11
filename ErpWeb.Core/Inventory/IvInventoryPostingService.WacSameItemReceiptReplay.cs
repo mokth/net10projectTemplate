@@ -28,7 +28,7 @@ public sealed partial class IvInventoryPostingService
     private sealed record ReversedSaleProof(
         string Fingerprint, int SaleHistoryId, int ReversalHistoryId,
         long SaleFactId, long ReversalFactId, decimal Quantity,
-        decimal OriginalCost, decimal ProjectedCost);
+        decimal OriginalCost, decimal ProjectedCost, int? LaterReceiptHistoryId);
 
     internal sealed record ReversedSaleCycleState(
         string Fingerprint, string RootRole, long SaleFactId, long ReversalFactId,
@@ -375,17 +375,50 @@ public sealed partial class IvInventoryPostingService
                 steps = projected.LaterSteps; finalQty = projected.FinalQuantity; finalValue = projected.FinalValue;
             }
             var projectedSaleCost = -steps.Single(s => s.EventId == sale.Id).SignedValue;
+            int? laterReceiptHistoryId = null;
+            if ((projectedSaleCost != fact.CostAmount || cycle?.ActiveRootId is not null)
+                && (plan.PhysicalLater.Count != 0 || plan.WacLater.Count != 0))
+            {
+                // Only a single fixed-value receipt after both sale legs can be
+                // ignored by the paired correction. Other tails need their own
+                // combined replay and must remain blocked.
+                if (!(cycle is { RootRole: "PRIMARY" } || cycle is null && !plan.Removal)
+                    || plan.PhysicalLater.Count != 1 || plan.WacLater.Count != 1)
+                    return null;
+                var physicalReceipt = plan.PhysicalLater[0];
+                var valuedReceipt = plan.WacLater[0];
+                if (physicalReceipt.EventId is not (> 0 and <= int.MaxValue)
+                    || physicalReceipt.EventId != valuedReceipt.EventId
+                    || physicalReceipt.Key.CompareTo(reverseKey) <= 0
+                    || valuedReceipt.Key.CompareTo(physicalReceipt.Key) != 0
+                    || physicalReceipt.AbsoluteCountQty is not null || physicalReceipt.SignedDelta <= 0m
+                    || valuedReceipt.OldSignedQuantity != physicalReceipt.SignedDelta
+                    || valuedReceipt.ReplaySignedQuantity != valuedReceipt.OldSignedQuantity
+                    || valuedReceipt.FixedSignedValue != valuedReceipt.OldSignedValue
+                    || valuedReceipt.OldSignedValue < 0m || valuedReceipt.AbsoluteCountQty is not null
+                    || valuedReceipt.ReturnOfSaleEventId is not null || valuedReceipt.ReversedProductionIssueEventId is not null)
+                    return null;
+                var receiptId = checked((int)physicalReceipt.EventId);
+                var laterReceipt = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == receiptId, ct);
+                if (laterReceipt is null || laterReceipt.CompanyCode != company || laterReceipt.BranchCode != branch
+                    || laterReceipt.TrxType != IvTrxTypes.MiscellaneousReceipt || laterReceipt.EntryRole != "ORIGINAL"
+                    || laterReceipt.BatchStatus != IvBatchStatuses.Posted || laterReceipt.ICode != plan.ItemCode
+                    || laterReceipt.ToBalLocId != plan.BalLocId || laterReceipt.ToStdQty != physicalReceipt.SignedDelta
+                    || laterReceipt.FromBalLocId is not null || laterReceipt.TrxDtTime != physicalReceipt.Key.EffectiveAt
+                    || laterReceipt.TrxDtTime.Year != receipt.TrxDtTime.Year
+                    || laterReceipt.TrxDtTime.Month != receipt.TrxDtTime.Month
+                    || await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.ReversesHistoryId == receiptId, ct)
+                    || await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, laterReceipt.TrxDtTime, ct) is not null)
+                    return null;
+                laterReceiptHistoryId = receiptId;
+            }
             if (cycle?.ActiveRootId is not null
                 && ((plan.Removal ? cycle.RootRole != "PRIMARY" : cycle.RootRole != "REVERSAL")
-                    || plan.PhysicalLater.Count != 0 || plan.WacLater.Count != 0
                     || projectedSaleCost != fact.CostAmount))
                 return null;
             if (projectedSaleCost != fact.CostAmount)
             {
-                // The paired sale correction supports one receipt with no
-                // other active descendants or foreign currency.
-                if (!allowCostCorrection || plan.PhysicalLater.Count != 0
-                    || plan.WacLater.Count != 0 || projectedSaleCost < 0m
+                if (!allowCostCorrection || projectedSaleCost < 0m
                     || fact.TransactionCurrency is not null || fact.TransactionCostAmount is not null
                     || fact.ExchangeRate is not null)
                     return null;
@@ -409,10 +442,10 @@ public sealed partial class IvInventoryPostingService
                 sale.FromBalLocId, sale.FrStdQty, sale.FrStdUom, sale.IStatus, sale.FromLotId, sale.FrLotNo,
                 fact.BaseCurrency, fact.TransactionCurrency, fact.TransactionCostAmount, fact.ExchangeRate,
                 plan.PhysicalCurrent, plan.PhysicalFinal, plan.WacCurrentQty, plan.WacCurrentValue,
-                plan.WacFinalQty, plan.WacFinalValue, projectedSaleCost, Cycle = cycle?.Fingerprint
+                plan.WacFinalQty, plan.WacFinalValue, projectedSaleCost, laterReceiptHistoryId, Cycle = cycle?.Fingerprint
             }).SourceSnapshotHash;
             return new(fingerprint, sale.Id, reverse.Id, fact.Id, inverse.Id,
-                fact.BaseQty, currentSaleCost, projectedSaleCost);
+                fact.BaseQty, currentSaleCost, projectedSaleCost, laterReceiptHistoryId);
         }
         catch (Exception error) when (error is StockLedgerException or ArgumentException or InvalidOperationException)
         {
@@ -427,6 +460,19 @@ public sealed partial class IvInventoryPostingService
             plan.Candidate, plan.Tail.LaterEvents, plan.Projection.LaterSteps,
             plan.Projection.FinalQuantity, plan.Projection.FinalValue);
 
+    private static bool MatchesReversedSaleTail(ReversedSaleProof proof,
+        IReadOnlyList<StockReplayPhysicalEvent> physical, IReadOnlyList<StockReplayWacEvent> valued)
+    {
+        if (proof.LaterReceiptHistoryId is not int receiptId)
+            return physical.Count == 0 && valued.Count == 0;
+        return physical.Count == 1 && valued.Count == 1
+            && physical[0].EventId == receiptId && valued[0].EventId == receiptId
+            && physical[0].Key.CompareTo(valued[0].Key) == 0 && physical[0].SignedDelta > 0m
+            && valued[0].OldSignedQuantity == physical[0].SignedDelta
+            && valued[0].ReplaySignedQuantity == valued[0].OldSignedQuantity
+            && valued[0].FixedSignedValue == valued[0].OldSignedValue;
+    }
+
     private static async Task AppendReversedSaleUndoAsync(
         StockPostingContext context, ReversedSaleCycleState cycle, ReversedSaleProof proof,
         StockReplayWacInsertionPlan plan, CancellationToken ct)
@@ -440,7 +486,7 @@ public sealed partial class IvInventoryPostingService
             || cycle.ReceiptQuantity != plan.Candidate.ReplaySignedQuantity || cycle.ReceiptValue != plan.Candidate.FixedSignedValue
             || cycle.EffectiveSaleCost != proof.OriginalCost || proof.SaleFactId != cycle.SaleFactId
             || proof.ReversalFactId != cycle.ReversalFactId || proof.OriginalCost == proof.ProjectedCost
-            || plan.Tail.LaterEvents.Count != 0 || plan.PhysicalPlan.LaterEvents.Count != 0)
+            || !MatchesReversedSaleTail(proof, plan.PhysicalPlan.LaterEvents, plan.Tail.LaterEvents))
             throw MultiWacError("The reversed sale undo has invalid replay authority.");
         var db = context.Db;
         await db.SaveChangesAsync(ct);
@@ -483,7 +529,7 @@ public sealed partial class IvInventoryPostingService
             || cycle.ReceiptValue != plan.RemovedActiveEvent.OldSignedValue
             || cycle.EffectiveSaleCost != proof.OriginalCost || proof.SaleFactId != cycle.SaleFactId
             || proof.ReversalFactId != cycle.ReversalFactId || proof.OriginalCost == proof.ProjectedCost
-            || plan.Tail.LaterEvents.Count != 0 || plan.PhysicalPlan.LaterEvents.Count != 0)
+            || !MatchesReversedSaleTail(proof, plan.PhysicalPlan.LaterEvents, plan.Tail.LaterEvents))
             throw MultiWacError("The reversed sale undo has invalid replay authority.");
         var db = context.Db;
         await db.SaveChangesAsync(ct);
@@ -581,8 +627,8 @@ public sealed partial class IvInventoryPostingService
             || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
             || context.Posting.PostingRole != "REVERSAL"
             || proof.OriginalCost == proof.ProjectedCost || proof.Quantity <= 0m
-            || proof.ProjectedCost < 0m || plan.Tail.LaterEvents.Count != 0
-            || plan.PhysicalPlan.LaterEvents.Count != 0 || string.IsNullOrWhiteSpace(plan.PlanHash))
+            || proof.ProjectedCost < 0m || !MatchesReversedSaleTail(proof, plan.PhysicalPlan.LaterEvents, plan.Tail.LaterEvents)
+            || string.IsNullOrWhiteSpace(plan.PlanHash))
             throw MultiWacError("The reversed sale correction has invalid replay authority.");
 
         var db = context.Db;
@@ -626,8 +672,8 @@ public sealed partial class IvInventoryPostingService
             || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
             || context.Posting.PostingRole != "PRIMARY" || context.Posting.ReversesPostingId is not null
             || proof.OriginalCost == proof.ProjectedCost || proof.Quantity <= 0m
-            || proof.ProjectedCost < 0m || plan.Tail.LaterEvents.Count != 0
-            || plan.PhysicalPlan.LaterEvents.Count != 0 || string.IsNullOrWhiteSpace(plan.PlanHash))
+            || proof.ProjectedCost < 0m || !MatchesReversedSaleTail(proof, plan.PhysicalPlan.LaterEvents, plan.Tail.LaterEvents)
+            || string.IsNullOrWhiteSpace(plan.PlanHash))
             throw MultiWacError("The reversed sale correction has invalid replay authority.");
 
         var db = context.Db;
