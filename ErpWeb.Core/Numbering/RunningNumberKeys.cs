@@ -23,4 +23,10 @@ public static class RunningNumberKeys
 
     /// <summary>Quality case number. Formatted <c>QC00000001</c>. Record-only; never a stock document.</summary>
     public const string QualityCase = "QA_CASE";
+
+    /// <summary>Subcon send-out number. Formatted <c>SD00000001</c>. Draft-only in Phase 1.</summary>
+    public const string SubconDispatch = "SUBCON_DISPATCH";
+
+    /// <summary>Subcon receive-back number. Formatted <c>SR00000001</c>. Draft-only in Phase 1.</summary>
+    public const string SubconReceipt = "SUBCON_RECEIPT";
 }

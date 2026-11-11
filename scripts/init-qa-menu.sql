@@ -32,7 +32,7 @@ BEGIN
     IF @qualityId IS NULL
     BEGIN
         INSERT INTO dbo.Menu (MenuCode, MenuName, ParentMenuId, Route, SortOrder, AlwaysVisible, IsActive, CreatedDate, CreatedBy)
-        VALUES (N'QUALITY', N'Quality', NULL, NULL, 6, 0, 1, SYSUTCDATETIME(), N'SEED');
+        VALUES (N'QUALITY', N'Quality', NULL, NULL, 7, 0, 1, SYSUTCDATETIME(), N'SEED');
         SET @qualityId = SCOPE_IDENTITY();
     END
 
@@ -50,9 +50,9 @@ BEGIN
 END
 GO
 
-UPDATE dbo.Menu SET MenuName = N'Quality', ParentMenuId = NULL, SortOrder = 6, IsActive = 1
+UPDATE dbo.Menu SET MenuName = N'Quality', ParentMenuId = NULL, SortOrder = 7, IsActive = 1
 WHERE MenuCode = N'QUALITY'
-  AND (MenuName <> N'Quality' OR ParentMenuId IS NOT NULL OR SortOrder <> 6 OR IsActive <> 1);
+  AND (MenuName <> N'Quality' OR ParentMenuId IS NOT NULL OR SortOrder <> 7 OR IsActive <> 1);
 
 UPDATE dbo.Menu SET MenuName = N'Quality Workbench', Route = N'/quality/cases', ParentMenuId = (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'QUALITY'), SortOrder = 1, IsActive = 1
 WHERE MenuCode = N'QA_WORKBENCH';
@@ -63,8 +63,8 @@ WHERE MenuCode = N'QA_INQUIRY';
 UPDATE dbo.Menu SET MenuName = N'Quality Settings', Route = N'/quality/settings', ParentMenuId = (SELECT MenuId FROM dbo.Menu WHERE MenuCode = N'QUALITY'), SortOrder = 3, IsActive = 1
 WHERE MenuCode = N'QA_SETTINGS';
 
-UPDATE dbo.Menu SET SortOrder = 7, IsActive = 1
-WHERE MenuCode = N'SECURITY' AND (SortOrder <> 7 OR IsActive <> 1);
+UPDATE dbo.Menu SET SortOrder = 8, IsActive = 1
+WHERE MenuCode = N'SECURITY' AND (SortOrder <> 8 OR IsActive <> 1);
 GO
 
 INSERT INTO dbo.MenuPermission (MenuId, PermissionId, SortOrder, IsActive)

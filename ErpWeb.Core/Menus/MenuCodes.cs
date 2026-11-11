@@ -288,6 +288,14 @@ public static class MenuCodes
     public const string PlanningMaterialConsumeVariance = "PLN_MAT_CONSUME_VAR";
 
 
+    /// <summary>Subcontracting parent. Phase 1 draft shell; posting stays blocked.</summary>
+    public const string Subcontracting = "SUBCONTRACTING";
+    public const string SubconWorkbench = "SUBCON_WORKBENCH";
+    public const string SubconSendOut = "SUBCON_SEND_OUT";
+    public const string SubconReceiveBack = "SUBCON_RECEIVE_BACK";
+    public const string SubconInquiry = "SUBCON_INQUIRY";
+    public const string SubconSettings = "SUBCON_SETTINGS";
+
     /// <summary>Quality Assurance parent. Record-only workbench and settings; no POST permission.</summary>
     public const string Quality = "QUALITY";
     public const string QualityWorkbench = "QA_WORKBENCH";

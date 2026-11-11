@@ -1,0 +1,64 @@
+@page "/subcon/send-out"
+@inherits PageBase
+
+<PageTitle>Send Out</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SubconSendOut">
+    <div class="iv-page">
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-truck-ramp-box"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Subcontracting</p>
+                <h1 class="iv-title">Send Out</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Drafts only</span>
+                </div>
+            </div>
+        </header>
+        <section class="iv-card">
+            <SubconPostingBanner Message="@SubconBlockedReasons.NoAtomicInventorySeam" />
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line"></div>
+                </div>
+            }
+            else if (TotalCount == 0)
+            {
+                <div class="qa-empty">
+                    <h3>No send-out drafts.</h3>
+                    <p>Create a draft here. Posting stays blocked.</p>
+                    @if (CanAdd)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="New send-out"
+                                  IconCssClass="fas fa-plus"
+                                  Click="@(() => Navigation.NavigateTo("/subcon/send-out/new"))" />
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="SubconListRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(SubconListRow.DocNo)"
+                                      GridKey="subcon-send-out-list"
+                                      Title="Send Out"
+                                      CustomDataSource="@DataSource"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnButtonEventHandle="@OnButtonClick"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+            }
+        </section>
+    </div>
+</MenuAuthorize>

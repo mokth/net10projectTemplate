@@ -1,0 +1,131 @@
+@page "/subcon"
+@inherits PageBase
+
+<PageTitle>Subcontracting</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SubconWorkbench">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="() => ErrorMessage = null" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-handshake"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Subcontracting</p>
+                <h1 class="iv-title">Workbench</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">Open lines @Page.OpenLineCount.ToString("N0")</span>
+                    <span class="iv-chip">Drafts @Page.DraftCount.ToString("N0")</span>
+                    <span class="iv-chip">Overdue @Page.OverdueLineCount.ToString("N0")</span>
+                    @foreach (var uom in Page.OutstandingByUom)
+                    {
+                        <span class="iv-chip">@uom</span>
+                    }
+                    <span class="iv-chip">Drafts only</span>
+                </div>
+            </div>
+            <div class="iv-hero__kpi">
+                <span>Documents</span>
+                <strong>@Page.TotalCount.ToString("N0")</strong>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <SubconPostingBanner Message="@Page.PostingBanner" />
+            <div class="iv-toolbar-row">
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="Send Out"
+                          IconCssClass="fa-solid fa-truck-ramp-box"
+                          Enabled="@CanAdd"
+                          Click="@(() => Navigation.NavigateTo("/subcon/send-out/new"))" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                          Text="Receive Back"
+                          IconCssClass="fa-solid fa-boxes-packing"
+                          Click="@(() => Navigation.NavigateTo("/subcon/receive-back"))" />
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption" for="subcon-workbench-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="subcon-workbench-search"
+                                   Text="@SearchText"
+                                   TextChanged="OnSearchTextChanged"
+                                   NullText="Search supplier, item, document…"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   CssClass="w-100"
+                                   BindValueMode="BindValueMode.OnInput" />
+                    </div>
+                </div>
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                </div>
+            }
+            else if (Page.TotalCount == 0)
+            {
+                <div class="qa-empty">
+                    <h3>No subcontract drafts yet.</h3>
+                    <p>Start at Send Out. Saving a draft does not move stock.</p>
+                    @if (CanAdd)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Send Out"
+                                  IconCssClass="fa-solid fa-truck-ramp-box"
+                                  Click="@(() => Navigation.NavigateTo("/subcon/send-out/new"))" />
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="SubconListRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(SubconListRow.DocNo)"
+                                      GridKey="subcon-workbench-list"
+                                      Title="Jobs"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+                <div class="iv-list-compact">
+                    @foreach (var row in Page.Rows)
+                    {
+                        <button type="button"
+                                class="iv-list-compact__item"
+                                @onclick="() => NavigateView(row.DocNo)">
+                            <span class="iv-list-compact__code">@row.DocNo</span>
+                            <span class="iv-list-compact__desc">@row.SupplierName · @row.TrxDate.ToString("dd/MM/yyyy")</span>
+                            <div class="iv-list-compact__meta">
+                                <span class="iv-status">@row.Status</span>
+                                <span class="iv-chip">@row.LineCount line(s)</span>
+                            </div>
+                        </button>
+                    }
+                </div>
+            }
+        </section>
+    </div>
+</MenuAuthorize>

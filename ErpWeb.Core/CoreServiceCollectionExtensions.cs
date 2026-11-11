@@ -5,6 +5,7 @@ using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Quality;
+using ErpWeb.Core.Subcon;
 using ErpWeb.Core.Sales;
 using ErpWeb.Core.Sales.Delivery;
 using ErpWeb.Core.Purchase;
@@ -302,6 +303,10 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IMachineScheduleAdvancedPlanningService, MachineScheduleAdvancedPlanningService>();
         services.AddScoped<IMachineScheduleSegmentBackfillService, MachineScheduleSegmentBackfillService>();
         services.AddScoped<IMachineScheduleAllocationBackfillService, MachineScheduleAllocationBackfillService>();
+
+        services.AddScoped<ISubconInventorySourceAdapter, SubconBlockedInventorySourceAdapter>();
+        services.AddScoped<ISubconProductionSourceAdapter, SubconBlockedProductionSourceAdapter>();
+        services.AddScoped<ISubconApplicationService, SubconApplicationService>();
 
         services.AddScoped<IQaPolicyService, QaPolicyService>();
         services.AddScoped<IQaCaseService, QaCaseService>();

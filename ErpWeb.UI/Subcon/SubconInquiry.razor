@@ -1,0 +1,85 @@
+@page "/subcon/inquiry"
+@inherits PageBase
+
+<PageTitle>Subcontracting Inquiry</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SubconInquiry">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="() => ErrorMessage = null" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-magnifying-glass-chart"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Subcontracting</p>
+                <h1 class="iv-title">Inquiry / Statement</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@TotalCountLabel</span>
+                    <span class="iv-chip">Read-only</span>
+                    <span class="iv-chip">Drafts only</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <SubconPostingBanner />
+            <p class="iv-guidance">This list is a draft statement. Posted outstanding quantities stay empty until send-out posting is enabled. No cost or money columns.</p>
+            <div class="iv-toolbar-row">
+                <div class="iv-toolbar-row__search erp-inline-search">
+                    <label class="erp-inline-search__caption" for="subcon-inquiry-search">Search</label>
+                    <div class="erp-inline-search__editor">
+                        <DxTextBox InputId="subcon-inquiry-search"
+                                   Text="@SearchText"
+                                   TextChanged="OnSearchTextChanged"
+                                   NullText="Search supplier, item, document…"
+                                   ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                   CssClass="w-100"
+                                   BindValueMode="BindValueMode.OnInput" />
+                    </div>
+                </div>
+            </div>
+
+            @if (IsBootstrapping)
+            {
+                <div class="iv-skeleton" aria-busy="true">
+                    <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+                </div>
+            }
+            else if (TotalCount == 0)
+            {
+                <div class="qa-empty">
+                    <h3>No subcontract drafts to list.</h3>
+                    <p>Save a send-out draft first. This inquiry does not post stock and does not show costs.</p>
+                </div>
+            }
+            else
+            {
+                <div class="iv-list-desktop">
+                    <CommonDataGridEx T="SubconListRow"
+                                      Columns="@Columns"
+                                      Buttons="@Buttons"
+                                      ActionButtons="@ActionButtons"
+                                      KeyName="@nameof(SubconListRow.DocNo)"
+                                      GridKey="subcon-inquiry-list"
+                                      Title="Statement"
+                                      CustomDataSource="@DataSource"
+                                      ShowToolbarText="true"
+                                      ShowResetLayoutButton="true"
+                                      UseBuiltInExport="false"
+                                      ShowSearchBox="false"
+                                      ShowFilterRow="false"
+                                      ShowGroupPanel="false"
+                                      allowSelect="false"
+                                      OnActionEventHandle="@OnActionClick" />
+                </div>
+            }
+        </section>
+    </div>
+</MenuAuthorize>
