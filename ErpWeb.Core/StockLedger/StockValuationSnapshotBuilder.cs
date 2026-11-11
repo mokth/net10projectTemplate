@@ -558,17 +558,33 @@ public static class StockValuationSnapshotBuilder
                 or StockValuationMovementClassifier.ReversedSaleReplayValueUndo)).ToArray();
         if (other.Length == 0)
             return rootFacts.Length == 3 && run.AffectedHistoryCount == 2;
-        if (rootFacts.Length != 5 || other.Length != 2 || run.AffectedHistoryCount != 3
-            || other.Any(f => f.InventoryHistoryId is not > 0)
-            || other.Select(f => f.InventoryHistoryId).Distinct().Count() != 1)
+        if (rootFacts.Length != 3 + other.Length || other.Any(f => f.InventoryHistoryId is not > 0))
             return false;
-        var issueId = other[0].InventoryHistoryId!.Value;
+        var issueGroups = other.GroupBy(f => f.InventoryHistoryId!.Value).ToArray();
+        if (issueGroups.Length > 100 || run.AffectedHistoryCount != 2 + issueGroups.Length
+            || issueGroups.Any(g => g.Count() != 2))
+            return false;
+        foreach (var group in issueGroups)
+            if (!await ValidateReversedSaleIssuePairAsync(db, company, branch, root, sale, reverse,
+                    run, group.Key, group.ToArray(), ct))
+                return false;
+        return true;
+    }
+
+    private static async Task<bool> ValidateReversedSaleIssuePairAsync(
+        AppDbContext db, string company, string branch, StockPosting root,
+        StockValuationFact sale, StockValuationFact reverse, StockReplayRun run,
+        int issueId, StockValuationFact[] issueFacts, CancellationToken ct)
+    {
         var issue = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == issueId, ct);
-        var reversal = other.SingleOrDefault(f => f.ReversesValuationFactId is not null);
-        var replacement = other.SingleOrDefault(f => f.ReversesValuationFactId is null);
-        if (issue is null || reversal?.ReversesValuationFactId is not long priorId || replacement is null
+        var reversals = issueFacts.Where(f => f.ReversesValuationFactId is not null).ToArray();
+        var replacements = issueFacts.Where(f => f.ReversesValuationFactId is null).ToArray();
+        if (issue is null || reversals.Length != 1 || replacements.Length != 1
+            || reversals[0].ReversesValuationFactId is not long priorId
             || issue.StockPostingId is not > 0)
             return false;
+        var reversal = reversals[0];
+        var replacement = replacements[0];
         var prior = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f => f.Id == priorId, ct);
         var issueOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == issue.StockPostingId, ct);
         var reverseOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == reverse.StockPostingId, ct);
@@ -636,6 +652,19 @@ public static class StockValuationSnapshotBuilder
             || run.PlanWatermark < issueOwner.PostingSequence
             || run.PlanWatermark < priorOwner.PostingSequence || run.LatestEffectiveAt < issue.TrxDtTime
             || await db.StockValuationFacts.AsNoTracking().CountAsync(f => f.ReversesValuationFactId == prior.Id, ct) != 1)
+            return false;
+
+        if (priorOwner.Id != issueOwner.Id && !await db.StockReplayEffects.AsNoTracking().AnyAsync(e =>
+                e.CompanyCode == company && e.BranchCode == branch && e.RootStockPostingId == priorOwner.Id
+                && e.BusinessOwnerPostingId == issueOwner.Id && e.AffectedEntityType == StockReplayEffectTypes.StockValuationFact
+                && e.AffectedEntityId == prior.Id && e.OriginalEntityId.HasValue
+                && e.EffectKind == StockReplayEffectTypes.WacIssueReplacement
+                && db.StockReplayRuns.Any(r => r.Id == e.ReplayRunId && r.RootStockPostingId == priorOwner.Id
+                    && r.CompanyCode == company && r.BranchCode == branch)
+                && db.StockValuationFacts.Any(v => v.StockPostingId == priorOwner.Id
+                    && (v.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue
+                        || v.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValueUndo)
+                    && (v.OriginalValuationFactId == sale.Id || v.OriginalValuationFactId == reverse.Id)), ct))
             return false;
 
         bool MatchesIdentity(StockValuationFact fact) =>

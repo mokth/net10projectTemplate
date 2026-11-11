@@ -21,6 +21,12 @@ $patterns = @(
     'ProductionOutputConsumeVarianceTests', 'ProductionDailyOutputCoreTests',
     'Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction',
     'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
+    'Receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues',
+    'Receipt_first_rollback_reprices_canceled_sale_and_three_later_issues',
+    'Receipt_first_rollback_reprices_canceled_sale_and_unequal_later_issues',
+    'Receipt_first_rollback_with_multiple_issues_respects_qa_hold',
+    'Receipt_first_rollback_with_multiple_issues_rejects_negative_stock',
+    'Receipt_first_repost_with_multiple_issues_rejects_missing_audit_evidence',
     'Receipt_first_rollback_with_later_issue_respects_qa_hold',
     'Receipt_first_repost_with_later_issue_rejects_missing_audit_evidence',
     'Receipt_first_rollback_rejects_unproven_mixed_issue_tail',
@@ -55,6 +61,10 @@ $patterns = @(
     'Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts',
     'Backdated_receipt_before_multiple_later_receipts_',
     'Backdated_receipt_reprices_canceled_sale_and_later_issue',
+    'Backdated_receipt_reprices_canceled_sale_and_multiple_later_issues',
+    'Backdated_receipt_reprices_canceled_sale_and_three_later_issues',
+    'Backdated_receipt_reprices_canceled_sale_and_unequal_later_issues',
+    'Backdated_receipt_before_canceled_sale_and_multiple_issues_',
     'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_receipts',
     'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_goods_receipt',
     'Backdated_receipt_before_canceled_sale_and_issue_',
@@ -69,6 +79,12 @@ $required = @(
     'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
     'ProductionEffectiveCostResolverTests',
     'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
+    'Receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues',
+    'Receipt_first_rollback_reprices_canceled_sale_and_three_later_issues',
+    'Receipt_first_rollback_reprices_canceled_sale_and_unequal_later_issues',
+    'Receipt_first_rollback_with_multiple_issues_respects_qa_hold',
+    'Receipt_first_rollback_with_multiple_issues_rejects_negative_stock',
+    'Receipt_first_repost_with_multiple_issues_rejects_missing_audit_evidence',
     'Receipt_first_rollback_with_later_issue_respects_qa_hold',
     'Receipt_first_repost_with_later_issue_rejects_missing_audit_evidence',
     'Receipt_first_rollback_rejects_unproven_mixed_issue_tail',
@@ -76,6 +92,13 @@ $required = @(
     'Backdated_receipt_before_multiple_later_receipts_respects_qa_hold',
     'Backdated_receipt_before_multiple_later_receipts_rejects_multiple_issues',
     'Backdated_receipt_reprices_canceled_sale_and_later_issue',
+    'Backdated_receipt_reprices_canceled_sale_and_multiple_later_issues',
+    'Backdated_receipt_reprices_canceled_sale_and_three_later_issues',
+    'Backdated_receipt_reprices_canceled_sale_and_unequal_later_issues',
+    'Backdated_receipt_before_canceled_sale_and_multiple_issues_respects_qa_hold',
+    'Backdated_receipt_before_canceled_sale_and_multiple_issues_rejects_missing_issue_evidence',
+    'Backdated_receipt_before_canceled_sale_and_multiple_issues_rejects_foreign_last_issue_owner',
+    'Backdated_receipt_before_canceled_sale_and_multiple_issues_blocks_close_for_missing_issue_evidence',
     'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_receipts',
     'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_goods_receipt',
     'Backdated_receipt_before_canceled_sale_and_issue_blocks_close_for_damaged_evidence',
@@ -133,6 +156,8 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterIssue
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleReceiptFirstIssue
+        & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMultipleIssues
+        & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleReceiptFirstMultipleIssues
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleCycle
         Write-Output 'The selected SQL Server replay checks passed in disposable databases.'
     }
