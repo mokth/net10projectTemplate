@@ -12,4 +12,6 @@ public static class StockReplayEffectTypes
     public const string StockValuationFact = "STOCK_VALUATION_FACT";
     public const string SalesReversalValue = "SALES_REVERSAL_VALUE";
     public const string SalesReversalValueUndo = "SALES_REVERSAL_VALUE_UNDO";
+    public const string WacIssueReversal = "WAC_ISSUE_REVERSAL";
+    public const string WacIssueReplacement = "WAC_ISSUE_REPLACEMENT";
 }

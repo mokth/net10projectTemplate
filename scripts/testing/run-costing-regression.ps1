@@ -50,6 +50,10 @@ $patterns = @(
     'Backdated_receipt_replays_canceled_sale_before_a_later_receipt',
     'Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts',
     'Backdated_receipt_before_multiple_later_receipts_',
+    'Backdated_receipt_reprices_canceled_sale_and_later_issue',
+    'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_receipts',
+    'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_goods_receipt',
+    'Backdated_receipt_before_canceled_sale_and_issue_',
     'Backdated_receipt_replays_canceled_sale_before_misc_and_goods_receipts',
     'Backdated_receipt_replays_canceled_sale_before_multiple_purchase_orders',
     'Backdated_receipt_before_later_goods_receipt_rejects_invoiced_purchase_order',
@@ -62,7 +66,15 @@ $required = @(
     'ProductionEffectiveCostResolverTests',
     'Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts',
     'Backdated_receipt_before_multiple_later_receipts_respects_qa_hold',
-    'Backdated_receipt_before_multiple_later_receipts_rejects_an_additional_issue',
+    'Backdated_receipt_before_multiple_later_receipts_rejects_multiple_issues',
+    'Backdated_receipt_reprices_canceled_sale_and_later_issue',
+    'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_receipts',
+    'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_goods_receipt',
+    'Backdated_receipt_before_canceled_sale_and_issue_blocks_close_for_damaged_evidence',
+    'Backdated_receipt_before_canceled_sale_and_issue_rejects_rollback_for_missing_issue_evidence',
+    'Backdated_receipt_before_canceled_sale_and_issue_rejects_foreign_issue_owner',
+    'Backdated_receipt_before_canceled_sale_and_issue_rejects_damaged_issue_source',
+    'Backdated_receipt_before_canceled_sale_and_issue_rejects_overlapping_reversed_value',
     'Backdated_receipt_replays_canceled_sale_before_misc_and_goods_receipts',
     'Backdated_receipt_replays_canceled_sale_before_multiple_purchase_orders',
     'Backdated_receipt_before_later_goods_receipt_rejects_invoiced_purchase_order',
@@ -111,6 +123,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts
+        & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterIssue
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleCycle
         Write-Output 'The selected SQL Server replay checks passed in disposable databases.'
     }
