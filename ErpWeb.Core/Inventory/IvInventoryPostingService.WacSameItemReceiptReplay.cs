@@ -28,7 +28,7 @@ public sealed partial class IvInventoryPostingService
     private sealed record ReversedSaleProof(
         string Fingerprint, int SaleHistoryId, int ReversalHistoryId,
         long SaleFactId, long ReversalFactId, decimal Quantity,
-        decimal OriginalCost, decimal ProjectedCost, int? LaterReceiptHistoryId);
+        decimal OriginalCost, decimal ProjectedCost, string LaterReceiptTailFingerprint);
 
     internal sealed record ReversedSaleCycleState(
         string Fingerprint, string RootRole, long SaleFactId, long ReversalFactId,
@@ -375,42 +375,37 @@ public sealed partial class IvInventoryPostingService
                 steps = projected.LaterSteps; finalQty = projected.FinalQuantity; finalValue = projected.FinalValue;
             }
             var projectedSaleCost = -steps.Single(s => s.EventId == sale.Id).SignedValue;
-            int? laterReceiptHistoryId = null;
+            var laterReceiptTailFingerprint = string.Empty;
             if ((projectedSaleCost != fact.CostAmount || cycle?.ActiveRootId is not null)
                 && (plan.PhysicalLater.Count != 0 || plan.WacLater.Count != 0))
             {
-                // Only a single fixed-value receipt after both sale legs can be
-                // ignored by the paired correction. Other tails need their own
-                // combined replay and must remain blocked.
+                // Fixed-value receipts after both sale legs do not alter the
+                // paired correction. Other tails need combined replay.
                 if (!(cycle is { RootRole: "PRIMARY" } || cycle is null && !plan.Removal)
-                    || plan.PhysicalLater.Count != 1 || plan.WacLater.Count != 1)
+                    || ReceiptTailFingerprint(plan.PhysicalLater, plan.WacLater) is not string tailFingerprint
+                    || plan.PhysicalLater.Any(e => e.Key.CompareTo(reverseKey) <= 0))
                     return null;
-                var physicalReceipt = plan.PhysicalLater[0];
-                var valuedReceipt = plan.WacLater[0];
-                if (physicalReceipt.EventId is not (> 0 and <= int.MaxValue)
-                    || physicalReceipt.EventId != valuedReceipt.EventId
-                    || physicalReceipt.Key.CompareTo(reverseKey) <= 0
-                    || valuedReceipt.Key.CompareTo(physicalReceipt.Key) != 0
-                    || physicalReceipt.AbsoluteCountQty is not null || physicalReceipt.SignedDelta <= 0m
-                    || valuedReceipt.OldSignedQuantity != physicalReceipt.SignedDelta
-                    || valuedReceipt.ReplaySignedQuantity != valuedReceipt.OldSignedQuantity
-                    || valuedReceipt.FixedSignedValue != valuedReceipt.OldSignedValue
-                    || valuedReceipt.OldSignedValue < 0m || valuedReceipt.AbsoluteCountQty is not null
-                    || valuedReceipt.ReturnOfSaleEventId is not null || valuedReceipt.ReversedProductionIssueEventId is not null)
+                var receiptIds = plan.PhysicalLater.Select(e => checked((int)e.EventId)).ToArray();
+                var laterReceipts = await db.IvTrxHistories.AsNoTracking().Where(h => receiptIds.Contains(h.Id)).ToArrayAsync(ct);
+                var reversedReceipts = await db.IvTrxHistories.AsNoTracking().Where(h =>
+                    h.ReversesHistoryId.HasValue && receiptIds.Contains(h.ReversesHistoryId.Value)).Select(h => h.Id).ToArrayAsync(ct);
+                if (laterReceipts.Length != receiptIds.Length || reversedReceipts.Length != 0
+                    || await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, plan.PhysicalLater[0].Key.EffectiveAt, ct) is not null)
                     return null;
-                var receiptId = checked((int)physicalReceipt.EventId);
-                var laterReceipt = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == receiptId, ct);
-                if (laterReceipt is null || laterReceipt.CompanyCode != company || laterReceipt.BranchCode != branch
-                    || laterReceipt.TrxType != IvTrxTypes.MiscellaneousReceipt || laterReceipt.EntryRole != "ORIGINAL"
-                    || laterReceipt.BatchStatus != IvBatchStatuses.Posted || laterReceipt.ICode != plan.ItemCode
-                    || laterReceipt.ToBalLocId != plan.BalLocId || laterReceipt.ToStdQty != physicalReceipt.SignedDelta
-                    || laterReceipt.FromBalLocId is not null || laterReceipt.TrxDtTime != physicalReceipt.Key.EffectiveAt
-                    || laterReceipt.TrxDtTime.Year != receipt.TrxDtTime.Year
-                    || laterReceipt.TrxDtTime.Month != receipt.TrxDtTime.Month
-                    || await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.ReversesHistoryId == receiptId, ct)
-                    || await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, laterReceipt.TrxDtTime, ct) is not null)
-                    return null;
-                laterReceiptHistoryId = receiptId;
+                var receiptsById = laterReceipts.ToDictionary(h => h.Id);
+                foreach (var physicalReceipt in plan.PhysicalLater)
+                {
+                    if (!receiptsById.TryGetValue(checked((int)physicalReceipt.EventId), out var laterReceipt)
+                        || laterReceipt.CompanyCode != company || laterReceipt.BranchCode != branch
+                        || laterReceipt.TrxType != IvTrxTypes.MiscellaneousReceipt || laterReceipt.EntryRole != "ORIGINAL"
+                        || laterReceipt.BatchStatus != IvBatchStatuses.Posted || laterReceipt.ICode != plan.ItemCode
+                        || laterReceipt.ToBalLocId != plan.BalLocId || laterReceipt.ToStdQty != physicalReceipt.SignedDelta
+                        || laterReceipt.FromBalLocId is not null || laterReceipt.TrxDtTime != physicalReceipt.Key.EffectiveAt
+                        || laterReceipt.TrxDtTime.Year != receipt.TrxDtTime.Year
+                        || laterReceipt.TrxDtTime.Month != receipt.TrxDtTime.Month)
+                        return null;
+                }
+                laterReceiptTailFingerprint = tailFingerprint;
             }
             if (cycle?.ActiveRootId is not null
                 && ((plan.Removal ? cycle.RootRole != "PRIMARY" : cycle.RootRole != "REVERSAL")
@@ -442,10 +437,10 @@ public sealed partial class IvInventoryPostingService
                 sale.FromBalLocId, sale.FrStdQty, sale.FrStdUom, sale.IStatus, sale.FromLotId, sale.FrLotNo,
                 fact.BaseCurrency, fact.TransactionCurrency, fact.TransactionCostAmount, fact.ExchangeRate,
                 plan.PhysicalCurrent, plan.PhysicalFinal, plan.WacCurrentQty, plan.WacCurrentValue,
-                plan.WacFinalQty, plan.WacFinalValue, projectedSaleCost, laterReceiptHistoryId, Cycle = cycle?.Fingerprint
+                plan.WacFinalQty, plan.WacFinalValue, projectedSaleCost, laterReceiptTailFingerprint, Cycle = cycle?.Fingerprint
             }).SourceSnapshotHash;
             return new(fingerprint, sale.Id, reverse.Id, fact.Id, inverse.Id,
-                fact.BaseQty, currentSaleCost, projectedSaleCost, laterReceiptHistoryId);
+                fact.BaseQty, currentSaleCost, projectedSaleCost, laterReceiptTailFingerprint);
         }
         catch (Exception error) when (error is StockLedgerException or ArgumentException or InvalidOperationException)
         {
@@ -463,14 +458,37 @@ public sealed partial class IvInventoryPostingService
     private static bool MatchesReversedSaleTail(ReversedSaleProof proof,
         IReadOnlyList<StockReplayPhysicalEvent> physical, IReadOnlyList<StockReplayWacEvent> valued)
     {
-        if (proof.LaterReceiptHistoryId is not int receiptId)
-            return physical.Count == 0 && valued.Count == 0;
-        return physical.Count == 1 && valued.Count == 1
-            && physical[0].EventId == receiptId && valued[0].EventId == receiptId
-            && physical[0].Key.CompareTo(valued[0].Key) == 0 && physical[0].SignedDelta > 0m
-            && valued[0].OldSignedQuantity == physical[0].SignedDelta
-            && valued[0].ReplaySignedQuantity == valued[0].OldSignedQuantity
-            && valued[0].FixedSignedValue == valued[0].OldSignedValue;
+        return ReceiptTailFingerprint(physical, valued) is string actual
+            && actual == proof.LaterReceiptTailFingerprint;
+    }
+
+    private static string? ReceiptTailFingerprint(
+        IReadOnlyList<StockReplayPhysicalEvent> physical, IReadOnlyList<StockReplayWacEvent> valued)
+    {
+        if (physical.Count != valued.Count)
+            return null;
+        if (physical.Count == 0)
+            return string.Empty;
+        var ids = new HashSet<long>();
+        for (var i = 0; i < physical.Count; i++)
+        {
+            var p = physical[i];
+            var v = valued[i];
+            if (p.EventId is not (> 0 and <= int.MaxValue) || !ids.Add(p.EventId)
+                || p.EventId != v.EventId || p.Key.CompareTo(v.Key) != 0
+                || i > 0 && physical[i - 1].Key.CompareTo(p.Key) >= 0
+                || p.AbsoluteCountQty is not null || p.SignedDelta <= 0m
+                || v.OldSignedQuantity != p.SignedDelta || v.ReplaySignedQuantity != v.OldSignedQuantity
+                || v.FixedSignedValue != v.OldSignedValue || v.OldSignedValue < 0m
+                || v.AbsoluteCountQty is not null || v.CountFallbackUnitCost is not null || v.CountPreQuantity is not null
+                || v.ReturnOfSaleEventId is not null
+                || v.SalesReturnAllocationId is not null || v.ReversedProductionIssueEventId is not null)
+                return null;
+        }
+        return StockPostingFingerprint.Create(new { Kind = "REVERSED_SALE_FIXED_RECEIPT_TAIL" }, new
+        {
+            receipts = physical.Select((p, i) => new { p.EventId, p.Key, p.SignedDelta, valued[i].OldSignedValue }).ToArray()
+        }).SourceSnapshotHash;
     }
 
     private static async Task AppendReversedSaleUndoAsync(
