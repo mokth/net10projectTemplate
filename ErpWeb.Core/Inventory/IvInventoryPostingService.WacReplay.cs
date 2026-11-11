@@ -642,7 +642,8 @@ public sealed partial class IvInventoryPostingService
             ? await ReadReversedSaleCycleAsync(read, companyCode, branchCode, batch, original.ICode, cancellationToken)
             : null;
         if (isReceipt && await HasUnresolvedReversedSaleValueAsync(read, companyCode, branchCode,
-                [original.ICode], batch.TrxDtTime, cancellationToken, rollback: true))
+                [original.ICode], batch.TrxDtTime, cancellationToken, rollback: true)
+            && saleCycle is not { ActiveRootId: null })
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "This receipt has an existing reversed-sale cost correction that needs replay before rollback.");
         var hasReversedSale = isReceipt && await HasReversedSalesAfterAsync(read,
@@ -666,7 +667,12 @@ public sealed partial class IvInventoryPostingService
         var physical = await StockReplayPhysicalPlanner.BuildRemovalAsync(
             read, companyCode, branchCode, pileId.Value, removed,
             cancellationToken);
-        var financial = reversedIssuePlan is { IssueDeltaId: not null, ReversalDeltaId: not null }
+        if (saleCycle is not null && reversedIssuePlan is not null)
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has multiple reversed-cost dependencies.");
+        var financial = saleCycle is { ActiveRootId: null }
+            ? await StockReplayWacRemovalPlanner.BuildForReversedSaleAsync(
+                read, companyCode, branchCode, original.ICode, physical, saleCycle, cancellationToken)
+            : reversedIssuePlan is { IssueDeltaId: not null, ReversalDeltaId: not null }
             ? await StockReplayWacRemovalPlanner.BuildForReversedIssueAsync(
                 read, companyCode, branchCode, original.ICode, physical,
                 reversedIssuePlan, cancellationToken)
@@ -734,7 +740,8 @@ public sealed partial class IvInventoryPostingService
             if (saleCycle?.Fingerprint != lockedSaleCycle?.Fingerprint)
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed-sale correction changed. Retry rollback.");
             if (await HasUnresolvedReversedSaleValueAsync(write, companyCode, branchCode,
-                    [original.ICode], batch.TrxDtTime, cancellationToken, rollback: true))
+                    [original.ICode], batch.TrxDtTime, cancellationToken, rollback: true)
+                && lockedSaleCycle is not { ActiveRootId: null })
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed-sale cost changed. Retry rollback after reconciliation.");
             if (await HasReversedSalesAfterAsync(write, companyCode, branchCode, [original.ICode],
                     batch.TrxDtTime, cancellationToken) != hasReversedSale

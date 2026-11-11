@@ -34,7 +34,7 @@ public sealed partial class IvInventoryPostingService
         string Fingerprint, long SaleFactId, long ReversalFactId,
         long? SaleDeltaId, long? ReversalDeltaId, long? ActiveRootId,
         int ReceiptBalanceId, decimal ReceiptQuantity, decimal ReceiptUnitCost, decimal ReceiptValue,
-        decimal EffectiveSaleCost);
+        decimal EffectiveSaleCost, long[] ValueIds);
 
     private static async Task<ReversedSaleCycleState?> ReadReversedSaleCycleAsync(
         AppDbContext db, string company, string branch, IvTrxBatch receipt, string item, CancellationToken ct)
@@ -131,7 +131,8 @@ public sealed partial class IvInventoryPostingService
             receiptHistory.Id, balanceId, receiptHistory.ToStdQty, receiptFacts[0].UnitCost, receiptFacts[0].CostAmount, cost
         }).SourceSnapshotHash;
         return new(fingerprint, sales[0].Id, reversals[0].Id, saleDelta?.Id, reverseDelta?.Id,
-            saleDelta?.StockPostingId, balanceId, receiptHistory.ToStdQty.Value, receiptFacts[0].UnitCost, receiptFacts[0].CostAmount, cost);
+            saleDelta?.StockPostingId, balanceId, receiptHistory.ToStdQty.Value, receiptFacts[0].UnitCost, receiptFacts[0].CostAmount, cost,
+            values.Select(v => v.Id).Concat(children.Select(v => v.Id)).Order().ToArray());
     }
 
     private static Task<bool> HasReversedSalesAfterAsync(

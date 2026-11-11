@@ -5762,6 +5762,25 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                     var line = Assert.Single(Assert.Single(reposted.ChangeTracker.Entries<StockValuationPeriodSnapshotHdr>()).Entity.Lines);
                     Assert.Equal((20m, 45m + 5m * receiptUnitCost), (line.ClosingQty, line.ClosingValue));
                 }
+                if (iteration == 0)
+                {
+                    var crossedSale = await invoice.PostAsync([savedInvoice.InvNo!]);
+                    Assert.False(crossedSale.Succeeded, "A sale crossed the earlier cancellation without historical replay.");
+                    Assert.Contains("reversed-sale cost correction", crossedSale.ErrorMessage ?? string.Empty);
+                    await using var unchangedSale = await _factory.CreateDbContextAsync();
+                    var state = await unchangedSale.StockCostStates.SingleAsync();
+                    Assert.Equal((20m, 45m + 5m * receiptUnitCost), (state.OnHandBaseQty, state.InventoryValue));
+                    Assert.Equal(20m, (await unchangedSale.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+                    var activeReceipt = await unchangedSale.IvTrxHistories.SingleAsync(h =>
+                        h.BatchNo == savedReceipt.BatchNo && h.EntryRole == "ORIGINAL"
+                        && !unchangedSale.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id));
+                    var owner = await unchangedSale.StockPostings.SingleAsync(p => p.Id == activeReceipt.StockPostingId);
+                    var key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                        owner.PostingSequence, $"H{activeReceipt.Id:D10}", 0);
+                    var refusedTail = await Assert.ThrowsAsync<StockLedgerException>(() =>
+                        StockReplayWacFinancialTailReader.ReadLaterAsync(unchangedSale, "DEMO", "HQ", "A100", key));
+                    Assert.Contains("reversed-sale cost correction", refusedTail.Error.Message);
+                }
                 if (testQaHold && iteration == 0)
                 {
                     long holdId;

@@ -29,7 +29,7 @@ public static class StockReplayWacFinancialTailReader
         string itemCode,
         StockReplayEventKey after,
         CancellationToken cancellationToken = default) =>
-        ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after, [], cancellationToken);
+        ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after, [], false, cancellationToken);
 
     // Only receipt replay with an independently verified complete isolated
     // issue/reversal or sale/reversal pair may omit its two zero-net deltas.
@@ -42,13 +42,25 @@ public static class StockReplayWacFinancialTailReader
             || excludedValueIds.Distinct().Count() != 2)
             throw Corrupt("The reversed issue or sale value pair is incomplete.");
         return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
-            excludedValueIds, cancellationToken);
+            excludedValueIds, false, cancellationToken);
+    }
+
+    internal static Task<StockReplayWacFinancialTail> ReadLaterForReversedSaleAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (excludedValueIds.Count < 2 || excludedValueIds.Any(id => id <= 0)
+            || excludedValueIds.Distinct().Count() != excludedValueIds.Count)
+            throw Corrupt("The reversed sale correction cycle is incomplete.");
+        return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
+            excludedValueIds, true, cancellationToken);
     }
 
     private static async Task<StockReplayWacFinancialTail> ReadLaterCoreAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
-        CancellationToken cancellationToken)
+        bool excludeSaleCycle, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (string.IsNullOrWhiteSpace(companyCode)
@@ -208,12 +220,41 @@ public static class StockReplayWacFinancialTailReader
         {
             var excluded = valueRows.Where(f => excludedValueIds.Contains(f.Id)).ToArray();
             if (excluded.Length != excludedValueIds.Count
-                || excluded.Any(f => f.BaseQty != 0m || f.ReversesValuationFactId is not null
-                    || f.ValuationStatus != StockValuationStatuses.Valued)
+                || excluded.Any(f => f.BaseQty != 0m)
                 || StockLedgerPrecision.Money(excluded.Sum(f => f.SignedValue)) != 0m)
+                throw Corrupt($"Item {itemCode} has an invalid reversed value pair.");
+            if (excludeSaleCycle)
+            {
+                var bases = excluded.Where(f => f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue).ToArray();
+                if (bases.Length == 0 || excluded.Any(f =>
+                        f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue
+                            ? f.ReversesValuationFactId is not null || f.ValuationStatus != StockValuationStatuses.Valued
+                            : f.MovementCode != StockValuationMovementClassifier.ReversedSaleReplayValueUndo
+                                || f.ReversesValuationFactId is null || f.ValuationStatus != StockValuationStatuses.Reversed)
+                    || !await StockValuationSnapshotBuilder.ValidateReversedSaleCorrectionsAsync(db, companyCode, branchCode,
+                        bases.Select(f => f.StockPostingId).Distinct().ToArray(), cancellationToken))
+                    throw Corrupt($"Item {itemCode} has an invalid reversed sale correction cycle.");
+                var sourceIds = bases.Select(f => f.OriginalValuationFactId!.Value).Distinct().ToArray();
+                var relatedIds = await db.StockValuationFacts.AsNoTracking().Where(f =>
+                        f.OriginalValuationFactId.HasValue && sourceIds.Contains(f.OriginalValuationFactId.Value)
+                        && (f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue
+                            || f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValueUndo))
+                    .Select(f => f.Id).ToArrayAsync(cancellationToken);
+                if (!relatedIds.Order().SequenceEqual(excludedValueIds.Order()))
+                    throw Corrupt($"Item {itemCode} has an incomplete reversed sale correction cycle.");
+            }
+            else if (excluded.Any(f => f.ReversesValuationFactId is not null
+                    || f.ValuationStatus != StockValuationStatuses.Valued))
                 throw Corrupt($"Item {itemCode} has an invalid reversed issue value pair.");
             valueRows = valueRows.Where(f => !excludedValueIds.Contains(f.Id)).ToArray();
         }
+        if (valueRows.Any(f => f.EffectiveAt >= after.EffectiveAt
+                && (f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue
+                    || f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValueUndo)))
+            throw Corrupt("This transaction cannot yet replay an existing reversed-sale cost correction.");
+        valueRows = valueRows.Where(f => f.EffectiveAt >= after.EffectiveAt
+            || (f.MovementCode != StockValuationMovementClassifier.ReversedSaleReplayValue
+                && f.MovementCode != StockValuationMovementClassifier.ReversedSaleReplayValueUndo)).ToArray();
         var valueIds = valueRows.Where(f => f.ReversesValuationFactId is null)
             .Select(f => f.Id).ToArray();
         var reversalRows = await db.StockValuationFacts.AsNoTracking()
