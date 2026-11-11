@@ -1,6 +1,7 @@
 using System.Globalization;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
@@ -47,6 +48,7 @@ public sealed partial class IvStockCountService : IIvStockCountService
     private readonly IIvInventoryPostingService _posting;
     private readonly ILogger<IvStockCountService> _logger;
     private readonly IStockPostingCoordinator? _coordinator;
+    private readonly IQaPhysicalHoldAuthorization _qaPhysical;
     private readonly bool _openPeriodBackdatedReplayEnabled;
 
     public IvStockCountService(
@@ -61,7 +63,8 @@ public sealed partial class IvStockCountService : IIvStockCountService
         IIvInventoryPostingService posting,
         ILogger<IvStockCountService> logger,
         IStockPostingCoordinator? coordinator = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -74,6 +77,7 @@ public sealed partial class IvStockCountService : IIvStockCountService
         _posting = posting;
         _logger = logger;
         _coordinator = coordinator;
+        _qaPhysical = qaPhysical ?? DisabledQaPhysicalHoldAuthorization.Instance;
         _openPeriodBackdatedReplayEnabled =
             configuration?.GetValue<bool>("OpenPeriodBackdatedReplayEnabled") == true;
     }

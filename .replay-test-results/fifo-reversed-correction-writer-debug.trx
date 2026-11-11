@@ -1,0 +1,71 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="86706dbc-fb6e-4efb-88a6-e1d43920f4c3" name="Mokth@MOKTH 2026-11-09 14:35:30" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-09T14:35:30.8780487+08:00" queuing="2026-11-09T14:35:30.8780492+08:00" start="2026-11-09T14:35:17.0146654+08:00" finish="2026-11-09T14:35:30.8830430+08:00" />
+  <TestSettings name="default" id="6d131dd0-dba0-4a50-8b9f-a2a143df1405">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-09_14_35_30" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="44a2fa7f-7511-4e66-ac66-43293e29924e" testId="f0d3ebd3-d0f9-6d84-afa7-8347dde2469e" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_issue_correction_writes_complete_layer_and_cost_evidence" computerName="MOKTH" duration="00:00:10.8141465" startTime="2026-11-09T14:35:19.9393009+08:00" endTime="2026-11-09T14:35:30.7478802+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="44a2fa7f-7511-4e66-ac66-43293e29924e">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Strings differ&#xD;
+           ↓ (pos 0)&#xD;
+Expected: "8BBDB1D7FCE791F5E7D4B3DBF62D1238BF1BE83D3"···&#xD;
+Actual:   "F822F96F41FBBD1D2BE77229D9C017E68B233DA6D"···&#xD;
+           ↑ (pos 0)</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.&lt;&gt;c__DisplayClass169_1.&lt;&lt;BackdatedFifoReceiptAndProductionIssueAsync&gt;g__AssertFifoCorrectionWithinRolledBackRootAsync|7&gt;d.MoveNext() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 5141&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.&lt;&gt;c__DisplayClass169_1.&lt;&lt;BackdatedFifoReceiptAndProductionIssueAsync&gt;g__AssertFifoCorrectionWithinRolledBackRootAsync|7&gt;d.MoveNext() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 5157&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.&lt;&gt;c__DisplayClass169_1.&lt;&lt;BackdatedFifoReceiptAndProductionIssueAsync&gt;g__AssertFifoCorrectionWithinRolledBackRootAsync|7&gt;d.MoveNext() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 5157&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedFifoReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 scenario) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 5287&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_issue_correction_writes_complete_layer_and_cost_evidence" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="f0d3ebd3-d0f9-6d84-afa7-8347dde2469e">
+      <Execution id="44a2fa7f-7511-4e66-ac66-43293e29924e" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Fifo_reversed_issue_correction_writes_complete_layer_and_cost_evidence" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="f0d3ebd3-d0f9-6d84-afa7-8347dde2469e" executionId="44a2fa7f-7511-4e66-ac66-43293e29924e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="1" executed="1" passed="0" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:02.11]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.53]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.55]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:13.40]       Assert.Equal() Failure: Strings differ&#xD;
+[xUnit.net 00:00:13.40]                  ↓ (pos 0)&#xD;
+[xUnit.net 00:00:13.40]       Expected: "8BBDB1D7FCE791F5E7D4B3DBF62D1238BF1BE83D3"···&#xD;
+[xUnit.net 00:00:13.41]       Actual:   "F822F96F41FBBD1D2BE77229D9C017E68B233DA6D"···&#xD;
+[xUnit.net 00:00:13.41]                  ↑ (pos 0)&#xD;
+[xUnit.net 00:00:13.41]       Stack Trace:&#xD;
+[xUnit.net 00:00:13.41]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(5141,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.&lt;&gt;c__DisplayClass169_1.&lt;&lt;BackdatedFifoReceiptAndProductionIssueAsync&gt;g__AssertFifoCorrectionWithinRolledBackRootAsync|7&gt;d.MoveNext()&#xD;
+[xUnit.net 00:00:13.41]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:13.41]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(5157,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.&lt;&gt;c__DisplayClass169_1.&lt;&lt;BackdatedFifoReceiptAndProductionIssueAsync&gt;g__AssertFifoCorrectionWithinRolledBackRootAsync|7&gt;d.MoveNext()&#xD;
+[xUnit.net 00:00:13.41]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:13.41]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(5157,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.&lt;&gt;c__DisplayClass169_1.&lt;&lt;BackdatedFifoReceiptAndProductionIssueAsync&gt;g__AssertFifoCorrectionWithinRolledBackRootAsync|7&gt;d.MoveNext()&#xD;
+[xUnit.net 00:00:13.41]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:13.41]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(5287,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedFifoReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 scenario)&#xD;
+[xUnit.net 00:00:13.41]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:13.42]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-09T14:35:30.7528457+08:00">
+        <Text>[xUnit.net 00:00:13.40]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_issue_correction_writes_complete_layer_and_cost_evidence [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

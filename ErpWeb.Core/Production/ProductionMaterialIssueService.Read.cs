@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Production;
@@ -157,10 +158,60 @@ public sealed partial class ProductionMaterialIssueService
             .Where(x => x.PostingLinkId == link.Uid && x.MovementType == ProductionMaterialMovementTypes.Issue)
             .OrderBy(x => x.InventoryTrxLineNo)
             .ToListAsync(cancellationToken);
+        IReadOnlyDictionary<long, ProductionEffectiveCost> effectiveCosts =
+            new Dictionary<long, ProductionEffectiveCost>();
+        if (canViewCost)
+        {
+            var movementIds = movements.Where(m => m.ProductionBalLotMovementId is > 0)
+                .Select(m => m.ProductionBalLotMovementId!.Value).Distinct().ToArray();
+            var historyIds = movements.Where(m => m.InventoryHistoryId is > 0)
+                .Select(m => m.InventoryHistoryId!.Value).Distinct().ToArray();
+            // Discover corrections by the posting link as well as the stored
+            // movement pointer, so a broken pointer cannot fall back to stale cost.
+            var candidateIds = await db.ProductionBalLotMovements.AsNoTracking()
+                .Where(m => movementIds.Contains(m.Uid)
+                    || m.MovementType == ProductionBalLotMovementTypes.Issue && m.OriginalMovementId == null
+                        && (m.PostingLinkId == link.Uid || m.InventoryHistoryId.HasValue
+                            && historyIds.Contains(m.InventoryHistoryId.Value)))
+                .Select(m => m.Uid).Distinct().ToArrayAsync(cancellationToken);
+            var correctedIds = await db.ProductionCostRestatementFacts.AsNoTracking()
+                .Where(f => candidateIds.Contains(f.ProductionBalLotMovementId))
+                .Select(f => f.ProductionBalLotMovementId).Distinct().ToArrayAsync(cancellationToken);
+            if (correctedIds.Length > 0)
+            {
+                var associated = movements.Where(m => m.ProductionBalLotMovementId is long id
+                    && correctedIds.Contains(id)).ToArray();
+                if (associated.Length != correctedIds.Length
+                    || associated.Select(m => m.ProductionBalLotMovementId).Distinct().Count() != correctedIds.Length)
+                    return IvMasterOperationResult<ProductionMaterialIssueDocument>.Fail(
+                        IvMasterErrorCode.Validation, "The material issue's replayed cost could not be verified.");
+                try
+                {
+                    effectiveCosts = await ProductionReplayEffectiveCostReader.ReadAsync(db,
+                        scope.CompanyCode, scope.BranchCode, correctedIds, cancellationToken);
+                    var inventoryCosts = await ProductionIssueEffectiveCostReader.ReadAsync(db,
+                        scope.CompanyCode, scope.BranchCode, correctedIds, cancellationToken);
+                    if (correctedIds.Any(id => effectiveCosts[id].TotalCost != inventoryCosts[id].TotalCost
+                            || effectiveCosts[id].UnitCost != inventoryCosts[id].UnitCost
+                            || inventoryCosts[id].MaterialMovementId != associated.Single(m =>
+                                m.ProductionBalLotMovementId == id).Uid))
+                        return IvMasterOperationResult<ProductionMaterialIssueDocument>.Fail(
+                            IvMasterErrorCode.Validation, "The material issue's replayed cost could not be verified.");
+                }
+                catch (StockLedgerException)
+                {
+                    return IvMasterOperationResult<ProductionMaterialIssueDocument>.Fail(
+                        IvMasterErrorCode.Validation, "The material issue's replayed cost could not be verified.");
+                }
+            }
+        }
         var mapRows = await db.ProductionMaterialIssueLines.AsNoTracking()
             .Where(x => x.PostingLinkId == link.Uid)
             .OrderBy(x => x.InventoryTrxLineNo)
             .ToListAsync(cancellationToken);
+        ProductionEffectiveCost? EffectiveCost(ProductionMaterialMovement? movement) =>
+            movement?.ProductionBalLotMovementId is long id
+                ? effectiveCosts.GetValueOrDefault(id) : null;
         IReadOnlyList<ProductionMaterialIssueDocumentLine> documentLines;
         if (mapRows.Count > 0)
         {
@@ -174,7 +225,9 @@ public sealed partial class ProductionMaterialIssueService
                 var detail = details[x.InventoryBatchDetailId];
                 var material = materials[x.WorkOrderMaterialId];
                 postedByDetail.TryGetValue(detail.Id, out var movement);
-                var unitCost = movement?.UnitCost ?? detail.UnitPrice ?? 0m;
+                var effective = EffectiveCost(movement);
+                var unitCost = effective?.UnitCost ?? movement?.UnitCost ?? detail.UnitPrice ?? 0m;
+                var totalCost = effective?.TotalCost ?? StockLedgerPrecision.Money(x.BaseQty * unitCost);
                 return new ProductionMaterialIssueDocumentLine
                 {
                     WorkOrderMaterialId = x.WorkOrderMaterialId, InventoryLineNo = x.InventoryTrxLineNo,
@@ -183,7 +236,7 @@ public sealed partial class ProductionMaterialIssueService
                     BaseQty = x.BaseQty, BaseUom = material.BaseUom ?? string.Empty,
                     Warehouse = detail.FrWarehouse ?? string.Empty, Location = detail.FrLocation ?? string.Empty,
                     LotNo = detail.FrLotNo ?? string.Empty, ItemStatus = detail.IStatus ?? string.Empty,
-                    UnitCost = canViewCost ? unitCost : null, TotalCost = canViewCost ? StockLedgerPrecision.Money(x.BaseQty * unitCost) : null,
+                    UnitCost = canViewCost ? unitCost : null, TotalCost = canViewCost ? totalCost : null,
                     ExcessIssueReason = x.ExcessIssueReason
                 };
             }).ToList();
@@ -197,8 +250,9 @@ public sealed partial class ProductionMaterialIssueService
                 FromBalLocId = x.FromBalLocId ?? 0,
                 ItemCode = x.ItemCode, IssueQty = x.Qty, Uom = x.Uom, BaseQty = x.BaseQty,
                 BaseUom = x.BaseUom, Warehouse = x.WarehouseCode, Location = x.LocationCode,
-                LotNo = x.LotNo, ItemStatus = x.ItemStatus, UnitCost = canViewCost ? x.UnitCost : null,
-                TotalCost = canViewCost ? x.TotalCost : null
+                LotNo = x.LotNo, ItemStatus = x.ItemStatus,
+                UnitCost = canViewCost ? EffectiveCost(x)?.UnitCost ?? x.UnitCost : null,
+                TotalCost = canViewCost ? EffectiveCost(x)?.TotalCost ?? x.TotalCost : null
             }).ToList();
         }
 

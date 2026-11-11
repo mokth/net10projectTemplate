@@ -1,0 +1,72 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="872c63f4-e7a5-4a63-a53d-044b91808596" name="Mokth@MOKTH 2026-11-06 20:57:40" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-06T20:57:40.5933382+08:00" queuing="2026-11-06T20:57:40.5933389+08:00" start="2026-11-06T20:57:09.2207521+08:00" finish="2026-11-06T20:57:42.3634808+08:00" />
+  <TestSettings name="default" id="da51f153-1420-4cc3-b912-61eee875099b">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-06_20_57_40" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="4ac1023d-d8d0-4df8-b5e4-a0d0eefb84a2" testId="3edfcae6-461d-e305-5e57-423e37d54f95" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Receipt_rollback_rejects_changed_cost_of_a_later_reversed_issue(replayEnabled: True)" computerName="MOKTH" duration="00:00:21.3634345" startTime="2026-11-06T20:57:19.1730619+08:00" endTime="2026-11-06T20:57:40.5001485+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4ac1023d-d8d0-4df8-b5e4-a0d0eefb84a2">
+      <Output>
+        <ErrorInfo>
+          <Message>Removing the receipt would change both historical issue costs.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1155&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="6e087ba4-6747-4548-9c4c-de5a89001ac6" testId="a9894b58-614d-9bba-0f1c-7f102b4bf92e" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Receipt_rollback_rejects_changed_cost_of_a_later_reversed_issue(replayEnabled: False)" computerName="MOKTH" duration="00:00:01.7187588" startTime="2026-11-06T20:57:40.5621992+08:00" endTime="2026-11-06T20:57:42.2196448+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6e087ba4-6747-4548-9c4c-de5a89001ac6">
+      <Output>
+        <ErrorInfo>
+          <Message>Removing the receipt would change both historical issue costs.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1155&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Receipt_rollback_rejects_changed_cost_of_a_later_reversed_issue(replayEnabled: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="3edfcae6-461d-e305-5e57-423e37d54f95">
+      <Execution id="4ac1023d-d8d0-4df8-b5e4-a0d0eefb84a2" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Receipt_rollback_rejects_changed_cost_of_a_later_reversed_issue" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Receipt_rollback_rejects_changed_cost_of_a_later_reversed_issue(replayEnabled: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="a9894b58-614d-9bba-0f1c-7f102b4bf92e">
+      <Execution id="6e087ba4-6747-4548-9c4c-de5a89001ac6" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Receipt_rollback_rejects_changed_cost_of_a_later_reversed_issue" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="3edfcae6-461d-e305-5e57-423e37d54f95" executionId="4ac1023d-d8d0-4df8-b5e4-a0d0eefb84a2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a9894b58-614d-9bba-0f1c-7f102b4bf92e" executionId="6e087ba4-6747-4548-9c4c-de5a89001ac6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="0" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:07.85]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:09.19]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:09.26]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:30.74]       Removing the receipt would change both historical issue costs.&#xD;
+[xUnit.net 00:00:30.74]       Stack Trace:&#xD;
+[xUnit.net 00:00:30.75]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1155,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:30.75]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:32.45]       Removing the receipt would change both historical issue costs.&#xD;
+[xUnit.net 00:00:32.45]       Stack Trace:&#xD;
+[xUnit.net 00:00:32.45]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1155,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:32.45]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:32.46]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T20:57:40.5093417+08:00">
+        <Text>[xUnit.net 00:00:30.74]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Receipt_rollback_rejects_changed_cost_of_a_later_reversed_issue(replayEnabled: True) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T20:57:42.2205830+08:00">
+        <Text>[xUnit.net 00:00:32.45]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Receipt_rollback_rejects_changed_cost_of_a_later_reversed_issue(replayEnabled: False) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

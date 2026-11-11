@@ -59,6 +59,26 @@ public static class StockValuationSnapshotBuilder
             })
             .ToListAsync(cancellationToken);
 
+        var fifoCorrectionRoots = facts.Where(f =>
+                f.MovementCode == StockReplayFifoReversedIssueGenerationReader.ValueMovement)
+            .Select(f => f.StockPostingId).Distinct().ToArray();
+        if (fifoCorrectionRoots.Length != 0)
+        {
+            try
+            {
+                await StockReplayFifoReversedIssueGenerationReader.ValidateForSnapshotAsync(
+                    db, company, branch, fifoCorrectionRoots, cancellationToken);
+            }
+            catch (StockLedgerException)
+            {
+                return "Cannot close: a reversed FIFO issue has incomplete correction evidence.";
+            }
+            catch (System.Data.Common.DbException)
+            {
+                return "Cannot close: reversed FIFO correction evidence is unavailable.";
+            }
+        }
+
         var revision = (await db.StockValuationPeriodSnapshotHdrs.AsNoTracking()
             .Where(x => x.CompanyCode == company && x.BranchCode == branch
                         && x.PeriodKey == periodFrom.ToString("yyyy-MM"))

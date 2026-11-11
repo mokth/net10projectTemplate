@@ -143,6 +143,12 @@ public sealed partial class ProductionMaterialIssueService
                 return RollbackFail(IvMasterErrorCode.Validation,
                     "Production issue cost does not match its active Inventory valuation.");
 
+            // Reversing a corrected issue first would hide its historical values
+            // from later receipt replay, even when it has no Production output.
+            if (effectiveCosts.Values.Any(cost => cost.RestatementFactId is not null))
+                return RollbackFail(IvMasterErrorCode.InUse,
+                    "Reverse the backdated source receipt or reconcile the replayed cost before rolling back this Production issue.");
+
             // MATERIAL_IN piles must still hold the full original issue base qty.
             foreach (var original in originalMovements)
             {

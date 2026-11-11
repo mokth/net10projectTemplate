@@ -1,0 +1,58 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="77de7358-e9cc-41e7-900d-5121c5e6ac97" name="Mokth@MOKTH 2026-11-06 09:32:16" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-06T09:32:16.2474543+08:00" queuing="2026-11-06T09:32:16.2474549+08:00" start="2026-11-06T09:32:08.7370543+08:00" finish="2026-11-06T09:32:16.5907448+08:00" />
+  <TestSettings name="default" id="4f47b5df-a9f1-4ed1-a71a-886480b4b902">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-06_09_32_16" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="8143ca5e-d516-4a71-b863-81d01077a053" testId="7e803888-cc21-598b-cddd-51291ce4199e" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.The_unique_bal_loc_index_rejects_a_duplicate_line_in_one_sheet" computerName="MOKTH" duration="00:00:00.0649283" startTime="2026-11-06T09:32:16.3683286+08:00" endTime="2026-11-06T09:32:16.4335121+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8143ca5e-d516-4a71-b863-81d01077a053" />
+    <UnitTestResult executionId="e235b9a5-7cf7-40bd-a7ea-077f99e6af51" testId="bd20a1b9-13bc-260e-a5c9-c86e87c0e214" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.Two_savers_with_the_same_rowversion_leave_one_winner" computerName="MOKTH" duration="00:00:00.0322518" startTime="2026-11-06T09:32:16.3362728+08:00" endTime="2026-11-06T09:32:16.3678921+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e235b9a5-7cf7-40bd-a7ea-077f99e6af51" />
+    <UnitTestResult executionId="cc702a13-ac3c-4ecb-8ba8-727c7c3f1e75" testId="fccbb7b4-a1fe-cda1-47f6-fb96447383dc" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.A_count_edit_after_the_post_is_refused" computerName="MOKTH" duration="00:00:00.0715496" startTime="2026-11-06T09:32:16.4338179+08:00" endTime="2026-11-06T09:32:16.5056155+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cc702a13-ac3c-4ecb-8ba8-727c7c3f1e75" />
+    <UnitTestResult executionId="049d2693-1acb-4130-8fb2-ff5ebdc26ea9" testId="2014f901-da5f-12b8-0896-78f0c7cf13bc" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.Two_concurrent_posts_of_one_count_leave_exactly_one_batch" computerName="MOKTH" duration="00:00:00.1260601" startTime="2026-11-06T09:32:16.2488183+08:00" endTime="2026-11-06T09:32:16.3351137+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="049d2693-1acb-4130-8fb2-ff5ebdc26ea9" />
+    <UnitTestResult executionId="4145fe32-8e7c-4d58-879b-821cd7a7c327" testId="840deb4c-4a4c-1a8d-4ff5-8ca3e50e5e58" testName="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.A_count_post_and_a_stock_adjustment_post_on_one_pile_serialise_without_deadlock" computerName="MOKTH" duration="00:00:06.3285222" startTime="2026-11-06T09:32:09.8663024+08:00" endTime="2026-11-06T09:32:16.2069349+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4145fe32-8e7c-4d58-879b-821cd7a7c327" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.Two_concurrent_posts_of_one_count_leave_exactly_one_batch" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="2014f901-da5f-12b8-0896-78f0c7cf13bc">
+      <Execution id="049d2693-1acb-4130-8fb2-ff5ebdc26ea9" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests" name="Two_concurrent_posts_of_one_count_leave_exactly_one_batch" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.A_count_post_and_a_stock_adjustment_post_on_one_pile_serialise_without_deadlock" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="840deb4c-4a4c-1a8d-4ff5-8ca3e50e5e58">
+      <Execution id="4145fe32-8e7c-4d58-879b-821cd7a7c327" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests" name="A_count_post_and_a_stock_adjustment_post_on_one_pile_serialise_without_deadlock" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.A_count_edit_after_the_post_is_refused" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="fccbb7b4-a1fe-cda1-47f6-fb96447383dc">
+      <Execution id="cc702a13-ac3c-4ecb-8ba8-727c7c3f1e75" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests" name="A_count_edit_after_the_post_is_refused" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.Two_savers_with_the_same_rowversion_leave_one_winner" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="bd20a1b9-13bc-260e-a5c9-c86e87c0e214">
+      <Execution id="e235b9a5-7cf7-40bd-a7ea-077f99e6af51" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests" name="Two_savers_with_the_same_rowversion_leave_one_winner" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests.The_unique_bal_loc_index_rejects_a_duplicate_line_in_one_sheet" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="7e803888-cc21-598b-cddd-51291ce4199e">
+      <Execution id="8143ca5e-d516-4a71-b863-81d01077a053" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvStockCountSqlServerConcurrencyTests" name="The_unique_bal_loc_index_rejects_a_duplicate_line_in_one_sheet" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="7e803888-cc21-598b-cddd-51291ce4199e" executionId="8143ca5e-d516-4a71-b863-81d01077a053" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="bd20a1b9-13bc-260e-a5c9-c86e87c0e214" executionId="e235b9a5-7cf7-40bd-a7ea-077f99e6af51" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fccbb7b4-a1fe-cda1-47f6-fb96447383dc" executionId="cc702a13-ac3c-4ecb-8ba8-727c7c3f1e75" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2014f901-da5f-12b8-0896-78f0c7cf13bc" executionId="049d2693-1acb-4130-8fb2-ff5ebdc26ea9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="840deb4c-4a4c-1a8d-4ff5-8ca3e50e5e58" executionId="4145fe32-8e7c-4d58-879b-821cd7a7c327" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="5" executed="5" passed="5" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:00.18]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:00.72]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:00.78]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:07.44]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

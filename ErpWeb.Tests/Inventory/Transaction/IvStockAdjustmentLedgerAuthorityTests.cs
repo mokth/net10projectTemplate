@@ -1,8 +1,10 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -71,6 +73,83 @@ public sealed class IvStockAdjustmentLedgerAuthorityTests : IAsyncLifetime
     }
 
     public async Task DisposeAsync() => await _connection.DisposeAsync();
+
+    [Fact]
+    public async Task Positive_adjustment_rollback_respects_qa_stock_hold()
+    {
+        var balanceId = await SeedBalanceAsync(100m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 100m, 2m);
+        }
+        var service = InventoryLedgerTestFixture.CreateStockAdjustment(
+            _factory, FixedToday, qaPhysical: new QaPhysicalHoldAuthorizationService());
+        var saved = await service.SaveNewAsync(Request(balanceId, 10m));
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        var posted = await service.PostAsync([saved.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        int postingCount;
+        int valuationCount;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var balance = await db.IvBalLocs.SingleAsync(b => b.Id == balanceId);
+            db.QaPolicies.Add(new QaPolicy
+            {
+                CompanyCode = "DEMO", Version = 1, Enabled = true, IsPublished = true,
+                PhysicalHoldEnabled = true, CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
+            });
+            var line = new QaCaseLine { LineNo = 1, ItemCode = "A100", Uom = "EA", Qty = 105m };
+            var qaCase = new QaCase
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CaseNo = "QA-ADJ-HOLD",
+                CaseDate = FixedToday, Status = QaCaseStatuses.Approved,
+                SourceType = QaSourceTypes.InventoryStock, CreatedDate = DateTime.UtcNow,
+                CreatedBy = "tester", Lines = [line]
+            };
+            qaCase.PhysicalHolds.Add(new QaPhysicalHold
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CaseLine = line, BalLocId = balanceId,
+                ItemCode = balance.ICode, WarehouseCode = balance.WhCode, LocationCode = balance.LocCode,
+                LotNo = balance.LotNo ?? string.Empty, ItemStatus = balance.IStatus,
+                ReservedBaseQty = 105m, Status = QaLogicalHoldStatuses.Active,
+                Cause = QaLogicalHoldCauses.KeepHold, CreatedAtUtc = DateTime.UtcNow
+            });
+            db.QaCases.Add(qaCase);
+            await db.SaveChangesAsync();
+            postingCount = await db.StockPostings.CountAsync();
+            valuationCount = await db.StockValuationFacts.CountAsync();
+        }
+        var blocked = await service.RollbackAsync([saved.BatchNo]);
+        Assert.False(blocked.Succeeded);
+        Assert.Contains("quality hold", blocked.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal(110m, (await db.IvBalLocs.SingleAsync(b => b.Id == balanceId)).StdQty);
+            Assert.Equal(110m, state.OnHandBaseQty);
+            Assert.Equal(220m, state.InventoryValue);
+            Assert.Equal(IvBatchStatuses.Posted, (await db.IvTrxBatches.SingleAsync()).BatchStatus);
+            Assert.Equal(postingCount, await db.StockPostings.CountAsync());
+            Assert.Equal(valuationCount, await db.StockValuationFacts.CountAsync());
+            var hold = await db.QaPhysicalHolds.SingleAsync();
+            Assert.Equal(105m, hold.ReservedBaseQty);
+            Assert.Equal(QaLogicalHoldStatuses.Active, hold.Status);
+            hold.ReservedBaseQty = 100m;
+            await db.SaveChangesAsync();
+        }
+        var reversed = await service.RollbackAsync([saved.BatchNo]);
+        Assert.True(reversed.Succeeded, reversed.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal(100m, (await db.IvBalLocs.SingleAsync(b => b.Id == balanceId)).StdQty);
+            Assert.Equal(100m, state.OnHandBaseQty);
+            Assert.Equal(200m, state.InventoryValue);
+            Assert.Equal(100m, (await db.QaPhysicalHolds.SingleAsync()).ReservedBaseQty);
+            Assert.Equal(IvBatchStatuses.New, (await db.IvTrxBatches.SingleAsync()).BatchStatus);
+        }
+    }
 
     [Fact]
     public async Task Negative_moving_average_ignores_request_price()

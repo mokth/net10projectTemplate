@@ -44,6 +44,7 @@ public class AppDbContext : DbContext
                     or PurchaseReceiptCostSettlement or PurchaseCostAdjustment
                     or SalesReturnCostAllocation or SalesReturnStandardCostVariance
                     or StockFifoLayerConsumption
+                    or StockFifoReversedIssueGeneration or StockFifoReversedIssueSplit
                     or ProductionStandardCostVariance
                     or ProductionConversionCostFact
                     or StockCountCostBasis or StockCountReplayGeneration
@@ -177,6 +178,8 @@ public class AppDbContext : DbContext
     public DbSet<ItemStandardCostRevision> ItemStandardCostRevisions => Set<ItemStandardCostRevision>();
     public DbSet<StockFifoLayer> StockFifoLayers => Set<StockFifoLayer>();
     public DbSet<StockFifoLayerConsumption> StockFifoLayerConsumptions => Set<StockFifoLayerConsumption>();
+    public DbSet<StockFifoReversedIssueGeneration> StockFifoReversedIssueGenerations => Set<StockFifoReversedIssueGeneration>();
+    public DbSet<StockFifoReversedIssueSplit> StockFifoReversedIssueSplits => Set<StockFifoReversedIssueSplit>();
     public DbSet<PurchaseReceiptCostSettlement> PurchaseReceiptCostSettlements => Set<PurchaseReceiptCostSettlement>();
     public DbSet<PurchaseCostAdjustment> PurchaseCostAdjustments => Set<PurchaseCostAdjustment>();
     public DbSet<StockValuationPeriodSnapshotHdr> StockValuationPeriodSnapshotHdrs => Set<StockValuationPeriodSnapshotHdr>();

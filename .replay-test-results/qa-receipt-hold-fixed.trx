@@ -1,0 +1,64 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="5b959629-9561-4a0c-b0e1-8bd5856398f2" name="Mokth@MOKTH 2026-11-05 10:09:28" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-05T10:09:28.0794212+08:00" queuing="2026-11-05T10:09:28.0794217+08:00" start="2026-11-05T10:08:54.5000778+08:00" finish="2026-11-05T10:09:40.4334965+08:00" />
+  <TestSettings name="default" id="440ce9d4-77c0-4a72-ad5c-97b6a3511445">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-05_10_09_28" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="91ab4b34-6c24-4511-a4d0-31828be8cb46" testId="9440ac5b-a3e2-b981-8af4-86bfb1d2b13e" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds(goodsReceipt: True, standard: False)" computerName="MOKTH" duration="00:00:03.0339037" startTime="2026-11-05T10:09:33.0799243+08:00" endTime="2026-11-05T10:09:36.1008940+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="91ab4b34-6c24-4511-a4d0-31828be8cb46" />
+    <UnitTestResult executionId="8f64d88d-bb71-4e4c-b0bf-2b787663bc8a" testId="f75a98c3-6c2e-0562-8357-ba559767657a" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds(goodsReceipt: False, standard: True)" computerName="MOKTH" duration="00:00:01.2781933" startTime="2026-11-05T10:09:38.9357490+08:00" endTime="2026-11-05T10:09:40.2133541+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8f64d88d-bb71-4e4c-b0bf-2b787663bc8a" />
+    <UnitTestResult executionId="1c4fa72a-4c00-4fda-ba91-6387134942a3" testId="c5fd37ca-2f93-b485-a5e4-861c046d5e53" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds(goodsReceipt: True, standard: True)" computerName="MOKTH" duration="00:00:02.8497070" startTime="2026-11-05T10:09:30.2206155+08:00" endTime="2026-11-05T10:09:33.0662303+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1c4fa72a-4c00-4fda-ba91-6387134942a3" />
+    <UnitTestResult executionId="d6ece4a7-7467-4a9c-be6a-3787e136906e" testId="4b102247-11ea-a09e-8680-2a4d982babd8" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_rollback_respects_qa_stock_holds(goodsReceipt: True)" computerName="MOKTH" duration="00:00:22.5252183" startTime="2026-11-05T10:09:05.5289558+08:00" endTime="2026-11-05T10:09:28.0240444+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d6ece4a7-7467-4a9c-be6a-3787e136906e" />
+    <UnitTestResult executionId="4a573c06-f502-42a4-bd87-432460d1e769" testId="8e0e26cf-5141-91ba-14c3-ef33f443c7cc" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_rollback_respects_qa_stock_holds(goodsReceipt: False)" computerName="MOKTH" duration="00:00:02.1912679" startTime="2026-11-05T10:09:28.0567363+08:00" endTime="2026-11-05T10:09:30.2155796+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4a573c06-f502-42a4-bd87-432460d1e769" />
+    <UnitTestResult executionId="ab74ef8f-c0ff-4b0c-9059-1a9482ce3974" testId="ab6505af-339f-0b88-ae99-4abf5df55939" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds(goodsReceipt: False, standard: False)" computerName="MOKTH" duration="00:00:02.8336701" startTime="2026-11-05T10:09:36.1029758+08:00" endTime="2026-11-05T10:09:38.9347875+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ab74ef8f-c0ff-4b0c-9059-1a9482ce3974" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds(goodsReceipt: False, standard: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="ab6505af-339f-0b88-ae99-4abf5df55939">
+      <Execution id="ab74ef8f-c0ff-4b0c-9059-1a9482ce3974" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_rollback_respects_qa_stock_holds(goodsReceipt: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="4b102247-11ea-a09e-8680-2a4d982babd8">
+      <Execution id="d6ece4a7-7467-4a9c-be6a-3787e136906e" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_fifo_receipt_rollback_respects_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_rollback_respects_qa_stock_holds(goodsReceipt: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="8e0e26cf-5141-91ba-14c3-ef33f443c7cc">
+      <Execution id="4a573c06-f502-42a4-bd87-432460d1e769" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_fifo_receipt_rollback_respects_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds(goodsReceipt: True, standard: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="9440ac5b-a3e2-b981-8af4-86bfb1d2b13e">
+      <Execution id="91ab4b34-6c24-4511-a4d0-31828be8cb46" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds(goodsReceipt: True, standard: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c5fd37ca-2f93-b485-a5e4-861c046d5e53">
+      <Execution id="1c4fa72a-4c00-4fda-ba91-6387134942a3" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds(goodsReceipt: False, standard: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="f75a98c3-6c2e-0562-8357-ba559767657a">
+      <Execution id="8f64d88d-bb71-4e4c-b0bf-2b787663bc8a" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_wac_and_standard_receipt_rollback_respects_qa_stock_holds" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="9440ac5b-a3e2-b981-8af4-86bfb1d2b13e" executionId="91ab4b34-6c24-4511-a4d0-31828be8cb46" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f75a98c3-6c2e-0562-8357-ba559767657a" executionId="8f64d88d-bb71-4e4c-b0bf-2b787663bc8a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c5fd37ca-2f93-b485-a5e4-861c046d5e53" executionId="1c4fa72a-4c00-4fda-ba91-6387134942a3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4b102247-11ea-a09e-8680-2a4d982babd8" executionId="d6ece4a7-7467-4a9c-be6a-3787e136906e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8e0e26cf-5141-91ba-14c3-ef33f443c7cc" executionId="4a573c06-f502-42a4-bd87-432460d1e769" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ab6505af-339f-0b88-ae99-4abf5df55939" executionId="ab74ef8f-c0ff-4b0c-9059-1a9482ce3974" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="6" executed="6" passed="6" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:09.13]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:10.35]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:10.41]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:45.20]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

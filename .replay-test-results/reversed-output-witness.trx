@@ -1,0 +1,114 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="9e5f84e2-1a2f-483e-a765-187fae2a281f" name="Mokth@MOKTH 2026-11-05 23:16:54" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-05T23:16:54.1461988+08:00" queuing="2026-11-05T23:16:54.1461994+08:00" start="2026-11-05T23:16:37.7515113+08:00" finish="2026-11-05T23:16:58.2973472+08:00" />
+  <TestSettings name="default" id="1bfcd4ae-47bd-4a9b-be2c-fae06c9545c7">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-05_23_16_54" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="c44ccb2f-c140-4bc0-bb56-473ed8100be7" testId="85754e15-d665-f5fc-04fe-f9ece8a919b2" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: True)" computerName="MOKTH" duration="00:00:11.7572685" startTime="2026-11-05T23:16:42.3425326+08:00" endTime="2026-11-05T23:16:54.0927884+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c44ccb2f-c140-4bc0-bb56-473ed8100be7">
+      <Output>
+        <ErrorInfo>
+          <Message>Batch 2: The backdated receipt would change a reversed Production output cost; this replay is not yet supported.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 760&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="9f16d57f-8a7b-41d6-8c6e-532fc8c80ed5" testId="f6e20a78-9bf2-e1db-9322-ddafd9a24192" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: True)" computerName="MOKTH" duration="00:00:01.6331539" startTime="2026-11-05T23:16:55.3572642+08:00" endTime="2026-11-05T23:16:56.9851264+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9f16d57f-8a7b-41d6-8c6e-532fc8c80ed5">
+      <Output>
+        <ErrorInfo>
+          <Message>Batch 3: The backdated receipt would change a reversed Production output cost; this replay is not yet supported.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedFifoReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 scenario) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 2368&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="c617ee4a-ebd1-4d64-bd4e-e912332a58e3" testId="b053380e-e23e-03aa-e967-ff25a33f56db" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: False)" computerName="MOKTH" duration="00:00:01.1836355" startTime="2026-11-05T23:16:56.9863427+08:00" endTime="2026-11-05T23:16:58.1694125+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c617ee4a-ebd1-4d64-bd4e-e912332a58e3">
+      <Output>
+        <ErrorInfo>
+          <Message>Batch 3: The backdated receipt would change a reversed Production output cost; this replay is not yet supported.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedFifoReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 scenario) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 2368&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a5c8cb51-567d-4391-b74a-9da084906533" testId="8eac4e4a-5a54-2fe3-785d-3167d8560e27" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: False)" computerName="MOKTH" duration="00:00:01.2576871" startTime="2026-11-05T23:16:54.1303433+08:00" endTime="2026-11-05T23:16:55.3510599+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a5c8cb51-567d-4391-b74a-9da084906533">
+      <Output>
+        <ErrorInfo>
+          <Message>Batch 2: The backdated receipt would change a reversed Production output cost; this replay is not yet supported.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 760&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="b053380e-e23e-03aa-e967-ff25a33f56db">
+      <Execution id="c617ee4a-ebd1-4d64-bd4e-e912332a58e3" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_fifo_receipt_replays_changed_cost_after_output_reversal_without_finished_goods" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="f6e20a78-9bf2-e1db-9322-ddafd9a24192">
+      <Execution id="9f16d57f-8a7b-41d6-8c6e-532fc8c80ed5" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_fifo_receipt_replays_changed_cost_after_output_reversal_without_finished_goods" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="85754e15-d665-f5fc-04fe-f9ece8a919b2">
+      <Execution id="c44ccb2f-c140-4bc0-bb56-473ed8100be7" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_wac_receipt_replays_changed_cost_after_output_reversal_without_finished_goods" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="8eac4e4a-5a54-2fe3-785d-3167d8560e27">
+      <Execution id="a5c8cb51-567d-4391-b74a-9da084906533" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_wac_receipt_replays_changed_cost_after_output_reversal_without_finished_goods" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="85754e15-d665-f5fc-04fe-f9ece8a919b2" executionId="c44ccb2f-c140-4bc0-bb56-473ed8100be7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f6e20a78-9bf2-e1db-9322-ddafd9a24192" executionId="9f16d57f-8a7b-41d6-8c6e-532fc8c80ed5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b053380e-e23e-03aa-e967-ff25a33f56db" executionId="c617ee4a-ebd1-4d64-bd4e-e912332a58e3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8eac4e4a-5a54-2fe3-785d-3167d8560e27" executionId="a5c8cb51-567d-4391-b74a-9da084906533" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="4" executed="4" passed="0" failed="4" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:03.17]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.89]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.94]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:15.75]       Batch 2: The backdated receipt would change a reversed Production output cost; this replay is not yet supported.&#xD;
+[xUnit.net 00:00:15.75]       Stack Trace:&#xD;
+[xUnit.net 00:00:15.75]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(760,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:15.75]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:17.00]       Batch 2: The backdated receipt would change a reversed Production output cost; this replay is not yet supported.&#xD;
+[xUnit.net 00:00:17.00]       Stack Trace:&#xD;
+[xUnit.net 00:00:17.00]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(760,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:17.00]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:18.63]       Batch 3: The backdated receipt would change a reversed Production output cost; this replay is not yet supported.&#xD;
+[xUnit.net 00:00:18.63]       Stack Trace:&#xD;
+[xUnit.net 00:00:18.63]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(2368,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedFifoReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 scenario)&#xD;
+[xUnit.net 00:00:18.63]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:19.82]       Batch 3: The backdated receipt would change a reversed Production output cost; this replay is not yet supported.&#xD;
+[xUnit.net 00:00:19.82]       Stack Trace:&#xD;
+[xUnit.net 00:00:19.82]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(2368,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedFifoReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 scenario)&#xD;
+[xUnit.net 00:00:19.82]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:19.82]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T23:16:54.0978306+08:00">
+        <Text>[xUnit.net 00:00:15.74]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: True) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T23:16:55.3518411+08:00">
+        <Text>[xUnit.net 00:00:17.00]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_wac_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: False) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T23:16:56.9862061+08:00">
+        <Text>[xUnit.net 00:00:18.63]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: True) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-05T23:16:58.1701301+08:00">
+        <Text>[xUnit.net 00:00:19.82]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_replays_changed_cost_after_output_reversal_without_finished_goods(goodsReceipt: False) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

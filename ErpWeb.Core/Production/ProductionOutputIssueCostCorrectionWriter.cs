@@ -81,21 +81,26 @@ internal static class ProductionOutputIssueCostCorrectionWriter
                     && e.ConsumerMovementId == finished.Uid)))
             throw Invalid("Production output dependencies changed after replay planning.");
 
-        var correctedConsume = outputReversed ? costs[consumeId].TotalCost
-            : consume.BaseQty == issue.BaseQty ? authority.TotalCost
+        var correctedConsume = consume.BaseQty == issue.BaseQty ? authority.TotalCost
             : StockLedgerPrecision.Money(authority.TotalCost * consume.BaseQty / issue.BaseQty);
         var correctedSource = StockLedgerPrecision.Money(authority.TotalCost
             - (outputReversed ? 0m : correctedConsume));
-        var correctedProduce = outputReversed ? costs[produceId].TotalCost
-            : StockLedgerPrecision.Money(costs[produceId].TotalCost
-                + correctedConsume - costs[consumeId].TotalCost);
+        var correctedProduce = StockLedgerPrecision.Money(costs[produceId].TotalCost
+            + correctedConsume - costs[consumeId].TotalCost);
         if (correctedSource < 0m || correctedProduce < 0m
             || source.BaseQty == 0m && correctedSource != 0m)
             throw Invalid("Production output correction would leave a negative or stranded pool value.");
 
         await ProductionCostRestatementWriter.AppendWithinRootAsync(context, expectedIssue,
             authority.TotalCost, authority.UnitCost, ct);
-        if (!outputReversed)
+        if (outputReversed && (correctedConsume != costs[consumeId].TotalCost
+            || correctedProduce != costs[produceId].TotalCost))
+        {
+            await ProductionReversedOutputCostCorrectionWriter.AppendWithinRootAsync(context,
+                consume, produce, costs[consumeId], costs[produceId],
+                correctedConsume, correctedProduce, ct);
+        }
+        else if (!outputReversed)
         {
             await ProductionCostRestatementWriter.AppendWithinRootAsync(context, costs[consumeId],
                 correctedConsume, StockLedgerPrecision.Money(correctedConsume / consume.BaseQty), ct);

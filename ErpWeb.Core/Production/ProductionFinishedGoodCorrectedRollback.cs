@@ -302,8 +302,11 @@ internal static class ProductionFinishedGoodCorrectedRollback
         if (facts.Length != 1) return false;
         var movement = await db.ProductionBalLotMovements.AsNoTracking()
             .SingleAsync(m => m.Uid == facts[0].ProductionMovementId, ct);
-        if (!await db.ProductionCostRestatementFacts.AsNoTracking().AnyAsync(r =>
-            r.ProductionBalLotMovementId == movement.Uid, ct)) return false;
+        var methods = await db.StockValuationFacts.AsNoTracking().Where(v =>
+            v.InventoryHistoryId == facts[0].InventoryHistoryId && v.StockPostingId == ownerId
+            && v.ReversesValuationFactId == null && v.OriginalValuationFactId == null)
+            .Select(v => v.CostMethod).ToArrayAsync(ct);
+        if (methods.Length != 1 || methods[0] != StockCostMethods.MovingAverage) return false;
         var outputs = await db.ProductionBalLotMovements.AsNoTracking().Where(m =>
             m.ProductionBalLotId == movement.ProductionBalLotId
             && m.MovementType == ProductionBalLotMovementTypes.Produce && m.OriginalMovementId == null).ToArrayAsync(ct);

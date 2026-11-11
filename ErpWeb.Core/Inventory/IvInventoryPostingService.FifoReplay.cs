@@ -4,6 +4,7 @@ using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.StockLedger;
+using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Inventory;
@@ -80,27 +81,49 @@ public sealed partial class IvInventoryPostingService
             read, companyCode, branchCode, batchNo, physical,
             cancellationToken, goodsReceipt,
             allowInvoiced: replayInvoice is not null);
+        var reversedIssuePlan = await PlanIsolatedFifoReversedReceiptAsync(read, companyCode, branchCode,
+            batchNo, removal: false, cancellationToken, requireTransaction: false);
+        if (reversedIssuePlan is not null && reversedIssuePlan.FinancialPlanHash != financial.PlanHash)
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The FIFO receipt changed while its reversed issue was planned. Retry posting.");
         var productionPlan = await PlanFifoProductionLeafAsync(read, companyCode, branchCode,
             financial.Projection, key, cancellationToken);
+        if (reversedIssuePlan is not null && (productionPlan is not null || replayInvoice is not null))
+            return IvInventoryPostingBatchResult.Fail(batchNo, "This FIFO receipt has additional dependencies that cannot yet be replayed together.");
         if (productionPlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated GR cannot yet replay both a Production issue and an invoice settlement.");
         if (await CheckSimpleFifoInventoryTailAsync(read, financial, key,
                 cancellationToken, replayInvoice, allowBoundedSales: true,
                 allowEmpty: physical.LaterEvents.Count == 0,
-                allowBoundedProduction: productionPlan is not null) is string unsupported)
+                allowBoundedProduction: productionPlan is not null,
+                correctionValueFactIds: reversedIssuePlan?.ExistingValueFactIds) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
         await using var write = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        FifoReversedReceiptPermit? reversedIssuePermit = null;
+        if (reversedIssuePlan is not null)
+        {
+            var lockedBatch = await _posting.LockBatchForUpdateAsync(write, companyCode, branchCode, batchNo, cancellationToken);
+            if (lockedBatch is null || lockedBatch.Id != reversedIssuePlan.BatchId
+                || lockedBatch.BatchStatus != IvBatchStatuses.New)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The FIFO receipt changed. Retry posting.");
+            reversedIssuePermit = await FifoReversedReceiptPermit.PrepareAsync(write, reversedIssuePlan, cancellationToken);
+            if (reversedIssuePermit is null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed FIFO issue changed. Retry posting.");
+        }
+        else if (await RejectReversedProductionReceiptAsync(write, companyCode, branchCode,
+                     batchNo, receiptType, rollback: false, cancellationToken) is { } reversedProduction)
+            return reversedProduction;
         await RecheckFifoProductionLeafAsync(write, companyCode, branchCode,
             financial.Projection, key, productionPlan, cancellationToken);
         if (await CheckSimpleFifoInventoryTailAsync(write, financial, key,
                 cancellationToken, replayInvoice, allowBoundedSales: true,
                 allowEmpty: physical.LaterEvents.Count == 0,
-                allowBoundedProduction: productionPlan is not null) is string lockedTailError)
+                allowBoundedProduction: productionPlan is not null,
+                correctionValueFactIds: reversedIssuePlan?.ExistingValueFactIds) is string lockedTailError)
             return IvInventoryPostingBatchResult.Fail(batchNo, lockedTailError);
         Dictionary<string, ErpWeb.Model.Entities.Purchase.PoOrder>? grOrders = null;
         IReadOnlyList<IvTrxBatchDetail>? grDetails = null;
@@ -146,7 +169,8 @@ public sealed partial class IvInventoryPostingService
                     financial, key, cancellationToken,
                     replayInvoice, allowBoundedSales: true,
                     allowEmpty: physical.LaterEvents.Count == 0,
-                    allowBoundedProduction: productionPlan is not null) is string changedTail)
+                    allowBoundedProduction: productionPlan is not null,
+                    correctionValueFactIds: reversedIssuePlan?.ExistingValueFactIds) is string changedTail)
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     changedTail);
         }
@@ -182,6 +206,8 @@ public sealed partial class IvInventoryPostingService
             .PrepareMiscReceiptWithinRootAsync(context, financial, batchNo,
                 cancellationToken, goodsReceipt,
                 allowInvoiced: replayInvoice is not null);
+        if (reversedIssuePermit is not null)
+            await reversedIssuePermit.ActivateForCorrectionAsync(context, cancellationToken);
         var productionPermit = productionPlan is null ? null : new StockReplayFifoProductionPermit(
             context, financial.ItemCode, financial.PlanHash,
             productionPlan.HistoryId, productionPlan.MaterialMovementId);
@@ -196,6 +222,8 @@ public sealed partial class IvInventoryPostingService
         await ApplyFifoProductionLeafAsync(context, productionPlan, financial.PlanHash,
             physical.BranchWatermark, financial.Snapshot, financial.Projection,
             key, cancellationToken);
+        if (reversedIssuePermit is not null)
+            await AppendFifoReversedIssueCorrectionAsync(context, reversedIssuePermit, written.Receipt.LayerId, cancellationToken);
         if (replayInvoice is not null)
         {
             var remap = await new PurchaseReceiptCostSettlementService()
@@ -213,6 +241,8 @@ public sealed partial class IvInventoryPostingService
             context, written.RequiredActiveHistoryIds, cancellationToken);
         await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
             context, financial, permit, written.Receipt, cancellationToken);
+        if (reversedIssuePermit is not null)
+            await VerifyFifoReversedIssueCorrectionWithinRootAsync(context, reversedIssuePermit, written.Receipt.LayerId, cancellationToken);
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);
         var operation = await write.IvTrxBatches.AsNoTracking()
@@ -292,6 +322,10 @@ public sealed partial class IvInventoryPostingService
         var financial = await StockReplayFifoRemovalPlanner.BuildAsync(
             read, companyCode, branchCode, original.ICode, physical,
             cancellationToken);
+        var reversedIssuePlan = await PlanIsolatedFifoReversedReceiptAsync(read, companyCode, branchCode,
+            batchNo, removal: true, cancellationToken, requireTransaction: false);
+        if (reversedIssuePlan is not null && reversedIssuePlan.FinancialPlanHash != financial.PlanHash)
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The FIFO receipt changed while its reversed issue was planned. Retry rollback.");
         PoInvoice? replayInvoice = null;
         if (goodsReceipt)
         {
@@ -307,6 +341,8 @@ public sealed partial class IvInventoryPostingService
         }
         var productionPlan = await PlanFifoProductionLeafAsync(read, companyCode, branchCode,
             financial.Projection, key, cancellationToken);
+        if (reversedIssuePlan is not null && (productionPlan is not null || replayInvoice is not null))
+            return IvInventoryPostingBatchResult.Fail(batchNo, "This FIFO receipt has additional dependencies that cannot yet be replayed together.");
         if (productionPlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated GR rollback cannot yet replay both a Production issue and an invoice settlement.");
@@ -314,20 +350,36 @@ public sealed partial class IvInventoryPostingService
                 financial.Snapshot, financial.Projection, key,
                 cancellationToken, replayInvoice, allowBoundedSales: true,
                 allowEmpty: physical.LaterEvents.Count == 0,
-                allowBoundedProduction: productionPlan is not null) is string unsupported)
+                allowBoundedProduction: productionPlan is not null,
+                correctionValueFactIds: reversedIssuePlan?.ExistingValueFactIds) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
         await using var write = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        FifoReversedReceiptPermit? reversedIssuePermit = null;
+        if (reversedIssuePlan is not null)
+        {
+            var lockedBatch = await _posting.LockBatchForUpdateAsync(write, companyCode, branchCode, batchNo, cancellationToken);
+            if (lockedBatch is null || lockedBatch.Id != reversedIssuePlan.BatchId
+                || lockedBatch.BatchStatus != IvBatchStatuses.Posted)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The FIFO receipt changed. Retry rollback.");
+            reversedIssuePermit = await FifoReversedReceiptPermit.PrepareAsync(write, reversedIssuePlan, cancellationToken);
+            if (reversedIssuePermit is null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed FIFO issue changed. Retry rollback.");
+        }
+        else if (await RejectReversedProductionReceiptAsync(write, companyCode, branchCode,
+                     batchNo, receiptType, rollback: true, cancellationToken) is { } reversedProduction)
+            return reversedProduction;
         await RecheckFifoProductionLeafAsync(write, companyCode, branchCode,
             financial.Projection, key, productionPlan, cancellationToken);
         if (await CheckSimpleFifoInventoryTailAsync(write, original.ICode,
                 financial.Snapshot, financial.Projection, key,
                 cancellationToken, replayInvoice, allowBoundedSales: true,
                 allowEmpty: physical.LaterEvents.Count == 0,
-                allowBoundedProduction: productionPlan is not null) is string lockedTailError)
+                allowBoundedProduction: productionPlan is not null,
+                correctionValueFactIds: reversedIssuePlan?.ExistingValueFactIds) is string lockedTailError)
             return IvInventoryPostingBatchResult.Fail(batchNo, lockedTailError);
         var ledger = await BeginStandaloneLedgerAsync(write, companyCode,
             branchCode, batchNo, reversal: true, cancellationToken);
@@ -358,6 +410,22 @@ public sealed partial class IvInventoryPostingService
                     owner.EffectiveAt.Month)), cancellationToken);
         var permit = await StockReplayFifoRemovalPlanner.PrepareWithinRootAsync(
             context, financial, cancellationToken);
+        var plannedPile = await write.IvBalLocs.AsNoTracking().SingleOrDefaultAsync(b =>
+            b.CompanyCode == companyCode && b.BranchCode == branchCode
+            && b.Id == physical.BalLocId && b.ICode == original.ICode, cancellationToken);
+        if (plannedPile is null)
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt stock balance changed before rollback.");
+        var qaSlice = IvStockSliceKey.Create(plannedPile.CompanyCode, plannedPile.BranchCode,
+            plannedPile.ICode, plannedPile.WhCode, plannedPile.LocCode, plannedPile.LotNo, plannedPile.IStatus);
+        var lockedPiles = await _posting.LockBalanceSlicesAsync(write, [qaSlice], cancellationToken);
+        if (!lockedPiles.TryGetValue(qaSlice, out var lockedPile) || lockedPile.Id != physical.BalLocId
+            || lockedPile.StdQty != physical.CurrentQuantity
+            || !lockedPile.RowVersion.SequenceEqual(physical.BalanceRowVersion))
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt stock balance changed before rollback.");
+        var qaHoldError = await _qaPhysical.AssertRemainingCoversHoldsAsync(write,
+            companyCode, branchCode, lockedPile.Id, physical.Projection.FinalQuantity, cancellationToken);
+        if (qaHoldError is not null)
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaHoldError);
         Dictionary<string, ErpWeb.Model.Entities.Purchase.PoOrder>? grOrders = null;
         IReadOnlyList<IvTrxBatchDetail>? grDetails = null;
         if (goodsReceipt)
@@ -410,7 +478,8 @@ public sealed partial class IvInventoryPostingService
                     financial.Projection, key, cancellationToken,
                     replayInvoice, allowBoundedSales: true,
                     allowEmpty: physical.LaterEvents.Count == 0,
-                    allowBoundedProduction: productionPlan is not null) is string changedTail)
+                    allowBoundedProduction: productionPlan is not null,
+                    correctionValueFactIds: reversedIssuePlan?.ExistingValueFactIds) is string changedTail)
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     changedTail);
             var poError = await ValidateGoodsReceiptPoQtyAsync(write,
@@ -428,6 +497,8 @@ public sealed partial class IvInventoryPostingService
         var productionPermit = productionPlan is null ? null : new StockReplayFifoProductionPermit(
             context, financial.ItemCode, financial.PlanHash,
             productionPlan.HistoryId, productionPlan.MaterialMovementId);
+        if (reversedIssuePermit is not null)
+            await reversedIssuePermit.ActivateForCorrectionAsync(context, cancellationToken);
         var written = await StockReplayFifoMrRemovalRootWriter.RemoveAsync(
             context, financial, permit, batchNo, cancellationToken,
             goodsReceipt, allowSales: true, productionPermit: productionPermit);
@@ -438,6 +509,8 @@ public sealed partial class IvInventoryPostingService
         await ApplyFifoProductionLeafAsync(context, productionPlan, financial.PlanHash,
             physical.BranchWatermark, financial.Snapshot, financial.Projection,
             key, cancellationToken);
+        if (reversedIssuePermit is not null)
+            await AppendFifoReversedIssueCorrectionAsync(context, reversedIssuePermit, insertedReceiptLayerId: null, cancellationToken);
         if (replayInvoice is not null)
         {
             var remap = await new PurchaseReceiptCostSettlementService()
@@ -456,6 +529,8 @@ public sealed partial class IvInventoryPostingService
             context, written.RequiredActiveHistoryIds, cancellationToken);
         await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
             context, financial, permit, cancellationToken);
+        if (reversedIssuePermit is not null)
+            await VerifyFifoReversedIssueCorrectionWithinRootAsync(context, reversedIssuePermit, insertedReceiptLayerId: null, cancellationToken);
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);
         var operation = await write.IvTrxBatches.AsNoTracking()
@@ -750,10 +825,10 @@ public sealed partial class IvInventoryPostingService
         CancellationToken cancellationToken,
         PoInvoice? replayInvoice = null,
         bool allowBoundedSales = false, bool allowEmpty = false,
-        bool allowBoundedProduction = false) =>
+        bool allowBoundedProduction = false, IReadOnlyCollection<long>? correctionValueFactIds = null) =>
         await CheckSimpleFifoInventoryTailAsync(db, plan.ItemCode,
             plan.Snapshot, plan.Projection, candidateKey, cancellationToken,
-            replayInvoice, allowBoundedSales, allowEmpty, allowBoundedProduction);
+            replayInvoice, allowBoundedSales, allowEmpty, allowBoundedProduction, correctionValueFactIds);
 
     private static async Task<string?> CheckSimpleFifoInventoryTailAsync(
         ErpWeb.Model.Data.AppDbContext db, string itemCode,
@@ -763,7 +838,7 @@ public sealed partial class IvInventoryPostingService
         CancellationToken cancellationToken,
         PoInvoice? replayInvoice = null,
         bool allowBoundedSales = false, bool allowEmpty = false,
-        bool allowBoundedProduction = false)
+        bool allowBoundedProduction = false, IReadOnlyCollection<long>? correctionValueFactIds = null)
     {
         var laterIssues = projection.Issues.Where(i =>
             !i.IsCandidate && i.Key.CompareTo(candidateKey) > 0).ToArray();
@@ -1120,6 +1195,8 @@ public sealed partial class IvInventoryPostingService
         if (laterFacts.Any(f => !receiptFactIds.Contains(f.Id)
                 && !neutralizedFactIds.Contains(f.Id)
                 && !returnAdjustmentIds.Contains(f.Id)
+                && !(correctionValueFactIds?.Contains(f.Id) == true
+                    && f.MovementCode == StockReplayFifoReversedIssueGenerationReader.ValueMovement)
                 && (f.InventoryHistoryId is not int historyId
                     || !issueHistoryIds.Contains(historyId)
                         && !validReversalIds.Contains(historyId))))

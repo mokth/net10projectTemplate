@@ -1,6 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Tests.Procurement.Transaction;
@@ -340,7 +341,9 @@ internal static class InventoryLedgerTestFixture
         string branch = BranchCode,
         IAccessRightService? access = null,
         IInventoryValuationService? valuation = null,
-        bool enableBackdatedReplay = false)
+        bool enableBackdatedReplay = false,
+        IQaReceiptAuthorization? qaReceipt = null,
+        IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         return new IvInventoryPostingService(
@@ -360,7 +363,9 @@ internal static class InventoryLedgerTestFixture
                 {
                     ["OpenPeriodBackdatedReplayEnabled"] = "true"
                 }
-                : null);
+                : null,
+            qaReceipt: qaReceipt,
+            qaPhysical: qaPhysical);
     }
 
     public static IvMiscIssueService CreateMiscIssue(
@@ -368,7 +373,8 @@ internal static class InventoryLedgerTestFixture
         DateTime today,
         string company = CompanyCode,
         string branch = BranchCode,
-        bool enableBackdatedReplay = false)
+        bool enableBackdatedReplay = false,
+        IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -384,7 +390,7 @@ internal static class InventoryLedgerTestFixture
             new IvStockTransactionRepository(),
             postingRepo,
             CreateInventoryPosting(factory, company, branch, access,
-                enableBackdatedReplay: enableBackdatedReplay),
+                enableBackdatedReplay: enableBackdatedReplay, qaPhysical: qaPhysical),
             NullLogger<IvMiscIssueService>.Instance);
     }
 
@@ -393,7 +399,8 @@ internal static class InventoryLedgerTestFixture
         DateTime today,
         string company = CompanyCode,
         string branch = BranchCode,
-        bool enableBackdatedReplay = false)
+        bool enableBackdatedReplay = false,
+        IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -405,7 +412,7 @@ internal static class InventoryLedgerTestFixture
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(), postingRepo,
             CreateInventoryPosting(factory, company, branch, access,
-                enableBackdatedReplay: enableBackdatedReplay),
+                enableBackdatedReplay: enableBackdatedReplay, qaPhysical: qaPhysical),
             new PoSupplierRepository(factory),
             new IvUomConversionService(factory),
             NullLogger<IvMiscReceiptService>.Instance);
@@ -441,7 +448,8 @@ internal static class InventoryLedgerTestFixture
         DateTime today,
         string company = CompanyCode,
         string branch = BranchCode,
-        bool enableBackdatedReplay = false)
+        bool enableBackdatedReplay = false,
+        IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -457,7 +465,7 @@ internal static class InventoryLedgerTestFixture
             new IvStockTransactionRepository(),
             postingRepo,
             CreateInventoryPosting(factory, company, branch, access,
-                enableBackdatedReplay: enableBackdatedReplay),
+                enableBackdatedReplay: enableBackdatedReplay, qaPhysical: qaPhysical),
             NullLogger<IvStockTransferService>.Instance);
     }
 
@@ -491,7 +499,8 @@ internal static class InventoryLedgerTestFixture
         DateTime today,
         string company = CompanyCode,
         string branch = BranchCode,
-        IAccessRightService? access = null)
+        IAccessRightService? access = null,
+        IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         access ??= Allow();
@@ -506,7 +515,7 @@ internal static class InventoryLedgerTestFixture
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),
             postingRepo,
-            CreateInventoryPosting(factory, company, branch, access),
+            CreateInventoryPosting(factory, company, branch, access, qaPhysical: qaPhysical),
             NullLogger<IvStockAdjustmentService>.Instance);
     }
 
@@ -538,7 +547,8 @@ internal static class InventoryLedgerTestFixture
         DateTime today,
         string company = CompanyCode,
         string branch = BranchCode,
-        bool enableBackdatedReplay = false)
+        bool enableBackdatedReplay = false,
+        IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -552,7 +562,7 @@ internal static class InventoryLedgerTestFixture
             new IvStockCommonRepository(factory),
             new IvStockTransactionRepository(),
             postingRepo,
-            CreateInventoryPosting(factory, company, branch, access),
+            CreateInventoryPosting(factory, company, branch, access, qaPhysical: qaPhysical),
             NullLogger<IvStockCountService>.Instance,
             coordinator: enableBackdatedReplay
                 ? CreateCoordinator(factory, company, branch) : null,
@@ -561,7 +571,8 @@ internal static class InventoryLedgerTestFixture
                 {
                     ["OpenPeriodBackdatedReplayEnabled"] = "true"
                 }
-                : null);
+                : null,
+            qaPhysical: qaPhysical);
     }
 
     public static IAccessRightService Allow()

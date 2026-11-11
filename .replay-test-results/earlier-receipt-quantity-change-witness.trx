@@ -1,0 +1,72 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="63d57e5c-803e-4ada-bd7c-4db97c965742" name="Mokth@MOKTH 2026-11-08 13:02:19" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-08T13:02:19.8452329+08:00" queuing="2026-11-08T13:02:19.8452337+08:00" start="2026-11-08T13:01:57.1717442+08:00" finish="2026-11-08T13:02:21.4537486+08:00" />
+  <TestSettings name="default" id="2534b101-6529-41fb-baff-477918535566">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-08_13_02_19" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="2c8f860c-4c4c-44b5-91c3-c830d3e77811" testId="807b1e57-5d15-17b6-3d4e-d1d3e4e021bb" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_changed_quantity_and_price(goodsReceipt: True)" computerName="MOKTH" duration="00:00:15.6151652" startTime="2026-11-08T13:02:04.2010302+08:00" endTime="2026-11-08T13:02:19.7848614+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2c8f860c-4c4c-44b5-91c3-c830d3e77811">
+      <Output>
+        <ErrorInfo>
+          <Message>Repost cycle 0: Batch 1: This transaction cannot be replayed with unresolved reversed Production issue cost corrections. Check the source quantity and correction history.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1688&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="bfce08d4-1b40-4eb8-b9b4-17c6791040e1" testId="4620de2c-0d78-2183-505a-4d72d079825e" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_changed_quantity_and_price(goodsReceipt: False)" computerName="MOKTH" duration="00:00:01.5467408" startTime="2026-11-08T13:02:19.8189306+08:00" endTime="2026-11-08T13:02:21.3319323+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bfce08d4-1b40-4eb8-b9b4-17c6791040e1">
+      <Output>
+        <ErrorInfo>
+          <Message>Repost cycle 0: Batch 1: This transaction cannot be replayed with unresolved reversed Production issue cost corrections. Check the source quantity and correction history.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1688&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_changed_quantity_and_price(goodsReceipt: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="807b1e57-5d15-17b6-3d4e-d1d3e4e021bb">
+      <Execution id="2c8f860c-4c4c-44b5-91c3-c830d3e77811" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Earlier_receipt_replay_allows_changed_quantity_and_price" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_changed_quantity_and_price(goodsReceipt: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="4620de2c-0d78-2183-505a-4d72d079825e">
+      <Execution id="bfce08d4-1b40-4eb8-b9b4-17c6791040e1" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Earlier_receipt_replay_allows_changed_quantity_and_price" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="807b1e57-5d15-17b6-3d4e-d1d3e4e021bb" executionId="2c8f860c-4c4c-44b5-91c3-c830d3e77811" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4620de2c-0d78-2183-505a-4d72d079825e" executionId="bfce08d4-1b40-4eb8-b9b4-17c6791040e1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="0" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:05.47]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:06.34]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:06.39]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:22.07]       Repost cycle 0: Batch 1: This transaction cannot be replayed with unresolved reversed Production issue cost corrections. Check the source quantity and correction history.&#xD;
+[xUnit.net 00:00:22.07]       Stack Trace:&#xD;
+[xUnit.net 00:00:22.08]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1688,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:22.08]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:23.62]       Repost cycle 0: Batch 1: This transaction cannot be replayed with unresolved reversed Production issue cost corrections. Check the source quantity and correction history.&#xD;
+[xUnit.net 00:00:23.62]       Stack Trace:&#xD;
+[xUnit.net 00:00:23.62]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1688,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:23.62]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:23.62]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-08T13:02:19.7888015+08:00">
+        <Text>[xUnit.net 00:00:22.07]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_changed_quantity_and_price(goodsReceipt: True) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-08T13:02:21.3328416+08:00">
+        <Text>[xUnit.net 00:00:23.62]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_changed_quantity_and_price(goodsReceipt: False) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

@@ -195,6 +195,18 @@ public sealed class QaPhysicalHoldAuthorizationService : IQaPhysicalHoldAuthoriz
         return null;
     }
 
+    public async Task<string?> AssertRemainingCoversHoldsAsync(
+        AppDbContext db, string companyCode, string branchCode, int balLocId,
+        decimal remainingBaseQty, CancellationToken cancellationToken = default)
+    {
+        var physical = await PreparePhysicalAsync(db, cancellationToken);
+        if (physical.Skip) return null;
+        if (physical.Error is not null) return physical.Error;
+        var reserved = await ActiveRemainingAsync(db, companyCode, branchCode, balLocId, cancellationToken);
+        var remaining = IvQty.Round(remainingBaseQty);
+        return remaining >= reserved ? null : FriendlyShortage(balLocId, reserved, remaining);
+    }
+
     public async Task<string?> RestoreStockOutAsync(
         AppDbContext db,
         string companyCode,

@@ -313,6 +313,104 @@ public static class StockReplayWacTailProjector
         return financial;
     }
 
+    // Receipt lines on different piles have one shared item-level WAC effect,
+    // but every pile must be rewound and replayed with its own quantity.
+    internal static StockReplayWacResult SimulateMultiPileReceiptInsertion(
+        StockReplayWacFinancialTail tail, IReadOnlyList<StockReplayPhysicalPlan> plans,
+        StockReplayWacEvent candidate)
+    {
+        if (plans.Count < 2 || plans.Select(p => p.BalLocId).Distinct().Count() != plans.Count
+            || candidate.OldSignedQuantity != 0m || candidate.OldSignedValue != 0m
+            || candidate.AbsoluteCountQty is not null || candidate.FixedSignedValue is null
+            || plans.Any(p => p.Candidate.EventId != candidate.EventId || p.Candidate.Key != candidate.Key
+                || p.Candidate.AbsoluteCountQty is not null || p.Candidate.SignedDelta <= 0m
+                || p.CompanyCode != plans[0].CompanyCode || p.BranchCode != plans[0].BranchCode
+                || p.LedgerEpochId != plans[0].LedgerEpochId || p.BranchWatermark != plans[0].BranchWatermark)
+            || IvQty.Round(plans.Sum(p => p.Candidate.SignedDelta)) != candidate.ReplaySignedQuantity)
+            throw Corrupt("The receipt does not have consistent item and pile candidates.");
+        var changed = new Dictionary<int, StockReplayPhysicalTailResult>();
+        foreach (var plan in plans)
+        {
+            if (!tail.CurrentQuantityByPile.TryGetValue(plan.BalLocId, out var current)
+                || current != plan.CurrentQuantity
+                || !tail.PhysicalByPile.TryGetValue(plan.BalLocId, out var later)
+                || !later.SequenceEqual(plan.LaterEvents))
+                throw Corrupt("A receipt pile differs from its WAC tail.");
+            changed.Add(plan.BalLocId, new StockReplayPhysicalTailResult(
+                plan.Projection.HistoricalQuantityBeforeCandidate, plan.Projection.LaterSteps,
+                plan.Projection.FinalQuantity));
+        }
+        var (historical, final, bound) = BindMultiPileReceiptTail(tail, candidate.Key, changed);
+        var result = StockReplayWacSimulator.SimulateInsertion(
+            tail.CurrentQuantity, tail.CurrentValue, candidate, bound);
+        if (result.HistoricalQuantityBeforeCandidate != historical || result.FinalQuantity != final)
+            throw Corrupt("The receipt WAC projection does not reconcile to its piles.");
+        return result;
+    }
+
+    internal static StockReplayWacRemovalResult SimulateMultiPileReceiptRemoval(
+        StockReplayWacFinancialTail tail, IReadOnlyList<StockReplayPhysicalRemovalPlan> plans,
+        StockReplayWacEvent removed)
+    {
+        if (plans.Count < 2 || plans.Select(p => p.BalLocId).Distinct().Count() != plans.Count
+            || removed.AbsoluteCountQty is not null || removed.OldSignedQuantity <= 0m
+            || plans.Any(p => p.RemovedActiveEvent.AbsoluteCountQty is not null
+                || p.RemovedActiveEvent.SignedDelta <= 0m
+                || p.CompanyCode != plans[0].CompanyCode || p.BranchCode != plans[0].BranchCode
+                || p.LedgerEpochId != plans[0].LedgerEpochId || p.BranchWatermark != plans[0].BranchWatermark
+                || p.RemovedActiveEvent.Key.EffectiveAt != removed.Key.EffectiveAt
+                || p.RemovedActiveEvent.Key.OriginalPostingSequence != removed.Key.OriginalPostingSequence)
+            || IvQty.Round(plans.Sum(p => p.RemovedActiveEvent.SignedDelta)) != removed.OldSignedQuantity)
+            throw Corrupt("The removed receipt does not have consistent item and pile events.");
+        var changed = new Dictionary<int, StockReplayPhysicalTailResult>();
+        foreach (var plan in plans)
+        {
+            if (!tail.CurrentQuantityByPile.TryGetValue(plan.BalLocId, out var current)
+                || current != plan.CurrentQuantity
+                || !tail.PhysicalByPile.TryGetValue(plan.BalLocId, out var later)
+                || !later.SequenceEqual(plan.LaterEvents))
+                throw Corrupt("A removed receipt pile differs from its WAC tail.");
+            changed.Add(plan.BalLocId, new StockReplayPhysicalTailResult(
+                plan.Projection.HistoricalQuantityBeforeRemovedEvent, plan.Projection.LaterSteps,
+                plan.Projection.FinalQuantity));
+        }
+        var (historical, final, bound) = BindMultiPileReceiptTail(tail, removed.Key, changed);
+        var result = StockReplayWacSimulator.SimulateRemoval(
+            tail.CurrentQuantity, tail.CurrentValue, removed, bound);
+        if (result.HistoricalQuantityBeforeRemovedEvent != historical || result.FinalQuantity != final)
+            throw Corrupt("The removed receipt WAC projection does not reconcile to its piles.");
+        return result;
+    }
+
+    private static (decimal Historical, decimal Final, IReadOnlyList<StockReplayWacEvent> Bound)
+        BindMultiPileReceiptTail(StockReplayWacFinancialTail tail, StockReplayEventKey after,
+            IReadOnlyDictionary<int, StockReplayPhysicalTailResult> changed)
+    {
+        if (tail.CurrentQuantityByPile.Count != tail.PhysicalByPile.Count
+            || tail.CurrentQuantityByPile.Sum(p => p.Value) != tail.CurrentQuantity
+            || tail.LaterEvents.Any(e => e.AbsoluteCountQty is not null))
+            throw Corrupt("The receipt has an unsupported or incomplete item tail.");
+        var steps = new Dictionary<long, List<StockReplayPhysicalStep>>();
+        decimal historical = 0m, final = 0m;
+        foreach (var pile in tail.PhysicalByPile)
+        {
+            if (!tail.CurrentQuantityByPile.TryGetValue(pile.Key, out var current))
+                throw Corrupt("A receipt tail pile has no current quantity.");
+            var projection = changed.TryGetValue(pile.Key, out var altered)
+                ? altered : StockReplayPhysicalSimulator.ProjectUnchangedTail(current, after, pile.Value);
+            historical = IvQty.Round(historical + projection.HistoricalQuantityBeforeTail);
+            final = IvQty.Round(final + projection.FinalQuantity);
+            foreach (var step in projection.LaterSteps)
+            {
+                if (!steps.TryGetValue(step.EventId, out var values)) steps.Add(step.EventId, values = []);
+                values.Add(step);
+            }
+        }
+        if (changed.Keys.Any(id => !tail.PhysicalByPile.ContainsKey(id)))
+            throw Corrupt("A changed receipt pile is missing from its WAC tail.");
+        return (historical, final, BindFinancialEvents(tail.LaterEvents, steps));
+    }
+
     public static StockReplayWacRemovalResult SimulateSinglePileRemoval(
         StockReplayWacFinancialTail tail,
         StockReplayPhysicalRemovalPlan physicalPlan,

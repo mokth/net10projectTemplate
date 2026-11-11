@@ -26,7 +26,8 @@ public sealed partial class ProductionFinishedGoodReceiptService(
     IIvInventoryHistoryWriter historyWriter,
     ISaDeliveryRequestFulfilmentService? deliveryRequestFulfilment = null,
     IQaFgAuthorization? qaFg = null,
-    ILogger<ProductionFinishedGoodReceiptService>? logger = null) : IProductionFinishedGoodReceiptService
+    ILogger<ProductionFinishedGoodReceiptService>? logger = null,
+    IQaPhysicalHoldAuthorization? qaPhysical = null) : IProductionFinishedGoodReceiptService
 {
     private const string Menu = MenuCodes.PlanningFinishedGoodReceipt;
     private static IvMasterOperationResult<T> Fail<T>(string message, IvMasterErrorCode code = IvMasterErrorCode.Validation,
@@ -423,6 +424,10 @@ public sealed partial class ProductionFinishedGoodReceiptService(
                 ? r.Batch.BatchNo.ToString(CultureInfo.InvariantCulture)
                 : requestedRefNo;
             r.WorkOrderId = order.Uid; r.Batch.TrxDtTime = date; r.Batch.RefNo = resolvedRefNo; r.Batch.Remarks = request.Remarks?.Trim();
+            // Header-only and line-only edits must also advance the receipt's
+            // rowversion, which is the token checked by posting and rollback.
+            if (request.Id != 0)
+                db.Entry(r).Property(x => x.WorkOrderId).IsModified = true;
             r.Batch.ModifiedDate = clock.Now; r.Batch.ModifiedBy = User(scope);
             short lineNo = 0;
             var requestedBySource = new Dictionary<long, decimal>();

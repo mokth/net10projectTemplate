@@ -40,4 +40,9 @@ public sealed class DisabledQaPhysicalHoldAuthorization : IQaPhysicalHoldAuthori
         int batchNo,
         CancellationToken cancellationToken = default) =>
         Task.FromResult<string?>(null);
+
+    public Task<string?> AssertRemainingCoversHoldsAsync(
+        AppDbContext db, string companyCode, string branchCode, int balLocId,
+        decimal remainingBaseQty, CancellationToken cancellationToken = default) =>
+        Task.FromResult<string?>(null);
 }

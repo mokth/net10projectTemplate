@@ -55,6 +55,38 @@ public sealed class FinishedGoodReceiptMathTests
 [Trait(TestCategories.Name, TestCategories.Production)]
 public sealed class FinishedGoodReceiptSqliteReplayBoundaryTests
 {
+    [Fact]
+    public async Task Missing_legacy_production_location_is_not_ready_and_cannot_post()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        var factory = new TestDbContextFactory(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection).AddInterceptors(new SqliteUnicodeLiteralInterceptor()).Options);
+        var fixture = await FinishedGoodReceiptSqlServerTests.CreateFixtureAsync(factory);
+        await using (var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync())
+        {
+            // Model an imported legacy inconsistency that SQL Server's V2 check now forbids.
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints = ON;");
+            var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == fixture.PoolId);
+            lot.ProductionLocationId = null;
+            await db.SaveChangesAsync();
+        }
+        var search = await fixture.Service.SearchSourcesAsync(new());
+        Assert.True(search.Succeeded, search.Message);
+        var row = Assert.Single(search.Data!.Rows, x => x.Id == fixture.PoolId);
+        Assert.Contains("production location", row.Readiness, StringComparison.OrdinalIgnoreCase);
+
+        var draft = await fixture.Service.SaveAsync(fixture.Draft(1));
+        Assert.True(draft.Succeeded, draft.Message);
+        await using (var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE PrFinishedGoodReceipt SET RowVersion = X'01' WHERE BatchId = {draft.Data!.Id};");
+        var current = await fixture.Service.GetAsync(draft.Data!.Id);
+        var posted = await fixture.Service.PostAsync(new(draft.Data.Id, current.Data!.RowVersion, Guid.NewGuid()));
+        Assert.False(posted.Succeeded);
+        Assert.Contains("production location", posted.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -593,7 +625,7 @@ public sealed class FinishedGoodReceiptSqlServerTests
         }
         Assert.Contains("test", new SqlConnectionStringBuilder(cs).InitialCatalog, StringComparison.OrdinalIgnoreCase);
         var factory = new TestDbContextFactory(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options);
-        return await CreateFixtureAsync(factory, lotControlled, existingCompany, branch);
+        return await CreateFixtureAsync(factory, lotControlled, existingCompany, branch, valueInventory: true);
     }
 
     internal static async Task<Fixture> CreateFixtureAsync(TestDbContextFactory factory,
@@ -604,7 +636,16 @@ public sealed class FinishedGoodReceiptSqlServerTests
         IQaFgAuthorization? qaFg = null)
     {
         await using var db = await ((IDbContextFactory<AppDbContext>)factory).CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
-        var company = existingCompany ?? "F" + Guid.NewGuid().ToString("N")[..4].ToUpperInvariant();
+        var company = existingCompany;
+        if (company is null)
+        {
+            do
+            {
+                company = "F" + Guid.NewGuid().ToString("N")[..4].ToUpperInvariant();
+            }
+            while (await db.ProductionWorkOrders.AnyAsync(x => x.CompanyCode == company)
+                || await db.IvWarehouses.AnyAsync(x => x.CompanyCode == company));
+        }
         var order = new ProductionWorkOrder { CompanyCode = company, BranchCode = branch, WorkOrderNo = "WO-FG-" + branch, Status = "COMPLETED",
             ProductCode = "FG", PlannedQty = 10, OutputUom = "EA", CreatedBy = "TEST" };
         var bom = await db.PrBomHdrs.FirstOrDefaultAsync(x => x.CompanyCode == company && x.ProdCode == "FG");
@@ -716,7 +757,8 @@ public sealed class FinishedGoodReceiptSqlServerTests
         Assert.Equal(48, (await verify.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId)).TotalCost);
         Assert.Equal(6, (await verify.IvBalLocs.SingleAsync(x => x.CompanyCode == f.Company)).StdQty);
         var generations = await verify.ProductionPostingLinks
-            .Where(x => x.InventoryBatchNo == saved.Data.BatchNo
+            .Where(x => x.CompanyCode == f.Company && x.BranchCode == "HQ"
+                && x.InventoryBatchNo == saved.Data.BatchNo
                 && x.CommandType == ProductionPostingCommandTypes.FinishedGoodReceiptPost)
             .OrderBy(x => x.DocumentRevision).ToListAsync();
         Assert.Equal([1, 2], generations.Select(x => x.DocumentRevision));
@@ -764,6 +806,20 @@ public sealed class FinishedGoodReceiptSqlServerTests
         var update = f.Draft(4); update.Id = first.Data!.Id; update.ExpectedVersion = first.Data.RowVersion; update.RefNo = "Changed header";
         var second = await f.Service.SaveAsync(update); Assert.True(second.Succeeded, second.Message);
         Assert.False(first.Data.RowVersion.SequenceEqual(second.Data!.RowVersion));
+        var stalePost = await f.Service.PostAsync(new(first.Data.Id, first.Data.RowVersion, Guid.NewGuid()));
+        Assert.False(stalePost.Succeeded);
+        Assert.Contains("changed", stalePost.Message, StringComparison.OrdinalIgnoreCase);
+        var lineUpdate = f.Draft(3);
+        lineUpdate.Id = second.Data.Id;
+        lineUpdate.ExpectedVersion = second.Data.RowVersion;
+        lineUpdate.RefNo = "Changed header";
+        var third = await f.Service.SaveAsync(lineUpdate);
+        Assert.True(third.Succeeded, third.Message);
+        Assert.False(second.Data.RowVersion.SequenceEqual(third.Data!.RowVersion));
+        var staleLinePost = await f.Service.PostAsync(new(second.Data.Id, second.Data.RowVersion, Guid.NewGuid()));
+        Assert.False(staleLinePost.Succeeded);
+        Assert.Contains("changed", staleLinePost.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3m, Assert.Single(third.Data.Lines).Quantity);
         Assert.False((await f.Service.DeleteAsync(first.Data.Id, first.Data.RowVersion)).Succeeded);
         await using (var db = await f.Factory.CreateDbContextAsync())
         {
@@ -820,26 +876,19 @@ public sealed class FinishedGoodReceiptSqlServerTests
     }
 
     [Fact]
-    public async Task Missing_production_location_is_not_ready_and_cannot_post()
+    public async Task SqlServer_rejects_missing_location_for_v2_production_source()
     {
         var f = await CreateAsync(); if (f is null) return;
         await using (var db = await f.Factory.CreateDbContextAsync())
         {
             var lot = await db.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId);
             lot.ProductionLocationId = null;
-            await db.SaveChangesAsync();
+            var error = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+            Assert.Contains("CK_PrProductionBalLot_V2", error.InnerException?.Message,
+                StringComparison.OrdinalIgnoreCase);
         }
-
-        var search = await f.Service.SearchSourcesAsync(new());
-        Assert.True(search.Succeeded, search.Message);
-        var row = Assert.Single(search.Data!.Rows, x => x.Id == f.PoolId);
-        Assert.Contains("production location", row.Readiness, StringComparison.OrdinalIgnoreCase);
-
-        var draft = await f.Service.SaveAsync(f.Draft(1));
-        Assert.True(draft.Succeeded, draft.Message);
-        var posted = await f.Service.PostAsync(new(draft.Data!.Id, draft.Data.RowVersion, Guid.NewGuid()));
-        Assert.False(posted.Succeeded);
-        Assert.Contains("production location", posted.Message, StringComparison.OrdinalIgnoreCase);
+        await using var verify = await f.Factory.CreateDbContextAsync();
+        Assert.NotNull((await verify.ProductionBalLots.SingleAsync(x => x.Uid == f.PoolId)).ProductionLocationId);
     }
 
     private sealed class FailureWriter(Func<bool> fail) : IProductionStockWriter

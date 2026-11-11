@@ -1,0 +1,153 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="9b9cbaf5-b765-4925-aea6-b8aca72fec11" name="Mokth@MOKTH 2026-11-04 23:27:45" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-04T23:27:45.0220657+08:00" queuing="2026-11-04T23:27:45.0220667+08:00" start="2026-11-04T23:27:31.8075319+08:00" finish="2026-11-04T23:27:47.6024450+08:00" />
+  <TestSettings name="default" id="270c9383-8fa9-4d14-8dde-df1a8db7f824">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-04_23_27_45" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="5fdaa680-f224-4583-967c-6c35010dcf7e" testId="10df4647-3e87-2659-be82-e26319b1c62f" testName="ErpWeb.Tests.Sales.Master.SaCustServiceTests.Update_PreservesLeftoverBranchCode" computerName="MOKTH" duration="00:00:10.3355080" startTime="2026-11-04T23:27:33.1826696+08:00" endTime="2026-11-04T23:27:44.8728984+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5fdaa680-f224-4583-967c-6c35010dcf7e">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.True() Failure&#xD;
+Expected: True&#xD;
+Actual:   False</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Master.SaCustServiceTests.Update_PreservesLeftoverBranchCode() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 807&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5309da6c-06bb-46c0-ab3a-1bc9df92085a" testId="7796308e-2958-bc1c-1776-04218cf885ad" testName="ErpWeb.Tests.Inventory.Master.IvStockMasterServiceTests.Update_PreservesLeftoverBranchCode" computerName="MOKTH" duration="00:00:10.8641485" startTime="2026-11-04T23:27:33.1844276+08:00" endTime="2026-11-04T23:27:45.7635318+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5309da6c-06bb-46c0-ab3a-1bc9df92085a" />
+    <UnitTestResult executionId="999432f8-0902-40da-89c9-c3a7f81f0d1d" testId="54698078-02c0-f1f0-d229-2375046448ee" testName="ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Circular_bom_rejected_on_save" computerName="MOKTH" duration="00:00:11.7572696" startTime="2026-11-04T23:27:33.1843813+08:00" endTime="2026-11-04T23:27:46.0727828+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="999432f8-0902-40da-89c9-c3a7f81f0d1d">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Circular_bom_rejected_on_save() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Planning\Master\PrProductDefServiceTests.cs:line 349&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="25c7bbab-8855-4581-bd63-2a37f2f7f527" testId="3c44e055-3da7-b646-e248-9bfc0e5fe17e" testName="ErpWeb.Tests.Sales.Master.SaCustServiceTests.PhoneOnly_EmptyGlCode_OnEdit_Succeeds" computerName="MOKTH" duration="00:00:01.0155444" startTime="2026-11-04T23:27:44.9791130+08:00" endTime="2026-11-04T23:27:45.9200285+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="25c7bbab-8855-4581-bd63-2a37f2f7f527">
+      <Output>
+        <ErrorInfo>
+          <Message>Validation failed.</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Master.SaCustServiceTests.PhoneOnly_EmptyGlCode_OnEdit_Succeeds() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 569&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="76423d62-ae1e-4c93-83fd-8aaab3586630" testId="5fb14e30-f13d-c2ed-d724-2807811a9930" testName="ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Overlapping_active_versions_rejected" computerName="MOKTH" duration="00:00:01.3096120" startTime="2026-11-04T23:27:46.0773270+08:00" endTime="2026-11-04T23:27:47.4028127+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="76423d62-ae1e-4c93-83fd-8aaab3586630">
+      <Output>
+        <ErrorInfo>
+          <Message>Product definition not found.</Message>
+          <StackTrace>   at ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Overlapping_active_versions_rejected() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Planning\Master\PrProductDefServiceTests.cs:line 380&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="da00f220-de59-4f31-91c1-76fef1716b0a" testId="4e184844-819d-626e-5683-b90d0dfd0b7e" testName="ErpWeb.Tests.Sales.Master.SaCustServiceTests.PaymentFieldChange_RequiresGlCode" computerName="MOKTH" duration="00:00:01.1060627" startTime="2026-11-04T23:27:45.9235099+08:00" endTime="2026-11-04T23:27:47.0751714+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="da00f220-de59-4f31-91c1-76fef1716b0a">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.True() Failure&#xD;
+Expected: True&#xD;
+Actual:   False</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Master.SaCustServiceTests.PaymentFieldChange_RequiresGlCode() in C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 590&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Sales.Master.SaCustServiceTests.PaymentFieldChange_RequiresGlCode" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="4e184844-819d-626e-5683-b90d0dfd0b7e">
+      <Execution id="da00f220-de59-4f31-91c1-76fef1716b0a" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Master.SaCustServiceTests" name="PaymentFieldChange_RequiresGlCode" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Master.SaCustServiceTests.Update_PreservesLeftoverBranchCode" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="10df4647-3e87-2659-be82-e26319b1c62f">
+      <Execution id="5fdaa680-f224-4583-967c-6c35010dcf7e" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Master.SaCustServiceTests" name="Update_PreservesLeftoverBranchCode" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Overlapping_active_versions_rejected" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="5fb14e30-f13d-c2ed-d724-2807811a9930">
+      <Execution id="76423d62-ae1e-4c93-83fd-8aaab3586630" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Planning.Master.PrProductDefServiceTests" name="Overlapping_active_versions_rejected" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Master.IvStockMasterServiceTests.Update_PreservesLeftoverBranchCode" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="7796308e-2958-bc1c-1776-04218cf885ad">
+      <Execution id="5309da6c-06bb-46c0-ab3a-1bc9df92085a" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Master.IvStockMasterServiceTests" name="Update_PreservesLeftoverBranchCode" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Master.SaCustServiceTests.PhoneOnly_EmptyGlCode_OnEdit_Succeeds" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="3c44e055-3da7-b646-e248-9bfc0e5fe17e">
+      <Execution id="25c7bbab-8855-4581-bd63-2a37f2f7f527" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Master.SaCustServiceTests" name="PhoneOnly_EmptyGlCode_OnEdit_Succeeds" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Circular_bom_rejected_on_save" storage="c:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="54698078-02c0-f1f0-d229-2375046448ee">
+      <Execution id="999432f8-0902-40da-89c9-c3a7f81f0d1d" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Planning.Master.PrProductDefServiceTests" name="Circular_bom_rejected_on_save" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="10df4647-3e87-2659-be82-e26319b1c62f" executionId="5fdaa680-f224-4583-967c-6c35010dcf7e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7796308e-2958-bc1c-1776-04218cf885ad" executionId="5309da6c-06bb-46c0-ab3a-1bc9df92085a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="54698078-02c0-f1f0-d229-2375046448ee" executionId="999432f8-0902-40da-89c9-c3a7f81f0d1d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3c44e055-3da7-b646-e248-9bfc0e5fe17e" executionId="25c7bbab-8855-4581-bd63-2a37f2f7f527" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="5fb14e30-f13d-c2ed-d724-2807811a9930" executionId="76423d62-ae1e-4c93-83fd-8aaab3586630" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4e184844-819d-626e-5683-b90d0dfd0b7e" executionId="da00f220-de59-4f31-91c1-76fef1716b0a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="6" executed="6" passed="1" failed="5" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:00.27]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:00.82]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:00.86]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:12.59]       Assert.True() Failure&#xD;
+[xUnit.net 00:00:12.59]       Expected: True&#xD;
+[xUnit.net 00:00:12.59]       Actual:   False&#xD;
+[xUnit.net 00:00:12.60]       Stack Trace:&#xD;
+[xUnit.net 00:00:12.60]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs(807,0): at ErpWeb.Tests.Sales.Master.SaCustServiceTests.Update_PreservesLeftoverBranchCode()&#xD;
+[xUnit.net 00:00:12.60]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:13.63]       Validation failed.&#xD;
+[xUnit.net 00:00:13.63]       Stack Trace:&#xD;
+[xUnit.net 00:00:13.63]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs(569,0): at ErpWeb.Tests.Sales.Master.SaCustServiceTests.PhoneOnly_EmptyGlCode_OnEdit_Succeeds()&#xD;
+[xUnit.net 00:00:13.63]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:13.78]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:13.78]       Expected: False&#xD;
+[xUnit.net 00:00:13.78]       Actual:   True&#xD;
+[xUnit.net 00:00:13.78]       Stack Trace:&#xD;
+[xUnit.net 00:00:13.78]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Planning\Master\PrProductDefServiceTests.cs(349,0): at ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Circular_bom_rejected_on_save()&#xD;
+[xUnit.net 00:00:13.78]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:14.78]       Assert.True() Failure&#xD;
+[xUnit.net 00:00:14.78]       Expected: True&#xD;
+[xUnit.net 00:00:14.78]       Actual:   False&#xD;
+[xUnit.net 00:00:14.78]       Stack Trace:&#xD;
+[xUnit.net 00:00:14.78]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs(590,0): at ErpWeb.Tests.Sales.Master.SaCustServiceTests.PaymentFieldChange_RequiresGlCode()&#xD;
+[xUnit.net 00:00:14.78]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:15.11]       Product definition not found.&#xD;
+[xUnit.net 00:00:15.11]       Stack Trace:&#xD;
+[xUnit.net 00:00:15.11]         C:\wincom\net10projects\.replay-productionv2-20261104\.baseline-ed703f6\ErpWeb.Tests\Planning\Master\PrProductDefServiceTests.cs(380,0): at ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Overlapping_active_versions_rejected()&#xD;
+[xUnit.net 00:00:15.11]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:15.12]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:27:44.8829447+08:00">
+        <Text>[xUnit.net 00:00:12.59]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.Update_PreservesLeftoverBranchCode [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:27:45.9217283+08:00">
+        <Text>[xUnit.net 00:00:13.63]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.PhoneOnly_EmptyGlCode_OnEdit_Succeeds [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:27:46.0736455+08:00">
+        <Text>[xUnit.net 00:00:13.78]     ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Circular_bom_rejected_on_save [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:27:47.0759894+08:00">
+        <Text>[xUnit.net 00:00:14.78]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.PaymentFieldChange_RequiresGlCode [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-04T23:27:47.4035753+08:00">
+        <Text>[xUnit.net 00:00:15.11]     ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Overlapping_active_versions_rejected [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

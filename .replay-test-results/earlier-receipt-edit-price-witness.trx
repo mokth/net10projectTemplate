@@ -1,0 +1,51 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="d341347e-1c0b-4de6-9789-07b0458777e3" name="Mokth@MOKTH 2026-11-07 22:04:55" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-07T22:04:55.2388156+08:00" queuing="2026-11-07T22:04:55.2388162+08:00" start="2026-11-07T22:04:40.0592251+08:00" finish="2026-11-07T22:04:55.2451180+08:00" />
+  <TestSettings name="default" id="8305c577-1e35-4d1a-bf4b-6f95cc042b80">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-07_22_04_55" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="c4790b2e-126a-4796-8d4b-5edc60372249" testId="6d977ff9-4d3b-f24c-cbc6-2b242c18561c" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_approved_changed_price_on_repost" computerName="MOKTH" duration="00:00:10.9097866" startTime="2026-11-07T22:04:44.2217302+08:00" endTime="2026-11-07T22:04:55.1122287+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c4790b2e-126a-4796-8d4b-5edc60372249">
+      <Output>
+        <ErrorInfo>
+          <Message>Repost cycle 0: Batch 1: Value fact 5 has no active receipt origin.</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1604&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_approved_changed_price_on_repost" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="6d977ff9-4d3b-f24c-cbc6-2b242c18561c">
+      <Execution id="c4790b2e-126a-4796-8d4b-5edc60372249" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Earlier_receipt_replay_allows_approved_changed_price_on_repost" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="6d977ff9-4d3b-f24c-cbc6-2b242c18561c" executionId="c4790b2e-126a-4796-8d4b-5edc60372249" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="1" executed="1" passed="0" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:02.95]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.67]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.70]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:14.66]       Repost cycle 0: Batch 1: Value fact 5 has no active receipt origin.&#xD;
+[xUnit.net 00:00:14.66]       Stack Trace:&#xD;
+[xUnit.net 00:00:14.66]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1604,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:14.66]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:14.68]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-07T22:04:55.1166905+08:00">
+        <Text>[xUnit.net 00:00:14.66]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_allows_approved_changed_price_on_repost [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

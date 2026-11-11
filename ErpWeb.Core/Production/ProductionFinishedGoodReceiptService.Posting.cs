@@ -391,6 +391,10 @@ public sealed partial class ProductionFinishedGoodReceiptService
             if (laterHistory) throw new FgException("Reverse later active destination stock movements first.");
             var qty = histories.Where(x => x.ToBalLocId == balance.Id).Sum(x => x.ToStdQty ?? 0);
             if (balance.StdQty < qty) throw new FgException("Insufficient destination stock for rollback.");
+            var qaHoldError = await (qaPhysical ?? DisabledQaPhysicalHoldAuthorization.Instance)
+                .AssertRemainingCoversHoldsAsync(db, scope.CompanyCode, scope.BranchCode!,
+                    balance.Id, IvQty.Round(balance.StdQty - qty), ct);
+            if (qaHoldError is not null) throw new FgException(qaHoldError);
             var price = snapshots.Single(x => x.DestinationBalanceId == balance.Id);
             if (balance.UnitPrice != price.PostedUnitPrice || balance.Cost != price.PostedUnitPrice || balance.PriceEvidence != $"FG_EXACT_BASE_CURRENCY:{r.PostingId}")
                 throw new FgException("Destination pricing changed after this receipt; rollback cannot overwrite it.");

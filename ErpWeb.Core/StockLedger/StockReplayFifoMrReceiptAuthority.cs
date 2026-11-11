@@ -23,6 +23,19 @@ public static class StockReplayFifoMrReceiptAuthorityReader
         int batchNo, int balLocId,
         CancellationToken cancellationToken = default,
         bool allowExistingLot = false)
+        => await ReadCoreAsync(db, companyCode, branchCode, batchNo, balLocId,
+            null, cancellationToken, allowExistingLot);
+
+    internal static Task<StockReplayFifoMrReceiptAuthority> ReadLineAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        int batchNo, int balLocId, int detailId, CancellationToken cancellationToken = default)
+        => ReadCoreAsync(db, companyCode, branchCode, batchNo, balLocId,
+            detailId, cancellationToken, allowExistingLot: true);
+
+    private static async Task<StockReplayFifoMrReceiptAuthority> ReadCoreAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        int batchNo, int balLocId, int? detailId,
+        CancellationToken cancellationToken, bool allowExistingLot)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (batchNo <= 0 || balLocId <= 0)
@@ -40,9 +53,10 @@ public static class StockReplayFifoMrReceiptAuthorityReader
             throw Invalid("FIFO MR authority needs an active NEW receipt.");
         var details = await db.IvTrxBatchDetails.AsNoTracking()
             .Where(d => d.BatchId == batch.Id).ToArrayAsync(cancellationToken);
-        if (details.Length != 1)
+        if (detailId is null && details.Length != 1
+            || detailId is not null && (detailId <= 0 || details.Count(d => d.Id == detailId) != 1))
             throw Invalid("FIFO MR replay currently needs one approved receipt line.");
-        var detail = details[0];
+        var detail = detailId is int lineId ? details.Single(d => d.Id == lineId) : details[0];
         if (detail.CompanyCode != companyCode
             || detail.BranchCode != branchCode
             || detail.BatchNo != batchNo

@@ -13,13 +13,27 @@ namespace ErpWeb.Core.StockLedger;
 /// </summary>
 public static class StockReplayPhysicalTimelineReader
 {
-    public static async Task<IReadOnlyList<StockReplayPhysicalEvent>> ReadLaterAsync(
+    public static Task<IReadOnlyList<StockReplayPhysicalEvent>> ReadLaterAsync(
+        AppDbContext db, string companyCode, string branchCode, int balLocId,
+        StockReplayEventKey after, CancellationToken cancellationToken = default) =>
+        ReadLaterCoreAsync(db, companyCode, branchCode, balLocId, after,
+            excludePendingCountId: null, cancellationToken);
+
+    internal static Task<IReadOnlyList<StockReplayPhysicalEvent>> ReadLaterWithoutCrossingAsync(
+        AppDbContext db, string companyCode, string branchCode, int balLocId,
+        StockReplayEventKey after, CancellationToken cancellationToken = default,
+        int? excludePendingCountId = null) =>
+        ReadLaterCoreAsync(db, companyCode, branchCode, balLocId, after,
+            excludePendingCountId, cancellationToken);
+
+    private static async Task<IReadOnlyList<StockReplayPhysicalEvent>> ReadLaterCoreAsync(
         AppDbContext db,
         string companyCode,
         string branchCode,
         int balLocId,
         StockReplayEventKey after,
-        CancellationToken cancellationToken = default)
+        int? excludePendingCountId,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (string.IsNullOrWhiteSpace(companyCode) || string.IsNullOrWhiteSpace(branchCode)
@@ -122,6 +136,7 @@ public static class StockReplayPhysicalTimelineReader
             .Where(l => l.BalLocId == balLocId
                 && l.Header.CompanyCode == companyCode
                 && l.Header.BranchCode == branchCode
+                && (excludePendingCountId == null || l.StockCountId != excludePendingCountId.Value)
                 && l.Header.CountDate >= countDateBound
                 && (l.Header.Status == "POSTED" || l.Header.Status == "ROLLED_BACK"))
             .Select(l => new { l.Id, l.BalLocId, l.PhysicalQty })
@@ -203,7 +218,11 @@ public static class StockReplayPhysicalTimelineReader
                     generation.SignedAdjustmentQty, line.PhysicalQty));
         }
 
-        return events.OrderBy(e => e.Key).ThenBy(e => e.EventId).ToArray();
+        var ordered = events.OrderBy(e => e.Key).ThenBy(e => e.EventId).ToArray();
+        if (ordered.Select(e => e.EventId).Distinct().Count() != ordered.Length
+            || ordered.Zip(ordered.Skip(1), (a, b) => a.Key == b.Key).Any(equal => equal))
+            throw Corrupt("A physical tail has duplicate movement evidence.");
+        return ordered;
     }
 
     private static StockLedgerException Corrupt(string message) =>

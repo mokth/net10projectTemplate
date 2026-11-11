@@ -1,0 +1,155 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="644b870b-a8c8-4b1d-bb0f-c3c1771cd4c2" name="Mokth@MOKTH 2026-11-09 15:40:42" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-09T15:40:42.1552415+08:00" queuing="2026-11-09T15:40:42.1552422+08:00" start="2026-11-09T15:40:17.6152152+08:00" finish="2026-11-09T15:40:42.1630162+08:00" />
+  <TestSettings name="default" id="510b5df4-1d94-4442-9135-7747acf8c1a8">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-09_15_40_42" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="b245cdfe-1496-4dbb-86cb-b7891bf1e81b" testId="bc02ed4b-51af-4e44-b7f1-e48c2e28afaf" testName="ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost" computerName="MOKTH" duration="00:00:20.0427492" startTime="2026-11-09T15:40:21.9330608+08:00" endTime="2026-11-09T15:40:41.9646649+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b245cdfe-1496-4dbb-86cb-b7891bf1e81b">
+      <Output>
+        <ErrorInfo>
+          <Message>Posting ended before the race point: True; 
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+FROM [IvTrxBatchDetail] AS [i]&#xD;
+WHERE [i].[BatchId] = @batch_Id
+---
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+FROM [IvTrxBatchDetail] AS [i]&#xD;
+WHERE [i].[BatchId] = @batch_Id
+---
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+FROM [IvTrxBatchDetail] AS [i]&#xD;
+WHERE [i].[BatchId] = @batch_Id
+---
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+FROM [IvTrxBatchDetail] AS [i]&#xD;
+WHERE [i].[BatchId] = @batch_Id
+---
+SELECT [i].[ID] AS [Id], [i].[DocumentRevision], [i].[TrxLineNo], [i].[ICode], [i].[FrWarehouse], [i].[FrLocation], [i].[FrLot] AS [FrLotNo], [i].[FrStdQty], [i].[FrStdUOM] AS [FrStdUom], [i].[ToWarehouse], [i].[ToLocation], [i].[ToLot] AS [ToLotNo], [i].[ToStdQty], [i].[ToStdUOM] AS [ToStdUom]&#xD;
+FROM [IvTrxBatchDetail] AS [i]&#xD;
+WHERE [i].[BatchId] = @batch_Id&#xD;
+ORDER BY [i].[DocumentRevision], [i].[TrxLineNo]
+---
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+FROM [IvTrxBatchDetail] AS [i]&#xD;
+WHERE [i].[BatchId] = @batch_Id
+---
+SELECT TOP(2) [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+FROM [IvTrxBatchDetail] AS [i]&#xD;
+WHERE [i].[ID] = @authority_DetailId
+---
+SET NOCOUNT ON;&#xD;
+UPDATE [IvBalLoc] SET [Updated] = @p0, [PriceEvidence] = @p1, [StdQty] = @p2, [TransDate] = @p3&#xD;
+WHERE [ID] = @p4 AND [RowVersion] = @p5;&#xD;
+SELECT [RowVersion]&#xD;
+FROM [IvBalLoc]&#xD;
+WHERE @@ROWCOUNT = 1 AND [ID] = @p4;&#xD;
+&#xD;
+UPDATE [IvTrxBatch] SET [BatchStatus] = @p6, [UpdatedUID] = @p7, [Updated] = @p8, [PostedBy] = @p9, [PostedCount] = @p10, [PostedDate] = @p11, [PostingOperationId] = @p12&#xD;
+OUTPUT 1&#xD;
+WHERE [ID] = @p13;&#xD;
+UPDATE [IvTrxBatchDetail] SET [ToBalLocId] = @p14&#xD;
+OUTPUT 1&#xD;
+WHERE [ID] = @p15;&#xD;
+INSERT INTO [IvTrxHistory] ([asNowCost], [BaseUnitPrices], [BatchNo], [BatchStatus], [BranchCode], [CompanyCode], [Cost], [CostApprovedAtUtc], [CostApprovedBy], [CostEvidenceType], [CostOverrideReason], [CostPrice], [UserID], [Created], [DONo], [DocumentRevision], [EntryRole], [EvidenceBaseQty], [EvidenceBaseUom], [ExactTransferredValue], [FrLocation], [FrLot], [FrPurQty], [FrPurUOM], [FrStdQty], [FrStdUOM], [FrWarehouse], [FromBalLocId], [FromLotId], [ICode], [IDesc], [IStatus], [InvNo], [LedgerEpochID], [LedgerVersion], [LocationCode], [Updated], [PO_Line_No], [PO_No], [PO_Rel_No], [PostingLineNo], [PriceEvidence], [ProdCode], [ProdDesc], [RefNo], [Remarks], [ReversesHistoryID], [SO_Line_No], [SO_No], [StockCountCostBasisId], [StockPostingID], [ToBalLocId], [ToLocation], [ToLotId], [ToLot], [ToPurQty], [ToPurUOM], [ToStdQty], [ToStdUOM], [ToWarehouse], [TrxDtTime], [TrxLineNo], [TrxType], [UnitPrice], [ValuationStatus])&#xD;
+VALUES (@p16, @p17, @p18, @p19, @p20, @p21, @p22, @p23, @p24, @p25, @p26, @p27, @p28, @p29, @p30, @p31, @p32, @p33, @p34, @p35, @p36, @p37, @p38, @p39, @p40, @p41, @p42, @p43, @p44, @p45, @p46, @p47, @p48, @p49, @p50, @p51, @p52, @p53, @p54, @p55, @p56, @p57, @p58, @p59, @p60, @p61, @p62, @p63, @p64, @p65, @p66, @p67, @p68, @p69, @p70, @p71, @p72, @p73, @p74, @p75, @p76, @p77, @p78, @p79, @p80);&#xD;
+SELECT [ID]&#xD;
+FROM [IvTrxHistory]&#xD;
+WHERE @@ROWCOUNT = 1 AND [ID] = scope_identity();&#xD;
+&#xD;
+</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1606&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(IDbContextFactory`1 factory, WacReceiptPostingBarrier barrier) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 60&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(IDbContextFactory`1 factory, WacReceiptPostingBarrier barrier) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 60&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.RunAsync(Boolean goodsReceipt, Boolean concurrent, Boolean sameDay, Boolean replayEnabled, Nullable`1 rollbackCostChanged, Nullable`1 issueDetailDamage, Nullable`1 crossPileReplay, Nullable`1 correctedIssueLower, Nullable`1 earlierReceiptLower, Boolean earlierReceiptConcurrent, Boolean earlierReceiptFailure, Boolean earlierReceiptEdited, Boolean earlierReceiptEditedFailure, Boolean earlierReceiptNeutralEdited, Boolean earlierReceiptQuantityEdited, Boolean earlierReceiptQuantityRounding, Boolean correctedIssueFailure, Nullable`1 reversedOutputLower, Boolean reversedOutputFailure, Boolean earlierOutput, Boolean outputEdited, Boolean outputQuantityEdited, Boolean partialOutput, Nullable`1 fifoGuardReplay, Boolean fifoGuardSafe, Boolean fifoNeutral, Boolean fifoNeutralFailure, Boolean fifoNeutralQa, Boolean fifoNeutralEdited, Boolean fifoNeutralRounding, Boolean fifoProjectionInsertion, Int32 fifoSameTimeCase, Boolean wacReceiptEditRace) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionNeutralReversedIssueSqlServerTests.cs:line 335&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="bc02ed4b-51af-4e44-b7f1-e48c2e28afaf">
+      <Execution id="b245cdfe-1496-4dbb-86cb-b7891bf1e81b" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests" name="Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="bc02ed4b-51af-4e44-b7f1-e48c2e28afaf" executionId="b245cdfe-1496-4dbb-86cb-b7891bf1e81b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="1" executed="1" passed="0" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:02.72]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.64]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.68]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:23.79]       Posting ended before the race point: True; 
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvTrxBatchDetail] AS [i]&#xD;
+[xUnit.net 00:00:23.79]       WHERE [i].[BatchId] = @batch_Id
+---
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvTrxBatchDetail] AS [i]&#xD;
+[xUnit.net 00:00:23.79]       WHERE [i].[BatchId] = @batch_Id
+---
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvTrxBatchDetail] AS [i]&#xD;
+[xUnit.net 00:00:23.79]       WHERE [i].[BatchId] = @batch_Id
+---
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvTrxBatchDetail] AS [i]&#xD;
+[xUnit.net 00:00:23.79]       WHERE [i].[BatchId] = @batch_Id
+---
+SELECT [i].[ID] AS [Id], [i].[DocumentRevision], [i].[TrxLineNo], [i].[ICode], [i].[FrWarehouse], [i].[FrLocation], [i].[FrLot] AS [FrLotNo], [i].[FrStdQty], [i].[FrStdUOM] AS [FrStdUom], [i].[ToWarehouse], [i].[ToLocation], [i].[ToLot] AS [ToLotNo], [i].[ToStdQty], [i].[ToStdUOM] AS [ToStdUom]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvTrxBatchDetail] AS [i]&#xD;
+[xUnit.net 00:00:23.79]       WHERE [i].[BatchId] = @batch_Id&#xD;
+[xUnit.net 00:00:23.79]       ORDER BY [i].[DocumentRevision], [i].[TrxLineNo]
+---
+SELECT [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvTrxBatchDetail] AS [i]&#xD;
+[xUnit.net 00:00:23.79]       WHERE [i].[BatchId] = @batch_Id
+---
+SELECT TOP(2) [i].[ID], [i].[BaseUnitPrices], [i].[BatchId], [i].[BatchNo], [i].[BranchCode], [i].[CompanyCode], [i].[Cost], [i].[CostApprovedAtUtc], [i].[CostApprovedBy], [i].[CostEvidenceType], [i].[CostOverrideReason], [i].[CostPrice], [i].[Currency], [i].[DONo], [i].[DocumentRevision], [i].[ExpiryDate], [i].[FrLocation], [i].[FrLot], [i].[FrPurQty], [i].[FrPurUOM], [i].[FrStdQty], [i].[FrStdUOM], [i].[FrWarehouse], [i].[FromBalLocId], [i].[FromLotId], [i].[IClassCode], [i].[ICode], [i].[IDesc], [i].[IStatus], [i].[InvNo], [i].[LocationCode], [i].[PO_Line_No], [i].[PO_No], [i].[PO_Rel_No], [i].[PriceEvidence], [i].[ProdCode], [i].[ProdDesc], [i].[Reason], [i].[Remarks], [i].[SO_Line_No], [i].[SO_No], [i].[StockCountCostBasisId], [i].[ToBalLocId], [i].[ToLocation], [i].[ToLotId], [i].[ToLot], [i].[ToPurQty], [i].[ToPurUOM], [i].[ToStdQty], [i].[ToStdUOM], [i].[ToWarehouse], [i].[TrxLineNo], [i].[TrxType], [i].[UnitPrice]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvTrxBatchDetail] AS [i]&#xD;
+[xUnit.net 00:00:23.79]       WHERE [i].[ID] = @authority_DetailId
+---
+SET NOCOUNT ON;&#xD;
+[xUnit.net 00:00:23.79]       UPDATE [IvBalLoc] SET [Updated] = @p0, [PriceEvidence] = @p1, [StdQty] = @p2, [TransDate] = @p3&#xD;
+[xUnit.net 00:00:23.79]       WHERE [ID] = @p4 AND [RowVersion] = @p5;&#xD;
+[xUnit.net 00:00:23.79]       SELECT [RowVersion]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvBalLoc]&#xD;
+[xUnit.net 00:00:23.79]       WHERE @@ROWCOUNT = 1 AND [ID] = @p4;&#xD;
+[xUnit.net 00:00:23.79]       &#xD;
+[xUnit.net 00:00:23.79]       UPDATE [IvTrxBatch] SET [BatchStatus] = @p6, [UpdatedUID] = @p7, [Updated] = @p8, [PostedBy] = @p9, [PostedCount] = @p10, [PostedDate] = @p11, [PostingOperationId] = @p12&#xD;
+[xUnit.net 00:00:23.79]       OUTPUT 1&#xD;
+[xUnit.net 00:00:23.79]       WHERE [ID] = @p13;&#xD;
+[xUnit.net 00:00:23.79]       UPDATE [IvTrxBatchDetail] SET [ToBalLocId] = @p14&#xD;
+[xUnit.net 00:00:23.79]       OUTPUT 1&#xD;
+[xUnit.net 00:00:23.79]       WHERE [ID] = @p15;&#xD;
+[xUnit.net 00:00:23.79]       INSERT INTO [IvTrxHistory] ([asNowCost], [BaseUnitPrices], [BatchNo], [BatchStatus], [BranchCode], [CompanyCode], [Cost], [CostApprovedAtUtc], [CostApprovedBy], [CostEvidenceType], [CostOverrideReason], [CostPrice], [UserID], [Created], [DONo], [DocumentRevision], [EntryRole], [EvidenceBaseQty], [EvidenceBaseUom], [ExactTransferredValue], [FrLocation], [FrLot], [FrPurQty], [FrPurUOM], [FrStdQty], [FrStdUOM], [FrWarehouse], [FromBalLocId], [FromLotId], [ICode], [IDesc], [IStatus], [InvNo], [LedgerEpochID], [LedgerVersion], [LocationCode], [Updated], [PO_Line_No], [PO_No], [PO_Rel_No], [PostingLineNo], [PriceEvidence], [ProdCode], [ProdDesc], [RefNo], [Remarks], [ReversesHistoryID], [SO_Line_No], [SO_No], [StockCountCostBasisId], [StockPostingID], [ToBalLocId], [ToLocation], [ToLotId], [ToLot], [ToPurQty], [ToPurUOM], [ToStdQty], [ToStdUOM], [ToWarehouse], [TrxDtTime], [TrxLineNo], [TrxType], [UnitPrice], [ValuationStatus])&#xD;
+[xUnit.net 00:00:23.79]       VALUES (@p16, @p17, @p18, @p19, @p20, @p21, @p22, @p23, @p24, @p25, @p26, @p27, @p28, @p29, @p30, @p31, @p32, @p33, @p34, @p35, @p36, @p37, @p38, @p39, @p40, @p41, @p42, @p43, @p44, @p45, @p46, @p47, @p48, @p49, @p50, @p51, @p52, @p53, @p54, @p55, @p56, @p57, @p58, @p59, @p60, @p61, @p62, @p63, @p64, @p65, @p66, @p67, @p68, @p69, @p70, @p71, @p72, @p73, @p74, @p75, @p76, @p77, @p78, @p79, @p80);&#xD;
+[xUnit.net 00:00:23.79]       SELECT [ID]&#xD;
+[xUnit.net 00:00:23.79]       FROM [IvTrxHistory]&#xD;
+[xUnit.net 00:00:23.79]       WHERE @@ROWCOUNT = 1 AND [ID] = scope_identity();&#xD;
+[xUnit.net 00:00:23.79]       &#xD;
+[xUnit.net 00:00:23.79]       &#xD;
+[xUnit.net 00:00:23.79]       Stack Trace:&#xD;
+[xUnit.net 00:00:23.79]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1606,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:23.79]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(60,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(IDbContextFactory`1 factory, WacReceiptPostingBarrier barrier)&#xD;
+[xUnit.net 00:00:23.79]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(60,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.VerifySqlServerWacReceiptEditRaceAsync(IDbContextFactory`1 factory, WacReceiptPostingBarrier barrier)&#xD;
+[xUnit.net 00:00:23.79]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionNeutralReversedIssueSqlServerTests.cs(335,0): at ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.RunAsync(Boolean goodsReceipt, Boolean concurrent, Boolean sameDay, Boolean replayEnabled, Nullable`1 rollbackCostChanged, Nullable`1 issueDetailDamage, Nullable`1 crossPileReplay, Nullable`1 correctedIssueLower, Nullable`1 earlierReceiptLower, Boolean earlierReceiptConcurrent, Boolean earlierReceiptFailure, Boolean earlierReceiptEdited, Boolean earlierReceiptEditedFailure, Boolean earlierReceiptNeutralEdited, Boolean earlierReceiptQuantityEdited, Boolean earlierReceiptQuantityRounding, Boolean correctedIssueFailure, Nullable`1 reversedOutputLower, Boolean reversedOutputFailure, Boolean earlierOutput, Boolean outputEdited, Boolean outputQuantityEdited, Boolean partialOutput, Nullable`1 fifoGuardReplay, Boolean fifoGuardSafe, Boolean fifoNeutral, Boolean fifoNeutralFailure, Boolean fifoNeutralQa, Boolean fifoNeutralEdited, Boolean fifoNeutralRounding, Boolean fifoProjectionInsertion, Int32 fifoSameTimeCase, Boolean wacReceiptEditRace)&#xD;
+[xUnit.net 00:00:23.79]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:23.81]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-09T15:40:41.9685675+08:00">
+        <Text>[xUnit.net 00:00:23.79]     ErpWeb.Tests.Production.Transaction.ProductionNeutralReversedIssueSqlServerTests.Wac_reversed_issue_receipt_serializes_edit_through_post_and_repost [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

@@ -1,0 +1,113 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="d3fc55b0-b1cc-4f57-a55c-e88c87748da4" name="Mokth@MOKTH 2026-11-06 09:51:07" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-06T09:51:07.0368171+08:00" queuing="2026-11-06T09:51:07.0368175+08:00" start="2026-11-06T09:50:58.3745745+08:00" finish="2026-11-06T09:51:07.9993012+08:00" />
+  <TestSettings name="default" id="398e9a02-6235-4707-bb24-5164b407945e">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-06_09_51_07" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="5100c3bf-507b-42b1-8b30-b6c6594cfaf1" testId="5ac5b7b5-e1a0-e1c8-00ac-7dfd859ef08b" testName="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch" computerName="MOKTH" duration="00:00:00.8570096" startTime="2026-11-06T09:51:07.0148251+08:00" endTime="2026-11-06T09:51:07.8723279+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5100c3bf-507b-42b1-8b30-b6c6594cfaf1">
+      <Output>
+        <ErrorInfo>
+          <Message>Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the entity changes. See the inner exception for details.&#xD;
+---- Microsoft.Data.SqlClient.SqlException : Cannot insert duplicate key row in object 'dbo.PrProductionBalLotMovement' with unique index 'UQ_PrProductionBalLotMovement_V2_PostingLine'. The duplicate key value is (2, &lt;NULL&gt;).</Message>
+          <StackTrace>   at Microsoft.EntityFrameworkCore.Update.AffectedCountModificationCommandBatch.ConsumeAsync(RelationalDataReader reader, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.SqlServer.Update.Internal.SqlServerModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.Storage.RelationalDatabase.SaveChangesAsync(IList`1 entries, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(IList`1 entriesToSave, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(StateManager stateManager, Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.SqlServer.Storage.Internal.SqlServerExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SeedSealFixtureAsync(String connectionString) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs:line 412&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SeedSealFixtureAsync(String connectionString) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs:line 436&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs:line 192&#xD;
+--- End of stack trace from previous location ---&#xD;
+----- Inner Stack Trace -----&#xD;
+   at Microsoft.Data.SqlClient.SqlConnection.OnError(SqlException exception, Boolean breakConnection, Action`1 wrapCloseInAction)&#xD;
+   at Microsoft.Data.SqlClient.SqlInternalConnection.OnError(SqlException exception, Boolean breakConnection, Action`1 wrapCloseInAction)&#xD;
+   at Microsoft.Data.SqlClient.TdsParser.ThrowExceptionAndWarning(TdsParserStateObject stateObj, SqlCommand command, Boolean callerHasConnectionLock, Boolean asyncClose)&#xD;
+   at Microsoft.Data.SqlClient.TdsParser.TryRun(RunBehavior runBehavior, SqlCommand cmdHandler, SqlDataReader dataStream, BulkCopySimpleResultSet bulkCopyHandler, TdsParserStateObject stateObj, Boolean&amp; dataReady)&#xD;
+   at Microsoft.Data.SqlClient.SqlDataReader.TryHasMoreRows(Boolean&amp; moreRows)&#xD;
+   at Microsoft.Data.SqlClient.SqlDataReader.TryHasMoreResults(Boolean&amp; moreResults)&#xD;
+   at Microsoft.Data.SqlClient.SqlDataReader.TryNextResult(Boolean&amp; more)&#xD;
+   at Microsoft.Data.SqlClient.SqlDataReader.NextResultAsyncExecute(Task task, Object state)&#xD;
+   at Microsoft.Data.SqlClient.SqlDataReader.InvokeAsyncCall[T](SqlDataReaderBaseAsyncCallContext`1 context)&#xD;
+--- End of stack trace from previous location ---&#xD;
+   at Microsoft.EntityFrameworkCore.Update.AffectedCountModificationCommandBatch.ConsumeAsync(RelationalDataReader reader, CancellationToken cancellationToken)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ca98de04-0994-4e55-9328-e145f9b14a22" testId="c5934314-6acd-cf3a-d228-f9219e8a9f50" testName="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_active_write_guard_returns_51011_without_context_and_allows_same_session_ef_updates" computerName="MOKTH" duration="00:00:07.3705773" startTime="2026-11-06T09:50:59.6099904+08:00" endTime="2026-11-06T09:51:06.9904153+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ca98de04-0994-4e55-9328-e145f9b14a22" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="5ac5b7b5-e1a0-e1c8-00ac-7dfd859ef08b">
+      <Execution id="5100c3bf-507b-42b1-8b30-b6c6594cfaf1" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests" name="SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_active_write_guard_returns_51011_without_context_and_allows_same_session_ef_updates" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c5934314-6acd-cf3a-d228-f9219e8a9f50">
+      <Execution id="ca98de04-0994-4e55-9328-e145f9b14a22" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests" name="SqlServer_active_write_guard_returns_51011_without_context_and_allows_same_session_ef_updates" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="5ac5b7b5-e1a0-e1c8-00ac-7dfd859ef08b" executionId="5100c3bf-507b-42b1-8b30-b6c6594cfaf1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c5934314-6acd-cf3a-d228-f9219e8a9f50" executionId="ca98de04-0994-4e55-9328-e145f9b14a22" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="1" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:00.31]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:00.80]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:00.83]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:09.12]       Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the entity changes. See the inner exception for details.&#xD;
+[xUnit.net 00:00:09.12]       ---- Microsoft.Data.SqlClient.SqlException : Cannot insert duplicate key row in object 'dbo.PrProductionBalLotMovement' with unique index 'UQ_PrProductionBalLotMovement_V2_PostingLine'. The duplicate key value is (2, &lt;NULL&gt;).&#xD;
+[xUnit.net 00:00:09.12]       Stack Trace:&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.Update.AffectedCountModificationCommandBatch.ConsumeAsync(RelationalDataReader reader, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.Update.ReaderModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.SqlServer.Update.Internal.SqlServerModificationCommandBatch.ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.Update.Internal.BatchExecutor.ExecuteAsync(IEnumerable`1 commandBatches, IRelationalConnection connection, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.Storage.RelationalDatabase.SaveChangesAsync(IList`1 entries, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(IList`1 entriesToSave, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.ChangeTracking.Internal.StateManager.SaveChangesAsync(StateManager stateManager, Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.SqlServer.Storage.Internal.SqlServerExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.DbContext.SaveChangesAsync(Boolean acceptAllChangesOnSuccess, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.12]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs(412,0): at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SeedSealFixtureAsync(String connectionString)&#xD;
+[xUnit.net 00:00:09.12]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs(436,0): at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SeedSealFixtureAsync(String connectionString)&#xD;
+[xUnit.net 00:00:09.12]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs(192,0): at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch()&#xD;
+[xUnit.net 00:00:09.12]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:09.12]         ----- Inner Stack Trace -----&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.SqlConnection.OnError(SqlException exception, Boolean breakConnection, Action`1 wrapCloseInAction)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.SqlInternalConnection.OnError(SqlException exception, Boolean breakConnection, Action`1 wrapCloseInAction)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.TdsParser.ThrowExceptionAndWarning(TdsParserStateObject stateObj, SqlCommand command, Boolean callerHasConnectionLock, Boolean asyncClose)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.TdsParser.TryRun(RunBehavior runBehavior, SqlCommand cmdHandler, SqlDataReader dataStream, BulkCopySimpleResultSet bulkCopyHandler, TdsParserStateObject stateObj, Boolean&amp; dataReady)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.SqlDataReader.TryHasMoreRows(Boolean&amp; moreRows)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.SqlDataReader.TryHasMoreResults(Boolean&amp; moreResults)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.SqlDataReader.TryNextResult(Boolean&amp; more)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.SqlDataReader.NextResultAsyncExecute(Task task, Object state)&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.Data.SqlClient.SqlDataReader.InvokeAsyncCall[T](SqlDataReaderBaseAsyncCallContext`1 context)&#xD;
+[xUnit.net 00:00:09.12]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:09.12]            at Microsoft.EntityFrameworkCore.Update.AffectedCountModificationCommandBatch.ConsumeAsync(RelationalDataReader reader, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.13]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:51:07.8776949+08:00">
+        <Text>[xUnit.net 00:00:09.12]     ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

@@ -19,7 +19,8 @@ public sealed record StockReplayWacEvent(
     decimal? CountFallbackUnitCost = null,
     decimal? CountPreQuantity = null,
     long? ReturnOfSaleEventId = null,
-    long? SalesReturnAllocationId = null);
+    long? SalesReturnAllocationId = null,
+    long? ReversedProductionIssueEventId = null);
 
 public sealed record StockReplayWacStep(
     long EventId,
@@ -175,6 +176,8 @@ public static class StockReplayWacSimulator
         var later = laterActiveEvents.OrderBy(e => e.Key)
             .ThenBy(e => e.EventId).ToArray();
         var ids = new HashSet<long> { anchor.EventId };
+        var earlier = new Dictionary<long, StockReplayWacEvent>();
+        var reversedProductionIssues = new HashSet<long>();
         for (var i = 0; i < later.Length; i++)
         {
             Validate(later[i]);
@@ -186,6 +189,15 @@ public static class StockReplayWacSimulator
                 throw new ArgumentException(
                     "Later WAC effects must have unique identities and ordered keys.",
                     nameof(laterActiveEvents));
+            if (later[i].ReversedProductionIssueEventId is long issueId
+                && (!reversedProductionIssues.Add(issueId)
+                    || !earlier.TryGetValue(issueId, out var issue)
+                    || issue.OldSignedQuantity >= 0m || issue.OldSignedValue > 0m
+                    || later[i].OldSignedQuantity != -issue.OldSignedQuantity
+                    || later[i].OldSignedValue != -issue.OldSignedValue))
+                throw Invalid(later[i].EventId,
+                    "has no exact earlier Production issue to reverse");
+            earlier.Add(later[i].EventId, later[i]);
         }
         return later;
     }
@@ -220,6 +232,14 @@ public static class StockReplayWacSimulator
                     beforeQty, beforeValue, movement.CountFallbackUnitCost,
                     movement.EventId))
                 : IssueValue(deltaQty, beforeQty, beforeValue, movement.EventId);
+        }
+        else if (movement.ReversedProductionIssueEventId is long issueId)
+        {
+            if (!applied.TryGetValue(issueId, out var issue)
+                || issue.SignedQuantity >= 0m || issue.SignedValue > 0m
+                || deltaQty != -issue.SignedQuantity)
+                throw Invalid(movement.EventId, "has no matching replayed Production issue");
+            deltaValue = -issue.SignedValue;
         }
         else if (movement.ReturnOfSaleEventId is long saleId)
         {
@@ -307,6 +327,7 @@ public static class StockReplayWacSimulator
                 || movement.FixedSignedValue.HasValue
                 || movement.ReturnOfSaleEventId.HasValue
                 || movement.SalesReturnAllocationId.HasValue
+                || movement.ReversedProductionIssueEventId.HasValue
                 || movement.Key.EffectiveAt
                     != StockReplayEventKey.CountEndOfDay(movement.Key.EffectiveAt))
                 throw new ArgumentException($"Count WAC event {movement.EventId} is invalid.");
@@ -320,6 +341,12 @@ public static class StockReplayWacSimulator
                     || movement.SalesReturnAllocationId is not > 0)
             || movement.ReturnOfSaleEventId is null
                 && movement.SalesReturnAllocationId.HasValue
+            || movement.ReversedProductionIssueEventId is long issueId
+                && (issueId <= 0 || issueId == movement.EventId
+                    || movement.ReplaySignedQuantity <= 0m
+                    || movement.FixedSignedValue != movement.OldSignedValue
+                    || movement.ReturnOfSaleEventId.HasValue
+                    || movement.SalesReturnAllocationId.HasValue)
             || movement.ReplaySignedQuantity < 0m && movement.FixedSignedValue.HasValue
             || movement.ReplaySignedQuantity >= 0m
                 && movement.FixedSignedValue is not decimal authorizedValue

@@ -57,6 +57,16 @@ internal static class StockReplayInventoryRouteSelector
                 && f.ReversesValuationFactId == null
                 && !db.StockValuationFacts.Any(r =>
                     r.ReversesValuationFactId == f.Id), cancellationToken);
+        // A reversed Production issue has no active net valuation, but a
+        // receipt before it can still change both historical issue costs.
+        if (!laterValuation && itemCodes.Length > 0
+            && expectedTrxType is (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive))
+            laterValuation = await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
+                h.CompanyCode == companyCode && h.BranchCode == branchCode
+                && h.TrxType == IvTrxTypes.IssueToProduction && h.EntryRole == "ORIGINAL"
+                && h.BatchStatus == IvBatchStatuses.Posted && itemCodes.Contains(h.ICode)
+                && h.TrxDtTime > batch.TrxDtTime
+                && db.IvTrxHistories.Any(r => r.ReversesHistoryId == h.Id), cancellationToken);
 
         var laterPileDate = false;
         var laterPhysical = false;

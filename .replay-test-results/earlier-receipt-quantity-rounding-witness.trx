@@ -1,0 +1,80 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="136cc896-704e-4a71-b12a-585f6ccb9162" name="Mokth@MOKTH 2026-11-08 13:03:56" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-08T13:03:56.8235317+08:00" queuing="2026-11-08T13:03:56.8235321+08:00" start="2026-11-08T13:03:45.0414838+08:00" finish="2026-11-08T13:03:58.2402035+08:00" />
+  <TestSettings name="default" id="3e938ac6-9f4e-4caa-9905-39741822b156">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-08_13_03_56" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="ea3a3b9b-a344-4e74-a20b-490567145982" testId="9caa27ab-b2a6-7a91-2eec-3d8a41a0b9a5" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_rejects_unreconciled_quantity_rounding(goodsReceipt: False)" computerName="MOKTH" duration="00:00:08.7840642" startTime="2026-11-08T13:03:48.0102553+08:00" endTime="2026-11-08T13:03:56.7862464+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ea3a3b9b-a344-4e74-a20b-490567145982">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1672&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a7c157db-de1c-43cf-b5c4-afc6f29165b6" testId="81e766d5-357c-07d2-4099-b8d6d5a2d88f" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_rejects_unreconciled_quantity_rounding(goodsReceipt: True)" computerName="MOKTH" duration="00:00:01.3655349" startTime="2026-11-08T13:03:56.8092693+08:00" endTime="2026-11-08T13:03:58.1523465+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a7c157db-de1c-43cf-b5c4-afc6f29165b6">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs:line 1672&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_rejects_unreconciled_quantity_rounding(goodsReceipt: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="81e766d5-357c-07d2-4099-b8d6d5a2d88f">
+      <Execution id="a7c157db-de1c-43cf-b5c4-afc6f29165b6" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Earlier_receipt_replay_rejects_unreconciled_quantity_rounding" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_rejects_unreconciled_quantity_rounding(goodsReceipt: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="9caa27ab-b2a6-7a91-2eec-3d8a41a0b9a5">
+      <Execution id="ea3a3b9b-a344-4e74-a20b-490567145982" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Earlier_receipt_replay_rejects_unreconciled_quantity_rounding" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="9caa27ab-b2a6-7a91-2eec-3d8a41a0b9a5" executionId="ea3a3b9b-a344-4e74-a20b-490567145982" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="81e766d5-357c-07d2-4099-b8d6d5a2d88f" executionId="a7c157db-de1c-43cf-b5c4-afc6f29165b6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="0" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:01.95]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.43]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.46]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:11.28]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:11.28]       Expected: False&#xD;
+[xUnit.net 00:00:11.28]       Actual:   True&#xD;
+[xUnit.net 00:00:11.28]       Stack Trace:&#xD;
+[xUnit.net 00:00:11.28]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1672,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:11.28]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:12.64]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:12.64]       Expected: False&#xD;
+[xUnit.net 00:00:12.64]       Actual:   True&#xD;
+[xUnit.net 00:00:12.64]       Stack Trace:&#xD;
+[xUnit.net 00:00:12.64]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionMaterialIssueSequenceOverlapTests.cs(1672,0): at ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.BackdatedReceiptAndProductionIssueAsync(Boolean goodsReceipt, Boolean receiptFirst, Int32 consumeAt, Boolean standard)&#xD;
+[xUnit.net 00:00:12.64]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:12.65]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-08T13:03:56.7895708+08:00">
+        <Text>[xUnit.net 00:00:11.28]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_rejects_unreconciled_quantity_rounding(goodsReceipt: False) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-08T13:03:58.1530902+08:00">
+        <Text>[xUnit.net 00:00:12.64]     ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Earlier_receipt_replay_rejects_unreconciled_quantity_rounding(goodsReceipt: True) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

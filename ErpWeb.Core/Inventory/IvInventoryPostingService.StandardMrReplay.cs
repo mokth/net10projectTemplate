@@ -93,6 +93,9 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (await RejectReversedProductionReceiptAsync(write, companyCode, branchCode,
+                batchNo, receiptType, rollback: false, cancellationToken) is { } reversedProduction)
+            return reversedProduction;
         Dictionary<string, ErpWeb.Model.Entities.Purchase.PoOrder>? grOrders = null;
         IReadOnlyList<IvTrxBatchDetail>? grDetails = null;
         if (goodsReceipt)
@@ -576,6 +579,9 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (await RejectReversedProductionReceiptAsync(write, companyCode, branchCode,
+                batchNo, receiptType, rollback: true, cancellationToken) is { } reversedProduction)
+            return reversedProduction;
         var ledger = await BeginStandaloneLedgerAsync(write, companyCode,
             branchCode, batchNo, reversal: true, cancellationToken);
         await using var postingScope = new StockPostingAbortScope(

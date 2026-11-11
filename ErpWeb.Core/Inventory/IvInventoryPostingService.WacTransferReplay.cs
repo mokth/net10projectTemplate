@@ -263,12 +263,12 @@ public sealed partial class IvInventoryPostingService
             || state.InventoryValue != tail.CurrentValue)
             throw InvalidWacTransfer("The WAC item state changed before transfer rollback.");
 
-        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
-            db, companyCode, branchCode, batchNo, cancellationToken);
-        if (qaRestore is not null)
+        var qaError = await AssertQaTransferRemovalAsync(
+            db, companyCode, branchCode, batchNo, sourcePlan, destPlan, cancellationToken);
+        if (qaError is not null)
         {
             await tx.RollbackAsync(cancellationToken);
-            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
         }
 
         var now = DateTime.UtcNow;

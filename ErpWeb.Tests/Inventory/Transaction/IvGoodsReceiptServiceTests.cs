@@ -346,7 +346,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Backdated_wac_gr_reprices_later_issue_and_restores_po_on_rollback()
+    public async Task Backdated_wac_gr_checks_approval_reprices_later_issue_and_restores_po_on_rollback()
     {
         await EnsureActiveStockLedgerAsync();
         await using (var db = await _factory.CreateDbContextAsync())
@@ -410,6 +410,39 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             line.BaseUnitPrices = 10m;
             await unchanged.SaveChangesAsync();
         }
+
+        var approval = new Mock<IProcurementApprovalGuard>();
+        approval.Setup(x => x.LockPublishedPolicyAsync(
+                It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        approval.Setup(x => x.LockInstancesAsync(
+                It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IEnumerable<(string DocNo, short DocRev)>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        approval.Setup(x => x.AssertPoReceivableAsync(
+                It.IsAny<AppDbContext>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<short>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("Pending approval");
+        var unapprovedReceipt = CreateGrSut(withLedger: true,
+            enableBackdatedReplay: true, approval: approval.Object);
+        var rejectedApproval = await unapprovedReceipt.PostAsync([saved.BatchNo]);
+        Assert.False(rejectedApproval.Succeeded);
+        Assert.Contains("needs approval", rejectedApproval.ErrorMessage ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase);
+        approval.Verify(x => x.AssertPoReceivableAsync(
+            It.IsAny<AppDbContext>(), "DEMO", "HQ", po.PoNo,
+            It.IsAny<short>(), It.IsAny<CancellationToken>()), Times.Once);
+        await using (var unchanged = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(0m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
+            Assert.Equal(11m, (await unchanged.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(33m, (await unchanged.StockCostStates.SingleAsync()).InventoryValue);
+            Assert.Equal(IvBatchStatuses.New, (await unchanged.IvTrxBatches
+                .SingleAsync(b => b.BatchNo == saved.BatchNo)).BatchStatus);
+            Assert.Empty(await unchanged.IvTrxHistories
+                .Where(h => h.BatchNo == saved.BatchNo).ToListAsync());
+        }
+
         var posted = await receipt.PostAsync([saved.BatchNo]);
         Assert.True(posted.Succeeded, posted.ErrorMessage);
         await using (var db = await _factory.CreateDbContextAsync())

@@ -3,12 +3,56 @@ using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
+using ErpWeb.Model.Repositories.Inventory;
 using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvStockCountService
 {
+    private sealed record QaCountProjection(int BalanceId, decimal CurrentQuantity,
+        byte[] RowVersion, decimal FinalQuantity);
+
+    private async Task<string?> CheckQaCountHoldsWithinRootAsync(
+        StockPostingContext root, IReadOnlyList<QaCountProjection> projections,
+        CancellationToken cancellationToken)
+    {
+        root.EnsureUnsealed();
+        if (root.Db.Database.CurrentTransaction is null || projections.Count == 0
+            || projections.Select(p => p.BalanceId).Distinct().Count() != projections.Count
+            || projections.Any(p => p.BalanceId <= 0 || p.FinalQuantity < 0m))
+            return "The count stock balances changed before QA validation.";
+        var ids = projections.Select(p => p.BalanceId).ToArray();
+        var snapshots = await root.Db.IvBalLocs.AsNoTracking()
+            .Where(b => b.CompanyCode == root.CompanyCode && b.BranchCode == root.BranchCode
+                && ids.Contains(b.Id)).ToDictionaryAsync(b => b.Id, cancellationToken);
+        if (snapshots.Count != projections.Count)
+            return "The count stock balances changed before QA validation.";
+        var bySlice = new Dictionary<IvStockSliceKey, QaCountProjection>();
+        foreach (var projection in projections)
+        {
+            var pile = snapshots[projection.BalanceId];
+            var slice = IvStockSliceKey.Create(pile.CompanyCode, pile.BranchCode,
+                pile.ICode, pile.WhCode, pile.LocCode, pile.LotNo, pile.IStatus);
+            if (!bySlice.TryAdd(slice, projection))
+                return "The count has ambiguous stock balances for QA validation.";
+        }
+        var ordered = _postingRepo.GetOrderedStockSlices(bySlice.Keys);
+        var locked = await _postingRepo.LockBalanceSlicesAsync(root.Db, ordered, cancellationToken);
+        foreach (var slice in ordered)
+        {
+            var projection = bySlice[slice];
+            if (!locked.TryGetValue(slice, out var pile) || pile.Id != projection.BalanceId
+                || pile.StdQty != projection.CurrentQuantity
+                || !pile.RowVersion.SequenceEqual(projection.RowVersion))
+                return "The count stock balances changed before QA validation.";
+            var error = await _qaPhysical.AssertRemainingCoversHoldsAsync(root.Db,
+                root.CompanyCode, root.BranchCode, pile.Id, projection.FinalQuantity, cancellationToken);
+            if (error is not null) return error;
+        }
+        return null;
+    }
+
     private async Task<IvStockCountOperationResult?> TryPreviewBackdatedCountAsync(
         UserContext user, int id,
         IReadOnlyCollection<StockCountCostApprovalRequest> costApprovals,
@@ -223,6 +267,16 @@ public sealed partial class IvStockCountService
             return IvStockCountOperationResult.Fail(lockedClosed);
         }
         var root = begin.Context;
+        await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root, plan.PhysicalSheet, cancellationToken);
+        var qaError = await CheckQaCountHoldsWithinRootAsync(root,
+            plan.PhysicalSheet.Lines.Select(l => new QaCountProjection(
+                l.BalLocId, l.CurrentQuantity, l.BalanceRowVersion, l.Projection.FinalQuantity)).ToArray(),
+            cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvStockCountOperationResult.Fail(qaError);
+        }
         var written = await StockReplayCountSheetRootWriter.AppendWithinRootAsync(
             root, plan, _runningNumbers, cancellationToken);
         await _coordinator.CompleteReplayInTransactionAsync(root,
@@ -431,13 +485,23 @@ public sealed partial class IvStockCountService
             return IvStockCountOperationResult.Fail(lockedClosed);
         }
         var root = begin.Context;
+        var removal = wac?.Sheet ?? plan.Standard?.Sheet
+            ?? plan.Fifo?.Sheet ?? plan.Zero!.Removal;
+        await StockReplayCountSheetRemovalPlanner.ValidateWithinRootAsync(root, removal, cancellationToken);
+        var qaError = await CheckQaCountHoldsWithinRootAsync(root,
+            removal.Lines.Select(l => new QaCountProjection(l.BalLocId,
+                l.Physical.CurrentQuantity, l.Physical.BalanceRowVersion,
+                l.Physical.Projection.FinalQuantity)).ToArray(), cancellationToken);
+        if (qaError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvStockCountOperationResult.Fail(qaError);
+        }
         var written = await StockReplayCountSheetRemovalRootWriter
             .AppendWithinRootAsync(root, plan, _runningNumbers,
                 reason.Trim(), DateTime.UtcNow, cancellationToken);
         await _coordinator.CompleteReplayInTransactionAsync(root,
             written.RequiredActiveHistoryIds, cancellationToken);
-        var removal = wac?.Sheet ?? plan.Standard?.Sheet
-            ?? plan.Fifo?.Sheet ?? plan.Zero!.Removal;
         var projectedByPile = removal.Lines.ToDictionary(l => l.BalLocId,
             l => l.Physical.Projection.FinalQuantity);
         var pileIds = projectedByPile.Keys.ToArray();

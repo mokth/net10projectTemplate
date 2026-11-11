@@ -1,0 +1,70 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="a3e90107-41b6-4b57-b944-a1855e767ea4" name="Mokth@MOKTH 2026-11-08 23:47:57" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-08T23:47:57.8444242+08:00" queuing="2026-11-08T23:47:57.8444248+08:00" start="2026-11-08T23:47:38.9524589+08:00" finish="2026-11-08T23:48:07.0783652+08:00" />
+  <TestSettings name="default" id="d5aeb1a8-ac49-4668-b974-85bc7f18711f">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-08_23_47_57" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="7a15e8b2-43a8-4fb4-b3f4-f49868e1472c" testId="3b23c638-cf66-75f6-db5b-a4c51cd88b57" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting(goodsReceipt: False, replayEnabled: False)" computerName="MOKTH" duration="00:00:01.6319544" startTime="2026-11-08T23:48:04.2447609+08:00" endTime="2026-11-08T23:48:05.8765673+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7a15e8b2-43a8-4fb4-b3f4-f49868e1472c" />
+    <UnitTestResult executionId="37e9baa0-0866-4bea-bd54-63582377adc0" testId="6d194efb-9614-3ec9-450b-b09c6caae946" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_refuses_already_reversed_issue_without_output(goodsReceipt: False)" computerName="MOKTH" duration="00:00:10.9005852" startTime="2026-11-08T23:47:46.9212733+08:00" endTime="2026-11-08T23:47:57.7930621+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="37e9baa0-0866-4bea-bd54-63582377adc0" />
+    <UnitTestResult executionId="27698bad-c875-4bec-b06a-90939bb2d25d" testId="6f42a789-492c-b5fa-a791-582998d5d896" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting(goodsReceipt: True, replayEnabled: True)" computerName="MOKTH" duration="00:00:01.6755142" startTime="2026-11-08T23:47:59.7859017+08:00" endTime="2026-11-08T23:48:01.4581790+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="27698bad-c875-4bec-b06a-90939bb2d25d" />
+    <UnitTestResult executionId="79019cbb-c29d-4428-8d5d-34551d6a1dff" testId="e57bfd0d-78c4-4fb6-3351-fb2d501f842e" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_receipt_plan_refuses_damaged_reversal_cost" computerName="MOKTH" duration="00:00:01.1028345" startTime="2026-11-08T23:48:05.8770240+08:00" endTime="2026-11-08T23:48:06.9795922+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="79019cbb-c29d-4428-8d5d-34551d6a1dff" />
+    <UnitTestResult executionId="a35d6c6b-21cd-4235-8b61-a2e27c32246c" testId="3d4f54ce-a881-9a75-ebfb-20881e14c574" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_refuses_already_reversed_issue_without_output(goodsReceipt: True)" computerName="MOKTH" duration="00:00:01.9884376" startTime="2026-11-08T23:47:57.8222472+08:00" endTime="2026-11-08T23:47:59.7820034+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a35d6c6b-21cd-4235-8b61-a2e27c32246c" />
+    <UnitTestResult executionId="c8e00165-66e2-45ff-8f15-8245abc27349" testId="6442d357-20e5-f289-43c1-f95f72e7fbac" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting(goodsReceipt: True, replayEnabled: False)" computerName="MOKTH" duration="00:00:01.2447675" startTime="2026-11-08T23:48:01.4589543+08:00" endTime="2026-11-08T23:48:02.7032141+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c8e00165-66e2-45ff-8f15-8245abc27349" />
+    <UnitTestResult executionId="65df15c4-477d-4352-bbc7-91afc3fc71ad" testId="469f4dbb-a4d8-2a6b-5601-cb0fd15a82c6" testName="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting(goodsReceipt: False, replayEnabled: True)" computerName="MOKTH" duration="00:00:01.5410704" startTime="2026-11-08T23:48:02.7035921+08:00" endTime="2026-11-08T23:48:04.2444705+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="65df15c4-477d-4352-bbc7-91afc3fc71ad" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_reversed_receipt_plan_refuses_damaged_reversal_cost" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="e57bfd0d-78c4-4fb6-3351-fb2d501f842e">
+      <Execution id="79019cbb-c29d-4428-8d5d-34551d6a1dff" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Fifo_reversed_receipt_plan_refuses_damaged_reversal_cost" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting(goodsReceipt: False, replayEnabled: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="3b23c638-cf66-75f6-db5b-a4c51cd88b57">
+      <Execution id="7a15e8b2-43a8-4fb4-b3f4-f49868e1472c" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting(goodsReceipt: False, replayEnabled: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="469f4dbb-a4d8-2a6b-5601-cb0fd15a82c6">
+      <Execution id="65df15c4-477d-4352-bbc7-91afc3fc71ad" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting(goodsReceipt: True, replayEnabled: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="6f42a789-492c-b5fa-a791-582998d5d896">
+      <Execution id="27698bad-c875-4bec-b06a-90939bb2d25d" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_refuses_already_reversed_issue_without_output(goodsReceipt: True)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="3d4f54ce-a881-9a75-ebfb-20881e14c574">
+      <Execution id="a35d6c6b-21cd-4235-8b61-a2e27c32246c" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_fifo_receipt_refuses_already_reversed_issue_without_output" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting(goodsReceipt: True, replayEnabled: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="6442d357-20e5-f289-43c1-f95f72e7fbac">
+      <Execution id="c8e00165-66e2-45ff-8f15-8245abc27349" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Fifo_earlier_receipt_consumed_by_reversed_issue_cannot_be_removed_without_recosting" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests.Backdated_fifo_receipt_refuses_already_reversed_issue_without_output(goodsReceipt: False)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="6d194efb-9614-3ec9-450b-b09c6caae946">
+      <Execution id="37e9baa0-0866-4bea-bd54-63582377adc0" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionMaterialIssueSequenceOverlapTests" name="Backdated_fifo_receipt_refuses_already_reversed_issue_without_output" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="3b23c638-cf66-75f6-db5b-a4c51cd88b57" executionId="7a15e8b2-43a8-4fb4-b3f4-f49868e1472c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6d194efb-9614-3ec9-450b-b09c6caae946" executionId="37e9baa0-0866-4bea-bd54-63582377adc0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6f42a789-492c-b5fa-a791-582998d5d896" executionId="27698bad-c875-4bec-b06a-90939bb2d25d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e57bfd0d-78c4-4fb6-3351-fb2d501f842e" executionId="79019cbb-c29d-4428-8d5d-34551d6a1dff" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3d4f54ce-a881-9a75-ebfb-20881e14c574" executionId="a35d6c6b-21cd-4235-8b61-a2e27c32246c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6442d357-20e5-f289-43c1-f95f72e7fbac" executionId="c8e00165-66e2-45ff-8f15-8245abc27349" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="469f4dbb-a4d8-2a6b-5601-cb0fd15a82c6" executionId="65df15c4-477d-4352-bbc7-91afc3fc71ad" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="7" executed="7" passed="7" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:06.77]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:07.53]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:07.58]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:27.71]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

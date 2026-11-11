@@ -17,6 +17,42 @@ public sealed record StockReplayWacTailRepricingResult(
 /// </summary>
 public static class StockReplayWacTailRepricingWriter
 {
+    internal static Task<StockReplayWacTailRepricingResult> AppendPreparedMultiPileReceiptInsertionAsync(
+        StockPostingContext context, StockReplayWacWritePermit permit,
+        StockReplayWacMultiPileReceiptInsertionPlan plan, int firstLine, CancellationToken ct,
+        bool allowSalesReturn = false)
+    {
+        StockReplayWacMultiPileReceiptPlanner.ValidatePreparedInsertion(plan);
+        ValidateMultiPileReceiptPermit(context, permit, plan.Item, plan.Hash,
+            plan.Piles.ToDictionary(p => p.BalLocId, p => p.Projection.FinalQuantity), firstLine);
+        return AppendTailAsync(context, permit, plan.Tail.LaterEvents, plan.Projection.LaterSteps,
+            firstLine, null, null, ct, allowSalesReturn);
+    }
+
+    internal static Task<StockReplayWacTailRepricingResult> AppendPreparedMultiPileReceiptRemovalAsync(
+        StockPostingContext context, StockReplayWacWritePermit permit,
+        StockReplayWacMultiPileReceiptRemovalPlan plan, int firstLine, CancellationToken ct,
+        bool allowSalesReturn = false)
+    {
+        StockReplayWacMultiPileReceiptPlanner.ValidatePreparedRemoval(plan);
+        ValidateMultiPileReceiptPermit(context, permit, plan.Anchor.ItemCode, plan.Hash,
+            plan.Piles.ToDictionary(p => p.BalLocId, p => p.Projection.FinalQuantity), firstLine);
+        return AppendTailAsync(context, permit, plan.Tail.LaterEvents, plan.Projection.LaterSteps,
+            firstLine, null, null, ct, allowSalesReturn);
+    }
+
+    private static void ValidateMultiPileReceiptPermit(StockPostingContext context, StockReplayWacWritePermit permit,
+        string item, string hash, IReadOnlyDictionary<int, decimal> piles, int firstLine)
+    {
+        context.EnsureUnsealed();
+        if (firstLine <= 0 || permit.RootPostingId != context.Posting.Id
+            || permit.RootPostingSequence != context.Posting.PostingSequence || permit.LedgerEpochId != context.Epoch.Id
+            || permit.CompanyCode != context.CompanyCode || permit.BranchCode != context.BranchCode
+            || permit.ItemCode != item || permit.PlanHash != hash || permit.ChangedPiles.Count != piles.Count
+            || piles.Any(p => !permit.ChangedPiles.TryGetValue(p.Key, out var quantity) || quantity != p.Value))
+            throw Invalid("The receipt replay has no matching multi-pile permit.");
+    }
+
     /// <summary>
     /// Rejects a sheet tail needing physical count corrections or a separate
     /// receipt/settlement authority before any count-root mutation begins.
@@ -349,6 +385,8 @@ public static class StockReplayWacTailRepricingWriter
         foreach (var movement in laterEvents)
         {
             var step = steps[movement.EventId];
+            if (movement.ReversedProductionIssueEventId.HasValue)
+                throw Invalid("A reversed Production issue needs its paired valuation correction writer.");
             if (step.SignedQuantity != movement.OldSignedQuantity)
             {
                 if (movement.EventId >= 0 || changedCountPlan is null

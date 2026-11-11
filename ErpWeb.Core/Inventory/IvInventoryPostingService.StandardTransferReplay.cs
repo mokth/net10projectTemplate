@@ -116,6 +116,13 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, lockedClosed);
         }
+        var pileError = await LockQaTransferPilesAsync(write, companyCode, branchCode,
+            source, destination, cancellationToken);
+        if (pileError is not null)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, pileError);
+        }
         var writeDetails = await write.IvTrxBatchDetails
             .Where(d => d.BatchId == batch.Id)
             .ToListAsync(cancellationToken);
@@ -830,12 +837,12 @@ public sealed partial class IvInventoryPostingService
             || state.InventoryValue != tail.CurrentValue)
             throw InvalidStandardTransfer("The Standard item state changed before rollback.");
 
-        var qaRestore = await _qaPhysical.RestoreStockOutAsync(
-            db, companyCode, branchCode, batchNo, cancellationToken);
-        if (qaRestore is not null)
+        var qaError = await AssertQaTransferRemovalAsync(
+            db, companyCode, branchCode, batchNo, sourcePlan, destPlan, cancellationToken);
+        if (qaError is not null)
         {
             await tx.RollbackAsync(cancellationToken);
-            return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
+            return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
         }
 
         var now = DateTime.UtcNow;

@@ -37,6 +37,15 @@ public interface IQaPhysicalHoldAuthorization
         IReadOnlyList<QaStockOutNeed> needs,
         CancellationToken cancellationToken = default);
 
+    // The caller holds the affected inventory balance lock in its transaction.
+    Task<string?> AssertRemainingCoversHoldsAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int balLocId,
+        decimal remainingBaseQty,
+        CancellationToken cancellationToken = default);
+
     Task<string?> RestoreStockOutAsync(
         AppDbContext db,
         string companyCode,

@@ -1,0 +1,63 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="baaa3686-7c29-4af4-b5c0-fc7aa92a1147" name="Mokth@MOKTH 2026-11-06 09:53:25" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-06T09:53:25.3835091+08:00" queuing="2026-11-06T09:53:25.3835096+08:00" start="2026-11-06T09:53:15.1293955+08:00" finish="2026-11-06T09:53:26.5605858+08:00" />
+  <TestSettings name="default" id="31a932a9-4d22-4a9e-ada1-4c1f7daac441">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-06_09_53_25" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="43fe6f60-043a-42bc-886f-eb0b59e8ef97" testId="5ac5b7b5-e1a0-e1c8-00ac-7dfd859ef08b" testName="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch" computerName="MOKTH" duration="00:00:01.0798642" startTime="2026-11-06T09:53:25.3671192+08:00" endTime="2026-11-06T09:53:26.4459665+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="43fe6f60-043a-42bc-886f-eb0b59e8ef97">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Values differ&#xD;
+Expected: 51002&#xD;
+Actual:   2601</Message>
+          <StackTrace>   at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.AssertSqlErrorNumberAsync(Func`1 action, Int32 expectedNumber) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs:line 677&#xD;
+   at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs:line 203&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="e3cf3acf-c5ea-4dac-ac1c-2b5b052a1ed8" testId="c5934314-6acd-cf3a-d228-f9219e8a9f50" testName="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_active_write_guard_returns_51011_without_context_and_allows_same_session_ef_updates" computerName="MOKTH" duration="00:00:06.4584304" startTime="2026-11-06T09:53:18.9089384+08:00" endTime="2026-11-06T09:53:25.3505832+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e3cf3acf-c5ea-4dac-ac1c-2b5b052a1ed8" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="5ac5b7b5-e1a0-e1c8-00ac-7dfd859ef08b">
+      <Execution id="43fe6f60-043a-42bc-886f-eb0b59e8ef97" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests" name="SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_active_write_guard_returns_51011_without_context_and_allows_same_session_ef_updates" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c5934314-6acd-cf3a-d228-f9219e8a9f50">
+      <Execution id="e3cf3acf-c5ea-4dac-ac1c-2b5b052a1ed8" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests" name="SqlServer_active_write_guard_returns_51011_without_context_and_allows_same_session_ef_updates" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="5ac5b7b5-e1a0-e1c8-00ac-7dfd859ef08b" executionId="43fe6f60-043a-42bc-886f-eb0b59e8ef97" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c5934314-6acd-cf3a-d228-f9219e8a9f50" executionId="e3cf3acf-c5ea-4dac-ac1c-2b5b052a1ed8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="1" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:02.49]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.20]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:03.26]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:10.85]       Assert.Equal() Failure: Values differ&#xD;
+[xUnit.net 00:00:10.85]       Expected: 51002&#xD;
+[xUnit.net 00:00:10.85]       Actual:   2601&#xD;
+[xUnit.net 00:00:10.85]       Stack Trace:&#xD;
+[xUnit.net 00:00:10.85]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs(677,0): at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.AssertSqlErrorNumberAsync(Func`1 action, Int32 expectedNumber)&#xD;
+[xUnit.net 00:00:10.85]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\ProductionStockLedgerSqlServerTests.cs(203,0): at ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch()&#xD;
+[xUnit.net 00:00:10.85]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:10.86]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-06T09:53:26.4500065+08:00">
+        <Text>[xUnit.net 00:00:10.85]     ErpWeb.Tests.Production.Transaction.ProductionStockLedgerSqlServerTests.SqlServer_seal_triggers_reject_existing_and_new_facts_for_a_prepared_branch [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

@@ -416,7 +416,7 @@ public sealed class ProductionStockLedgerSqlServerTests
         {
             CompanyCode = company, BranchCode = branch, BatchNo = UniquePositiveInt(), TrxLineNo = 1,
             TrxDtTime = DateTime.UtcNow, TrxType = "TEST", BatchStatus = "POSTED", ICode = $"FG-{token}",
-            StockPostingId = posting.Id
+            StockPostingId = posting.Id, PostingLineNo = 1
         };
         db.ProductionMaterialMovements.Add(material);
         db.IvTrxHistories.Add(history);
@@ -562,7 +562,7 @@ public sealed class ProductionStockLedgerSqlServerTests
     {
         ProductionBalLotId = balanceId, MovementType = type, Qty = 1m, Uom = "EA", BaseQty = 1m, BaseUom = "EA",
         UnitCost = 0m, TotalCost = 0m, WorkOrderId = graph.WorkOrderId, PostingLinkId = linkId,
-        CompanyCode = company, BranchCode = branch, StockPostingId = postingId, ItemCode = $"FG-{token}",
+        CompanyCode = company, BranchCode = branch, StockPostingId = postingId, PostingLineNo = ordinal, ItemCode = $"FG-{token}",
         DocumentType = "TEST", DocumentNo = $"PM-{token}-{ordinal}", MovementDate = DateTime.UtcNow,
         CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
     };
@@ -597,7 +597,7 @@ public sealed class ProductionStockLedgerSqlServerTests
         var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connectionString).Options;
         await using var db = new AppDbContext(options);
         db.ProductionMaterialMovements.Add(NewMaterialMovement(fixture.Company, fixture.Branch, fixture.Graph,
-            fixture.BalanceId, fixture.ReceiptMovementId, fixture.PostingLinkId, fixture.PostingId, fixture.Token, sourceLine));
+            fixture.BalanceId, fixture.AdditionalOutboundMovementId, fixture.PostingLinkId, fixture.PostingId, fixture.Token, sourceLine));
         await db.SaveChangesAsync();
     }
 
@@ -622,7 +622,7 @@ public sealed class ProductionStockLedgerSqlServerTests
         {
             CompanyCode = fixture.Company, BranchCode = fixture.Branch, BatchNo = UniquePositiveInt(), TrxLineNo = 1,
             TrxDtTime = DateTime.UtcNow, TrxType = "TEST", BatchStatus = "POSTED", ICode = $"FG-{fixture.Token}",
-            StockPostingId = fixture.PostingId
+            StockPostingId = fixture.PostingId, PostingLineNo = 99
         });
         await db.SaveChangesAsync();
     }
