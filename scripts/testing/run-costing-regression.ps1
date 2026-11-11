@@ -87,6 +87,7 @@ $required = @(
     'Backdated_wac_misc_receipt_rejects_purchase_invoice_price_variance',
     'Backdated_wac_misc_receipt_rejects_damaged_purchase_evidence',
     'Backdated_wac_misc_receipt_before_purchase_invoice_respects_qa_hold',
+    'Neutral_purchase_invoice_can_roll_back_before_backdated_receipt',
     'ProductionEffectiveCostResolverTests',
     'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
     'Receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues',
