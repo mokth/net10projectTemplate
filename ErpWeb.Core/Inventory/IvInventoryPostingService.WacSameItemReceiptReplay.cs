@@ -397,12 +397,52 @@ public sealed partial class IvInventoryPostingService
                 {
                     if (!receiptsById.TryGetValue(checked((int)physicalReceipt.EventId), out var laterReceipt)
                         || laterReceipt.CompanyCode != company || laterReceipt.BranchCode != branch
-                        || laterReceipt.TrxType != IvTrxTypes.MiscellaneousReceipt || laterReceipt.EntryRole != "ORIGINAL"
+                        || laterReceipt.TrxType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+                        || laterReceipt.EntryRole != "ORIGINAL"
                         || laterReceipt.BatchStatus != IvBatchStatuses.Posted || laterReceipt.ICode != plan.ItemCode
                         || laterReceipt.ToBalLocId != plan.BalLocId || laterReceipt.ToStdQty != physicalReceipt.SignedDelta
                         || laterReceipt.FromBalLocId is not null || laterReceipt.TrxDtTime != physicalReceipt.Key.EffectiveAt
                         || laterReceipt.TrxDtTime.Year != receipt.TrxDtTime.Year
                         || laterReceipt.TrxDtTime.Month != receipt.TrxDtTime.Month)
+                        return null;
+                }
+                // A goods receipt also needs its exact purchase owner and an
+                // unsettled PO line. Recheck this with the rest of the proof
+                // under the branch lock; an invoiced GR needs procurement replay.
+                var goodsReceipts = laterReceipts.Where(h => h.TrxType == IvTrxTypes.GoodsReceive).ToArray();
+                if (goodsReceipts.Length != 0)
+                {
+                    if (goodsReceipts.Any(h => string.IsNullOrWhiteSpace(h.PoNo) || h.PoRelNo is null || h.PoLineNo is null))
+                        return null;
+                    if (lockSalesEvidence && db.Database.IsSqlServer())
+                    {
+                        if (db.Database.CurrentTransaction is null)
+                            throw new InvalidOperationException("Purchase evidence must be locked inside the replay transaction.");
+                        var keys = goodsReceipts.Select(h => new { PoNo = h.PoNo!.Trim(), PoRelNo = h.PoRelNo!.Value })
+                            .Distinct().ToArray();
+                        var keysJson = System.Text.Json.JsonSerializer.Serialize(keys);
+                        try
+                        {
+                            // Purchase invoice posting locks its PO before the
+                            // branch. Refuse a busy PO instead of waiting while
+                            // holding the branch lock, then hold the header locks
+                            // through source validation and commit.
+                            var locked = await db.PoOrders.FromSqlInterpolated($@"
+                                SELECT p.* FROM dbo.POOrder AS p WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                                INNER JOIN OPENJSON({keysJson}) WITH (PONo nvarchar(30) '$.PoNo', PORelNo smallint '$.PoRelNo') AS k
+                                    ON p.PONo = k.PONo AND p.PORelNo = k.PORelNo
+                                WHERE p.CompanyCode = {company} AND p.BranchCode = {branch}")
+                                .AsNoTracking().ToArrayAsync(ct);
+                            if (locked.Length != keys.Length || keys.Any(k => !locked.Any(p =>
+                                string.Equals(p.PoNo, k.PoNo, StringComparison.OrdinalIgnoreCase) && p.PoRelNo == k.PoRelNo)))
+                                return null;
+                        }
+                        catch (SqlException error) when (error.Number == 1222)
+                        {
+                            return null;
+                        }
+                    }
+                    if (await CheckSimpleWacTailAsync(db, plan.WacLater, receipt.TrxDtTime, ct) is not null)
                         return null;
                 }
                 laterReceiptTailFingerprint = tailFingerprint;
