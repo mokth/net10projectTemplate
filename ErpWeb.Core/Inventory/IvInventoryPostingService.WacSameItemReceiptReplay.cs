@@ -26,7 +26,7 @@ public sealed partial class IvInventoryPostingService
         decimal WacFinalQty, decimal WacFinalValue);
 
     private sealed record ReversedSaleIssueProof(int HistoryId, decimal OldSignedValue, decimal NewSignedValue);
-    private sealed record ReversedSaleFixedReceiptProof(int HistoryId, long FactId, long OwnerId,
+    private sealed record WacFixedReceiptProof(int HistoryId, long FactId, long OwnerId,
         string OwnerFingerprint, string OwnerSnapshotHash, DateTime? OwnerSealedAt,
         decimal UnitCost, decimal CostAmount, string? BaseCurrency, string? TransactionCurrency,
         decimal? TransactionCostAmount, decimal? ExchangeRate);
@@ -385,7 +385,7 @@ public sealed partial class IvInventoryPostingService
             var projectedSaleCost = -steps.Single(s => s.EventId == sale.Id).SignedValue;
             var laterTailFingerprint = string.Empty;
             var laterIssues = new List<ReversedSaleIssueProof>();
-            var laterFixedReceipts = new List<ReversedSaleFixedReceiptProof>();
+            var laterFixedReceipts = new List<WacFixedReceiptProof>();
             if ((projectedSaleCost != fact.CostAmount || cycle?.ActiveRootId is not null)
                 && (plan.PhysicalLater.Count != 0 || plan.WacLater.Count != 0))
             {
@@ -425,50 +425,12 @@ public sealed partial class IvInventoryPostingService
                             || laterReceipt.ToBalLocId != plan.BalLocId || laterReceipt.ToStdQty != physicalReceipt.SignedDelta
                             || laterReceipt.FromBalLocId is not null)
                             return null;
-                        var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, company, branch, [laterReceipt], ct);
-                        var facts = active[laterReceipt.Id];
-                        if (facts.Count != 1 || laterReceipt.StockPostingId is not > 0)
-                            return null;
-                        var factOwner = await db.StockPostings.AsNoTracking()
-                            .SingleOrDefaultAsync(p => p.Id == laterReceipt.StockPostingId, ct);
-                        var receiptFact = facts[0];
                         var receiptEvent = plan.WacLater.Single(e => e.EventId == laterReceipt.Id);
-                        if (factOwner is null || factOwner.CompanyCode != company || factOwner.BranchCode != branch
-                            || factOwner.LedgerEpochId != plan.EpochId || factOwner.SealedAtUtc is null
-                            || factOwner.SourceModule != "INVENTORY" || factOwner.SourceDocumentType != laterReceipt.TrxType
-                            || factOwner.PostingRole != "PRIMARY" || factOwner.CommandType != $"IV_POST_{laterReceipt.TrxType}"
-                            || factOwner.EffectiveAt != laterReceipt.TrxDtTime || receiptFact.StockPostingId != factOwner.Id
-                            || receiptFact.CompanyCode != company || receiptFact.BranchCode != branch
-                            || receiptFact.LedgerEpochId != plan.EpochId || receiptFact.InventoryHistoryId != laterReceipt.Id
-                            || receiptFact.ItemCode != plan.ItemCode || receiptFact.Direction != 1
-                            || receiptFact.BaseQty != laterReceipt.ToStdQty || receiptFact.ToBalLocId != plan.BalLocId
-                            || receiptFact.FromBalLocId is not null || receiptFact.CostMethod != StockCostMethods.MovingAverage
-                            || receiptFact.UnitCost < 0m || receiptFact.CostAmount < 0m
-                            || receiptFact.BaseCostAmount != receiptFact.CostAmount
-                            || StockLedgerPrecision.Money(receiptFact.BaseQty * receiptFact.UnitCost) != receiptFact.CostAmount
-                            || receiptFact.SignedValue != receiptEvent.OldSignedValue || receiptFact.MovementCode != "RECEIPT_IN"
-                            || receiptFact.ValuationStatus != StockValuationStatuses.Valued
-                            || receiptFact.ValuationSource != (laterReceipt.TrxType == IvTrxTypes.GoodsReceive
-                                ? StockValuationSources.ReceiptActual : StockValuationSources.ManualApproved)
-                            || receiptFact.ValuationVersion != 1 || receiptFact.SplitOrdinal != 0
-                            || receiptFact.OriginalValuationFactId is not null || receiptFact.ReversesValuationFactId is not null
-                            || receiptFact.PostingLineNo != laterReceipt.PostingLineNo
-                            || receiptFact.SourceDocumentType != factOwner.SourceDocumentType
-                            || receiptFact.SourceDocumentId != factOwner.SourceDocumentId
-                            || receiptFact.SourceDocumentNo != factOwner.SourceDocumentNo
-                            || receiptFact.SourceDocumentLine != laterReceipt.TrxLineNo.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                            || receiptFact.EffectiveAt != factOwner.EffectiveAt || receiptFact.BusinessDate != factOwner.BusinessDate
-                            || receiptFact.PeriodKey != factOwner.PeriodKey || receiptFact.BaseUom != laterReceipt.ToStdUom
-                            || receiptFact.LotId != laterReceipt.ToLotId
-                            || !string.Equals(receiptFact.LotNo ?? string.Empty, laterReceipt.ToLotNo?.Trim() ?? string.Empty, StringComparison.OrdinalIgnoreCase)
-                            || !string.Equals(receiptFact.WarehouseCode ?? string.Empty, laterReceipt.ToWarehouse?.Trim() ?? string.Empty, StringComparison.OrdinalIgnoreCase)
-                            || !string.Equals(receiptFact.LocationCode ?? string.Empty, laterReceipt.ToLocation?.Trim() ?? string.Empty, StringComparison.OrdinalIgnoreCase)
-                            || !string.Equals(receiptFact.ItemStatus ?? string.Empty, laterReceipt.IStatus?.Trim() ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                        var fixedReceipt = await ProveOriginalWacFixedReceiptAsync(db, company, branch,
+                            plan.ItemCode, plan.EpochId, plan.BalLocId, laterReceipt, receiptEvent, ct);
+                        if (fixedReceipt is null)
                             return null;
-                        laterFixedReceipts.Add(new(laterReceipt.Id, receiptFact.Id, factOwner.Id,
-                            factOwner.RequestFingerprint, factOwner.SourceSnapshotHash, factOwner.SealedAtUtc,
-                            receiptFact.UnitCost, receiptFact.CostAmount, receiptFact.BaseCurrency,
-                            receiptFact.TransactionCurrency, receiptFact.TransactionCostAmount, receiptFact.ExchangeRate));
+                        laterFixedReceipts.Add(fixedReceipt);
                     }
                     else
                     {
@@ -612,6 +574,66 @@ public sealed partial class IvInventoryPostingService
             return new(fingerprint, sale.Id, reverse.Id, fact.Id, inverse.Id,
                 fact.BaseQty, currentSaleCost, projectedSaleCost, laterTailFingerprint,
                 laterIssuesJson);
+        }
+        catch (Exception error) when (error is StockLedgerException or ArgumentException or InvalidOperationException or OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private static async Task<WacFixedReceiptProof?> ProveOriginalWacFixedReceiptAsync(
+        AppDbContext db, string company, string branch, string item, long epochId, int balLocId,
+        IvTrxHistory history, StockReplayWacEvent movement, CancellationToken ct)
+    {
+        try
+        {
+            if (history.CompanyCode != company || history.BranchCode != branch || history.ICode != item
+                || history.LedgerEpochId != epochId || history.EntryRole != "ORIGINAL"
+                || history.BatchStatus != IvBatchStatuses.Posted
+                || history.TrxType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+                || history.StockPostingId is not > 0 || history.ToBalLocId != balLocId
+                || history.FromBalLocId is not null || history.ToStdQty is not > 0m
+                || movement.EventId != history.Id || movement.Key.EffectiveAt != history.TrxDtTime
+                || movement.OldSignedQuantity != history.ToStdQty
+                || movement.ReplaySignedQuantity != movement.OldSignedQuantity
+                || movement.FixedSignedValue != movement.OldSignedValue)
+                return null;
+            var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, company, branch, [history], ct);
+            var facts = active[history.Id];
+            if (facts.Count != 1)
+                return null;
+            var owner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == history.StockPostingId, ct);
+            var fact = facts[0];
+            if (owner is null || owner.CompanyCode != company || owner.BranchCode != branch
+                || owner.LedgerEpochId != epochId || owner.SealedAtUtc is null
+                || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != history.TrxType
+                || owner.PostingRole != "PRIMARY" || owner.CommandType != $"IV_POST_{history.TrxType}"
+                || owner.EffectiveAt != history.TrxDtTime || fact.StockPostingId != owner.Id
+                || fact.CompanyCode != company || fact.BranchCode != branch
+                || fact.LedgerEpochId != epochId || fact.InventoryHistoryId != history.Id
+                || fact.ItemCode != item || fact.Direction != 1 || fact.BaseQty != history.ToStdQty
+                || fact.ToBalLocId != balLocId || fact.FromBalLocId is not null
+                || fact.CostMethod != StockCostMethods.MovingAverage || fact.UnitCost < 0m || fact.CostAmount < 0m
+                || fact.BaseCostAmount != fact.CostAmount
+                || StockLedgerPrecision.Money(fact.BaseQty * fact.UnitCost) != fact.CostAmount
+                || fact.SignedValue != movement.OldSignedValue || fact.MovementCode != "RECEIPT_IN"
+                || fact.ValuationStatus != StockValuationStatuses.Valued
+                || fact.ValuationSource != (history.TrxType == IvTrxTypes.GoodsReceive
+                    ? StockValuationSources.ReceiptActual : StockValuationSources.ManualApproved)
+                || fact.ValuationVersion != 1 || fact.SplitOrdinal != 0
+                || fact.OriginalValuationFactId is not null || fact.ReversesValuationFactId is not null
+                || fact.PostingLineNo != history.PostingLineNo || fact.SourceDocumentType != owner.SourceDocumentType
+                || fact.SourceDocumentId != owner.SourceDocumentId || fact.SourceDocumentNo != owner.SourceDocumentNo
+                || fact.SourceDocumentLine != history.TrxLineNo.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                || fact.EffectiveAt != owner.EffectiveAt || fact.BusinessDate != owner.BusinessDate
+                || fact.PeriodKey != owner.PeriodKey || fact.BaseUom != history.ToStdUom || fact.LotId != history.ToLotId
+                || !string.Equals(fact.LotNo ?? string.Empty, history.ToLotNo?.Trim() ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(fact.WarehouseCode ?? string.Empty, history.ToWarehouse?.Trim() ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(fact.LocationCode ?? string.Empty, history.ToLocation?.Trim() ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(fact.ItemStatus ?? string.Empty, history.IStatus?.Trim() ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                return null;
+            return new(history.Id, fact.Id, owner.Id, owner.RequestFingerprint, owner.SourceSnapshotHash, owner.SealedAtUtc,
+                fact.UnitCost, fact.CostAmount, fact.BaseCurrency, fact.TransactionCurrency, fact.TransactionCostAmount, fact.ExchangeRate);
         }
         catch (Exception error) when (error is StockLedgerException or ArgumentException or InvalidOperationException or OverflowException)
         {

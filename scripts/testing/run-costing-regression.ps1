@@ -14,6 +14,7 @@ $patterns = @(
     'InventoryValuationServiceTests', 'IvGoodsReceiptServiceTests', 'IvMiscReceiptServiceTests',
     'IvStockTransferPostingServiceTests', 'IvPeriodCloseServiceTests', 'IvPeriodCloseGuardTests',
     'CostingDiagnosticCenterTests', 'QaPhysicalHoldTests', 'QaIncomingGrantTests',
+    'SubconPostBlockedTests', 'SubconModeTests',
     'PoInvoiceServiceTests', 'PoCdnServiceTests',
     'ProductionIssueEffectiveCostReaderTests', 'ProductionEffectiveCostResolverTests',
     'ProductionDependencyOwnerReaderTests', 'ProductionReplayDependencyPlannerTests',
@@ -81,6 +82,11 @@ $required = @(
     'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
     'StockReplayStandardSimulatorTests', 'InventoryValuationServiceTests',
     'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
+    'SubconPostBlockedTests', 'SubconModeTests',
+    'Backdated_wac_misc_receipt_replays_after_value_neutral_purchase_invoice',
+    'Backdated_wac_misc_receipt_rejects_purchase_invoice_price_variance',
+    'Backdated_wac_misc_receipt_rejects_damaged_purchase_evidence',
+    'Backdated_wac_misc_receipt_before_purchase_invoice_respects_qa_hold',
     'ProductionEffectiveCostResolverTests',
     'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
     'Receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues',
@@ -161,6 +167,7 @@ try {
 
     if ($IncludeSqlServer) {
         $sqlRunner = Join-Path $PSScriptRoot 'run-multi-wac-sql-scratch.ps1'
+        & $sqlRunner -Server $SqlServer -NoBuild -NeutralLaterPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts

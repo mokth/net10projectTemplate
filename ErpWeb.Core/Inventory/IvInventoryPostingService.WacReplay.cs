@@ -113,9 +113,17 @@ public sealed partial class IvInventoryPostingService
         var productionPlan = await PlanWacProductionLeafAsync(read, companyCode, branchCode,
             financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, cancellationToken,
             insertingReceiptBatchId: batch.Id);
+        var laterInvoice = await PlanNeutralLaterInvoiceAsync(read, companyCode, branchCode,
+            itemCode, physical.LedgerEpochId, physical.BalLocId, batch.TrxDtTime,
+            physical.LaterEvents, financial.Tail.LaterEvents, cancellationToken);
+        if (laterInvoice.Error is not null)
+            return IvInventoryPostingBatchResult.Fail(batchNo, laterInvoice.Error);
+        if (laterInvoice.Plan is not null && (hasReversedSale || reversedIssuePlan is not null || productionPlan is not null))
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "This receipt cannot yet replay a purchase invoice together with another dependent correction.");
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
-                batch.TrxDtTime, cancellationToken,
+                batch.TrxDtTime, cancellationToken, laterInvoice.Plan?.Invoice,
                 allowBoundedSales: true, allowBoundedProduction: productionPlan is not null) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
@@ -168,9 +176,16 @@ public sealed partial class IvInventoryPostingService
         await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
             financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, productionPlan, cancellationToken,
             insertingReceiptBatchId: batch.Id);
+        var lockedLaterInvoice = await PlanNeutralLaterInvoiceAsync(write, companyCode, branchCode,
+            itemCode, physical.LedgerEpochId, physical.BalLocId, batch.TrxDtTime,
+            physical.LaterEvents, financial.Tail.LaterEvents, cancellationToken,
+            lockEvidence: true, expectedInvoiceNo: laterInvoice.Plan?.Invoice.DocNo);
+        if (lockedLaterInvoice.Error is not null || lockedLaterInvoice.Plan?.Fingerprint != laterInvoice.Plan?.Fingerprint)
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                lockedLaterInvoice.Error ?? "The later purchase invoice changed. Retry posting.");
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
-                batch.TrxDtTime, cancellationToken,
+                batch.TrxDtTime, cancellationToken, lockedLaterInvoice.Plan?.Invoice,
                 allowBoundedSales: true, allowBoundedProduction: productionPlan is not null) is string changedTail)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -724,10 +739,23 @@ public sealed partial class IvInventoryPostingService
         if (productionPlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated GR rollback cannot yet replay both a Production issue and an invoice settlement.");
+        NeutralLaterInvoicePlan? laterInvoicePlan = null;
+        if (trxType == IvTrxTypes.MiscellaneousReceipt)
+        {
+            var laterInvoice = await PlanNeutralLaterInvoiceAsync(read, companyCode, branchCode,
+                original.ICode, physical.LedgerEpochId, physical.BalLocId, original.TrxDtTime,
+                physical.LaterEvents, financial.Tail.LaterEvents, cancellationToken);
+            if (laterInvoice.Error is not null)
+                return IvInventoryPostingBatchResult.Fail(batchNo, laterInvoice.Error);
+            laterInvoicePlan = laterInvoice.Plan;
+            if (laterInvoicePlan is not null && (hasReversedSale || reversedIssuePlan is not null || productionPlan is not null))
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    "This receipt cannot yet replay a purchase invoice together with another dependent correction.");
+        }
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
                 original.TrxDtTime, cancellationToken,
-                replayInvoice, allowBoundedSales: isReceipt,
+                replayInvoice ?? laterInvoicePlan?.Invoice, allowBoundedSales: isReceipt,
                 allowBoundedProduction: productionPlan is not null) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
@@ -773,6 +801,16 @@ public sealed partial class IvInventoryPostingService
                 batchNo, trxType, rollback: true, cancellationToken,
                 allowProvenReversedSale: reversedSaleProof is not null) is { } reversedProduction)
             return reversedProduction;
+        if (trxType == IvTrxTypes.MiscellaneousReceipt)
+        {
+            var lockedLaterInvoice = await PlanNeutralLaterInvoiceAsync(write, companyCode, branchCode,
+                original.ICode, physical.LedgerEpochId, physical.BalLocId, original.TrxDtTime,
+                physical.LaterEvents, financial.Tail.LaterEvents, cancellationToken,
+                lockEvidence: true, expectedInvoiceNo: laterInvoicePlan?.Invoice.DocNo);
+            if (lockedLaterInvoice.Error is not null || lockedLaterInvoice.Plan?.Fingerprint != laterInvoicePlan?.Fingerprint)
+                return IvInventoryPostingBatchResult.Fail(batchNo,
+                    lockedLaterInvoice.Error ?? "The later purchase invoice changed. Retry rollback.");
+        }
         var qaPhysicalRestore = await _qaPhysical.RestoreStockOutAsync(
             write, companyCode, branchCode, batchNo, cancellationToken);
         if (qaPhysicalRestore is not null)
@@ -786,7 +824,7 @@ public sealed partial class IvInventoryPostingService
                 productionPlan, cancellationToken, owner.Id);
         if (financial.Tail.LaterEvents.Count > 0
             && await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
-                original.TrxDtTime, cancellationToken, replayInvoice,
+                original.TrxDtTime, cancellationToken, replayInvoice ?? laterInvoicePlan?.Invoice,
                 allowBoundedSales: isReceipt,
                 allowBoundedProduction: productionPlan is not null) is string lockedTailError)
         {
@@ -1103,7 +1141,8 @@ public sealed partial class IvInventoryPostingService
         string companyCode, string branchCode, string? poNo,
         short? poRelNo, short? poLineNo, string itemCode,
         DateTime grDate, CancellationToken cancellationToken,
-        bool allowPostedCreditNote = false)
+        bool allowPostedCreditNote = false,
+        bool requireAdjustmentWriter = true)
     {
         if (string.IsNullOrWhiteSpace(poNo)
             || poRelNo is null || poLineNo is null)
@@ -1135,7 +1174,7 @@ public sealed partial class IvInventoryPostingService
             if (!hasPostedInvoice)
                 return (null, null);
         }
-        if (_purchaseCostAdjustments is null
+        if (requireAdjustmentWriter && _purchaseCostAdjustments is null
             || line.InvoicedQty < 0m
             || !string.Equals(line.PurchaseUom, line.StdUom,
                 StringComparison.OrdinalIgnoreCase))
