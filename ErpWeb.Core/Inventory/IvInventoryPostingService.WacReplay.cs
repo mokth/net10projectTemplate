@@ -46,8 +46,10 @@ public sealed partial class IvInventoryPostingService
         if (method != StockCostMethods.MovingAverage)
             return null;
         var saleCycle = await ReadReversedSaleCycleAsync(read, companyCode, branchCode, batch, itemCode, cancellationToken);
+        var canReplaySaleCycle = saleCycle is { RootRole: "REVERSAL", ActiveRootId: not null }
+            or { RootRole: "PRIMARY", ActiveRootId: null };
         if (await HasUnresolvedReversedSaleValueAsync(read, companyCode, branchCode,
-                [itemCode], batch.TrxDtTime, cancellationToken) && saleCycle?.ActiveRootId is null)
+                [itemCode], batch.TrxDtTime, cancellationToken) && !canReplaySaleCycle)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "This receipt has an existing reversed-sale cost correction that needs replay.");
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, companyCode,
@@ -65,7 +67,7 @@ public sealed partial class IvInventoryPostingService
         var authority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
             read, companyCode, branchCode, batchNo, pileId.Value, cancellationToken,
             allowExistingLot: true);
-        if (saleCycle?.ActiveRootId is not null && (authority.BalLocId != saleCycle.ReceiptBalanceId
+        if (saleCycle is not null && (authority.BalLocId != saleCycle.ReceiptBalanceId
             || authority.Quantity != saleCycle.ReceiptQuantity || authority.UnitCost != saleCycle.ReceiptUnitCost
             || authority.Value != saleCycle.ReceiptValue))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt quantity or cost changed after its rollback.");
@@ -82,9 +84,9 @@ public sealed partial class IvInventoryPostingService
             reversedIssuePlan = null;
         var receiptEvent = new StockReplayWacEvent(candidate.EventId, key, 0m, 0m,
             authority.Quantity, authority.Value);
-        if (saleCycle?.ActiveRootId is not null && reversedIssuePlan is not null)
+        if (saleCycle is not null && reversedIssuePlan is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has multiple reversed-cost dependencies.");
-        var financial = saleCycle?.ActiveRootId is not null
+        var financial = saleCycle is not null && canReplaySaleCycle
             ? await StockReplayWacInsertionPlanner.BuildForReversedSaleAsync(
                 read, companyCode, branchCode, itemCode, physical, receiptEvent, saleCycle, cancellationToken)
             : reversedIssuePlan is { IssueDeltaId: not null, ReversalDeltaId: not null }
@@ -96,7 +98,7 @@ public sealed partial class IvInventoryPostingService
             [itemCode], batch.TrxDtTime, cancellationToken);
         var reversedSaleProof = hasReversedSale
             ? await ProveNeutralReversedSaleAsync(read, companyCode, branchCode, batch,
-                NeutralSaleCandidate(financial), cancellationToken, cycle: saleCycle)
+                NeutralSaleCandidate(financial), cancellationToken, allowCostCorrection: true, cycle: saleCycle)
             : null;
         if (hasReversedSale && reversedSaleProof is null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
@@ -133,7 +135,9 @@ public sealed partial class IvInventoryPostingService
         var lockedSaleCycle = await ReadReversedSaleCycleAsync(write, companyCode, branchCode, lockedBatch, itemCode, cancellationToken);
         if (saleCycle?.Fingerprint != lockedSaleCycle?.Fingerprint)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed-sale correction changed. Retry posting.");
-        if (lockedSaleCycle?.ActiveRootId is not null)
+        var canReplayLockedSaleCycle = lockedSaleCycle is { RootRole: "REVERSAL", ActiveRootId: not null }
+            or { RootRole: "PRIMARY", ActiveRootId: null };
+        if (lockedSaleCycle is not null)
         {
             var lockedAuthority = await StockReplayFifoMrReceiptAuthorityReader.ReadAsync(
                 write, companyCode, branchCode, batchNo, physical.BalLocId, cancellationToken, allowExistingLot: true);
@@ -142,13 +146,13 @@ public sealed partial class IvInventoryPostingService
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt quantity or cost changed after its rollback.");
         }
         if (await HasUnresolvedReversedSaleValueAsync(write, companyCode, branchCode,
-                [itemCode], batch.TrxDtTime, cancellationToken) && lockedSaleCycle?.ActiveRootId is null)
+                [itemCode], batch.TrxDtTime, cancellationToken) && !canReplayLockedSaleCycle)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed-sale cost changed. Retry posting after reconciliation.");
         if (await HasReversedSalesAfterAsync(write, companyCode, branchCode, [itemCode],
                 batch.TrxDtTime, cancellationToken) != hasReversedSale
             || hasReversedSale && reversedSaleProof != await ProveNeutralReversedSaleAsync(
                 write, companyCode, branchCode, lockedBatch, NeutralSaleCandidate(financial),
-                cancellationToken, lockSalesEvidence: true, cycle: lockedSaleCycle))
+                cancellationToken, lockSalesEvidence: true, allowCostCorrection: true, cycle: lockedSaleCycle))
             return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed sale changed. Retry posting.");
         if (reversedIssuePlan is not null)
         {
@@ -187,8 +191,11 @@ public sealed partial class IvInventoryPostingService
                 "Backdated WAC replay requires an active V2 posting root."));
         var required = await StockReplayWacMrRootWriter.InsertAsync(
             ledger.Context, financial, batchNo, cancellationToken);
-        if (saleCycle?.ActiveRootId is not null && reversedSaleProof is not null)
+        if (saleCycle is { RootRole: "REVERSAL", ActiveRootId: not null } && reversedSaleProof is not null)
             await AppendReversedSaleUndoAsync(ledger.Context, saleCycle, reversedSaleProof, financial, cancellationToken);
+        else if (reversedSaleProof is { } saleCorrection
+            && saleCorrection.OriginalCost != saleCorrection.ProjectedCost)
+            await AppendReversedSaleCorrectionAsync(ledger.Context, saleCorrection, financial, cancellationToken);
         await ApplyWacProductionLeafAsync(ledger.Context, productionPlan, financial.PlanHash,
             physical.BranchWatermark, financial.Tail.LaterEvents, cancellationToken);
         if (reversedIssuePlan is { IsCostNeutral: false })
@@ -641,9 +648,11 @@ public sealed partial class IvInventoryPostingService
         var saleCycle = trxType == IvTrxTypes.MiscellaneousReceipt
             ? await ReadReversedSaleCycleAsync(read, companyCode, branchCode, batch, original.ICode, cancellationToken)
             : null;
+        var canReplaySaleCycle = saleCycle is { RootRole: "REVERSAL", ActiveRootId: null }
+            || saleCycle is { RootRole: "PRIMARY", ActiveRootId: not null } && saleCycle.ActiveRootId == owner.Id;
         if (isReceipt && await HasUnresolvedReversedSaleValueAsync(read, companyCode, branchCode,
                 [original.ICode], batch.TrxDtTime, cancellationToken, rollback: true)
-            && saleCycle is not { ActiveRootId: null })
+            && !canReplaySaleCycle)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "This receipt has an existing reversed-sale cost correction that needs replay before rollback.");
         var hasReversedSale = isReceipt && await HasReversedSalesAfterAsync(read,
@@ -669,7 +678,7 @@ public sealed partial class IvInventoryPostingService
             cancellationToken);
         if (saleCycle is not null && reversedIssuePlan is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has multiple reversed-cost dependencies.");
-        var financial = saleCycle is { ActiveRootId: null }
+        var financial = saleCycle is not null && canReplaySaleCycle
             ? await StockReplayWacRemovalPlanner.BuildForReversedSaleAsync(
                 read, companyCode, branchCode, original.ICode, physical, saleCycle, cancellationToken)
             : reversedIssuePlan is { IssueDeltaId: not null, ReversalDeltaId: not null }
@@ -739,9 +748,11 @@ public sealed partial class IvInventoryPostingService
                 : null;
             if (saleCycle?.Fingerprint != lockedSaleCycle?.Fingerprint)
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed-sale correction changed. Retry rollback.");
+            var canReplayLockedSaleCycle = lockedSaleCycle is { RootRole: "REVERSAL", ActiveRootId: null }
+                || lockedSaleCycle is { RootRole: "PRIMARY", ActiveRootId: not null } && lockedSaleCycle.ActiveRootId == owner.Id;
             if (await HasUnresolvedReversedSaleValueAsync(write, companyCode, branchCode,
                     [original.ICode], batch.TrxDtTime, cancellationToken, rollback: true)
-                && lockedSaleCycle is not { ActiveRootId: null })
+                && !canReplayLockedSaleCycle)
                 return IvInventoryPostingBatchResult.Fail(batchNo, "The reversed-sale cost changed. Retry rollback after reconciliation.");
             if (await HasReversedSalesAfterAsync(write, companyCode, branchCode, [original.ICode],
                     batch.TrxDtTime, cancellationToken) != hasReversedSale
@@ -1053,7 +1064,9 @@ public sealed partial class IvInventoryPostingService
         var tail = await StockReplayWacTailRepricingWriter
             .AppendPreparedRemovalTailAsync(context, permit, financial, 2,
                 cancellationToken, allowSalesReturn: isReceipt);
-        if (reversedSaleProof is { } saleCorrection
+        if (saleCycle is { RootRole: "PRIMARY", ActiveRootId: not null } && reversedSaleProof is not null)
+            await AppendReversedSaleUndoAsync(context, saleCycle, reversedSaleProof, financial, cancellationToken);
+        else if (reversedSaleProof is { } saleCorrection
             && saleCorrection.OriginalCost != saleCorrection.ProjectedCost)
             await AppendReversedSaleCorrectionAsync(context, saleCorrection, financial, cancellationToken);
         await StockReplayWacCostStateWriter.ApplyAsync(

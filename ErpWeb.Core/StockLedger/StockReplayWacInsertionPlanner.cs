@@ -82,9 +82,11 @@ public static class StockReplayWacInsertionPlanner
         StockReplayPhysicalPlan physicalPlan, StockReplayWacEvent candidate,
         IvInventoryPostingService.ReversedSaleCycleState cycle, CancellationToken cancellationToken = default)
     {
-        if (cycle.SaleDeltaId is not long saleId || saleId <= 0
-            || cycle.ReversalDeltaId is not long reverseId || reverseId <= 0 || saleId == reverseId
-            || cycle.ActiveRootId is not > 0 || cycle.ReceiptBalanceId != physicalPlan.BalLocId
+        var undoingRemoval = cycle.RootRole == "REVERSAL" && cycle.ActiveRootId is > 0
+            && cycle.SaleDeltaId is > 0 && cycle.ReversalDeltaId is > 0 && cycle.SaleDeltaId != cycle.ReversalDeltaId;
+        var repostingInsertion = cycle.RootRole == "PRIMARY" && cycle.ActiveRootId is null
+            && cycle.SaleDeltaId is null && cycle.ReversalDeltaId is null && cycle.ValueIds.Length >= 4;
+        if ((!undoingRemoval && !repostingInsertion) || cycle.ReceiptBalanceId != physicalPlan.BalLocId
             || cycle.ReceiptQuantity != physicalPlan.Candidate.SignedDelta
             || cycle.ReceiptValue != candidate.FixedSignedValue)
             throw Invalid("The reversed sale value pair or receipt differs from its verified replay evidence.");

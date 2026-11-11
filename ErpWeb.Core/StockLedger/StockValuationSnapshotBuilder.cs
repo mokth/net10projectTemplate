@@ -349,7 +349,9 @@ public static class StockValuationSnapshotBuilder
                 && f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue).ToArrayAsync(ct);
             if (root is null || root.CompanyCode != company || root.BranchCode != branch || root.SealedAtUtc is null
                 || root.SourceModule != "INVENTORY" || root.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
-                || root.PostingRole != "REVERSAL" || root.ReversesPostingId is not > 0
+                || root.PostingRole is not ("PRIMARY" or "REVERSAL")
+                || root.PostingRole == "PRIMARY" && root.ReversesPostingId is not null
+                || root.PostingRole == "REVERSAL" && root.ReversesPostingId is not > 0
                 || runs.Length != 1 || runs[0].CompanyCode != company || runs[0].BranchCode != branch
                 || runs[0].RootRequestId != root.RequestId || runs[0].RootDocumentType != root.SourceDocumentType
                 || runs[0].RootDocumentId != root.SourceDocumentId || runs[0].AffectedHistoryCount != 2
@@ -430,23 +432,40 @@ public static class StockValuationSnapshotBuilder
                 .Select(b => (int?)b.Id).SingleOrDefaultAsync(ct);
             if (receiptBatchId is not int batchId
                 || batchId.ToString(System.Globalization.CultureInfo.InvariantCulture) != root.SourceDocumentId
-                || receiptRoots[0].EntryRole != "REVERSAL"
                 || receiptRoots[0].TrxType != IvTrxTypes.MiscellaneousReceipt
                 || receiptRoots[0].CompanyCode != company || receiptRoots[0].BranchCode != branch
                 || receiptRoots[0].LedgerEpochId != root.LedgerEpochId || receiptRoots[0].TrxDtTime != root.EffectiveAt
                 || receiptRoots[0].BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture) != root.SourceDocumentNo
-                || receiptRoots[0].ReversesHistoryId is not int receiptId
-                || !await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.Id == receiptId
-                    && h.CompanyCode == company && h.BranchCode == branch
-                    && h.BatchNo == receiptRoots[0].BatchNo && h.TrxType == IvTrxTypes.MiscellaneousReceipt
-                    && h.EntryRole == "ORIGINAL" && h.StockPostingId == root.ReversesPostingId
-                    && db.StockPostings.Any(p => p.Id == h.StockPostingId && p.CompanyCode == company
-                        && p.BranchCode == branch && p.LedgerEpochId == root.LedgerEpochId && p.SealedAtUtc != null
-                        && p.SourceModule == root.SourceModule && p.SourceDocumentType == root.SourceDocumentType
-                        && p.SourceDocumentId == root.SourceDocumentId && p.SourceDocumentNo == root.SourceDocumentNo), ct)
                 || effects.Length != 2 || values.Any(v => !Matches(v, sources.Single(s => s.Id == v.OriginalValuationFactId)))
                 || values.Sum(v => v.SignedValue) != 0m)
                 return false;
+            if (root.PostingRole == "REVERSAL")
+            {
+                if (receiptRoots[0].EntryRole != "REVERSAL" || receiptRoots[0].ReversesHistoryId is not int receiptId
+                    || !await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.Id == receiptId
+                        && h.CompanyCode == company && h.BranchCode == branch
+                        && h.BatchNo == receiptRoots[0].BatchNo && h.TrxType == IvTrxTypes.MiscellaneousReceipt
+                        && h.EntryRole == "ORIGINAL" && h.StockPostingId == root.ReversesPostingId
+                        && db.StockPostings.Any(p => p.Id == h.StockPostingId && p.CompanyCode == company
+                            && p.BranchCode == branch && p.LedgerEpochId == root.LedgerEpochId && p.SealedAtUtc != null
+                            && p.SourceModule == root.SourceModule && p.SourceDocumentType == root.SourceDocumentType
+                            && p.SourceDocumentId == root.SourceDocumentId && p.SourceDocumentNo == root.SourceDocumentNo), ct))
+                    return false;
+            }
+            else
+            {
+                var receiptFacts = await db.StockValuationFacts.AsNoTracking().Where(f =>
+                    f.InventoryHistoryId == receiptRoots[0].Id).ToArrayAsync(ct);
+                if (receiptRoots[0].EntryRole != "ORIGINAL" || receiptRoots[0].ReversesHistoryId is not null
+                    || receiptRoots[0].ICode != sale.ItemCode || receiptRoots[0].ToBalLocId is not > 0
+                    || receiptRoots[0].ToStdQty is not > 0m || receiptFacts.Length != 1
+                    || receiptFacts[0].StockPostingId != rootId || receiptFacts[0].LedgerEpochId != root.LedgerEpochId
+                    || receiptFacts[0].ItemCode != sale.ItemCode || receiptFacts[0].ToBalLocId != receiptRoots[0].ToBalLocId
+                    || receiptFacts[0].BaseQty != receiptRoots[0].ToStdQty || receiptFacts[0].Direction != 1
+                    || receiptFacts[0].CostMethod != StockCostMethods.MovingAverage
+                    || receiptFacts[0].ValuationStatus != StockValuationStatuses.Valued)
+                    return false;
+            }
             if (checkedPairs.Add((sale.Id, reverse.Id)))
             {
                 var relatedValues = await db.StockValuationFacts.AsNoTracking().Where(f =>
@@ -465,7 +484,9 @@ public static class StockValuationSnapshotBuilder
                     if (pair.Length != 2 || pair.Select(v => v.OriginalValuationFactId).Distinct().Count() != 2)
                         return false;
                     var pairRoot = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == group.Key, ct);
-                    if (pairRoot is null || pairRoot.SourceDocumentId != root.SourceDocumentId)
+                    if (pairRoot is null || pairRoot.SourceDocumentId != root.SourceDocumentId
+                        || pairRoot.SourceDocumentNo != root.SourceDocumentNo || pairRoot.PostingRole != root.PostingRole
+                        || pairRoot.EffectiveAt != root.EffectiveAt)
                         return false;
                     pendingRoots.Enqueue(group.Key);
                     var children = undoValues.Where(v => pair.Any(p => p.Id == v.ReversesValuationFactId)).ToArray();
@@ -527,11 +548,14 @@ public static class StockValuationSnapshotBuilder
         var undoId = undoValues[0].StockPostingId;
         var undoRoot = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == undoId, ct);
         var runs = await db.StockReplayRuns.AsNoTracking().Where(r => r.RootStockPostingId == undoId).ToArrayAsync(ct);
+        var priorWasPrimary = priorRoot.PostingRole == "PRIMARY";
         if (undoRoot is null || undoRoot.CompanyCode != company || undoRoot.BranchCode != branch
             || undoRoot.LedgerEpochId != priorRoot.LedgerEpochId || undoRoot.SealedAtUtc is null
             || undoRoot.SourceModule != "INVENTORY" || undoRoot.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
             || undoRoot.SourceDocumentId != priorRoot.SourceDocumentId || undoRoot.SourceDocumentNo != priorRoot.SourceDocumentNo
-            || undoRoot.PostingRole != "PRIMARY" || undoRoot.ReversesPostingId is not null
+            || priorRoot.PostingRole is not ("PRIMARY" or "REVERSAL")
+            || undoRoot.PostingRole != (priorWasPrimary ? "REVERSAL" : "PRIMARY")
+            || (priorWasPrimary ? undoRoot.ReversesPostingId != priorRoot.Id : undoRoot.ReversesPostingId is not null)
             || undoRoot.EffectiveAt != priorRoot.EffectiveAt || undoRoot.PostingSequence <= priorRoot.PostingSequence
             || runs.Length != 1 || runs[0].CompanyCode != company || runs[0].BranchCode != branch
             || runs[0].RootRequestId != undoRoot.RequestId || runs[0].RootDocumentType != undoRoot.SourceDocumentType
@@ -547,26 +571,38 @@ public static class StockValuationSnapshotBuilder
 
         var priorHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.StockPostingId == priorRoot.Id, ct);
         var undoHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.StockPostingId == undoId, ct);
-        if (priorHistory is null || undoHistory is null || priorHistory.ReversesHistoryId is not int originalId)
+        if (priorHistory is null || undoHistory is null)
             return false;
-        var originalHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == originalId, ct);
-        var oldFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.InventoryHistoryId == originalId).ToArrayAsync(ct);
+        var originalId = priorWasPrimary ? priorHistory.Id : priorHistory.ReversesHistoryId;
+        if (originalId is not int originalReceiptId)
+            return false;
+        var originalHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == originalReceiptId, ct);
+        var oldFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.InventoryHistoryId == originalReceiptId).ToArrayAsync(ct);
         var rootFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == undoId).ToArrayAsync(ct);
         var receiptFacts = rootFacts.Where(f => f.InventoryHistoryId == undoHistory.Id).ToArray();
-        if (originalHistory is null || originalHistory.StockPostingId != priorRoot.ReversesPostingId
+        if (originalHistory is null || originalHistory.StockPostingId != (priorWasPrimary ? priorRoot.Id : priorRoot.ReversesPostingId)
             || originalHistory.CompanyCode != company || originalHistory.BranchCode != branch
             || undoHistory.CompanyCode != company || undoHistory.BranchCode != branch
-            || undoHistory.TrxType != IvTrxTypes.MiscellaneousReceipt || undoHistory.EntryRole != "ORIGINAL"
+            || undoHistory.TrxType != IvTrxTypes.MiscellaneousReceipt
+            || undoHistory.EntryRole != (priorWasPrimary ? "REVERSAL" : "ORIGINAL")
+            || (priorWasPrimary ? undoHistory.ReversesHistoryId != originalHistory.Id : undoHistory.ReversesHistoryId is not null)
             || undoHistory.BatchNo != originalHistory.BatchNo || undoHistory.TrxLineNo != originalHistory.TrxLineNo
             || undoHistory.TrxDtTime != originalHistory.TrxDtTime || undoHistory.ICode != originalHistory.ICode
-            || undoHistory.ToBalLocId != originalHistory.ToBalLocId || undoHistory.ToStdQty != originalHistory.ToStdQty
-            || undoHistory.ToStdUom != originalHistory.ToStdUom || undoHistory.ToLotId != originalHistory.ToLotId
-            || undoHistory.ToLotNo != originalHistory.ToLotNo || undoHistory.IStatus != originalHistory.IStatus
+            || (priorWasPrimary
+                ? undoHistory.FromBalLocId != originalHistory.ToBalLocId || undoHistory.FrStdQty != originalHistory.ToStdQty
+                    || undoHistory.FrStdUom != originalHistory.ToStdUom || undoHistory.FromLotId != originalHistory.ToLotId
+                    || undoHistory.FrLotNo != originalHistory.ToLotNo
+                : undoHistory.ToBalLocId != originalHistory.ToBalLocId || undoHistory.ToStdQty != originalHistory.ToStdQty
+                    || undoHistory.ToStdUom != originalHistory.ToStdUom || undoHistory.ToLotId != originalHistory.ToLotId
+                    || undoHistory.ToLotNo != originalHistory.ToLotNo)
+            || undoHistory.IStatus != originalHistory.IStatus
             || oldFacts.Length != 1 || receiptFacts.Length != 1 || rootFacts.Length != 3
-            || receiptFacts[0].SignedQty != oldFacts[0].SignedQty || receiptFacts[0].SignedValue != oldFacts[0].SignedValue
+            || receiptFacts[0].SignedQty != (priorWasPrimary ? -oldFacts[0].SignedQty : oldFacts[0].SignedQty)
+            || receiptFacts[0].SignedValue != (priorWasPrimary ? -oldFacts[0].SignedValue : oldFacts[0].SignedValue)
             || receiptFacts[0].UnitCost != oldFacts[0].UnitCost
             || receiptFacts[0].ItemCode != oldFacts[0].ItemCode || receiptFacts[0].BaseUom != oldFacts[0].BaseUom
-            || receiptFacts[0].ToBalLocId != oldFacts[0].ToBalLocId || receiptFacts[0].CostMethod != oldFacts[0].CostMethod
+            || (priorWasPrimary ? receiptFacts[0].FromBalLocId : receiptFacts[0].ToBalLocId) != oldFacts[0].ToBalLocId
+            || receiptFacts[0].CostMethod != oldFacts[0].CostMethod
             || receiptFacts[0].BaseCurrency != oldFacts[0].BaseCurrency)
             return false;
 

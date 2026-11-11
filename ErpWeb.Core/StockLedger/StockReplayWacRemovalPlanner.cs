@@ -67,7 +67,11 @@ public static class StockReplayWacRemovalPlanner
         StockReplayPhysicalRemovalPlan physicalPlan, IvInventoryPostingService.ReversedSaleCycleState cycle,
         CancellationToken cancellationToken = default)
     {
-        if (cycle.ActiveRootId is not null || cycle.ValueIds.Length < 4
+        var removingRepostedReceipt = cycle.RootRole == "REVERSAL" && cycle.ActiveRootId is null
+            && cycle.SaleDeltaId is null && cycle.ReversalDeltaId is null && cycle.ValueIds.Length >= 4;
+        var undoingInsertion = cycle.RootRole == "PRIMARY" && cycle.ActiveRootId is > 0
+            && cycle.SaleDeltaId is > 0 && cycle.ReversalDeltaId is > 0 && cycle.SaleDeltaId != cycle.ReversalDeltaId;
+        if ((!removingRepostedReceipt && !undoingInsertion)
             || cycle.ReceiptBalanceId != physicalPlan.BalLocId
             || cycle.ReceiptQuantity != physicalPlan.RemovedActiveEvent.SignedDelta)
             throw Invalid("The reversed sale correction cycle differs from the removed receipt.");
