@@ -17,8 +17,8 @@
         </header>
 
         <p class="iv-hint">
-            Ask what a line would cost and why. The result comes from the same engine that prices
-            documents, so it can never disagree with what a Sales Order receives.
+            This shows what current price rules would select today for a new direct line. It is not a
+            recorded agreed document price. The ladder uses the same engine as Sales entry.
         </p>
 
         <div class="iv-card">
@@ -89,7 +89,7 @@
                 {
                     <p class="pi-summary">
                         <strong>@Result.UnitPrice?.ToString("0.####")</strong>
-                        <span>per @Uom, tax-exclusive</span>
+                        <span>per @Uom (commercial UOM), tax-exclusive</span>
                         @if (IsInclusive && InclusivePrice is not null)
                         {
                             <span class="pi-note">@InclusivePrice?.ToString("0.####") tax-inclusive on the line</span>

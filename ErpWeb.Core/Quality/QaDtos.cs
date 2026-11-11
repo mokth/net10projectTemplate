@@ -10,6 +10,8 @@ public sealed class QaResult
     public QaListPage? ListPage { get; init; }
     public QaSourceListPage? SourcePage { get; init; }
     public QaInquiryPage? InquiryPage { get; init; }
+    public byte[]? FileBytes { get; init; }
+    public string? FileName { get; init; }
 
     public static QaResult Fail(string message) => new() { Succeeded = false, ErrorMessage = message };
 
@@ -23,6 +25,9 @@ public sealed class QaResult
     public static QaResult OkSources(QaSourceListPage page) => new() { Succeeded = true, SourcePage = page };
 
     public static QaResult OkInquiry(QaInquiryPage page) => new() { Succeeded = true, InquiryPage = page };
+
+    public static QaResult OkFile(byte[] bytes, string fileName) =>
+        new() { Succeeded = true, FileBytes = bytes, FileName = fileName };
 }
 
 public sealed class QaPolicyDto
@@ -85,6 +90,12 @@ public sealed class QaCaseListRow
     public string CreatedBy { get; init; } = string.Empty;
     public DateTime? ModifiedDate { get; init; }
     public string? ModifiedBy { get; init; }
+
+    public string StatusLabel => QaLabels.Status(Status);
+    public string SourceTypeLabel => QaLabels.Source(SourceType);
+    public string NextAction => QaLabels.NextActionShort(Status);
+    public bool IsPendingReview =>
+        string.Equals(Status, QaCaseStatuses.PendingReview, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class QaCaseDto
@@ -132,6 +143,12 @@ public sealed class QaCaseDto
     public IReadOnlyList<QaCaseLineDto> Lines { get; init; } = [];
     public IReadOnlyList<QaAuditEventDto> Audit { get; init; } = [];
     public IReadOnlyList<QaDestinationDto> Destinations { get; init; } = [];
+    public IReadOnlyList<QaActionDto> Actions { get; init; } = [];
+    public IReadOnlyList<QaAttemptDto> Attempts { get; init; } = [];
+    public string? SourceCheckNote { get; init; }
+    public bool FollowUpReady { get; init; }
+    public int OpenActionCount { get; init; }
+    public string AttachmentsNote { get; init; } = QaCaseMessages.AttachmentsDeferred;
 }
 
 public sealed class QaCaseLineDto
@@ -228,7 +245,69 @@ public sealed class QaInspectionSaveCommand
 {
     public string CaseNo { get; init; } = string.Empty;
     public byte[]? RowVersion { get; init; }
+    public string? ReinspectionReason { get; init; }
     public IReadOnlyList<QaInspectionLineCommand> Lines { get; init; } = [];
+}
+
+public sealed class QaActionDto
+{
+    public int ActionNo { get; init; }
+    public int LineNo { get; init; }
+    public string ActionType { get; init; } = string.Empty;
+    public decimal Qty { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public string? AssignedTo { get; init; }
+    public string? AssignedDepartment { get; init; }
+    public string? Reason { get; init; }
+    public DateTime? DueDate { get; init; }
+    public string? Remarks { get; init; }
+    public string? CompletionEvidence { get; init; }
+    public Guid? RequestId { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+    public string StatusLabel => QaLabels.ActionStatus(Status);
+    public string TypeLabel => QaLabels.ActionType(ActionType);
+    public bool IsOpen => QaActionStatuses.IsOpen(Status);
+}
+
+public sealed class QaAttemptDto
+{
+    public int LineNo { get; init; }
+    public int AttemptNo { get; init; }
+    public string Result { get; init; } = string.Empty;
+    public string Inspector { get; init; } = string.Empty;
+    public DateTime InspectedAtUtc { get; init; }
+    public decimal InspectedQty { get; init; }
+    public string? Notes { get; init; }
+    public string? DispositionSnapshot { get; init; }
+    public string? Reason { get; init; }
+    public string ResultLabel => QaLabels.Result(Result);
+}
+
+public sealed class QaActionSaveCommand
+{
+    public string CaseNo { get; init; } = string.Empty;
+    public byte[]? RowVersion { get; init; }
+    public int LineNo { get; init; }
+    public string ActionType { get; init; } = string.Empty;
+    public decimal Qty { get; init; }
+    public string? AssignedTo { get; init; }
+    public string? AssignedDepartment { get; init; }
+    public string? Reason { get; init; }
+    public DateTime? DueDate { get; init; }
+    public string? Remarks { get; init; }
+    public Guid? RequestId { get; init; }
+}
+
+public sealed class QaActionUpdateCommand
+{
+    public string CaseNo { get; init; } = string.Empty;
+    public byte[]? RowVersion { get; init; }
+    public int ActionNo { get; init; }
+    public string? AssignedTo { get; init; }
+    public string? AssignedDepartment { get; init; }
+    public string? Reason { get; init; }
+    public string? Remarks { get; init; }
+    public string? CompletionEvidence { get; init; }
 }
 
 public sealed class QaInspectionLineCommand
@@ -252,6 +331,9 @@ public sealed class QaSourceQuery
 {
     public string SourceType { get; set; } = string.Empty;
     public string? SearchText { get; set; }
+    public long? ExactSourceHeaderId { get; set; }
+    public long? ExactLotId { get; set; }
+    public long? ExactOutputId { get; set; }
     public int Skip { get; set; }
     public int Take { get; set; } = 20;
 }
@@ -311,6 +393,15 @@ public sealed class QaInquiryQuery
     public string? Status { get; set; }
     public string? SourceType { get; set; }
     public string? SearchText { get; set; }
+    public string? ItemCode { get; set; }
+    public string? LotNo { get; set; }
+    public string? PoNo { get; set; }
+    public string? WorkOrderNo { get; set; }
+    public string? Supplier { get; set; }
+    public string? Inspector { get; set; }
+    public string? Reviewer { get; set; }
+    public string? ActionOwner { get; set; }
+    public bool OverdueOnly { get; set; }
     public int Skip { get; set; }
     public int Take { get; set; } = 50;
 }
@@ -318,12 +409,22 @@ public sealed class QaInquiryQuery
 public sealed class QaInquiryPage
 {
     public int CaseCount { get; init; }
+    public int OpenCaseCount { get; init; }
+    public int PendingInspectionCount { get; init; }
     public int PendingReviewCount { get; init; }
     public int OpenDestinationCount { get; init; }
+    public decimal RejectedDecisionQty { get; init; }
+    public int OverdueActionCount { get; init; }
+    public int CompletedActionCount { get; init; }
+    public decimal? AverageCloseDays { get; init; }
+    public decimal? MedianCloseDays { get; init; }
     public int InspectedCount { get; init; }
     public int FirstPassCount { get; init; }
+    public int ApprovedWithoutRejectCount { get; init; }
     public decimal FirstPassYield { get; init; }
     public string FirstPassYieldNote { get; init; } = string.Empty;
+    public string RecordOnlyNote { get; init; } = QaCaseMessages.InquiryRecordOnly;
+    public bool FollowUpReady { get; init; }
     public IReadOnlyList<QaInquiryRow> Rows { get; init; } = [];
     public int TotalCount { get; init; }
 }
@@ -337,10 +438,13 @@ public sealed class QaInquiryRow
     public string? SourceDocNo { get; init; }
     public string? SupplierName { get; init; }
     public string? WorkOrderNo { get; init; }
+    public string? Inspector { get; init; }
+    public string? Reviewer { get; init; }
     public decimal AcceptedQty { get; init; }
     public decimal RejectedQty { get; init; }
     public decimal PostedQty { get; init; }
     public int AgingDays { get; init; }
+    public int OpenActionCount { get; init; }
     public string DestinationSummary { get; init; } = string.Empty;
     public IReadOnlyList<QaDestinationDto> Destinations { get; init; } = [];
 }

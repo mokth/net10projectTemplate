@@ -19,6 +19,8 @@ public static class QaSourceMessages
     public const string BatchNotFound = "Posted inventory document was not found for this company and branch.";
     public const string PileNotFound = "Warehouse pile was not found for this company and branch.";
     public const string WrongLotStage = "This production lot is not the source type selected on the case.";
+    public const string NeedSourceHeader =
+        "This source needs the posted document identity. Reload the source and try again.";
 
     public static string Injected(int lineNo) =>
         $"Line {lineNo} is not on the selected source document.";
@@ -225,7 +227,10 @@ public static class QaSourceResolver
             }
         }
 
-        return null;
+        return ExceedsAggregated(
+            lines,
+            line => line.PoLineNo?.ToString(),
+            line => details.FirstOrDefault(x => x.Line == line.PoLineNo)?.PoQty ?? 0m);
     }
 
     private static async Task<string?> RevalidateLotAsync(
@@ -290,7 +295,10 @@ public static class QaSourceResolver
             }
         }
 
-        return null;
+        return ExceedsAggregated(
+            lines,
+            _ => "lot",
+            line => SameText(line.Uom, lot.BaseUom) ? lot.BaseQty : lot.Qty);
     }
 
     private static async Task<string?> RevalidatePostedOrPileAsync(
@@ -303,6 +311,16 @@ public static class QaSourceResolver
         IReadOnlyList<QaCaseLineSaveCommand> lines,
         CancellationToken cancellationToken)
     {
+        if (sourceHeaderId is not > 0)
+        {
+            if (string.Equals(sourceType, QaSourceTypes.InventoryStock, StringComparison.OrdinalIgnoreCase))
+            {
+                return await RevalidatePileObservationAsync(db, company, branch, lines, cancellationToken);
+            }
+
+            return QaSourceMessages.NeedSourceHeader;
+        }
+
         if (sourceHeaderId is > 0 and <= int.MaxValue)
         {
             var batchId = (int)sourceHeaderId.Value;
@@ -366,14 +384,28 @@ public static class QaSourceResolver
                 }
             }
 
-            return null;
+            return ExceedsAggregated(
+                lines,
+                line => line.SourceLineId?.ToString(),
+                line =>
+                {
+                    var detail = line.SourceLineId is > 0 and <= int.MaxValue
+                        ? batch.Details.FirstOrDefault(x => x.Id == (int)line.SourceLineId.Value)
+                        : null;
+                    return detail?.ToStdQty ?? detail?.ToPurQty ?? 0m;
+                });
         }
 
-        if (!string.Equals(sourceType, QaSourceTypes.InventoryStock, StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
+        return QaSourceMessages.NeedSourceHeader;
+    }
 
+    private static async Task<string?> RevalidatePileObservationAsync(
+        AppDbContext db,
+        string company,
+        string branch,
+        IReadOnlyList<QaCaseLineSaveCommand> lines,
+        CancellationToken cancellationToken)
+    {
         foreach (var line in lines)
         {
             if (string.IsNullOrWhiteSpace(line.WarehouseCode)
@@ -424,7 +456,7 @@ public static class QaSourceResolver
     {
         if (sourceHeaderId is not > 0)
         {
-            return null;
+            return QaSourceMessages.NeedSourceHeader;
         }
 
         var output = await db.ProductionOutputs.AsNoTracking()
@@ -454,6 +486,25 @@ public static class QaSourceResolver
             if (IvQty.Round(line.Qty) > IvQty.Round(liveQty))
             {
                 return QaSourceMessages.StaleQty(line.LineNo);
+            }
+        }
+
+        return ExceedsAggregated(lines, _ => "output", _ => liveQty);
+    }
+
+    private static string? ExceedsAggregated(
+        IReadOnlyList<QaCaseLineSaveCommand> lines,
+        Func<QaCaseLineSaveCommand, string?> groupKey,
+        Func<QaCaseLineSaveCommand, decimal> liveQty)
+    {
+        foreach (var group in lines.GroupBy(x => groupKey(x) ?? $"line:{x.LineNo}", StringComparer.OrdinalIgnoreCase))
+        {
+            var sample = group.First();
+            var live = IvQty.Round(liveQty(sample));
+            var sum = IvQty.Round(group.Sum(x => x.Qty));
+            if (sum > live)
+            {
+                return QaSourceMessages.StaleQty(sample.LineNo);
             }
         }
 

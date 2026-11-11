@@ -184,11 +184,56 @@
     white-space: nowrap;
 }
 
+.qa-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    list-style: none;
+    margin: 0 0 12px;
+    padding: 0;
+}
+
+.qa-steps__item {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--mr-muted);
+    background: var(--mr-soft);
+}
+
+.qa-steps__item.is-done {
+    color: var(--mr-ok);
+}
+
+.qa-steps__item.is-current {
+    color: #fff;
+    background: var(--accent, #2f6fed);
+}
+
+.qa-next-action {
+    font-weight: 600;
+    color: var(--mr-ink);
+}
+
+.qa-source-stale {
+    color: var(--danger, #b42318);
+    font-weight: 600;
+}
+
 .qa-line-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     margin-bottom: 12px;
+}
+
+.qa-line-head__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
 }
 
 .qa-line-head h2,
@@ -224,8 +269,49 @@
 }
 
 .qa-muted {
+    display: block;
     color: var(--mr-muted);
     font-size: 0.85rem;
+}
+
+.qa-num {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.qa-inspect-scroll {
+    overflow-x: auto;
+}
+
+.qa-inspect-grid th,
+.qa-inspect-grid td {
+    vertical-align: middle;
+}
+
+.qa-spin,
+.qa-result,
+.qa-notes {
+    min-width: 88px;
+}
+
+.qa-notes {
+    min-width: 120px;
+}
+
+.qa-row-error {
+    background: color-mix(in srgb, var(--danger, #b42318) 6%, var(--mr-surface));
+}
+
+.qa-row-error__msg {
+    display: block;
+    margin-top: 4px;
+    color: var(--danger, #b42318);
+    font-size: 0.78rem;
+}
+
+.qa-inspect-card {
+    flex-direction: column;
+    align-items: stretch;
 }
 
 .qa-audit {
@@ -254,6 +340,19 @@
 
     .qa-lines-compact {
         display: grid;
+    }
+
+    .qa-line-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .qa-line-head__actions {
+        justify-content: stretch;
+    }
+
+    .qa-steps {
+        flex-direction: column;
     }
 
     .qa-line-card:first-child {

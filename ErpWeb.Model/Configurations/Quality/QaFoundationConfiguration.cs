@@ -108,6 +108,14 @@ public sealed class QaCaseConfiguration : IEntityTypeConfiguration<QaCase>
             .WithOne(x => x.Case)
             .HasForeignKey(x => x.CaseId)
             .OnDelete(DeleteBehavior.Restrict);
+        builder.HasMany(x => x.CorrectiveActions)
+            .WithOne(x => x.Case)
+            .HasForeignKey(x => x.CaseId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasMany(x => x.InspectionAttempts)
+            .WithOne(x => x.Case)
+            .HasForeignKey(x => x.CaseId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -146,6 +154,14 @@ public sealed class QaCaseLineConfiguration : IEntityTypeConfiguration<QaCaseLin
             .HasForeignKey(x => x.CaseLineId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasMany(x => x.FgGrants)
+            .WithOne(x => x.CaseLine)
+            .HasForeignKey(x => x.CaseLineId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasMany(x => x.CorrectiveActions)
+            .WithOne(x => x.CaseLine)
+            .HasForeignKey(x => x.CaseLineId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasMany(x => x.InspectionAttempts)
             .WithOne(x => x.CaseLine)
             .HasForeignKey(x => x.CaseLineId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -453,5 +469,67 @@ public sealed class QaNonGoodAllocationConfiguration : IEntityTypeConfiguration<
             .HasDatabaseName("UX_QaNonGoodAllocation_Posted_Grant_Output");
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.ProductionOutputId, x.Status })
             .HasDatabaseName("IX_QaNonGoodAllocation_Output");
+    }
+}
+
+public sealed class QaCorrectiveActionConfiguration : IEntityTypeConfiguration<QaCorrectiveAction>
+{
+    public void Configure(EntityTypeBuilder<QaCorrectiveAction> builder)
+    {
+        builder.ToTable("QaCorrectiveAction");
+        builder.HasKey(x => x.Uid);
+        builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
+        builder.Property(x => x.ActionType).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.Qty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.Status).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.AssignedTo).HasMaxLength(20);
+        builder.Property(x => x.AssignedDepartment).HasMaxLength(30);
+        builder.Property(x => x.Reason).HasMaxLength(250);
+        builder.Property(x => x.DueDate).HasColumnType("datetime2");
+        builder.Property(x => x.Remarks).HasMaxLength(500);
+        builder.Property(x => x.CompletionEvidence).HasMaxLength(500);
+        builder.Property(x => x.CreatedBy).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.ModifiedBy).HasMaxLength(20);
+        builder.Property(x => x.CompletedBy).HasMaxLength(20);
+        builder.Property(x => x.CancelledBy).HasMaxLength(20);
+        builder.Property(x => x.CancelReason).HasMaxLength(250);
+        builder.Property(x => x.CreatedDate).HasColumnType("datetime2").IsRequired();
+        builder.Property(x => x.ModifiedDate).HasColumnType("datetime2");
+        builder.Property(x => x.CompletedAtUtc).HasColumnType("datetime2");
+        builder.Property(x => x.CancelledAtUtc).HasColumnType("datetime2");
+        builder.Property(x => x.RowVersion).IsRowVersion();
+        builder.HasIndex(x => new { x.CaseId, x.ActionNo })
+            .IsUnique()
+            .HasDatabaseName("UX_QaCorrectiveAction_Case_No");
+        builder.HasIndex(x => x.RequestId)
+            .IsUnique()
+            .HasFilter("[RequestId] IS NOT NULL")
+            .HasDatabaseName("UX_QaCorrectiveAction_RequestId");
+        builder.HasIndex(x => new { x.CaseId, x.Status })
+            .HasDatabaseName("IX_QaCorrectiveAction_Case_Status");
+    }
+}
+
+public sealed class QaInspectionAttemptConfiguration : IEntityTypeConfiguration<QaInspectionAttempt>
+{
+    public void Configure(EntityTypeBuilder<QaInspectionAttempt> builder)
+    {
+        builder.ToTable("QaInspectionAttempt");
+        builder.HasKey(x => x.Uid);
+        builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
+        builder.Property(x => x.Result).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.Inspector).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.InspectedQty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.Notes).HasMaxLength(500);
+        builder.Property(x => x.MeasuredValues).HasMaxLength(500);
+        builder.Property(x => x.DispositionSnapshot).HasMaxLength(500);
+        builder.Property(x => x.SourceIdentity).HasMaxLength(200);
+        builder.Property(x => x.Reason).HasMaxLength(250);
+        builder.Property(x => x.InspectedAtUtc).HasColumnType("datetime2").IsRequired();
+        builder.HasIndex(x => new { x.CaseLineId, x.AttemptNo })
+            .IsUnique()
+            .HasDatabaseName("UX_QaInspectionAttempt_Line_No");
+        builder.HasIndex(x => new { x.CaseId, x.InspectedAtUtc })
+            .HasDatabaseName("IX_QaInspectionAttempt_Case_At");
     }
 }

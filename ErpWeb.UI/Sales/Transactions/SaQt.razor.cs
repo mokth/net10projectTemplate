@@ -843,6 +843,7 @@ public partial class SaQt : PageBase, IDisposable
         }
 
         _editingLine = null;
+        Interlocked.Increment(ref _priceApplySeq);
         Popup = new SaQtLineVm
         {
             // Left unset on purpose: the selected item's IvStockMaster.DefWarehouse must win, with the
@@ -865,6 +866,7 @@ public partial class SaQt : PageBase, IDisposable
         }
 
         _editingLine = line;
+        Interlocked.Increment(ref _priceApplySeq);
         Popup = line.Clone();
         // Re-opening a saved line re-establishes the override baseline. A line written before the feature
         // existed has no recorded engine price, so its stored price is the best available baseline.
@@ -937,19 +939,37 @@ public partial class SaQt : PageBase, IDisposable
     protected async Task OnPopupQuantityChangedAsync(decimal qty)
     {
         Popup.OrderQty = qty;
-        await ResolvePopupPriceAsync(assignDiscountSlots: true);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: true);
     }
 
     protected async Task OnPopupBasisChangedAsync(bool inclusive)
     {
         Popup.IsInclusive = inclusive;
-        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
     }
 
     protected async Task OnPopupTaxChangedAsync(string? taxGrCode)
     {
         Popup.TaxGrCode = taxGrCode;
-        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
+    }
+
+    /// <summary>
+    /// Quantity, tax group, and tax basis are not live-price triggers for already-saved or
+    /// manually overridden lines. Item-code change still resolves.
+    /// </summary>
+    private async Task ResolvePopupPriceOnQtyTaxOrBasisAsync(bool assignDiscountSlots)
+    {
+        if (!SaLinePricingTrigger.AllowLiveResolve(
+                isEditingExistingLine: _editingLine is not null,
+                hasInheritedSource: false,
+                isManualOverride: IsPriceOverridden()))
+        {
+            Interlocked.Increment(ref _priceApplySeq);
+            return;
+        }
+
+        await ResolvePopupPriceAsync(assignDiscountSlots);
     }
 
     /// <summary>
@@ -966,9 +986,7 @@ public partial class SaQt : PageBase, IDisposable
 
         var seq = Interlocked.Increment(ref _priceApplySeq);
 
-        var uom = !string.IsNullOrWhiteSpace(Popup.SellingUom)
-            ? Popup.SellingUom!
-            : Popup.StdUom ?? string.Empty;
+        var uom = SaLinePricingTrigger.CommercialUom(Popup.SellingUom, Popup.StdUom);
 
         var result = await SalesRefService.ResolveLinePricingAsync(
             new SaLinePricingRequest
@@ -1552,7 +1570,8 @@ public partial class SaQt : PageBase, IDisposable
         CustCode = CustCode ?? string.Empty,
         ItemCode = line.ICode,
         ItemDescription = line.IDesc,
-        Uom = !string.IsNullOrWhiteSpace(line.SellingUom) ? line.SellingUom! : line.StdUom ?? string.Empty,
+        Uom = SaLinePricingTrigger.CommercialUom(line.SellingUom, line.StdUom),
+        StockUom = line.StdUom,
         Qty = line.OrderQty,
         DocDate = QtDate,
         Currency = Currency,
@@ -1561,6 +1580,14 @@ public partial class SaQt : PageBase, IDisposable
         PricingRef = line.PricingRef,
         OriginalUnitPrice = line.OriginalUnitPrice,
         OverrideReason = line.OverrideReason,
+        ItemDiscount = line.ItemDiscount,
+        ItemDiscount2 = line.ItemDiscount2,
+        ItemDiscount3 = line.ItemDiscount3,
+        ItemDiscount4 = line.ItemDiscount4,
+        ItemDiscount5 = line.ItemDiscount5,
+        ItemDiscount6 = line.ItemDiscount6,
+        ItemDiscAmount = line.ItemDiscAmount,
+        ItemDiscAmount1 = line.ItemDiscAmount1,
         IsInclusive = line.IsInclusive,
         TaxPercent = ResolveTaxPercent(line.TaxGrCode)
     };

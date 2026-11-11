@@ -69,6 +69,8 @@ public class QaCase
     public ICollection<QaLogicalHold> LogicalHolds { get; set; } = [];
     public ICollection<QaPhysicalHold> PhysicalHolds { get; set; } = [];
     public ICollection<QaNonGoodGrant> NonGoodGrants { get; set; } = [];
+    public ICollection<QaCorrectiveAction> CorrectiveActions { get; set; } = [];
+    public ICollection<QaInspectionAttempt> InspectionAttempts { get; set; } = [];
 }
 
 public class QaCaseLine
@@ -96,6 +98,8 @@ public class QaCaseLine
     public ICollection<QaDispositionLine> Dispositions { get; set; } = [];
     public ICollection<QaReceiptGrant> Grants { get; set; } = [];
     public ICollection<QaFgGrant> FgGrants { get; set; } = [];
+    public ICollection<QaCorrectiveAction> CorrectiveActions { get; set; } = [];
+    public ICollection<QaInspectionAttempt> InspectionAttempts { get; set; } = [];
 }
 
 public class QaInspection
@@ -336,4 +340,59 @@ public class QaNonGoodAllocation
     public byte[] RowVersion { get; set; } = [];
 
     public QaNonGoodGrant Grant { get; set; } = null!;
+}
+
+/// <summary>QA-only follow-up task. Does not post stock, WIP, scrap, vendor return, or credit notes.</summary>
+public class QaCorrectiveAction
+{
+    public long Uid { get; set; }
+    public long CaseId { get; set; }
+    public long CaseLineId { get; set; }
+    public int ActionNo { get; set; }
+    public string ActionType { get; set; } = string.Empty;
+    public decimal Qty { get; set; }
+    public string Status { get; set; } = "OPEN";
+    public string? AssignedTo { get; set; }
+    public string? AssignedDepartment { get; set; }
+    public string? Reason { get; set; }
+    public DateTime? DueDate { get; set; }
+    public string? Remarks { get; set; }
+    public string? CompletionEvidence { get; set; }
+    public Guid? RequestId { get; set; }
+    public DateTime CreatedDate { get; set; }
+    public string CreatedBy { get; set; } = string.Empty;
+    public DateTime? ModifiedDate { get; set; }
+    public string? ModifiedBy { get; set; }
+    public DateTime? CompletedAtUtc { get; set; }
+    public string? CompletedBy { get; set; }
+    public DateTime? CancelledAtUtc { get; set; }
+    public string? CancelledBy { get; set; }
+    public string? CancelReason { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+
+    public QaCase Case { get; set; } = null!;
+    public QaCaseLine CaseLine { get; set; } = null!;
+}
+
+/// <summary>Append-only inspection attempt. QaInspection remains the latest summary snapshot.</summary>
+public class QaInspectionAttempt
+{
+    public long Uid { get; set; }
+    public long CaseId { get; set; }
+    public long CaseLineId { get; set; }
+    public int AttemptNo { get; set; }
+    public string Result { get; set; } = string.Empty;
+    public string Inspector { get; set; } = string.Empty;
+    public DateTime InspectedAtUtc { get; set; }
+    public decimal InspectedQty { get; set; }
+    public string? Notes { get; set; }
+    public string? MeasuredValues { get; set; }
+    public string? DispositionSnapshot { get; set; }
+    public string? SourceIdentity { get; set; }
+    public long? SourceHeaderId { get; set; }
+    public long? ProductionBalLotId { get; set; }
+    public string? Reason { get; set; }
+
+    public QaCase Case { get; set; } = null!;
+    public QaCaseLine CaseLine { get; set; } = null!;
 }

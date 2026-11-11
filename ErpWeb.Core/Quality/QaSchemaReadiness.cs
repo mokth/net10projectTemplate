@@ -32,7 +32,9 @@ public sealed class QaSchemaReadinessResult
     public QaFeaturePair Logical { get; init; } = AbsentPair("logical hold");
     public QaFeaturePair Physical { get; init; } = AbsentPair("physical hold");
     public QaFeaturePair NonGood { get; init; } = AbsentPair("non-good");
+    public QaFeaturePair FollowUp { get; init; } = AbsentPair("follow-up");
     public bool CanQueryPolicy => Foundation.IsReady;
+    public bool CanQueryFollowUp => FollowUp.IsReady;
     public bool CanQueryCaseGraph =>
         Foundation.IsReady
         && Incoming.IsReady
@@ -109,7 +111,9 @@ public static class QaSchemaReadiness
         "QaPhysicalHold",
         "QaPhysicalAllocation",
         "QaNonGoodGrant",
-        "QaNonGoodAllocation"
+        "QaNonGoodAllocation",
+        "QaCorrectiveAction",
+        "QaInspectionAttempt"
     ];
 
     private static readonly string[] FoundationTables =
@@ -183,7 +187,17 @@ public static class QaSchemaReadiness
         ("QaNonGoodAllocation", "Status"),
         ("QaNonGoodAllocation", "Qty"),
         ("QaNonGoodAllocation", "ProductionOutputId"),
-        ("QaNonGoodAllocation", "GrantId")
+        ("QaNonGoodAllocation", "GrantId"),
+        ("QaCorrectiveAction", "CaseId"),
+        ("QaCorrectiveAction", "CaseLineId"),
+        ("QaCorrectiveAction", "ActionNo"),
+        ("QaCorrectiveAction", "ActionType"),
+        ("QaCorrectiveAction", "Status"),
+        ("QaInspectionAttempt", "CaseId"),
+        ("QaInspectionAttempt", "CaseLineId"),
+        ("QaInspectionAttempt", "AttemptNo"),
+        ("QaInspectionAttempt", "Result"),
+        ("QaInspectionAttempt", "Inspector")
     ];
 
     private static readonly (string Index, string Table)[] RequiredIndexes =
@@ -205,7 +219,9 @@ public static class QaSchemaReadiness
         ("UX_QaPhysicalHold_CaseLine", "QaPhysicalHold"),
         ("UX_QaPhysicalAllocation_Posted_Hold_Detail", "QaPhysicalAllocation"),
         ("UX_QaNonGoodGrant_CaseLine", "QaNonGoodGrant"),
-        ("UX_QaNonGoodAllocation_Posted_Grant_Output", "QaNonGoodAllocation")
+        ("UX_QaNonGoodAllocation_Posted_Grant_Output", "QaNonGoodAllocation"),
+        ("UX_QaCorrectiveAction_Case_No", "QaCorrectiveAction"),
+        ("UX_QaInspectionAttempt_Line_No", "QaInspectionAttempt")
     ];
 
     private static readonly ConditionalWeakTable<AppDbContext, StrongBox<QaSchemaReadinessResult>> Cache = new();
@@ -407,6 +423,12 @@ public static class QaSchemaReadiness
             RequiredColumns.Where(x => x.Table is "QaNonGoodGrant" or "QaNonGoodAllocation").ToArray(),
             RequiredIndexes.Where(x => x.Table is "QaNonGoodGrant" or "QaNonGoodAllocation").ToArray(),
             Table, Column, Index);
+        var followUp = Pair(
+            "follow-up",
+            [("QaCorrectiveAction", true), ("QaInspectionAttempt", true)],
+            RequiredColumns.Where(x => x.Table is "QaCorrectiveAction" or "QaInspectionAttempt").ToArray(),
+            RequiredIndexes.Where(x => x.Table is "QaCorrectiveAction" or "QaInspectionAttempt").ToArray(),
+            Table, Column, Index);
 
         var incomplete = !foundation.IsReady
                          || !incoming.IsReady
@@ -424,7 +446,8 @@ public static class QaSchemaReadiness
             FinalFg = fg,
             Logical = logical,
             Physical = physical,
-            NonGood = nonGood
+            NonGood = nonGood,
+            FollowUp = followUp
         };
     }
 

@@ -1330,6 +1330,9 @@ public class SaCdnServiceTests : IAsyncLifetime
         var copied = copy.Document!.Lines[0];
         Assert.Equal("CUSTOMER_PRICE_LIST", copied.PricingSource);
         Assert.Equal("PL-A", copied.PricingRef);
+        Assert.Null(copied.OriginalUnitPrice);
+        Assert.Null(copied.OverrideReason);
+        Assert.Equal((short)1, copied.SourceInvLine);
 
         // Now save exactly what the copy produced and confirm it reaches the database.
         var save = await sut.SaveNewAsync(new SaCdnSaveRequest
@@ -1358,6 +1361,95 @@ public class SaCdnServiceTests : IAsyncLifetime
         Assert.True(get.Succeeded, get.ErrorMessage);
         Assert.Equal("CUSTOMER_PRICE_LIST", get.Document!.Lines[0].PricingSource);
         Assert.Equal("PL-A", get.Document.Lines[0].PricingRef);
+    }
+
+    /// <summary>
+    /// C14: Invoice→CN copies unit price, six % slots, the first amount slot, tax basis and group.
+    /// An upstream invoice override is not re-declared, so a billing clerk without PRICE_OVERRIDE can save.
+    /// Invoice provenance stays on InvNo + SourceInvLine.
+    /// </summary>
+    [Fact]
+    public async Task C14_CopiedFromInvoice_DoesNotDemandPriceOverrideForInheritedInvoicePrice()
+    {
+        var invNo = await SeedPostedInvoiceAsync(
+            80m,
+            pricingSource: "CUSTOMER_ITEM",
+            pricingRef: "MOQ=0",
+            unitPrice: 8m,
+            originalUnitPrice: 10m,
+            overrideReason: "Negotiated on invoice",
+            itemDiscount: 10m);
+
+        var copy = await CreateSut().CopyFromInvoiceAsync(invNo);
+        Assert.True(copy.Succeeded, copy.ErrorMessage);
+        Assert.Null(copy.WarningMessage);
+
+        var copied = copy.Document!.Lines[0];
+        Assert.Equal(8m, copied.UnitPrice);
+        Assert.Equal(10m, copied.ItemDiscount);
+        Assert.Null(copied.OriginalUnitPrice);
+        Assert.Null(copied.OverrideReason);
+        Assert.Equal("CUSTOMER_ITEM", copied.PricingSource);
+        Assert.Equal(invNo, copy.Document.InvNo);
+        Assert.Equal((short)1, copied.SourceInvLine);
+
+        var access = AllowedExceptPriceOverride();
+        var save = await CreateSut(access).SaveNewAsync(new SaCdnSaveRequest
+        {
+            Type = "CN",
+            DocDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            InvNo = invNo,
+            SalesmanCode = "SM1",
+            Lines =
+            [
+                new SaCdnLineRequest
+                {
+                    ICode = copied.ICode,
+                    Qty = copied.Qty,
+                    UnitPrice = copied.UnitPrice,
+                    PricingSource = copied.PricingSource,
+                    PricingRef = copied.PricingRef,
+                    OriginalUnitPrice = copied.OriginalUnitPrice,
+                    OverrideReason = copied.OverrideReason,
+                    ItemDiscount = copied.ItemDiscount,
+                    IsInclusive = copied.IsInclusive,
+                    TaxGrCode = copied.TaxGrCode,
+                    SourceInvLine = copied.SourceInvLine
+                }
+            ]
+        });
+
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var get = await CreateSut(access).GetAsync(save.DocNo!);
+        Assert.True(get.Succeeded, get.ErrorMessage);
+        Assert.Equal(8m, get.Document!.Lines[0].UnitPrice);
+        Assert.Equal(10m, get.Document.Lines[0].ItemDiscount);
+        Assert.Null(get.Document.Lines[0].OriginalUnitPrice);
+        Assert.Equal((short)1, get.Document.Lines[0].SourceInvLine);
+        Assert.Equal(invNo, get.Document.InvNo);
+    }
+
+    /// <summary>
+    /// C15: Invoice ItemDiscAmount1 cannot be stored on CN. Document the drop; do not stuff it into CostPrice.
+    /// Phase B2 would add a CN amount2 field after separate approval.
+    /// </summary>
+    [Fact]
+    public async Task C15_CopiedFromInvoice_DropsSecondAmountSlot_AndDoesNotStuffCostPrice()
+    {
+        var invNo = await SeedPostedInvoiceAsync(
+            100m,
+            itemDiscAmount: 1m,
+            itemDiscAmount1: 2m);
+
+        var copy = await CreateSut().CopyFromInvoiceAsync(invNo);
+        Assert.True(copy.Succeeded, copy.ErrorMessage);
+        Assert.Contains("second amount discount", copy.WarningMessage);
+
+        var copied = copy.Document!.Lines[0];
+        Assert.Equal(1m, copied.ItemDiscAmount);
+        Assert.Equal(0m, copied.CostPrice);
     }
 
     [Fact]
@@ -1801,14 +1893,30 @@ public class SaCdnServiceTests : IAsyncLifetime
         return access;
     }
 
+    private static Mock<IAccessRightService> AllowedExceptPriceOverride()
+    {
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, string permission, CancellationToken _) =>
+                Task.FromResult(
+                    !string.Equals(permission, PermissionCodes.PriceOverride, StringComparison.OrdinalIgnoreCase)));
+        return access;
+    }
+
     /// <summary>Seeds a simple service-only invoice and posts it. Returns the InvNo.</summary>
     private async Task<string> SeedPostedInvoiceAsync(
         decimal totalAmount = 100m,
         string? pricingSource = null,
-        string? pricingRef = null)
+        string? pricingRef = null,
+        decimal unitPrice = 10m,
+        decimal? originalUnitPrice = null,
+        string? overrideReason = null,
+        decimal itemDiscount = 0m,
+        decimal itemDiscAmount = 0m,
+        decimal itemDiscAmount1 = 0m)
     {
         var invService = CreateInvoiceService();
-        var qty = totalAmount / 10m;
+        var qty = unitPrice == 0m ? 1m : totalAmount / unitPrice;
         var invReq = new SaInvoiceSaveRequest
         {
             InvDate = FixedToday,
@@ -1822,10 +1930,15 @@ public class SaCdnServiceTests : IAsyncLifetime
                 {
                     ICode = "SVC1",
                     Qty = qty,
-                    UnitPrice = 10m,
+                    UnitPrice = unitPrice,
                     FrWarehouse = "MAIN",
                     PricingSource = pricingSource,
-                    PricingRef = pricingRef
+                    PricingRef = pricingRef,
+                    OriginalUnitPrice = originalUnitPrice,
+                    OverrideReason = overrideReason,
+                    ItemDiscount = itemDiscount,
+                    ItemDiscAmount = itemDiscAmount,
+                    ItemDiscAmount1 = itemDiscAmount1
                 }
             ]
         };

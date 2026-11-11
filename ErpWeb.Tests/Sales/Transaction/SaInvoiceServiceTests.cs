@@ -18,6 +18,7 @@ using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Sales;
 using ErpWeb.Tests.Inventory.Transaction;
 using ErpWeb.Tests.Procurement.Transaction;
+using SaInvoiceLineVm = ErpWeb.UI.Sales.Transactions.SaInvoiceLineVm;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -1186,6 +1187,293 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         await using var verify = await _factory.CreateDbContextAsync();
         Assert.Equal(SaInvoiceStatuses.New, (await verify.SaInvoices.SingleAsync(x => x.InvNo == save.InvNo)).Status);
         Assert.Equal(0, await verify.IvTrxHistories.CountAsync());
+    }
+
+    [Fact]
+    public async Task Linked_do_invoice_inherits_commercial_slots_and_keeps_frozen_pack()
+    {
+        const string doNo = "DO-COMM-0001";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaDos.Add(new SaDo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DoNo = doNo,
+                DoDate = FixedToday,
+                Status = SaDoStatuses.Posted,
+                CustCode = "CUST01",
+                Currency = "MYR",
+                CurrRate = 1m,
+                LocationCode = "SITE",
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                Details =
+                [
+                    new SaDoDetail
+                    {
+                        CompanyCode = "DEMO",
+                        BranchCode = "HQ",
+                        DoNo = doNo,
+                        Line = 1,
+                        SoNo = string.Empty,
+                        ICode = "PACK1",
+                        IDesc = "Packed item",
+                        Qty = 2m,
+                        StdQty = 24m,
+                        StdPsize = 12m,
+                        StdUom = "EA",
+                        SellingUom = "BOX",
+                        UnitPrice = 10m,
+                        ItemDiscount = 10m,
+                        ItemDiscount2 = 5m,
+                        ItemDiscount3 = 1m,
+                        ItemDiscount4 = 2m,
+                        ItemDiscount5 = 3m,
+                        ItemDiscount6 = 4m,
+                        IsInclusive = true,
+                        TaxGroup = "SR",
+                        OrderType = "STD",
+                        OriginalUnitPrice = 12m,
+                        OverrideReason = "promo",
+                        FrWarehouse = "MAIN",
+                        StockControl = true
+                    }
+                ]
+            });
+            var item = await db.IvStockMasters.SingleAsync(x => x.ICode == "PACK1");
+            item.StdPackSize = 10m;
+            await db.SaveChangesAsync();
+        }
+
+        var billable = new SaDoBillableLineDto
+        {
+            DoNo = doNo,
+            Line = 1,
+            ICode = "PACK1",
+            RemainingBillableQty = 2m,
+            UnitPrice = 10m,
+            PricingSource = "CUSTOMER_ITEM",
+            OriginalUnitPrice = 12m,
+            OverrideReason = "promo",
+            StdUom = "EA",
+            FrWarehouse = "MAIN",
+            StockControl = true,
+            ItemDiscount = 10m,
+            ItemDiscount2 = 5m,
+            ItemDiscount3 = 1m,
+            ItemDiscount4 = 2m,
+            ItemDiscount5 = 3m,
+            ItemDiscount6 = 4m,
+            IsInclusive = true,
+            TaxGroup = "SR",
+            OrderType = "STD"
+        };
+        var request = SaInvoiceLineVm.FromDeliveryOrder(billable).ToRequest();
+
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            TaxGrCode = "SR",
+            SalesmanCode = "SM1",
+            InvName = "Alpha",
+            InvAddress1 = "INV ADDR 1",
+            InvCity = "INV CITY",
+            InvPostalCode = "50000",
+            InvCountry = "MY",
+            InvTel = "123",
+            Lines = [request]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var line = Assert.Single(save.Document!.Lines);
+        Assert.Equal(10m, line.UnitPrice);
+        Assert.Equal(10m, line.ItemDiscount);
+        Assert.Equal(5m, line.ItemDiscount2);
+        Assert.Equal(1m, line.ItemDiscount3);
+        Assert.Equal(2m, line.ItemDiscount4);
+        Assert.Equal(3m, line.ItemDiscount5);
+        Assert.Equal(4m, line.ItemDiscount6);
+        Assert.Equal(0m, line.ItemDiscAmount);
+        Assert.Equal(0m, line.ItemDiscAmount1);
+        Assert.True(line.IsInclusive);
+        Assert.Equal("SR", line.TaxGrCode);
+        Assert.Equal("STD", line.OrderType);
+        Assert.Null(line.OriginalUnitPrice);
+        Assert.Null(line.OverrideReason);
+        Assert.Equal(2m, line.Qty);
+        Assert.Equal(24m, line.StdQty);
+        Assert.Equal("EA", line.StdUom);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(0, await verify.IvTrxHistories.CountAsync());
+    }
+
+    [Fact]
+    public async Task C12_so_linked_invoice_keeps_frozen_pack_when_master_selling_uom_changes()
+    {
+        const string soNo = "SO-C12-0001";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaSos.Add(new SaSo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SoNo = soNo,
+                CustRel = 1,
+                IsCurrent = true,
+                LastCustRel = 1,
+                SoDate = FixedToday,
+                Status = SaSoStatuses.New,
+                CustCode = "CUST01",
+                Currency = "MYR",
+                CurrRate = 1m,
+                PayCode = "NET30",
+                LocationCode = "SITE",
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                Details =
+                [
+                    new SaSoDetail
+                    {
+                        CompanyCode = "DEMO",
+                        BranchCode = "HQ",
+                        SoNo = soNo,
+                        Line = 1,
+                        CustRel = 1,
+                        ICode = "PACK1",
+                        IDesc = "Packed item",
+                        OrderQty = 2m,
+                        BalanceQty = 2m,
+                        StdQty = 24m,
+                        StdPsize = 12m,
+                        StdUom = "EA",
+                        SellingUom = "BOX",
+                        UnitPrice = 10m,
+                        Warehouse = "MAIN",
+                        StockControl = true
+                    }
+                ]
+            });
+            var item = await db.IvStockMasters.SingleAsync(x => x.ICode == "PACK1");
+            item.SellingUom = "PCS";
+            item.StdPackSize = 10m;
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            InvName = "Alpha",
+            InvAddress1 = "INV ADDR 1",
+            InvCity = "INV CITY",
+            InvPostalCode = "50000",
+            InvCountry = "MY",
+            InvTel = "123",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    ICode = "PACK1",
+                    Qty = 2m,
+                    UnitPrice = 10m,
+                    FrWarehouse = "MAIN",
+                    SoNo = soNo,
+                    SoLine = 1
+                }
+            ]
+        });
+
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var line = Assert.Single(save.Document!.Lines);
+        Assert.Equal(10m, line.UnitPrice);
+        Assert.Equal(2m, line.Qty);
+        Assert.Equal(24m, line.StdQty);
+        Assert.Equal("EA", line.StdUom);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(0, await verify.IvTrxHistories.CountAsync());
+    }
+
+    [Fact]
+    public async Task Linked_do_invoice_persists_amount_discount_slots()
+    {
+        const string doNo = "DO-AMT-0001";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaDos.Add(new SaDo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DoNo = doNo,
+                DoDate = FixedToday,
+                Status = SaDoStatuses.Posted,
+                CustCode = "CUST01",
+                Currency = "MYR",
+                CurrRate = 1m,
+                LocationCode = "SITE",
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                Details =
+                [
+                    new SaDoDetail
+                    {
+                        CompanyCode = "DEMO",
+                        BranchCode = "HQ",
+                        DoNo = doNo,
+                        Line = 1,
+                        SoNo = string.Empty,
+                        ICode = "SVC1",
+                        Qty = 5m,
+                        StdQty = 5m,
+                        StdPsize = 1m,
+                        StdUom = "EA",
+                        UnitPrice = 20m,
+                        ItemDiscAmount = 1m,
+                        ItemDiscAmount1 = 2m,
+                        TaxGroup = "ZR",
+                        OrderType = "EXP",
+                        StockControl = false
+                    }
+                ]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var request = SaInvoiceLineVm.FromDeliveryOrder(new SaDoBillableLineDto
+        {
+            DoNo = doNo,
+            Line = 1,
+            ICode = "SVC1",
+            RemainingBillableQty = 5m,
+            UnitPrice = 20m,
+            ItemDiscAmount = 1m,
+            ItemDiscAmount1 = 2m,
+            TaxGroup = "ZR",
+            OrderType = "EXP",
+            StockControl = false
+        }).ToRequest();
+
+        var save = await CreateSut().SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            Lines = [request]
+        });
+        Assert.True(save.Succeeded, save.ErrorMessage);
+        var line = Assert.Single(save.Document!.Lines);
+        Assert.Equal(1m, line.ItemDiscAmount);
+        Assert.Equal(2m, line.ItemDiscAmount1);
+        Assert.Equal(0m, line.ItemDiscount);
+        Assert.Equal("ZR", line.TaxGrCode);
+        Assert.Equal("EXP", line.OrderType);
+        Assert.Equal(5m, line.StdQty);
     }
 
     [Fact]

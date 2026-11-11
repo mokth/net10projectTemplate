@@ -330,7 +330,7 @@ public class QaDestinationTests : IAsyncLifetime
         var row = Assert.Single(result.InquiryPage!.Rows);
         Assert.DoesNotContain(row.Destinations, x => x.Status == QaDestinationStatuses.Executed);
         Assert.Contains(row.Destinations, x => x.Status == QaDestinationStatuses.LinkedUnverified);
-        Assert.Contains("divided by cases that reached inspection", result.InquiryPage.FirstPassYieldNote);
+        Assert.Contains("not a true first-pass yield", result.InquiryPage.FirstPassYieldNote);
 
         await using (var db = await _factory.CreateDbContextAsync())
         {

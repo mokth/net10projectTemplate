@@ -102,11 +102,11 @@ public sealed class QaPolicyService : IQaPolicyService
             };
             db.QaPolicies.Add(published);
         }
-        else if (command.RowVersion is { Length: > 0 }
-                 && published.RowVersion is { Length: > 0 }
-                 && !published.RowVersion.SequenceEqual(command.RowVersion))
+        else if (published.RowVersion is { Length: > 0 }
+                 && (command.RowVersion is not { Length: > 0 }
+                     || !published.RowVersion.SequenceEqual(command.RowVersion)))
         {
-            return QaResult.Fail("This policy was changed by someone else. Reload and try again.");
+            return QaResult.Fail(QaCaseMessages.PolicyChangedReload);
         }
 
         published.IncomingInspectionEnabled = KeepExistingOnly(published.IncomingInspectionEnabled, command.IncomingInspectionEnabled);

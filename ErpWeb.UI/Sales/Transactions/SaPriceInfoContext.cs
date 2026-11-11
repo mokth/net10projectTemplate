@@ -13,7 +13,12 @@ public sealed class SaPriceInfoContext
     public string CustCode { get; init; } = string.Empty;
     public string ItemCode { get; init; } = string.Empty;
     public string? ItemDescription { get; init; }
+    /// <summary>Commercial selling UOM used for recorded display and current-rule check.</summary>
     public string Uom { get; init; } = string.Empty;
+
+    /// <summary>Stock/standard UOM when it differs from <see cref="Uom"/>.</summary>
+    public string? StockUom { get; init; }
+
     public decimal Qty { get; init; }
     public DateTime DocDate { get; init; }
     public string? Currency { get; init; }
@@ -23,6 +28,15 @@ public sealed class SaPriceInfoContext
     public string? PricingRef { get; init; }
     public decimal? OriginalUnitPrice { get; init; }
     public string? OverrideReason { get; init; }
+
+    public decimal ItemDiscount { get; init; }
+    public decimal ItemDiscount2 { get; init; }
+    public decimal ItemDiscount3 { get; init; }
+    public decimal ItemDiscount4 { get; init; }
+    public decimal ItemDiscount5 { get; init; }
+    public decimal ItemDiscount6 { get; init; }
+    public decimal ItemDiscAmount { get; init; }
+    public decimal ItemDiscAmount1 { get; init; }
 
     public bool IsInclusive { get; init; }
     public decimal TaxPercent { get; init; }

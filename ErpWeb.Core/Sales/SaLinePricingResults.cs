@@ -19,10 +19,17 @@ public sealed class SaLinePricingRequest
     /// <summary>The TRANSACTION date, never the server date — the engine is validity-aware.</summary>
     public DateTime DocDate { get; init; }
 
-    /// <summary>Document currency; a price stored in another currency fails closed.</summary>
+    /// <summary>
+    /// Document currency. Blank/NULL is treated as the company base currency, not a wildcard.
+    /// A price stored in another currency fails closed; conversion is not implicit.
+    /// </summary>
     public string? DocumentCurrency { get; init; }
 
-    /// <summary>Item class, used only by discount-rule matching (a blank class matches any).</summary>
+    /// <summary>
+    /// Client item class. <see cref="ISaSalesRefService.ResolveLinePricingAsync"/> ignores this and
+    /// loads <c>IvStockMaster.IClassCode</c> server-side. Direct discount matching still uses the value
+    /// supplied on <c>SaItemFamilyDiscountRequest</c>.
+    /// </summary>
     public string? IClass { get; init; }
 
     /// <summary>Tax percent of the line's tax group, e.g. 6 for 6%.</summary>

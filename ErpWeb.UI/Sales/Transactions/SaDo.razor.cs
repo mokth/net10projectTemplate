@@ -996,6 +996,7 @@ public partial class SaDo : PageBase, IDisposable
         }
 
         _editingLine = null;
+        Interlocked.Increment(ref _priceApplySeq);
         _popupAdvancedExpanded = false;
         Popup = new SaDoLineVm
         {
@@ -1129,6 +1130,7 @@ public partial class SaDo : PageBase, IDisposable
         Renumber();
         Lines = Lines.ToList();
         RecalcDocument();
+        Interlocked.Increment(ref _priceApplySeq);
         MarkDirty();
         StatusMessage = added == 1 ? "1 sales order line added." : $"{added} sales order lines added.";
         ResetSoPicker();
@@ -1142,6 +1144,7 @@ public partial class SaDo : PageBase, IDisposable
         }
 
         _editingLine = line;
+        Interlocked.Increment(ref _priceApplySeq);
         _popupAdvancedExpanded = true;
         Popup = line.Clone();
         PopupDiscountIsAmount = Popup.ItemDiscAmount != 0m || Popup.ItemDiscAmount1 != 0m;
@@ -1184,6 +1187,7 @@ public partial class SaDo : PageBase, IDisposable
         Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.StdUom = item.StdUom;
+        Popup.SellingUom = item.SellingUom;
         Popup.StdPackSize = item.StdPackSize;
         Popup.StockControl = item.StockControl;
 
@@ -1212,7 +1216,25 @@ public partial class SaDo : PageBase, IDisposable
     protected async Task OnPopupQuantityChangedAsync(decimal qty)
     {
         Popup.Qty = qty;
-        await ResolvePopupPriceAsync(assignDiscountSlots: true);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: true);
+    }
+
+    /// <summary>
+    /// Quantity is not a live-price trigger for source-inherited, already-saved, or manually
+    /// overridden lines. Item-code change still resolves. RecalcDocument still updates amounts.
+    /// </summary>
+    private async Task ResolvePopupPriceOnQtyTaxOrBasisAsync(bool assignDiscountSlots)
+    {
+        if (!SaLinePricingTrigger.AllowLiveResolve(
+                isEditingExistingLine: _editingLine is not null,
+                hasInheritedSource: Popup.HasSource,
+                isManualOverride: SaPriceOverridePolicy.IsOverride(Popup.UnitPrice, Popup.OriginalUnitPrice)))
+        {
+            Interlocked.Increment(ref _priceApplySeq);
+            return;
+        }
+
+        await ResolvePopupPriceAsync(assignDiscountSlots);
     }
 
     /// <summary>
@@ -1234,7 +1256,7 @@ public partial class SaDo : PageBase, IDisposable
             {
                 CustCode = CustCode!,
                 ICode = Popup.ICode,
-                UOM = Popup.StdUom ?? string.Empty,
+                UOM = SaLinePricingTrigger.CommercialUom(Popup.SellingUom, Popup.StdUom),
                 Qty = Popup.Qty,
                 DocDate = DoDate,
                 DocumentCurrency = Currency,
@@ -1904,6 +1926,8 @@ public sealed class SaDoLineVm
     public decimal Qty { get; set; } = 1m;
     public decimal? StdPackSize { get; set; }
     public string? StdUom { get; set; }
+    /// <summary>Commercial selling UOM for live price lookup. Not sent on <see cref="ToRequest"/>.</summary>
+    public string? SellingUom { get; set; }
     public string? FrWarehouse { get; set; }
     public decimal UnitPrice { get; set; }
 
@@ -1956,6 +1980,7 @@ public sealed class SaDoLineVm
         Qty = Qty,
         StdPackSize = StdPackSize,
         StdUom = StdUom,
+        SellingUom = SellingUom,
         FrWarehouse = FrWarehouse,
         UnitPrice = UnitPrice,
         PricingSource = PricingSource,
@@ -2080,6 +2105,7 @@ public sealed class SaDoLineVm
             Qty = dto.BalanceQty,
             StdPackSize = dto.StdPsize > 0m ? dto.StdPsize : (decimal?)null,
             StdUom = dto.StdUom,
+            SellingUom = dto.SellingUom,
             FrWarehouse = dto.Warehouse,
             UnitPrice = dto.UnitPrice,
             PricingSource = dto.PricingSource,

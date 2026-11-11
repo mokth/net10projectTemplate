@@ -17,6 +17,7 @@ public partial class SaPriceInfoDialog : ComponentBase, IDisposable
     private string? _errorMessage;
     private bool _isChecking;
     private int _checkGeneration;
+    private bool _wasVisible;
 
     private bool CanCheckCurrentRules => Context is not null &&
         !string.IsNullOrWhiteSpace(Context.CustCode) &&
@@ -56,18 +57,32 @@ public partial class SaPriceInfoDialog : ComponentBase, IDisposable
         ? ToDocumentBasis(price, Context)
         : null;
 
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
-        if (ReferenceEquals(Context, _observedContext))
+        var contextChanged = !ReferenceEquals(Context, _observedContext);
+        var opened = Visible && !_wasVisible;
+        if (!contextChanged && !opened)
+        {
+            _wasVisible = Visible;
             return;
+        }
 
-        _observedContext = Context;
-        _checkGeneration++;
-        _checkCancellation?.Cancel();
-        _checkCancellation = null;
-        _isChecking = false;
-        _errorMessage = null;
-        _explanation = null;
+        if (contextChanged)
+        {
+            _observedContext = Context;
+            _checkGeneration++;
+            _checkCancellation?.Cancel();
+            _checkCancellation = null;
+            _isChecking = false;
+            _errorMessage = null;
+            _explanation = null;
+        }
+
+        _wasVisible = Visible;
+        if (Visible && CanCheckCurrentRules)
+        {
+            await CheckCurrentPricingRulesAsync();
+        }
     }
 
     private async Task CheckCurrentPricingRulesAsync()

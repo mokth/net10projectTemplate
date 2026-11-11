@@ -203,6 +203,107 @@ public class SaItemFamilyPricingContractTests
         Assert.True(blank.Found);
     }
 
+    [Fact]
+    public void C06_UsdDocument_DoesNotReceiveMyrItemDefault()
+    {
+        var resolution = Resolve(
+            Request(documentCurrency: "USD"),
+            new SaItemFamilyPriceCandidates
+            {
+                Items = [Item("I1", price: 14m)]
+            });
+
+        Assert.False(resolution.Found);
+        Assert.Contains("company currency", resolution.Message!);
+        Assert.Contains("USD", resolution.Message!);
+        Assert.Contains("Conversion is not implicit", resolution.Message!);
+    }
+
+    [Fact]
+    public void C06_UsdDocument_ExplicitUsdListBeatsBlankBaseLine_AndDoesNotUseItemDefault()
+    {
+        var resolution = Resolve(
+            Request(custPriceCode: "PL1", documentCurrency: "USD"),
+            new SaItemFamilyPriceCandidates
+            {
+                PriceListLines =
+                [
+                    new IvCustPriceCandidate
+                    {
+                        CustPriceCode = "PL1", ICode = "I1", UOM = "PCS", SellingPrice = 100m
+                    },
+                    new IvCustPriceCandidate
+                    {
+                        CustPriceCode = "PL1", ICode = "I1", UOM = "PCS", SellingPrice = 25m, Currency = "USD"
+                    }
+                ],
+                Items = [Item("I1", price: 14m)]
+            });
+
+        Assert.True(resolution.Found);
+        Assert.Equal(25m, resolution.UnitPrice);
+        Assert.Equal(SaItemFamilyPriceSources.PriceList, resolution.Source);
+    }
+
+    [Fact]
+    public void C06_UsdDocument_ExplicitUsdCustomerItem_Resolves()
+    {
+        var resolution = Resolve(
+            Request(documentCurrency: "USD"),
+            new SaItemFamilyPriceCandidates
+            {
+                CustomerItems = [Customer("I1", "PCS", moq: 0, price: 25m, currency: "USD")],
+                Items = [Item("I1", price: 14m)]
+            });
+
+        Assert.True(resolution.Found);
+        Assert.Equal(25m, resolution.UnitPrice);
+        Assert.Equal(SaPriceSource.CustomerItem, resolution.PricingSource);
+    }
+
+    [Fact]
+    public void C06_BlankDocumentCurrency_UsesCompanyBase_AndAcceptsBlankCandidate()
+    {
+        var resolution = Resolve(
+            Request(documentCurrency: null),
+            new SaItemFamilyPriceCandidates
+            {
+                CustomerItems = [Customer("I1", "PCS", moq: 0, price: 12.50m, currency: null)],
+                Items = [Item("I1", price: 14m)]
+            });
+
+        Assert.True(resolution.Found);
+        Assert.Equal(12.50m, resolution.UnitPrice);
+    }
+
+    [Fact]
+    public void C06_BlankDocumentCurrency_DoesNotAcceptAForeignCandidate()
+    {
+        var resolution = Resolve(
+            Request(documentCurrency: null),
+            new SaItemFamilyPriceCandidates
+            {
+                CustomerItems = [Customer("I1", "PCS", moq: 0, price: 12.50m, currency: "USD")],
+                Items = [Item("I1", price: 14m)]
+            });
+
+        Assert.False(resolution.Found);
+        Assert.Contains("different currency", resolution.Message!);
+    }
+
+    [Fact]
+    public void C06_MissingCompanyBase_FailsClosed()
+    {
+        var resolution = Resolve(
+            Request(documentCurrency: "MYR", companyBaseCurrency: ""),
+            new SaItemFamilyPriceCandidates
+            {
+                Items = [Item("I1", price: 14m)]
+            });
+
+        Assert.False(resolution.Found);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-3)]
@@ -360,6 +461,30 @@ public class SaItemFamilyPricingContractTests
     }
 
     [Fact]
+    public void RuntimeClassMatch_IsDirectional_AndCaseInsensitive()
+    {
+        Assert.True(SaItemFamilyRuleMatch.RuleMatchesActualClass("c1", "C1"));
+        Assert.False(SaItemFamilyRuleMatch.RuleMatchesActualClass("C1", "C2"));
+        Assert.True(SaItemFamilyRuleMatch.RuleMatchesActualClass(null, "C2"));
+        Assert.True(SaItemFamilyRuleMatch.RuleMatchesActualClass("  ", "C2"));
+        Assert.True(SaItemFamilyRuleMatch.RuleMatchesActualClass(null, null));
+        Assert.False(SaItemFamilyRuleMatch.RuleMatchesActualClass("C1", null));
+        Assert.False(SaItemFamilyRuleMatch.RuleMatchesActualClass("C1", "  "));
+
+        var classRule = Rule(id: 1, qtyFr: 1m, qtyTo: 10m, dateFr: DocDate, iClass: "c1");
+        Assert.True(SaItemFamilyRuleMatch.Applies(classRule, DiscountRequest(5m, DocDate, "C1")));
+        Assert.False(SaItemFamilyRuleMatch.Applies(classRule, DiscountRequest(5m, DocDate, null)));
+    }
+
+    [Fact]
+    public void SaveTimeClassesOverlap_BlankStillOverlapsSpecific()
+    {
+        Assert.True(SaItemFamilyRuleMatch.ClassesOverlap("C1", null));
+        Assert.True(SaItemFamilyRuleMatch.ClassesOverlap(null, "C1"));
+        Assert.False(SaItemFamilyRuleMatch.RuleMatchesActualClass("C1", null));
+    }
+
+    [Fact]
     public void RuleForAnotherItem_DoesNotApply() =>
         Assert.False(SaItemFamilyRuleMatch.Applies(
             new SaItemFamilyDiscountRule { Id = 1, ICode = "I2", QtyFr = 1m, QtyTo = 10m, DateFr = DocDate },
@@ -468,13 +593,27 @@ public class SaItemFamilyPricingContractTests
     [Fact]
     public void TieBreak_ClassSpecificBeatsBlankClass()
     {
+        var selection = SaItemFamilyDiscountResolver.Resolve(
+            DiscountRequest(5m, DocDate, "C1"),
+            [
+                Rule(id: 1, qtyFr: 1m, qtyTo: 10m, dateFr: DocDate, iClass: null, discount: 5m),
+                Rule(id: 2, qtyFr: 1m, qtyTo: 10m, dateFr: DocDate, iClass: "C1", discount: 7m)
+            ]);
+
+        Assert.Equal(2, selection.RuleId);
+        Assert.Equal([1], selection.CompetingRuleIds);
+    }
+
+    [Fact]
+    public void TieBreak_BlankActualClassKeepsOnlyWildcard()
+    {
         var selection = ResolveDiscount([
             Rule(id: 1, qtyFr: 1m, qtyTo: 10m, dateFr: DocDate, iClass: null, discount: 5m),
             Rule(id: 2, qtyFr: 1m, qtyTo: 10m, dateFr: DocDate, iClass: "C1", discount: 7m)
         ]);
 
-        Assert.Equal(2, selection.RuleId);
-        Assert.Equal([1], selection.CompetingRuleIds);
+        Assert.Equal(1, selection.RuleId);
+        Assert.Empty(selection.CompetingRuleIds);
     }
 
     [Fact]
@@ -540,7 +679,8 @@ public class SaItemFamilyPricingContractTests
         decimal qty = 10m,
         string? priceMethod = null,
         string? custPriceCode = null,
-        string? documentCurrency = null) =>
+        string? documentCurrency = null,
+        string? companyBaseCurrency = "MYR") =>
         new()
         {
             CustCode = custCode,
@@ -551,7 +691,8 @@ public class SaItemFamilyPricingContractTests
             PayCode = "CASH",
             PriceMethod = priceMethod,
             CustPriceCode = custPriceCode,
-            DocumentCurrency = documentCurrency
+            DocumentCurrency = documentCurrency,
+            CompanyBaseCurrency = companyBaseCurrency
         };
 
     private static SaItemFamilyPriceResolution Resolve(

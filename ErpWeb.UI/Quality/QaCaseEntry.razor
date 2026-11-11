@@ -40,7 +40,7 @@
                     <div class="mr-chips">
                         <span class="mr-chip">@ModeChip</span>
                         <span class="mr-chip">@CaseNoDisplay</span>
-                        <span class="mr-chip">@Header.Status</span>
+                        <span class="mr-chip">@StatusDisplay</span>
                         <span class="mr-chip">@PhaseChip</span>
                         <span class="mr-chip">Record-only</span>
                     </div>
@@ -53,11 +53,22 @@
 
             <section class="mr-card">
                 <QaRecordOnlyBanner />
+                <ol class="qa-steps" aria-label="Quality case steps">
+                    <li class="@StepClass("source")">1. Source</li>
+                    <li class="@StepClass("inspect")">2. Inspect</li>
+                    <li class="@StepClass("review")">3. Review</li>
+                    <li class="@StepClass("followup")">4. Follow-up</li>
+                </ol>
+                <p class="mr-guidance qa-next-action">Next: @NextActionHint</p>
+                @if (!string.IsNullOrWhiteSpace(Header.SourceCheckNote))
+                {
+                    <p class="mr-guidance qa-source-stale">Source needs review: @Header.SourceCheckNote Quality did not change the source document.</p>
+                }
                 @if (!string.IsNullOrWhiteSpace(Header.EligibilityNote))
                 {
                     <p class="mr-guidance">@Header.EligibilityNote</p>
                 }
-                <p class="mr-guidance">Attachments are not enabled in this phase.</p>
+                <p class="mr-guidance">@Header.AttachmentsNote</p>
                 @if (IsIncoming)
                 {
                     <div class="iv-chips" aria-label="Incoming quantities">
@@ -93,27 +104,29 @@
                 }
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form">
                     <DxFormLayoutItem Caption="Case date" ColSpanMd="4">
-                        <Template>
+                        <Template Context="field">
                             <DxDateEdit @bind-Date="@Header.CaseDate"
                                         DisplayFormat="dd/MM/yyyy"
                                         Enabled="@CanEditDocument" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
-                        <Template>
-                            <DxTextBox Text="@Header.Status" ReadOnly="true" ValidationEnabled="false" />
+                        <Template Context="field">
+                            <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Source type" ColSpanMd="4">
-                        <Template>
-                            <DxComboBox Data="@QaSourceTypes.All"
+                        <Template Context="field">
+                            <DxComboBox Data="@SourceTypeOptions"
+                                        TextFieldName="@nameof(QaNamedOption.Name)"
+                                        ValueFieldName="@nameof(QaNamedOption.Key)"
                                         @bind-Value="@Header.SourceType"
                                         Enabled="@CanChangeSourceType"
                                         NullText="Select source" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Source document" ColSpanMd="6">
-                        <Template>
+                        <Template Context="field">
                             <div class="qa-source-row">
                                 <DxTextBox Text="@Header.SourceDocNo"
                                            ReadOnly="true"
@@ -132,7 +145,7 @@
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Delivery note" ColSpanMd="3">
-                        <Template>
+                        <Template Context="field">
                             <DxTextBox @bind-Text="@Header.DeliveryNote"
                                        maxlength="50"
                                        ReadOnly="@(!CanEditDeliveryNote)"
@@ -140,7 +153,7 @@
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="PO / Rel" ColSpanMd="3">
-                        <Template>
+                        <Template Context="field">
                             <DxTextBox @bind-Text="@Header.PoNo"
                                        maxlength="30"
                                        ReadOnly="true"
@@ -148,12 +161,12 @@
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Supplier" ColSpanMd="6">
-                        <Template>
+                        <Template Context="field">
                             <DxTextBox Text="@SupplierDisplay" ReadOnly="true" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Work order" ColSpanMd="6">
-                        <Template>
+                        <Template Context="field">
                             <DxTextBox @bind-Text="@Header.WorkOrderNo"
                                        maxlength="30"
                                        ReadOnly="true"
@@ -161,7 +174,7 @@
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
-                        <Template>
+                        <Template Context="field">
                             <DxMemo @bind-Text="@Header.Remarks"
                                     Rows="2"
                                     ReadOnly="@(!CanEditDocument)" />
@@ -172,20 +185,172 @@
 
             <section class="mr-card">
                 <div class="qa-line-head">
-                    <h2>Lines</h2>
-                    @if (CanEditDocument)
-                    {
-                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                  Text="Add line"
-                                  IconCssClass="fa-solid fa-plus"
-                                  Click="@OpenNewLine" />
-                    }
+                    <h2>@(CanInspect ? "Inspect" : "Lines")</h2>
+                    <div class="qa-line-head__actions">
+                        @if (CanEditDocument)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="Add line"
+                                      IconCssClass="fa-solid fa-plus"
+                                      Click="@OpenNewLine" />
+                        }
+                        else if (CanInspect)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                      Text="Pass full amount"
+                                      Click="@BeginPassAll"
+                                      Enabled="@(!IsSubmitting && Lines.Count > 0)" />
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="@(IsSubmitting ? "Saving…" : "Save all")"
+                                      Click="@SaveAllInspectionsAsync"
+                                      Enabled="@(!IsSubmitting && Lines.Count > 0)" />
+                        }
+                    </div>
                 </div>
                 @if (Lines.Count == 0)
                 {
                     <div class="mr-empty">
                         <h3>No lines yet</h3>
                         <p>Use Lookup or Add line to pick items from the source document. Item, UOM, lot, PO and work order cannot be typed.</p>
+                    </div>
+                }
+                else if (CanInspect)
+                {
+                    <div class="qa-lines-desktop">
+                        <div class="qa-inspect-scroll">
+                            <table class="qa-lines qa-inspect-grid">
+                                <thead>
+                                    <tr>
+                                        <th>Line</th>
+                                        <th>Item</th>
+                                        <th class="qa-num">Qty</th>
+                                        <th class="qa-num">Inspected</th>
+                                        <th class="qa-num">Pending</th>
+                                        <th>Result</th>
+                                        <th class="qa-num">Accept</th>
+                                        <th class="qa-num">Reject</th>
+                                        <th class="qa-num">Rework</th>
+                                        <th class="qa-num">Hold</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var line in Lines)
+                                    {
+                                        <tr @key="line.LineNo" class="@(string.IsNullOrWhiteSpace(LineInspectError(line)) ? null : "qa-row-error")">
+                                            <td>@line.LineNo</td>
+                                            <td>
+                                                @line.ItemCode
+                                                <span class="qa-muted">@line.ItemName</span>
+                                                @if (!string.IsNullOrWhiteSpace(line.LotNo))
+                                                {
+                                                    <span class="qa-muted">Lot @line.LotNo</span>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(LineInspectError(line)))
+                                                {
+                                                    <span class="qa-row-error__msg">@LineInspectError(line)</span>
+                                                }
+                                            </td>
+                                            <td class="qa-num">@line.Qty.ToString("n4") @line.Uom</td>
+                                            <td class="qa-num">
+                                                <DxSpinEdit @bind-Value="@line.InspectedQty"
+                                                            MinValue="0m"
+                                                            MaxValue="@line.Qty"
+                                                            DisplayFormat="n4"
+                                                            CssClass="qa-spin" />
+                                            </td>
+                                            <td class="qa-num">@PendingQty(line).ToString("n4")</td>
+                                            <td>
+                                                <DxComboBox Data="@ResultOptions"
+                                                            TextFieldName="@nameof(QaNamedOption.Name)"
+                                                            ValueFieldName="@nameof(QaNamedOption.Key)"
+                                                            @bind-Value="@line.Result"
+                                                            CssClass="qa-result" />
+                                            </td>
+                                            <td class="qa-num">
+                                                <DxSpinEdit @bind-Value="@line.AcceptQty" MinValue="0m" DisplayFormat="n4" CssClass="qa-spin" />
+                                            </td>
+                                            <td class="qa-num">
+                                                <DxSpinEdit @bind-Value="@line.RejectQty" MinValue="0m" DisplayFormat="n4" CssClass="qa-spin" />
+                                            </td>
+                                            <td class="qa-num">
+                                                <DxSpinEdit @bind-Value="@line.ReworkQty" MinValue="0m" DisplayFormat="n4" CssClass="qa-spin" />
+                                            </td>
+                                            <td class="qa-num">
+                                                <DxSpinEdit @bind-Value="@line.HoldQty" MinValue="0m" DisplayFormat="n4" CssClass="qa-spin" />
+                                            </td>
+                                            <td>
+                                                <DxTextBox @bind-Text="@line.Notes" NullText="Optional" CssClass="qa-notes" />
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="qa-lines-compact">
+                        @foreach (var line in Lines)
+                        {
+                            <div class="qa-line-card qa-inspect-card" @key="line.LineNo">
+                                <div>
+                                    <strong>@line.ItemCode</strong>
+                                    <span class="qa-muted"> · Line @line.LineNo · @line.Qty.ToString("n4") @line.Uom</span>
+                                    @if (!string.IsNullOrWhiteSpace(line.LotNo))
+                                    {
+                                        <p class="qa-muted mb-0">Lot @line.LotNo</p>
+                                    }
+                                </div>
+                                <DxFormLayout SizeMode="SizeMode.Small">
+                                    <DxFormLayoutItem Caption="Inspected" ColSpanMd="6">
+                                        <Template Context="field">
+                                            <DxSpinEdit @bind-Value="@line.InspectedQty" MinValue="0m" MaxValue="@line.Qty" DisplayFormat="n4" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Pending" ColSpanMd="6">
+                                        <Template Context="field">
+                                            <DxTextBox Text="@PendingQty(line).ToString("n4")" ReadOnly="true" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Result" ColSpanMd="12">
+                                        <Template Context="field">
+                                            <DxComboBox Data="@ResultOptions"
+                                                        TextFieldName="@nameof(QaNamedOption.Name)"
+                                                        ValueFieldName="@nameof(QaNamedOption.Key)"
+                                                        @bind-Value="@line.Result" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Accept" ColSpanMd="6">
+                                        <Template Context="field">
+                                            <DxSpinEdit @bind-Value="@line.AcceptQty" MinValue="0m" DisplayFormat="n4" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Reject" ColSpanMd="6">
+                                        <Template Context="field">
+                                            <DxSpinEdit @bind-Value="@line.RejectQty" MinValue="0m" DisplayFormat="n4" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Rework" ColSpanMd="6">
+                                        <Template Context="field">
+                                            <DxSpinEdit @bind-Value="@line.ReworkQty" MinValue="0m" DisplayFormat="n4" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Hold" ColSpanMd="6">
+                                        <Template Context="field">
+                                            <DxSpinEdit @bind-Value="@line.HoldQty" MinValue="0m" DisplayFormat="n4" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                    <DxFormLayoutItem Caption="Notes" ColSpanMd="12">
+                                        <Template Context="field">
+                                            <DxTextBox @bind-Text="@line.Notes" NullText="Optional" />
+                                        </Template>
+                                    </DxFormLayoutItem>
+                                </DxFormLayout>
+                                @if (!string.IsNullOrWhiteSpace(LineInspectError(line)))
+                                {
+                                    <p class="qa-row-error__msg">@LineInspectError(line)</p>
+                                }
+                            </div>
+                        }
                     </div>
                 }
                 else
@@ -196,8 +361,9 @@
                                 <tr>
                                     <th>Line</th>
                                     <th>Item</th>
-                                    <th>Qty</th>
-                                    <th>Inspected</th>
+                                    <th class="qa-num">Qty</th>
+                                    <th class="qa-num">Inspected</th>
+                                    <th class="qa-num">Pending</th>
                                     <th>Result</th>
                                     <th>Disposition</th>
                                     <th></th>
@@ -206,21 +372,26 @@
                             <tbody>
                                 @foreach (var line in Lines)
                                 {
-                                    <tr>
+                                    <tr @key="line.LineNo">
                                         <td>@line.LineNo</td>
-                                        <td>@line.ItemCode<br /><span class="qa-muted">@line.ItemName</span></td>
-                                        <td>@line.Qty.ToString("n4") @line.Uom</td>
-                                        <td>@line.InspectedQty.ToString("n4")</td>
-                                        <td>@(line.Inspection?.Result ?? "—")</td>
+                                        <td>
+                                            @line.ItemCode
+                                            <br />
+                                            <span class="qa-muted">@line.ItemName</span>
+                                            @if (!string.IsNullOrWhiteSpace(line.LotNo))
+                                            {
+                                                <span class="qa-muted">Lot @line.LotNo</span>
+                                            }
+                                        </td>
+                                        <td class="qa-num">@line.Qty.ToString("n4") @line.Uom</td>
+                                        <td class="qa-num">@line.InspectedQty.ToString("n4")</td>
+                                        <td class="qa-num">@PendingQty(line).ToString("n4")</td>
+                                        <td>@QaLabels.Result(line.Inspection?.Result)</td>
                                         <td>@DispositionSummary(line)</td>
                                         <td>
                                             @if (CanEditDocument)
                                             {
                                                 <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Remove" Click="@(() => RemoveLine(line))" />
-                                            }
-                                            else if (CanInspect)
-                                            {
-                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Inspect" Click="@(() => OpenInspectLine(line))" />
                                             }
                                         </td>
                                     </tr>
@@ -231,26 +402,132 @@
                     <div class="qa-lines-compact">
                         @foreach (var line in Lines)
                         {
-                            <div class="qa-line-card">
+                            <div class="qa-line-card" @key="line.LineNo">
                                 <div>
                                     <strong>@line.ItemCode</strong>
                                     <span class="qa-muted"> · Line @line.LineNo</span>
-                                    <p class="qa-muted mb-0">@line.Qty.ToString("n4") @line.Uom · Inspected @line.InspectedQty.ToString("n4")</p>
-                                    <p class="qa-muted mb-0">@(line.Inspection?.Result ?? "—") · @DispositionSummary(line)</p>
+                                    <p class="qa-muted mb-0">@line.Qty.ToString("n4") @line.Uom · Inspected @line.InspectedQty.ToString("n4") · Pending @PendingQty(line).ToString("n4")</p>
+                                    <p class="qa-muted mb-0">@QaLabels.Result(line.Inspection?.Result) · @DispositionSummary(line)</p>
                                 </div>
                                 @if (CanEditDocument)
                                 {
                                     <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Remove" Click="@(() => RemoveLine(line))" />
-                                }
-                                else if (CanInspect)
-                                {
-                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Inspect" Click="@(() => OpenInspectLine(line))" />
                                 }
                             </div>
                         }
                     </div>
                 }
             </section>
+
+            <section class="mr-card">
+                <h2>Follow-up</h2>
+                @if (!Header.FollowUpReady)
+                {
+                    <p class="mr-guidance">@QaCaseMessages.FollowUpNotInstalled</p>
+                }
+                else
+                {
+                    <p class="mr-guidance">These tasks track human work after reject, rework, or hold. They never post stock, scrap, vendor return, or credit notes.</p>
+                    @if (Header.OpenActionCount > 0)
+                    {
+                        <p class="mr-guidance">@Header.OpenActionCount open follow-up task(s). The case cannot close until they are done or cancelled.</p>
+                    }
+                    @if (Header.Actions.Count == 0)
+                    {
+                        <p class="qa-muted">No follow-up tasks yet.</p>
+                    }
+                    else
+                    {
+                        <ul class="qa-destinations">
+                            @foreach (var action in Header.Actions)
+                            {
+                                <li>
+                                    <div>
+                                        <strong>@action.TypeLabel</strong>
+                                        <span class="qa-muted"> · Line @action.LineNo · @action.StatusLabel · @action.Qty.ToString("0.####")</span>
+                                        <p class="qa-muted mb-0">@(action.AssignedTo ?? "Unassigned") · @action.Reason</p>
+                                    </div>
+                                    @if (CanManageActions && action.IsOpen)
+                                    {
+                                        <div class="qa-line-head__actions">
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Start" Click="@(() => StartFollowUpAsync(action))" Enabled="@(!IsSubmitting)" />
+                                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Done" Click="@(() => CompleteFollowUpAsync(action))" Enabled="@(!IsSubmitting)" />
+                                            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel task" Click="@(() => CancelFollowUpAsync(action))" Enabled="@(!IsSubmitting)" />
+                                        </div>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                    @if (CanManageActions)
+                    {
+                        <DxFormLayout SizeMode="SizeMode.Small">
+                            <DxFormLayoutItem Caption="Line" ColSpanMd="3">
+                                <Template Context="field">
+                                    <DxSpinEdit @bind-Value="@DraftActionLineNo" MinValue="1" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Type" ColSpanMd="5">
+                                <Template Context="field">
+                                    <DxComboBox Data="@ActionTypeOptions"
+                                                TextFieldName="@nameof(QaNamedOption.Name)"
+                                                ValueFieldName="@nameof(QaNamedOption.Key)"
+                                                @bind-Value="@DraftActionType" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Qty" ColSpanMd="4">
+                                <Template Context="field">
+                                    <DxSpinEdit @bind-Value="@DraftActionQty" MinValue="0m" DisplayFormat="n4" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Assign to" ColSpanMd="4">
+                                <Template Context="field">
+                                    <DxTextBox @bind-Text="@DraftActionAssignedTo" maxlength="20" NullText="User id" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Due" ColSpanMd="4">
+                                <Template Context="field">
+                                    <DxDateEdit @bind-Date="@DraftActionDueDate" DisplayFormat="dd/MM/yyyy" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                </Template>
+                            </DxFormLayoutItem>
+                            <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                                <Template Context="field">
+                                    <DxTextBox @bind-Text="@DraftActionReason" maxlength="250" NullText="Why this follow-up exists" />
+                                </Template>
+                            </DxFormLayoutItem>
+                        </DxFormLayout>
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Add follow-up"
+                                  Click="@SaveFollowUpAsync"
+                                  Enabled="@(!IsSubmitting)" />
+                    }
+                }
+            </section>
+
+            @if (Header.Attempts.Count > 0)
+            {
+                <section class="mr-card">
+                    <h2>Inspection attempts</h2>
+                    <p class="mr-guidance">Earlier attempts are kept. The line inspection result is the latest summary only.</p>
+                    <ul class="qa-audit">
+                        @foreach (var attempt in Header.Attempts)
+                        {
+                            <li>
+                                <strong>Attempt @attempt.AttemptNo</strong>
+                                · Line @attempt.LineNo
+                                · @attempt.ResultLabel
+                                · @attempt.InspectedQty.ToString("n4")
+                                · @attempt.Inspector
+                                · @attempt.InspectedAtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                                @if (!string.IsNullOrWhiteSpace(attempt.DispositionSnapshot))
+                                {
+                                    <span class="qa-muted"> — @attempt.DispositionSnapshot</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </section>
+            }
 
             @if (Header.Destinations.Count > 0)
             {
@@ -284,7 +561,7 @@
                         @foreach (var eventRow in Header.Audit)
                         {
                             <li>
-                                <strong>@eventRow.EventType</strong>
+                                <strong>@QaLabels.Audit(eventRow.EventType)</strong>
                                 · @eventRow.ByUser
                                 · @eventRow.AtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
                                 @if (!string.IsNullOrWhiteSpace(eventRow.Payload))
@@ -299,15 +576,24 @@
 
             <footer class="mr-footer">
                     <p class="mr-footer__hint">
-                    @LineCountLabel. Inspection record only — posting approval not active.
+                    @LineCountLabel. @NextActionHint Inspection record only — posting approval not active.
                 </p>
                 <div class="mr-footer__actions">
                     @if (IsViewMode)
                     {
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="Close"
+                                  Text="Back"
                                   IconCssClass="fa-solid fa-xmark"
                                   Click="@OnCloseAsync" />
+                        @if (CanCancelCase)
+                        {
+                            <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Delete">
+                                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                          Text="Cancel Case"
+                                          Click="@OnCancelCase"
+                                          Enabled="@(!IsSubmitting)" />
+                            </PermissionAuthorize>
+                        }
                         @if (CanEditFromView)
                         {
                             <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Edit">
@@ -327,17 +613,27 @@
                         {
                             <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Start inspection" Click="@OnStartInspectionAsync" Enabled="@(!IsSubmitting)" />
                         }
+                        @if (CanInspect)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="Save inspection"
+                                      Click="@SaveAllInspectionsAsync"
+                                      Enabled="@(!IsSubmitting && Lines.Count > 0)" />
+                        }
                         @if (CanSubmitReview)
                         {
                             <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Submit">
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Submit for review" Click="@OnSubmitReviewAsync" Enabled="@(!IsSubmitting)" />
                             </PermissionAuthorize>
                         }
-                        @if (CanApprove)
+                        @if (CanReject)
                         {
                             <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Reject">
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Reject" Click="@OnRejectAsync" Enabled="@(!IsSubmitting)" />
                             </PermissionAuthorize>
+                        }
+                        @if (CanApprove)
+                        {
                             <PermissionAuthorize MenuCode="@MenuCodes.QualityWorkbench" Permission="@PermissionCodes.Approve">
                                 <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Approve" Click="@OnApproveAsync" Enabled="@(!IsSubmitting)" />
                             </PermissionAuthorize>
@@ -348,6 +644,10 @@
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Release hold" Click="@OnReleaseHoldAsync" Enabled="@(!IsSubmitting)" />
                             </PermissionAuthorize>
                         }
+                        @if (CanReinspect)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Reinspect" Click="@OnReinspect" Enabled="@(!IsSubmitting)" />
+                        }
                         @if (CanCloseCase)
                         {
                             <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close case" Click="@OnCloseCaseAsync" Enabled="@(!IsSubmitting)" />
@@ -356,7 +656,7 @@
                     else
                     {
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                  Text="Cancel"
+                                  Text="Cancel Edit"
                                   IconCssClass="fa-solid fa-xmark"
                                   Click="@OnCancelAsync"
                                   Enabled="@(!IsSubmitting)" />
@@ -377,73 +677,38 @@
              CloseOnOutsideClick="false"
              Width="720px"
              CssClass="mr-popup common-popup"
+             ShowFooter="true"
              @bind-Visible="@LinePopupVisible">
-        <Content>
+        <BodyContentTemplate>
             <DxFormLayout SizeMode="SizeMode.Small">
                 <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
-                    <Template>
+                    <Template Context="field">
                         <DxTextBox @bind-Text="@PopupLine.ItemCode" maxlength="30" ReadOnly="true" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Description" ColSpanMd="6">
-                    <Template>
+                    <Template Context="field">
                         <DxTextBox @bind-Text="@PopupLine.ItemName" maxlength="100" ReadOnly="true" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Quantity" ColSpanMd="4">
-                    <Template>
+                    <Template Context="field">
                         <DxSpinEdit @bind-Value="@PopupLine.Qty" MinValue="0m" DisplayFormat="n4" Enabled="false" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
-                    <Template>
+                    <Template Context="field">
                         <DxTextBox @bind-Text="@PopupLine.Uom" maxlength="10" ReadOnly="true" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Lot" ColSpanMd="4">
-                    <Template>
+                    <Template Context="field">
                         <DxTextBox @bind-Text="@PopupLine.LotNo" maxlength="50" ReadOnly="true" />
                     </Template>
                 </DxFormLayoutItem>
-                @if (CanInspect)
-                {
-                    <DxFormLayoutItem Caption="Inspected qty" ColSpanMd="4">
-                        <Template>
-                            <DxSpinEdit @bind-Value="@PopupLine.InspectedQty" MinValue="0m" DisplayFormat="n4" />
-                        </Template>
-                    </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Result" ColSpanMd="4">
-                        <Template>
-                            <DxComboBox Data="@QaInspectionResults.All" @bind-Value="@PopupLine.Result" />
-                        </Template>
-                    </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Accept" ColSpanMd="3">
-                        <Template>
-                            <DxSpinEdit @bind-Value="@PopupLine.AcceptQty" MinValue="0m" DisplayFormat="n4" />
-                        </Template>
-                    </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Reject" ColSpanMd="3">
-                        <Template>
-                            <DxSpinEdit @bind-Value="@PopupLine.RejectQty" MinValue="0m" DisplayFormat="n4" />
-                        </Template>
-                    </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Rework" ColSpanMd="3">
-                        <Template>
-                            <DxSpinEdit @bind-Value="@PopupLine.ReworkQty" MinValue="0m" DisplayFormat="n4" />
-                        </Template>
-                    </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Hold" ColSpanMd="3">
-                        <Template>
-                            <DxSpinEdit @bind-Value="@PopupLine.HoldQty" MinValue="0m" DisplayFormat="n4" />
-                        </Template>
-                    </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Inspection notes" ColSpanMd="12">
-                        <Template>
-                            <DxMemo @bind-Text="@PopupLine.Notes" Rows="2" />
-                        </Template>
-                    </DxFormLayoutItem>
-                }
             </DxFormLayout>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
             <div class="mr-popup-footer">
                 @if (!string.IsNullOrWhiteSpace(PopupError))
                 {
@@ -454,15 +719,16 @@
                     <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Save" Click="@CommitLineAsync" />
                 </div>
             </div>
-        </Content>
+        </FooterContentTemplate>
     </DxPopup>
 
     <DxPopup HeaderText="Source lookup"
              CloseOnOutsideClick="false"
              Width="860px"
              CssClass="mr-popup common-popup"
+             ShowFooter="true"
              @bind-Visible="@SourcePopupVisible">
-        <Content>
+        <BodyContentTemplate>
             <div class="erp-inline-search erp-inline-search--popup">
                 <label class="erp-inline-search__caption" for="qa-source-search">Search</label>
                 <div class="erp-inline-search__editor">
@@ -493,7 +759,7 @@
                         <tr>
                             <th>Document</th>
                             <th>Item</th>
-                            <th>Qty</th>
+                            <th class="qa-num">Qty</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -501,9 +767,12 @@
                         @foreach (var row in SourceRows)
                         {
                             <tr>
-                                <td>@row.DisplayText</td>
+                                <td>
+                                    @row.DisplayText
+                                    <span class="qa-muted">@QaLabels.Source(row.SourceType)</span>
+                                </td>
                                 <td>@row.ItemCode</td>
-                                <td>@row.Qty.ToString("n4")</td>
+                                <td class="qa-num">@row.Qty.ToString("n4")</td>
                                 <td>
                                     <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Select" Click="@(() => SelectSource(row))" />
                                 </td>
@@ -512,26 +781,81 @@
                     </tbody>
                 </table>
             }
-            <div class="mr-popup-footer">
-                <div class="mr-popup-footer__actions">
-                    <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => SourcePopupVisible = false)" />
-                </div>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <div class="mr-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => SourcePopupVisible = false)" />
             </div>
-        </Content>
+        </FooterContentTemplate>
     </DxPopup>
 
     <DxPopup HeaderText="Discard this case?"
              CloseOnOutsideClick="false"
              Width="440px"
              CssClass="mr-confirm common-popup"
+             ShowFooter="true"
              @bind-Visible="@ConfirmDiscardVisible">
-        <Content>
+        <BodyContentTemplate>
             <p class="mr-confirm__copy">Unsaved changes will be lost. This cannot be undone.</p>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
             <div class="mr-popup-footer__actions">
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmDiscardVisible = false)" />
                 <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscardAsync" />
             </div>
-        </Content>
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup HeaderText="Cancel this case?"
+             CloseOnOutsideClick="false"
+             Width="440px"
+             CssClass="mr-confirm common-popup"
+             ShowFooter="true"
+             @bind-Visible="@ConfirmCancelCaseVisible">
+        <BodyContentTemplate>
+            <p class="mr-confirm__copy">Cancel case @CaseNoDisplay? The case stays on the workbench as cancelled. This does not delete it and does not change stock.</p>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <div class="mr-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep case" Click="@(() => ConfirmCancelCaseVisible = false)" Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Cancel Case" Click="@ConfirmCancelCaseAsync" Enabled="@(!IsSubmitting)" />
+            </div>
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup HeaderText="Pass full inspected amount?"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="mr-confirm common-popup"
+             ShowFooter="true"
+             @bind-Visible="@ConfirmPassAllVisible">
+        <BodyContentTemplate>
+            <p class="mr-confirm__copy">Set every line to pass the full case quantity and save the inspection? Uninspected remainder will be accepted. Stock is not changed.</p>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <div class="mr-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => ConfirmPassAllVisible = false)" Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Pass and save" Click="@ConfirmPassAllAsync" Enabled="@(!IsSubmitting)" />
+            </div>
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup HeaderText="Reinspect this source?"
+             CloseOnOutsideClick="false"
+             Width="480px"
+             CssClass="mr-confirm common-popup"
+             ShowFooter="true"
+             @bind-Visible="@ConfirmReinspectVisible">
+        <BodyContentTemplate>
+            <p class="mr-confirm__copy">Reinspection stays on the same source. Quality will not create a second delivery or posting allowance.</p>
+            <DxMemo @bind-Text="@ReinspectReason" Rows="3" NullText="Reason (required)" />
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <div class="mr-popup-footer__actions">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep case" Click="@(() => ConfirmReinspectVisible = false)" Enabled="@(!IsSubmitting)" />
+                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Start reinspection" Click="@ConfirmReinspectAsync" Enabled="@(!IsSubmitting)" />
+            </div>
+        </FooterContentTemplate>
     </DxPopup>
 
     <QaHowToUsePopup @bind-Visible="@HelpVisible" />

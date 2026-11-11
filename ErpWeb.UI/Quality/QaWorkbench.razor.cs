@@ -30,6 +30,8 @@ public partial class QaWorkbench : PageBase, IDisposable
     protected string? StatusMessage;
     protected string SearchText = string.Empty;
     protected int TotalCount;
+    protected int PendingReviewCount;
+    protected QaInquiryPage Workload { get; set; } = new();
     protected List<QaCaseListRow> CompactRows { get; set; } = [];
 
     protected bool CanAdd;
@@ -50,6 +52,7 @@ public partial class QaWorkbench : PageBase, IDisposable
     protected QaWorkbenchGridDataSource DataSource { get; private set; } = default!;
 
     protected string TotalCountLabel => TotalCount == 1 ? "1 case" : $"{TotalCount:N0} cases";
+    protected string PendingReviewLabel => PendingReviewCount == 1 ? "1 pending review" : $"{PendingReviewCount:N0} pending review";
 
     protected bool HasActiveFilters =>
         !string.IsNullOrWhiteSpace(SearchText)
@@ -61,27 +64,28 @@ public partial class QaWorkbench : PageBase, IDisposable
     protected IReadOnlyList<StatusFilterOption> StatusFilterOptions { get; } =
     [
         new("all", "All"),
-        ..QaCaseStatuses.All.Select(x => new StatusFilterOption(x, x))
+        ..QaLabels.StatusOptions.Select(x => new StatusFilterOption(x.Key, x.Name))
     ];
 
     protected IReadOnlyList<StatusFilterOption> SourceFilterOptions { get; } =
     [
         new("all", "All"),
-        ..QaSourceTypes.All.Select(x => new StatusFilterOption(x, x))
+        ..QaLabels.SourceOptions.Select(x => new StatusFilterOption(x.Key, x.Name))
     ];
 
     protected List<GridColumnData> Columns { get; } =
     [
         new() { Caption = "Case No", FieldName = nameof(QaCaseListRow.CaseNo), SortIndex = 0, VisibleIndex = 1, Size = GridColumnSize.DocumentNo },
         new() { Caption = "Date", FieldName = nameof(QaCaseListRow.CaseDate), DataType = "date", DisplayFormat = "dd/MM/yyyy", VisibleIndex = 2, Size = GridColumnSize.Date },
-        new() { Caption = "Status", FieldName = nameof(QaCaseListRow.Status), VisibleIndex = 3, Size = GridColumnSize.Status },
-        new() { Caption = "Source", FieldName = nameof(QaCaseListRow.SourceType), VisibleIndex = 4, Size = GridColumnSize.Name },
+        new() { Caption = "Status", FieldName = nameof(QaCaseListRow.StatusLabel), VisibleIndex = 3, Size = GridColumnSize.Status },
+        new() { Caption = "Source", FieldName = nameof(QaCaseListRow.SourceTypeLabel), VisibleIndex = 4, Size = GridColumnSize.Name },
         new() { Caption = "Source doc", FieldName = nameof(QaCaseListRow.SourceDocNo), VisibleIndex = 5, Size = GridColumnSize.Reference },
         new() { Caption = "Supplier", FieldName = nameof(QaCaseListRow.SupplierName), VisibleIndex = 6, Size = GridColumnSize.Name },
         new() { Caption = "Work order", FieldName = nameof(QaCaseListRow.WorkOrderNo), VisibleIndex = 7, Size = GridColumnSize.DocumentNo },
         new() { Caption = "Lines", FieldName = nameof(QaCaseListRow.LineCount), Width = "80px", VisibleIndex = 8, Size = GridColumnSize.Tiny },
-        new() { Caption = "Note", FieldName = nameof(QaCaseListRow.EligibilityNote), VisibleIndex = 9, Size = GridColumnSize.LongText },
-        ..AuditColumns.For(startVisibleIndex: 10)
+        new() { Caption = "Next action", FieldName = nameof(QaCaseListRow.NextAction), VisibleIndex = 9, Size = GridColumnSize.Name },
+        new() { Caption = "Note", FieldName = nameof(QaCaseListRow.EligibilityNote), VisibleIndex = 10, Size = GridColumnSize.LongText },
+        ..AuditColumns.For(startVisibleIndex: 11)
     ];
 
     protected List<ButtonInfo> Buttons { get; set; } = [];
@@ -97,14 +101,14 @@ public partial class QaWorkbench : PageBase, IDisposable
 
         Buttons =
         [
-            new() { Text = "NEW", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd },
-            new() { Text = "DELETE", IConClass = "far fa-trash-alt", Style = "danger", Enabled = CanDelete }
+            new() { Text = "New QA", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd },
+            new() { Text = "Delete draft", IConClass = "far fa-trash-alt", Style = "danger", Enabled = CanDelete }
         ];
 
         ActionButtons =
         [
-            new() { Text = "VIEW", IConClass = "fa-regular fa-eye", Style = "primary", ToolTip = "View case" },
-            new() { Text = "EDIT", IConClass = "far fa-edit", Style = "primary", ToolTip = "Edit draft", Enabled = CanEdit }
+            new() { Text = "View", IConClass = "fa-regular fa-eye", Style = "primary", ToolTip = "View case" },
+            new() { Text = "Edit", IConClass = "far fa-edit", Style = "primary", ToolTip = "Edit draft", Enabled = CanEdit }
         ];
 
         SyncDataSourceFilters();
@@ -125,16 +129,10 @@ public partial class QaWorkbench : PageBase, IDisposable
         var mode = (info.SelectedButton.Text ?? string.Empty).ToUpperInvariant();
         switch (mode)
         {
-            case "NEW":
-                if (!CanAdd)
-                {
-                    StatusMessage = "Access Denied!!";
-                    return;
-                }
-
-                Navigation.NavigateTo("/quality/cases/new");
+            case "NEW QA":
+                NavigateNew();
                 break;
-            case "DELETE":
+            case "DELETE DRAFT":
                 await BeginDeleteAsync();
                 break;
         }
@@ -177,6 +175,17 @@ public partial class QaWorkbench : PageBase, IDisposable
 
     protected void NavigateView(string caseNo) =>
         Navigation.NavigateTo($"/quality/cases/view/{caseNo}");
+
+    protected void NavigateNew()
+    {
+        if (!CanAdd)
+        {
+            StatusMessage = "Access Denied!!";
+            return;
+        }
+
+        Navigation.NavigateTo("/quality/cases/new");
+    }
 
     private void CancelPendingSearch()
     {
@@ -325,11 +334,16 @@ public partial class QaWorkbench : PageBase, IDisposable
         else
         {
             CompactRows = [];
+            TotalCount = 0;
             if (!string.IsNullOrWhiteSpace(result.ErrorMessage))
             {
                 ErrorMessage = result.ErrorMessage;
             }
         }
+
+        var workload = await Cases.GetWorkloadAsync();
+        Workload = workload.InquiryPage ?? new QaInquiryPage();
+        PendingReviewCount = Workload.PendingReviewCount;
     }
 
     private async Task<(IReadOnlyList<QaCaseListRow> Rows, int TotalCount)> SearchPageAsync(

@@ -5,6 +5,7 @@ using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Quality;
+using ErpWeb.Model.Entities.Subcon;
 using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
@@ -365,6 +366,14 @@ public class AppDbContext : DbContext
     public DbSet<QaPhysicalAllocation> QaPhysicalAllocations => Set<QaPhysicalAllocation>();
     public DbSet<QaNonGoodGrant> QaNonGoodGrants => Set<QaNonGoodGrant>();
     public DbSet<QaNonGoodAllocation> QaNonGoodAllocations => Set<QaNonGoodAllocation>();
+    public DbSet<QaCorrectiveAction> QaCorrectiveActions => Set<QaCorrectiveAction>();
+    public DbSet<QaInspectionAttempt> QaInspectionAttempts => Set<QaInspectionAttempt>();
+
+    public DbSet<SubconPolicy> SubconPolicies => Set<SubconPolicy>();
+    public DbSet<SubconDispatch> SubconDispatches => Set<SubconDispatch>();
+    public DbSet<SubconDispatchLine> SubconDispatchLines => Set<SubconDispatchLine>();
+    public DbSet<SubconReceipt> SubconReceipts => Set<SubconReceipt>();
+    public DbSet<SubconReceiptLine> SubconReceiptLines => Set<SubconReceiptLine>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

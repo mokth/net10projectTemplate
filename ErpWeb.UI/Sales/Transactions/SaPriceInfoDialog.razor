@@ -14,7 +14,8 @@
             <div class="sa-price-info">
                 <div class="sa-price-info__body">
                     <section class="sa-price-info__section" aria-label="Recorded price information">
-                        <h2 class="sa-price-info__eyebrow">RECORDED PRICE INFORMATION</h2>
+                        <h2 class="sa-price-info__eyebrow">RECORDED AGREED PRICE</h2>
+                        <p class="sa-price-info__glance" role="status">@SaPriceInfoPresentation.Glance(Context)</p>
 
                         @if (status == SaPriceInfoStatus.ManualOverride)
                         {
@@ -90,7 +91,9 @@
                                 }
                             </dd>
                             <dt>UOM / Quantity</dt>
-                            <dd>@Display(Context.Uom) · @Context.Qty.ToString("n4")</dd>
+                            <dd>@SaPriceInfoPresentation.UomLabel(Context) · @Context.Qty.ToString("n4")</dd>
+                            <dt>Discount</dt>
+                            <dd>@SaPriceInfoPresentation.DiscountLabel(Context)</dd>
                             <dt>Document date</dt>
                             <dd>@Context.DocDate.ToString("dd/MM/yyyy")</dd>
                             @if (!string.IsNullOrWhiteSpace(Context.DocumentType) || !string.IsNullOrWhiteSpace(Context.DocumentNo))
@@ -112,10 +115,10 @@
                     </section>
 
                     <section class="sa-price-info__section sa-price-info__current" aria-label="Current pricing rule check">
-                        <h2 class="sa-price-info__eyebrow">CURRENT PRICING RULE CHECK</h2>
+                        <h2 class="sa-price-info__eyebrow">WHAT CURRENT RULES WOULD SELECT TODAY</h2>
                         <p class="sa-price-info__muted">
-                            Current master data is evaluated for this document's customer, item, UOM, quantity, and date.
-                            It may differ from the price information originally recorded on this line.
+                            This is a live master-data check for this customer, item, commercial UOM, quantity, and date.
+                            It is not the recorded agreed price and does not change the document.
                         </p>
 
                         @if (_isChecking)
@@ -181,7 +184,7 @@
                         }
                     </span>
                     <div class="sa-price-info__buttons">
-                        <DxButton Text="CHECK CURRENT PRICING RULES"
+                        <DxButton Text="RECHECK CURRENT RULES"
                                   RenderStyle="ButtonRenderStyle.Secondary"
                                   Click="@CheckCurrentPricingRulesAsync"
                                   Enabled="@(CanCheckCurrentRules && !_isChecking)" />

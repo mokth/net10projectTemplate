@@ -1,0 +1,204 @@
+@page "/subcon/send-out/{Mode:regex(^(new|edit|view)$)}"
+@page "/subcon/send-out/{Mode:regex(^(new|edit|view)$)}/{DocNo}"
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SubconSendOut">
+    <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="() => StatusMessage = null" aria-label="Dismiss">×</button>
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="iv-toast iv-toast--err" role="alert">
+                <span>@ErrorMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="() => ErrorMessage = null" aria-label="Dismiss">×</button>
+            </div>
+        }
+
+        <header class="iv-hero">
+            <div class="iv-hero__mark" aria-hidden="true">
+                <i class="fa-solid fa-truck-ramp-box"></i>
+            </div>
+            <div class="iv-hero__copy">
+                <p class="iv-eyebrow">Subcontracting</p>
+                <h1 class="iv-title">@PageHeading</h1>
+                <div class="iv-chips">
+                    <span class="iv-chip">@ModeChip</span>
+                    <span class="iv-chip">@DocNoDisplay</span>
+                    <span class="iv-chip">@LineCountLabel</span>
+                    <span class="iv-chip">@Header.Status</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="iv-card">
+            <SubconPostingBanner Message="@Header.PostBlockedReason" />
+            <p class="iv-guidance">Who am I sending this to? What item? How much? Save keeps a draft. Stock will not move.</p>
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Date" ColSpanMd="4">
+                    <Template>
+                        <DxDateEdit @bind-Date="@Header.TrxDate" DisplayFormat="dd/MM/yyyy" Enabled="@CanEditDocument" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Document" ColSpanMd="4">
+                    <Template>
+                        <DxTextBox Text="@DocNoDisplay" ReadOnly="true" ValidationEnabled="false" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Promised return" ColSpanMd="4">
+                    <Template>
+                        <DxDateEdit @bind-Date="@Header.PromisedReturnDate" DisplayFormat="dd/MM/yyyy" Enabled="@CanEditDocument" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Supplier" ColSpanMd="6">
+                    <Template>
+                        <PoSupplierPicker @bind-SuppCode="@Header.SupplierCode"
+                                          Selected="@OnSupplierSelected"
+                                          Enabled="@CanEditDocument"
+                                          NullText="Search supplier" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Supplier name" ColSpanMd="6">
+                    <Template>
+                        <DxTextBox Text="@Header.SupplierName" ReadOnly="true" ValidationEnabled="false" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Source" ColSpanMd="6">
+                    <Template>
+                        <DxTextBox Text="Inventory stock" ReadOnly="true" ValidationEnabled="false" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Linked PO" ColSpanMd="6">
+                    <Template>
+                        <DxTextBox @bind-Text="@Header.PoNo" NullText="Optional PO number" ReadOnly="@(!CanEditDocument)" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
+                    <Template>
+                        <DxMemo @bind-Text="@Header.Remarks" Rows="2" ReadOnly="@(!CanEditDocument)" />
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+
+            @if (!CanUseProductionMode)
+            {
+                <p class="iv-guidance">Work Order send-out is hidden. This company does not need a Planning right to use inventory send-out.</p>
+            }
+            else
+            {
+                <p class="iv-guidance">@SubconBlockedReasons.NoProductionCustody</p>
+            }
+
+            <DxGrid Data="@Lines"
+                    KeyFieldName="@nameof(LineVm.LineNo)"
+                    SizeMode="SizeMode.Small"
+                    ShowFilterRow="false">
+                <Columns>
+                    <DxGridCommandColumn VisibleIndex="0"
+                                         FixedPosition="GridColumnFixedPosition.Left"
+                                         Width="88px"
+                                         NewButtonVisible="false"
+                                         EditButtonVisible="false"
+                                         DeleteButtonVisible="false">
+                        <CellDisplayTemplate>
+                            @if (CanEditDocument)
+                            {
+                                var line = (LineVm)context.DataItem;
+                                <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                          RenderStyleMode="ButtonRenderStyleMode.Text"
+                                          IconCssClass="fa-solid fa-trash"
+                                          Click="@(() => RemoveLine(line))"
+                                          aria-label="Remove line" />
+                            }
+                        </CellDisplayTemplate>
+                    </DxGridCommandColumn>
+                    <DxGridDataColumn FieldName="@nameof(LineVm.ItemCode)" Caption="Item" Width="140px" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.ItemName)" Caption="Description" MinWidth="180" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.WarehouseCode)" Caption="Warehouse" Width="110px" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.Qty)" Caption="Qty" Width="110px" DisplayFormat="n4" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.Uom)" Caption="UOM" Width="80px" />
+                </Columns>
+            </DxGrid>
+
+            @if (CanEditDocument)
+            {
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Add line"
+                          IconCssClass="fa-solid fa-plus"
+                          Click="@(() => LinePopupVisible = true)" />
+            }
+
+            <footer class="iv-footer">
+                <p class="iv-footer__hint">@LineCountLabel. Post is not available.</p>
+                <div class="iv-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="@(IsView ? "Close" : "Cancel")"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@OnCancel" />
+                    @if (!IsView)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  Click="@OnSaveAsync"
+                                  Enabled="@CanSave" />
+                    }
+                    else if (CanEditDocumentAfterView)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="Edit"
+                                  IconCssClass="fa-solid fa-pen"
+                                  Click="@(() => Navigation.NavigateTo($"/subcon/send-out/edit/{DocNo}"))" />
+                    }
+                </div>
+            </footer>
+        </section>
+    </div>
+
+    <DxPopup HeaderText="Add line"
+             Width="720px"
+             ShowFooter="true"
+             @bind-Visible="@LinePopupVisible">
+        <BodyContentTemplate>
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                    <Template Context="field">
+                        <IvStockMasterPicker @bind-ICode="@DraftLine.ItemCode"
+                                             Selected="@OnItemSelected"
+                                             NullText="Search item" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                    <Template Context="field">
+                        <DxTextBox @bind-Text="@DraftLine.WarehouseCode" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Location" ColSpanMd="4">
+                    <Template Context="field">
+                        <DxTextBox @bind-Text="@DraftLine.LocationCode" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
+                    <Template Context="field">
+                        <DxTextBox @bind-Text="@DraftLine.Uom" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Quantity" ColSpanMd="4">
+                    <Template Context="field">
+                        <DxSpinEdit @bind-Value="@DraftLine.Qty" Increment="1m" MinValue="0m" />
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => LinePopupVisible = false)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Add" Click="@CommitLine" />
+        </FooterContentTemplate>
+    </DxPopup>
+</MenuAuthorize>

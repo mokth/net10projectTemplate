@@ -279,8 +279,22 @@
     </Menu>
   </Menu>
 
+  <!-- ─── Subcontracting ────────────────────────────────────────── -->
+  <Menu Code="SUBCONTRACTING" Name="Subcontracting" SortOrder="5" Icon="fa-solid fa-handshake">
+    <Menu Code="SUBCON_WORKBENCH" Name="Workbench" Route="/subcon" SortOrder="1"
+          Icon="fa-solid fa-list-check" />
+    <Menu Code="SUBCON_SEND_OUT" Name="Send Out" Route="/subcon/send-out" SortOrder="2"
+          Icon="fa-solid fa-truck-ramp-box" />
+    <Menu Code="SUBCON_RECEIVE_BACK" Name="Receive Back" Route="/subcon/receive-back" SortOrder="3"
+          Icon="fa-solid fa-boxes-packing" />
+    <Menu Code="SUBCON_INQUIRY" Name="Inquiry / Statement" Route="/subcon/inquiry" SortOrder="4"
+          Icon="fa-solid fa-magnifying-glass-chart" />
+    <Menu Code="SUBCON_SETTINGS" Name="Settings" Route="/subcon/settings" SortOrder="5"
+          Icon="fa-solid fa-sliders" />
+  </Menu>
+
   <!-- ─── Planning ──────────────────────────────────────────────── -->
-  <Menu Code="PLANNING" Name="Planning" SortOrder="5" Icon="fa-solid fa-calendar-days">
+  <Menu Code="PLANNING" Name="Planning" SortOrder="6" Icon="fa-solid fa-calendar-days">
     <Menu Code="PLN_MASTER" Name="Master" SortOrder="1" Icon="fa-solid fa-folder-tree">
       <Menu Code="PLN_PRODUCT_DEF" Name="Product Definition" Route="/planning/product-definitions" SortOrder="1"
             Icon="fa-solid fa-diagram-project" />
@@ -353,7 +367,7 @@
   </Menu>
 
   <!-- ─── Quality ───────────────────────────────────────────────── -->
-  <Menu Code="QUALITY" Name="Quality" SortOrder="6" Icon="fa-solid fa-clipboard-check">
+  <Menu Code="QUALITY" Name="Quality" SortOrder="7" Icon="fa-solid fa-clipboard-check">
     <Menu Code="QA_WORKBENCH" Name="Quality Workbench" Route="/quality/cases" SortOrder="1"
           Icon="fa-solid fa-list-check" />
     <Menu Code="QA_INQUIRY" Name="Quality Inquiry" Route="/quality/inquiry" SortOrder="2"
@@ -363,7 +377,7 @@
   </Menu>
 
   <!-- ─── Security / Administration ─────────────────────────────── -->
-  <Menu Code="SECURITY" Name="Administration" SortOrder="7" Icon="fa-solid fa-shield-halved">
+  <Menu Code="SECURITY" Name="Administration" SortOrder="8" Icon="fa-solid fa-shield-halved">
     <Menu Code="ADMIN" Name="Administration" SortOrder="1" Icon="fa-solid fa-gears">
       <!-- Demos kept in XML for dev/test; gated out of production navigation elsewhere -->
       <Menu Code="ADMIN_DEMO" Name="Admin Demo" Route="/admin-demo" SortOrder="0"

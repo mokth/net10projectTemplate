@@ -72,7 +72,7 @@ public partial class PriceInquiry : ComponentBase
         ICode = item.ICode;
         if (string.IsNullOrWhiteSpace(Uom))
         {
-            Uom = item.StdUom;
+            Uom = SaLinePricingTrigger.CommercialUom(item.SellingUom, item.StdUom);
         }
     }
 

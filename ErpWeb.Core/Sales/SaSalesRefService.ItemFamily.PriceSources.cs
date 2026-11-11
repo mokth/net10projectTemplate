@@ -60,22 +60,42 @@ public sealed partial class SaSalesRefService
             : exclusivePrice;
 
         // ---------- stage 3: discount, resolved against the STAGE 2 price ----------
-        var discount = await ResolveItemDiscountAsync(
-            new SaItemFamilyDiscountRequest
-            {
-                ICode = priceRequest.ICode,
-                IClass = request.IClass,
-                Qty = request.Qty,
-                DocDate = request.DocDate,
-                DiscountMethod = request.DiscountMethod,
-                UnitPrice = unitPrice
-            },
-            cancellationToken);
+        // Qty<=0 cannot select a quantity-band rule. Skip the lookup (do not swallow a Fail as 0%).
+        SaItemFamilyDiscountSelection selection;
+        if (request.Qty <= 0m)
+        {
+            selection = SaItemFamilyDiscountSelection.None;
+        }
+        else
+        {
+            var discount = await ResolveItemDiscountAsync(
+                new SaItemFamilyDiscountRequest
+                {
+                    ICode = priceRequest.ICode,
+                    IClass = context.Data.ActualClass,
+                    Qty = request.Qty,
+                    DocDate = request.DocDate,
+                    DiscountMethod = request.DiscountMethod,
+                    UnitPrice = unitPrice
+                },
+                cancellationToken);
 
-        // A failed discount lookup is NOT a pricing failure: "no matching rule" is a valid no-discount.
-        var selection = discount.Succeeded && discount.Data is not null
-            ? discount.Data
-            : SaItemFamilyDiscountSelection.None;
+            if (!discount.Succeeded)
+            {
+                return FailVm<SaLinePricingResult>(
+                    discount.ErrorCode,
+                    discount.Message ?? "Unable to resolve a discount for this line.");
+            }
+
+            if (discount.Data is null)
+            {
+                return FailVm<SaLinePricingResult>(
+                    IvMasterErrorCode.Validation,
+                    "Discount lookup returned no result.");
+            }
+
+            selection = discount.Data;
+        }
 
         return IvMasterOperationResult<SaLinePricingResult>.Ok(new SaLinePricingResult
         {
@@ -97,23 +117,6 @@ public sealed partial class SaSalesRefService
             DiscountRuleId = selection.RuleId,
             CompetingDiscountRuleIds = selection.CompetingRuleIds
         });
-    }
-
-    /// <summary>
-    /// Stage 0 — the company's pricing method. Defaults to the full specificity chain when the column
-    /// is NULL, blank or holds a token this build does not recognise.
-    /// </summary>
-    private async Task<string> GetSalesPriceMethodAsync(
-        AppDbContext db,
-        string company,
-        CancellationToken cancellationToken)
-    {
-        var stored = await db.Companies.AsNoTracking()
-            .Where(x => x.CompanyCode == company)
-            .Select(x => x.SalesPriceMethod)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        return SaCompanyPriceMethod.Normalize(stored);
     }
 
     /// <summary>
@@ -155,7 +158,8 @@ public sealed partial class SaSalesRefService
     /// </summary>
     private sealed record SaPriceContext(
         SaItemFamilyPriceRequest Request,
-        SaItemFamilyPriceCandidates Candidates);
+        SaItemFamilyPriceCandidates Candidates,
+        string? ActualClass);
 
     private async Task<IvMasterOperationResult<SaPriceContext>> LoadPriceContextAsync(
         SaLinePricingRequest request,
@@ -195,9 +199,22 @@ public sealed partial class SaSalesRefService
                 $"Customer {custCode} was not found in this company.");
         }
 
-        // The company pricing method is read SERVER-SIDE and never accepted from the caller, so a page
-        // cannot widen its own eligibility. NULL / unknown normalises to the full specificity chain.
-        var companyMethod = await GetSalesPriceMethodAsync(db, company, cancellationToken);
+        // Pricing method and base currency are read SERVER-SIDE and never accepted from the caller.
+        // NULL / unknown method normalises to the full specificity chain. Missing base currency
+        // cannot prove a match, so new-direct pricing fails closed.
+        var companyRow = await db.Companies.AsNoTracking()
+            .Where(x => x.CompanyCode == company)
+            .Select(x => new { x.SalesPriceMethod, x.CurrencyCode })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var companyMethod = SaCompanyPriceMethod.Normalize(companyRow?.SalesPriceMethod);
+        var baseCurrency = NormalizeOptionalCode(companyRow?.CurrencyCode);
+        if (baseCurrency.Length == 0)
+        {
+            return FailVm<SaPriceContext>(
+                IvMasterErrorCode.Validation,
+                "This company has no base currency. Set the company currency before pricing a sales line.");
+        }
 
         // Phase 5: the customer's GROUP default price list. Loaded only when the company method makes
         // the group level eligible, so an excluded source is never even queried. The walk still tries
@@ -226,12 +243,18 @@ public sealed partial class SaSalesRefService
             CustPriceCode = NormalizeOptionalCode(customer.CustPriceCode),
             GroupPriceCode = groupPriceCode,
             DocumentCurrency = request.DocumentCurrency,
+            CompanyBaseCurrency = baseCurrency,
             CompanyPriceMethod = companyMethod
         };
 
+        var actualClass = await db.IvStockMasters.AsNoTracking()
+            .Where(x => x.CompanyCode == company && x.ICode == iCode)
+            .Select(x => x.IClassCode)
+            .FirstOrDefaultAsync(cancellationToken);
+
         var candidates = await LoadPriceCandidatesAsync(db, company, custCode, iCode, priceRequest, cancellationToken);
 
-        return IvMasterOperationResult<SaPriceContext>.Ok(new SaPriceContext(priceRequest, candidates));
+        return IvMasterOperationResult<SaPriceContext>.Ok(new SaPriceContext(priceRequest, candidates, actualClass));
     }
 
     /// <summary>

@@ -60,6 +60,9 @@ public static class TestCategories
     /// <summary>Quality Assurance record-only cases, inspection, and policy. No stock posting.</summary>
     public const string Quality = "Quality";
 
+    /// <summary>Subcontracting draft shell. No stock or WIP posting in Phase 1.</summary>
+    public const string Subcon = "Subcon";
+
     /// <summary>Menu definition, deployment parity and navigation chrome.</summary>
     public const string Menus = "Menus";
 

@@ -283,7 +283,8 @@ public class QaPhysicalHoldTests : IAsyncLifetime
         var released = await cases.ReleaseHoldAsync(Review(current.Case!));
         Assert.True(released.Succeeded, released.ErrorMessage);
         Assert.Equal(0m, released.Case!.PhysicalHeldQty);
-        var afterRelease = await cases.CloseAsync(Review(released.Case!));
+        var completed = await CompleteOpenFollowUpsAsync(cases, released.Case!);
+        var afterRelease = await cases.CloseAsync(Review(completed));
         Assert.True(afterRelease.Succeeded, afterRelease.ErrorMessage);
         Assert.Equal(QaCaseStatuses.Closed, afterRelease.Case!.Status);
 
@@ -504,4 +505,23 @@ public class QaPhysicalHoldTests : IAsyncLifetime
         CaseNo = value.CaseNo,
         RowVersion = value.RowVersion
     };
+
+    private static async Task<QaCaseDto> CompleteOpenFollowUpsAsync(IQaCaseService cases, QaCaseDto value)
+    {
+        var current = value;
+        foreach (var action in value.Actions.Where(x => x.IsOpen).ToList())
+        {
+            var done = await cases.CompleteActionAsync(new QaActionUpdateCommand
+            {
+                CaseNo = current.CaseNo,
+                RowVersion = current.RowVersion,
+                ActionNo = action.ActionNo,
+                CompletionEvidence = "Hold released. Follow-up closed. No stock posting."
+            });
+            Assert.True(done.Succeeded, done.ErrorMessage);
+            current = done.Case!;
+        }
+
+        return current;
+    }
 }

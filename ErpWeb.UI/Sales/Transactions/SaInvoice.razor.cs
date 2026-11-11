@@ -1291,6 +1291,7 @@ public partial class SaInvoice : PageBase, IDisposable
         }
 
         _editingLine = null;
+        Interlocked.Increment(ref _priceApplySeq);
         _popupAdvancedExpanded = false;
         Popup = new SaInvoiceLineVm
         {
@@ -1424,6 +1425,7 @@ public partial class SaInvoice : PageBase, IDisposable
         Renumber();
         Lines = Lines.ToList();
         RecalcDocument();
+        Interlocked.Increment(ref _priceApplySeq);
         MarkDirty();
         StatusMessage = added == 1 ? "1 sales order line added." : $"{added} sales order lines added.";
         ResetSoPicker();
@@ -1579,6 +1581,7 @@ public partial class SaInvoice : PageBase, IDisposable
         Renumber();
         Lines = Lines.ToList();
         RecalcDocument();
+        Interlocked.Increment(ref _priceApplySeq);
         MarkDirty();
         StatusMessage = added == 1 ? "1 delivery order line added." : $"{added} delivery order lines added.";
         ResetDoPicker();
@@ -1592,6 +1595,7 @@ public partial class SaInvoice : PageBase, IDisposable
         }
 
         _editingLine = line;
+        Interlocked.Increment(ref _priceApplySeq);
         _popupAdvancedExpanded = true;
         Popup = line.Clone();
 
@@ -1637,6 +1641,7 @@ public partial class SaInvoice : PageBase, IDisposable
         Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
         Popup.StdUom = item.StdUom;
+        Popup.SellingUom = item.SellingUom;
         Popup.StdPackSize = item.StdPackSize;
         Popup.StockControl = item.StockControl;
         Popup.Classification = item.Classification;
@@ -1665,23 +1670,42 @@ public partial class SaInvoice : PageBase, IDisposable
     protected async Task OnPopupQuantityChangedAsync(decimal qty)
     {
         Popup.Qty = qty;
-        await ResolvePopupPriceAsync(assignDiscountSlots: true);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: true);
     }
 
     /// <summary>
     /// Toggling the basis changes the STORED price, so the price is re-resolved. The discount slots are
     /// left untouched: the document engine recomputes the effective discount from the slots anyway.
+    /// Source-inherited and already-saved lines keep UnitPrice; RecalcDocument still updates amounts.
     /// </summary>
     protected async Task OnPopupBasisChangedAsync(bool inclusive)
     {
         Popup.IsInclusive = inclusive;
-        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
     }
 
     protected async Task OnPopupTaxChangedAsync(string? taxGrCode)
     {
         Popup.TaxGrCode = taxGrCode;
-        await ResolvePopupPriceAsync(assignDiscountSlots: false);
+        await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
+    }
+
+    /// <summary>
+    /// Quantity, tax group, and tax basis are not live-price triggers for source-inherited,
+    /// already-saved, or manually overridden lines. Item-code change still resolves.
+    /// </summary>
+    private async Task ResolvePopupPriceOnQtyTaxOrBasisAsync(bool assignDiscountSlots)
+    {
+        if (!SaLinePricingTrigger.AllowLiveResolve(
+                isEditingExistingLine: _editingLine is not null,
+                hasInheritedSource: Popup.HasSource,
+                isManualOverride: IsPriceOverridden()))
+        {
+            Interlocked.Increment(ref _priceApplySeq);
+            return;
+        }
+
+        await ResolvePopupPriceAsync(assignDiscountSlots);
     }
 
     /// <summary>
@@ -1703,7 +1727,7 @@ public partial class SaInvoice : PageBase, IDisposable
             {
                 CustCode = CustCode!,
                 ICode = Popup.ICode,
-                UOM = Popup.StdUom ?? string.Empty,
+                UOM = SaLinePricingTrigger.CommercialUom(Popup.SellingUom, Popup.StdUom),
                 Qty = Popup.Qty,
                 DocDate = InvDate,
                 DocumentCurrency = Currency,
@@ -2331,7 +2355,8 @@ public partial class SaInvoice : PageBase, IDisposable
             CustCode = CustCode ?? string.Empty,
             ItemCode = line.ICode,
             ItemDescription = line.IDesc,
-            Uom = line.StdUom ?? string.Empty,
+            Uom = SaLinePricingTrigger.CommercialUom(line.SellingUom, line.StdUom),
+            StockUom = line.StdUom,
             Qty = line.Qty,
             DocDate = InvDate,
             Currency = Currency,
@@ -2340,6 +2365,14 @@ public partial class SaInvoice : PageBase, IDisposable
             PricingRef = line.PricingRef,
             OriginalUnitPrice = line.OriginalUnitPrice,
             OverrideReason = line.OverrideReason,
+            ItemDiscount = line.ItemDiscount,
+            ItemDiscount2 = line.ItemDiscount2,
+            ItemDiscount3 = line.ItemDiscount3,
+            ItemDiscount4 = line.ItemDiscount4,
+            ItemDiscount5 = line.ItemDiscount5,
+            ItemDiscount6 = line.ItemDiscount6,
+            ItemDiscAmount = line.ItemDiscAmount,
+            ItemDiscAmount1 = line.ItemDiscAmount1,
             IsInclusive = line.IsInclusive,
             TaxPercent = ResolveTaxPercent(line.TaxGrCode),
             SourceDocumentType = sourceType,
@@ -2489,6 +2522,8 @@ public sealed class SaInvoiceLineVm
     public decimal Qty { get; set; } = 1m;
     public decimal? StdPackSize { get; set; }
     public string? StdUom { get; set; }
+    /// <summary>Commercial selling UOM for live price lookup only. Not persisted on <c>SaInvoiceDetail</c>.</summary>
+    public string? SellingUom { get; set; }
     public string? FrWarehouse { get; set; }
     public decimal UnitPrice { get; set; }
 
@@ -2521,6 +2556,7 @@ public sealed class SaInvoiceLineVm
     public decimal ItemDiscAmount1 { get; set; }
     public bool IsInclusive { get; set; }
     public string? TaxGrCode { get; set; }
+    public string? OrderType { get; set; }
     public decimal Amount { get; set; }
     public decimal TaxAmt { get; set; }
     public decimal NetAmount { get; set; }
@@ -2545,6 +2581,7 @@ public sealed class SaInvoiceLineVm
         Qty = Qty,
         StdPackSize = StdPackSize,
         StdUom = StdUom,
+        SellingUom = SellingUom,
         FrWarehouse = FrWarehouse,
         UnitPrice = UnitPrice,
         PricingSource = PricingSource,
@@ -2561,6 +2598,7 @@ public sealed class SaInvoiceLineVm
         ItemDiscAmount1 = ItemDiscAmount1,
         IsInclusive = IsInclusive,
         TaxGrCode = TaxGrCode,
+        OrderType = OrderType,
         Amount = Amount,
         TaxAmt = TaxAmt,
         NetAmount = NetAmount,
@@ -2598,6 +2636,7 @@ public sealed class SaInvoiceLineVm
             ItemDiscAmount1 = ItemDiscAmount1,
             IsInclusive = IsInclusive,
             TaxGrCode = TaxGrCode,
+            OrderType = OrderType,
             Classification = Classification,
             Remarks = Remarks
         };
@@ -2654,6 +2693,7 @@ public sealed class SaInvoiceLineVm
             ItemDiscAmount1 = dto.ItemDiscAmount1,
             IsInclusive = dto.IsInclusive,
             TaxGrCode = dto.TaxGrCode,
+            OrderType = dto.OrderType,
             Amount = dto.Amount,
             TaxAmt = dto.TaxAmt,
             NetAmount = dto.NetAmount,
@@ -2679,6 +2719,7 @@ public sealed class SaInvoiceLineVm
             Qty = dto.RemainingBillableQty > 0m ? dto.RemainingBillableQty : dto.BalanceQty,
             StdPackSize = dto.StdPsize > 0m ? dto.StdPsize : (decimal?)null,
             StdUom = dto.StdUom,
+            SellingUom = dto.SellingUom,
             FrWarehouse = dto.Warehouse,
             UnitPrice = dto.UnitPrice,
             // Plan 2.3: the provenance is COPIED from the source SO line verbatim. The invoice must
@@ -2732,6 +2773,20 @@ public sealed class SaInvoiceLineVm
             // Phase 4: same reasoning as FromSalesOrder - the override is not re-imposed on billing.
             OriginalUnitPrice = null,
             OverrideReason = null,
+            ItemDiscount = dto.ItemDiscount,
+            ItemDiscount2 = dto.ItemDiscount2,
+            ItemDiscount3 = dto.ItemDiscount3,
+            ItemDiscount4 = dto.ItemDiscount4,
+            ItemDiscount5 = dto.ItemDiscount5,
+            ItemDiscount6 = dto.ItemDiscount6,
+            ItemDiscAmount = dto.ItemDiscAmount,
+            ItemDiscAmount1 = dto.ItemDiscAmount1,
+            IsInclusive = dto.IsInclusive,
+            TaxGrCode = dto.TaxGroup,
+            OrderType = dto.OrderType,
+            // Display / live-price UOM only. Invoice PrepareLines uses the DO frozen pack, not this UOM.
+            StdUom = dto.StdUom,
+            SellingUom = dto.SellingUom,
             StockControl = dto.StockControl,
             ShipmentComplete = true,
             Classification = null,

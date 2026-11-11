@@ -1637,8 +1637,20 @@ public sealed class SaDoService : ISaDoService
                 OriginalUnitPrice = detail.OriginalUnitPrice,
                 OverrideReason = detail.OverrideReason,
                 SellingUom = detail.SellingUom,
+                StdUom = detail.StdUom,
                 FrWarehouse = detail.FrWarehouse,
-                StockControl = detail.StockControl
+                StockControl = detail.StockControl,
+                ItemDiscount = detail.ItemDiscount,
+                ItemDiscount2 = detail.ItemDiscount2,
+                ItemDiscount3 = detail.ItemDiscount3,
+                ItemDiscount4 = detail.ItemDiscount4,
+                ItemDiscount5 = detail.ItemDiscount5,
+                ItemDiscount6 = detail.ItemDiscount6,
+                ItemDiscAmount = detail.ItemDiscAmount,
+                ItemDiscAmount1 = detail.ItemDiscAmount1,
+                IsInclusive = detail.IsInclusive,
+                TaxGroup = detail.TaxGroup,
+                OrderType = detail.OrderType
             });
         }
 

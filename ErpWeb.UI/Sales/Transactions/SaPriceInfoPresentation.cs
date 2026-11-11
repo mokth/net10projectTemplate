@@ -101,14 +101,81 @@ public static class SaPriceInfoPresentation
         if (status == SaPriceInfoStatus.ManualOverride)
             return $"Manual override · {source}";
 
-        if (status == SaPriceInfoStatus.Inherited && !string.IsNullOrWhiteSpace(context.SourceDocumentType))
-            return $"Inherited from {context.SourceDocumentType} · {source}";
+        if (status == SaPriceInfoStatus.Inherited)
+        {
+            var type = string.IsNullOrWhiteSpace(context.SourceDocumentType)
+                ? "source document"
+                : context.SourceDocumentType.Trim();
+            var no = string.IsNullOrWhiteSpace(context.SourceDocumentNo)
+                ? null
+                : context.SourceDocumentNo.Trim();
+            var inherited = string.IsNullOrWhiteSpace(no)
+                ? $"Inherited from {type}"
+                : $"Inherited from {type} {no}";
+            return string.IsNullOrWhiteSpace(context.PricingSource)
+                ? inherited
+                : $"{inherited} · {source}";
+        }
 
         if (string.IsNullOrWhiteSpace(context.PricingSource))
             return "Price information";
 
         var reference = string.IsNullOrWhiteSpace(context.PricingRef) ? string.Empty : $" · {context.PricingRef.Trim()}";
         return $"{source}{reference}";
+    }
+
+    public static string UomLabel(SaPriceInfoContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var commercial = string.IsNullOrWhiteSpace(context.Uom) ? "—" : context.Uom.Trim();
+        if (!string.IsNullOrWhiteSpace(context.StockUom)
+            && !string.Equals(context.StockUom.Trim(), commercial, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{commercial} (stock {context.StockUom.Trim()})";
+        }
+
+        return commercial;
+    }
+
+    public static string DiscountLabel(SaPriceInfoContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var parts = new List<string>();
+        foreach (var pct in new[]
+                 {
+                     context.ItemDiscount, context.ItemDiscount2, context.ItemDiscount3,
+                     context.ItemDiscount4, context.ItemDiscount5, context.ItemDiscount6
+                 })
+        {
+            if (pct != 0m)
+            {
+                parts.Add($"{pct:0.####}%");
+            }
+        }
+
+        if (context.ItemDiscAmount != 0m)
+        {
+            parts.Add(context.ItemDiscAmount.ToString("0.####"));
+        }
+
+        if (context.ItemDiscAmount1 != 0m)
+        {
+            parts.Add(context.ItemDiscAmount1.ToString("0.####"));
+        }
+
+        return parts.Count == 0 ? "None" : string.Join(" + ", parts);
+    }
+
+    /// <summary>
+    /// One-line recorded commercial facts: agreed price, commercial UOM, source, discount, inherited/agreed state.
+    /// </summary>
+    public static string Glance(SaPriceInfoContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return $"{FormatPrice(context.UnitPrice, context.Currency)} / {UomLabel(context)}"
+            + $" · {SourceLabel(context.PricingSource)}"
+            + $" · Discount {DiscountLabel(context)}"
+            + $" · {StatusLabel(Classify(context))}";
     }
 
     public static string FormatPrice(decimal price, string? currency)

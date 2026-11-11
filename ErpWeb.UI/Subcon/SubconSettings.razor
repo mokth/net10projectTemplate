@@ -1,0 +1,88 @@
+@page "/subcon/settings"
+@inherits PageBase
+
+<PageTitle>Subcontracting Settings</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.SubconSettings">
+<div class="iv-page">
+    @if (!string.IsNullOrWhiteSpace(StatusMessage))
+    {
+        <div class="iv-toast iv-toast--ok" role="status">
+            <span>@StatusMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="() => StatusMessage = null" aria-label="Dismiss">×</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="iv-toast iv-toast--err" role="alert">
+            <span>@ErrorMessage</span>
+            <button type="button" class="iv-toast__close" @onclick="() => ErrorMessage = null" aria-label="Dismiss">×</button>
+        </div>
+    }
+
+    <header class="iv-hero">
+        <div class="iv-hero__mark" aria-hidden="true">
+            <i class="fa-solid fa-sliders"></i>
+        </div>
+        <div class="iv-hero__copy">
+            <p class="iv-eyebrow">Subcontracting</p>
+            <h1 class="iv-title">Settings</h1>
+            <div class="iv-chips">
+                <span class="iv-chip">@(Policy.Version == 0 ? "No saved policy yet" : $"Saved policy · version {Policy.Version}")</span>
+                <span class="iv-chip">Drafts only</span>
+            </div>
+        </div>
+    </header>
+
+    <section class="iv-card">
+        <SubconPostingBanner />
+        @if (IsLoading)
+        {
+            <div class="iv-skeleton" aria-busy="true">
+                <div class="iv-skeleton__line iv-skeleton__line--lg"></div>
+            </div>
+        }
+        else
+        {
+            <p class="iv-guidance">Live send-out and receive-back stay off until inventory transfer can share a transaction with this document and supplier stock is excluded from sales, issues, and stock count.</p>
+            <ul class="qa-settings-help">
+                <li>Menus SUBCON_WORKBENCH, SUBCON_SEND_OUT, SUBCON_RECEIVE_BACK, SUBCON_INQUIRY, and SUBCON_SETTINGS grant the draft shell. They do not post stock.</li>
+                <li>Inventory-only companies do not need a Planning or Work Order right.</li>
+                <li>Run <code>scripts/create-subcon-foundation.sql</code> and <code>scripts/init-subcon-menu.sql</code> on SQL Server tenants.</li>
+                <li>Do not turn on a costing replay switch from this page. There is none.</li>
+            </ul>
+            <div class="qa-settings-list">
+                @foreach (var gate in FrozenGates)
+                {
+                    <div class="qa-setting qa-setting--frozen">
+                        <div class="qa-setting__copy">
+                            <p class="qa-setting__title">@gate.Title</p>
+                            <p class="qa-setting__help">@gate.Help</p>
+                        </div>
+                        <div class="qa-setting__control">
+                            <span class="qa-setting__state is-off">Off</span>
+                            <span class="qa-setting__frozen">Not available yet</span>
+                        </div>
+                    </div>
+                }
+            </div>
+            <footer class="iv-footer">
+                <p class="iv-footer__hint">Save keeps every live mode off.</p>
+                <div class="iv-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Close"
+                              IconCssClass="fa-solid fa-xmark"
+                              Click="@(() => Navigation.NavigateTo("/subcon"))" />
+                    <PermissionAuthorize MenuCode="@MenuCodes.SubconSettings" Permission="@PermissionCodes.Edit">
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  Click="@OnSaveAsync"
+                                  Enabled="@CanSave" />
+                    </PermissionAuthorize>
+                </div>
+            </footer>
+        }
+    </section>
+</div>
+</MenuAuthorize>

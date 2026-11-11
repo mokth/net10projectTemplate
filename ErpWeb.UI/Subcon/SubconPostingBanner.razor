@@ -1,0 +1,11 @@
+<div class="subcon-banner" role="note">
+    <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+    <div>
+        <strong>Drafts only — posting is not enabled.</strong>
+        <p>@Message</p>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Message { get; set; } = SubconBlockedReasons.PostingNotEnabled;
+}

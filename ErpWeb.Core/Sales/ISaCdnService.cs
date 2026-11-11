@@ -46,19 +46,26 @@ public sealed class SaCdnOperationResult
     public IReadOnlyDictionary<string, string> ValidationErrors { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Non-blocking operator notice on a successful result. Used when Invoice→CN cannot store the
+    /// invoice's second amount-discount slot.
+    /// </summary>
+    public string? WarningMessage { get; init; }
+
     public static SaCdnOperationResult Ok() =>
         new() { Succeeded = true, ErrorKind = SaCdnErrorKind.None };
 
     public static SaCdnOperationResult OkSaved(string docNo) =>
         new() { Succeeded = true, ErrorKind = SaCdnErrorKind.None, DocNo = docNo };
 
-    public static SaCdnOperationResult OkDocument(SaCdnDocument document) =>
+    public static SaCdnOperationResult OkDocument(SaCdnDocument document, string? warningMessage = null) =>
         new()
         {
             Succeeded = true,
             ErrorKind = SaCdnErrorKind.None,
             Document = document,
-            DocNo = document.DocNo
+            DocNo = document.DocNo,
+            WarningMessage = warningMessage
         };
 
     public static SaCdnOperationResult OkList(SaCdnListPage page) =>

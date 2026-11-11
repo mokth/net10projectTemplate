@@ -24,6 +24,15 @@
     letter-spacing: 0.06em;
 }
 
+.sa-price-info__glance {
+    margin: 0 0 0.85rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--line);
+    background: var(--surface, #f7f8fa);
+    font-size: 0.9rem;
+    line-height: 1.35;
+}
+
 .sa-price-info__facts {
     display: grid;
     grid-template-columns: minmax(8.5rem, 0.7fr) minmax(0, 1.8fr);

@@ -55,11 +55,7 @@ public static class QaSourcePrefill
 
         if (query.SourceHeaderId is > 0)
         {
-            var key = query.SourceHeaderId.Value.ToString();
-            return list.Where(x =>
-                    x.SourceHeaderId == query.SourceHeaderId
-                    || string.Equals(x.SourceDocNo, key, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            return list.Where(x => x.SourceHeaderId == query.SourceHeaderId).ToList();
         }
 
         var poNo = (query.PoNo ?? string.Empty).Trim();
