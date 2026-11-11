@@ -29,7 +29,9 @@ $patterns = @(
     'Receipt_first_repost_with_multiple_issues_rejects_missing_audit_evidence',
     'Receipt_first_rollback_with_later_issue_respects_qa_hold',
     'Receipt_first_repost_with_later_issue_rejects_missing_audit_evidence',
-    'Receipt_first_rollback_rejects_unproven_mixed_issue_tail',
+    'Receipt_first_rollback_reprices_canceled_sale_and_mixed_receipts_and_issues',
+    'Receipt_first_rollback_reprices_issues_around_a_later_receipt',
+    'Receipt_first_rollback_with_mixed_receipts_and_issues_',
     'Receipt_repost_correction_blocks_close_when_undo_evidence_is_missing',
     'Receipt_repost_rejects_changed_quantity_or_cost',
     'Receipt_repost_rejects_damaged_receipt_reversal_history',
@@ -64,6 +66,8 @@ $patterns = @(
     'Backdated_receipt_reprices_canceled_sale_and_multiple_later_issues',
     'Backdated_receipt_reprices_canceled_sale_and_three_later_issues',
     'Backdated_receipt_reprices_canceled_sale_and_unequal_later_issues',
+    'Backdated_receipt_reprices_canceled_sale_and_mixed_receipts_and_issues',
+    'Backdated_receipt_before_mixed_receipts_and_issues_',
     'Backdated_receipt_before_canceled_sale_and_multiple_issues_',
     'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_receipts',
     'Backdated_receipt_reprices_canceled_sale_and_issue_after_later_goods_receipt',
@@ -87,14 +91,20 @@ $required = @(
     'Receipt_first_repost_with_multiple_issues_rejects_missing_audit_evidence',
     'Receipt_first_rollback_with_later_issue_respects_qa_hold',
     'Receipt_first_repost_with_later_issue_rejects_missing_audit_evidence',
-    'Receipt_first_rollback_rejects_unproven_mixed_issue_tail',
+    'Receipt_first_rollback_reprices_canceled_sale_and_mixed_receipts_and_issues',
+    'Receipt_first_rollback_reprices_issues_around_a_later_receipt',
+    'Receipt_first_rollback_with_mixed_receipts_and_issues_rejects_damaged_receipt',
+    'Receipt_first_rollback_with_mixed_receipts_and_issues_respects_qa_hold',
     'Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts',
     'Backdated_receipt_before_multiple_later_receipts_respects_qa_hold',
-    'Backdated_receipt_before_multiple_later_receipts_rejects_multiple_issues',
+    'Backdated_receipt_before_multiple_later_receipts_and_issues_rejects_invoiced_goods',
     'Backdated_receipt_reprices_canceled_sale_and_later_issue',
     'Backdated_receipt_reprices_canceled_sale_and_multiple_later_issues',
     'Backdated_receipt_reprices_canceled_sale_and_three_later_issues',
     'Backdated_receipt_reprices_canceled_sale_and_unequal_later_issues',
+    'Backdated_receipt_reprices_canceled_sale_and_mixed_receipts_and_issues',
+    'Backdated_receipt_before_mixed_receipts_and_issues_respects_qa_hold',
+    'Backdated_receipt_before_mixed_receipts_and_issues_rejects_damaged_later_receipt',
     'Backdated_receipt_before_canceled_sale_and_multiple_issues_respects_qa_hold',
     'Backdated_receipt_before_canceled_sale_and_multiple_issues_rejects_missing_issue_evidence',
     'Backdated_receipt_before_canceled_sale_and_multiple_issues_rejects_foreign_last_issue_owner',
@@ -158,6 +168,8 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleReceiptFirstIssue
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMultipleIssues
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleReceiptFirstMultipleIssues
+        & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceiptsAndIssues
+        & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleReceiptFirstInterleaved
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleCycle
         Write-Output 'The selected SQL Server replay checks passed in disposable databases.'
     }
