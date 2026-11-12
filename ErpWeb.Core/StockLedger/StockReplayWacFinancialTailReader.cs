@@ -29,7 +29,7 @@ public static class StockReplayWacFinancialTailReader
         string itemCode,
         StockReplayEventKey after,
         CancellationToken cancellationToken = default) =>
-        ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after, [], false, cancellationToken);
+        ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after, [], false, null, cancellationToken);
 
     // Only receipt replay with an independently verified complete isolated
     // issue/reversal or sale/reversal pair may omit its two zero-net deltas.
@@ -42,7 +42,7 @@ public static class StockReplayWacFinancialTailReader
             || excludedValueIds.Distinct().Count() != 2)
             throw Corrupt("The reversed issue or sale value pair is incomplete.");
         return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
-            excludedValueIds, false, cancellationToken);
+            excludedValueIds, false, null, cancellationToken);
     }
 
     internal static Task<StockReplayWacFinancialTail> ReadLaterForReversedSaleAsync(
@@ -54,13 +54,23 @@ public static class StockReplayWacFinancialTailReader
             || excludedValueIds.Distinct().Count() != excludedValueIds.Count)
             throw Corrupt("The reversed sale correction cycle is incomplete.");
         return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
-            excludedValueIds, true, cancellationToken);
+            excludedValueIds, true, null, cancellationToken);
+    }
+
+    internal static Task<StockReplayWacFinancialTail> ReadLaterForPurchaseVarianceAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayEventKey after, long factId, CancellationToken cancellationToken = default)
+    {
+        if (factId <= 0 || factId >= long.MaxValue - int.MaxValue)
+            throw Corrupt("The purchase price adjustment has no valid fact identity.");
+        return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
+            [], false, factId, cancellationToken);
     }
 
     private static async Task<StockReplayWacFinancialTail> ReadLaterCoreAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
-        bool excludeSaleCycle, CancellationToken cancellationToken)
+        bool excludeSaleCycle, long? permittedPurchaseFactId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (string.IsNullOrWhiteSpace(companyCode)
@@ -334,8 +344,11 @@ public static class StockReplayWacFinancialTailReader
                         || !receiptHistories.TryGetValue(receiptHistoryId,
                             out var receiptHistory))
                         throw Corrupt($"Value fact {fact.Id} has no active receipt origin.");
-                    valueEvent = StockReplayWacValueEventFactory.CreateReceiptRestatement(
-                        fact, original, receiptHistory, originalOwner, owner);
+                    valueEvent = fact.Id == permittedPurchaseFactId
+                        ? StockReplayWacValueEventFactory.CreatePurchaseInvoiceAdjustment(
+                            fact, original, receiptHistory, originalOwner, owner)
+                        : StockReplayWacValueEventFactory.CreateReceiptRestatement(
+                            fact, original, receiptHistory, originalOwner, owner);
                 }
                 else
                 {
@@ -352,6 +365,9 @@ public static class StockReplayWacFinancialTailReader
         }
 
         var ordered = events.OrderBy(e => e.Key).ThenBy(e => e.EventId).ToArray();
+        if (permittedPurchaseFactId is long permitted
+            && ordered.Count(e => e.EventId == long.MaxValue - permitted) != 1)
+            throw Corrupt("The authorized purchase adjustment is not an active later value event.");
         if (ordered.Select(e => e.EventId).Distinct().Count() != ordered.Length
             || ordered.Zip(ordered.Skip(1), (a, b) => a.Key == b.Key).Any(equal => equal))
             throw Corrupt($"Item {itemCode} has duplicate WAC event identity or key.");

@@ -86,12 +86,18 @@ public sealed partial class IvInventoryPostingService
             authority.Quantity, authority.Value);
         if (saleCycle is not null && reversedIssuePlan is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has multiple reversed-cost dependencies.");
+        var purchaseVarianceFactId = saleCycle is null && reversedIssuePlan is null
+            ? await FindLaterPurchaseVarianceFactAsync(read, companyCode, branchCode, itemCode, physical.LaterEvents, cancellationToken)
+            : null;
         var financial = saleCycle is not null && canReplaySaleCycle
             ? await StockReplayWacInsertionPlanner.BuildForReversedSaleAsync(
                 read, companyCode, branchCode, itemCode, physical, receiptEvent, saleCycle, cancellationToken)
             : reversedIssuePlan is { IssueDeltaId: not null, ReversalDeltaId: not null }
             ? await StockReplayWacInsertionPlanner.BuildForReversedIssueAsync(
                 read, companyCode, branchCode, itemCode, physical, receiptEvent, reversedIssuePlan, cancellationToken)
+            : purchaseVarianceFactId is long purchaseFactId
+            ? await StockReplayWacInsertionPlanner.BuildForPurchaseVarianceAsync(
+                read, companyCode, branchCode, itemCode, physical, receiptEvent, purchaseFactId, cancellationToken)
             : await StockReplayWacInsertionPlanner.BuildAsync(
                 read, companyCode, branchCode, itemCode, physical, receiptEvent, cancellationToken);
         var hasReversedSale = await HasReversedSalesAfterAsync(read, companyCode, branchCode,
@@ -113,16 +119,17 @@ public sealed partial class IvInventoryPostingService
         var productionPlan = await PlanWacProductionLeafAsync(read, companyCode, branchCode,
             financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, cancellationToken,
             insertingReceiptBatchId: batch.Id);
-        var laterInvoice = await PlanNeutralLaterInvoiceAsync(read, companyCode, branchCode,
+        var laterInvoice = await PlanUnchangedLaterInvoiceAsync(read, companyCode, branchCode,
             itemCode, physical.LedgerEpochId, physical.BalLocId, batch.TrxDtTime,
-            physical.LaterEvents, financial.Tail.LaterEvents, cancellationToken);
+            physical.LaterEvents, financial.Tail.LaterEvents, financial.Projection.LaterSteps,
+            financial.Tail.CurrentQuantity, financial.Tail.CurrentValue, purchaseVarianceFactId, cancellationToken);
         if (laterInvoice.Error is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo, laterInvoice.Error);
         if (laterInvoice.Plan is not null && (hasReversedSale || reversedIssuePlan is not null || productionPlan is not null))
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "This receipt cannot yet replay a purchase invoice together with another dependent correction.");
         if (financial.Tail.LaterEvents.Count > 0
-            && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
+            && await CheckSimpleWacTailAsync(read, InventoryTailForProvenInvoice(financial.Tail.LaterEvents, laterInvoice.Plan),
                 batch.TrxDtTime, cancellationToken, laterInvoice.Plan?.Invoice,
                 allowBoundedSales: true, allowBoundedProduction: productionPlan is not null) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
@@ -176,15 +183,16 @@ public sealed partial class IvInventoryPostingService
         await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
             financial.Tail.LaterEvents, financial.Projection.LaterSteps, batch.TrxDtTime, productionPlan, cancellationToken,
             insertingReceiptBatchId: batch.Id);
-        var lockedLaterInvoice = await PlanNeutralLaterInvoiceAsync(write, companyCode, branchCode,
+        var lockedLaterInvoice = await PlanUnchangedLaterInvoiceAsync(write, companyCode, branchCode,
             itemCode, physical.LedgerEpochId, physical.BalLocId, batch.TrxDtTime,
-            physical.LaterEvents, financial.Tail.LaterEvents, cancellationToken,
+            physical.LaterEvents, financial.Tail.LaterEvents, financial.Projection.LaterSteps,
+            financial.Tail.CurrentQuantity, financial.Tail.CurrentValue, purchaseVarianceFactId, cancellationToken,
             lockEvidence: true, expectedInvoiceNo: laterInvoice.Plan?.Invoice.DocNo);
         if (lockedLaterInvoice.Error is not null || lockedLaterInvoice.Plan?.Fingerprint != laterInvoice.Plan?.Fingerprint)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 lockedLaterInvoice.Error ?? "The later purchase invoice changed. Retry posting.");
         if (financial.Tail.LaterEvents.Count > 0
-            && await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
+            && await CheckSimpleWacTailAsync(write, InventoryTailForProvenInvoice(financial.Tail.LaterEvents, lockedLaterInvoice.Plan),
                 batch.TrxDtTime, cancellationToken, lockedLaterInvoice.Plan?.Invoice,
                 allowBoundedSales: true, allowBoundedProduction: productionPlan is not null) is string changedTail)
         {
@@ -693,6 +701,10 @@ public sealed partial class IvInventoryPostingService
             cancellationToken);
         if (saleCycle is not null && reversedIssuePlan is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The receipt has multiple reversed-cost dependencies.");
+        var purchaseVarianceFactId = trxType == IvTrxTypes.MiscellaneousReceipt
+            && saleCycle is null && reversedIssuePlan is null
+            ? await FindLaterPurchaseVarianceFactAsync(read, companyCode, branchCode, original.ICode, physical.LaterEvents, cancellationToken)
+            : null;
         var financial = saleCycle is not null && canReplaySaleCycle
             ? await StockReplayWacRemovalPlanner.BuildForReversedSaleAsync(
                 read, companyCode, branchCode, original.ICode, physical, saleCycle, cancellationToken)
@@ -700,6 +712,9 @@ public sealed partial class IvInventoryPostingService
             ? await StockReplayWacRemovalPlanner.BuildForReversedIssueAsync(
                 read, companyCode, branchCode, original.ICode, physical,
                 reversedIssuePlan, cancellationToken)
+            : purchaseVarianceFactId is long purchaseFactId
+            ? await StockReplayWacRemovalPlanner.BuildForPurchaseVarianceAsync(
+                read, companyCode, branchCode, original.ICode, physical, purchaseFactId, cancellationToken)
             : await StockReplayWacRemovalPlanner.BuildAsync(
                 read, companyCode, branchCode, original.ICode, physical, cancellationToken);
         var reversedSaleProof = hasReversedSale
@@ -739,12 +754,13 @@ public sealed partial class IvInventoryPostingService
         if (productionPlan is not null && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "Backdated GR rollback cannot yet replay both a Production issue and an invoice settlement.");
-        NeutralLaterInvoicePlan? laterInvoicePlan = null;
+        UnchangedLaterInvoicePlan? laterInvoicePlan = null;
         if (trxType == IvTrxTypes.MiscellaneousReceipt)
         {
-            var laterInvoice = await PlanNeutralLaterInvoiceAsync(read, companyCode, branchCode,
+            var laterInvoice = await PlanUnchangedLaterInvoiceAsync(read, companyCode, branchCode,
                 original.ICode, physical.LedgerEpochId, physical.BalLocId, original.TrxDtTime,
-                physical.LaterEvents, financial.Tail.LaterEvents, cancellationToken);
+                physical.LaterEvents, financial.Tail.LaterEvents, financial.Projection.LaterSteps,
+                financial.Tail.CurrentQuantity, financial.Tail.CurrentValue, purchaseVarianceFactId, cancellationToken);
             if (laterInvoice.Error is not null)
                 return IvInventoryPostingBatchResult.Fail(batchNo, laterInvoice.Error);
             laterInvoicePlan = laterInvoice.Plan;
@@ -753,7 +769,7 @@ public sealed partial class IvInventoryPostingService
                     "This receipt cannot yet replay a purchase invoice together with another dependent correction.");
         }
         if (financial.Tail.LaterEvents.Count > 0
-            && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
+            && await CheckSimpleWacTailAsync(read, InventoryTailForProvenInvoice(financial.Tail.LaterEvents, laterInvoicePlan),
                 original.TrxDtTime, cancellationToken,
                 replayInvoice ?? laterInvoicePlan?.Invoice, allowBoundedSales: isReceipt,
                 allowBoundedProduction: productionPlan is not null) is string unsupported)
@@ -803,9 +819,10 @@ public sealed partial class IvInventoryPostingService
             return reversedProduction;
         if (trxType == IvTrxTypes.MiscellaneousReceipt)
         {
-            var lockedLaterInvoice = await PlanNeutralLaterInvoiceAsync(write, companyCode, branchCode,
+            var lockedLaterInvoice = await PlanUnchangedLaterInvoiceAsync(write, companyCode, branchCode,
                 original.ICode, physical.LedgerEpochId, physical.BalLocId, original.TrxDtTime,
-                physical.LaterEvents, financial.Tail.LaterEvents, cancellationToken,
+                physical.LaterEvents, financial.Tail.LaterEvents, financial.Projection.LaterSteps,
+                financial.Tail.CurrentQuantity, financial.Tail.CurrentValue, purchaseVarianceFactId, cancellationToken,
                 lockEvidence: true, expectedInvoiceNo: laterInvoicePlan?.Invoice.DocNo);
             if (lockedLaterInvoice.Error is not null || lockedLaterInvoice.Plan?.Fingerprint != laterInvoicePlan?.Fingerprint)
                 return IvInventoryPostingBatchResult.Fail(batchNo,
@@ -823,7 +840,7 @@ public sealed partial class IvInventoryPostingService
                 financial.Tail.LaterEvents, financial.Projection.LaterSteps, original.TrxDtTime,
                 productionPlan, cancellationToken, owner.Id);
         if (financial.Tail.LaterEvents.Count > 0
-            && await CheckSimpleWacTailAsync(write, financial.Tail.LaterEvents,
+            && await CheckSimpleWacTailAsync(write, InventoryTailForProvenInvoice(financial.Tail.LaterEvents, laterInvoicePlan),
                 original.TrxDtTime, cancellationToken, replayInvoice ?? laterInvoicePlan?.Invoice,
                 allowBoundedSales: isReceipt,
                 allowBoundedProduction: productionPlan is not null) is string lockedTailError)

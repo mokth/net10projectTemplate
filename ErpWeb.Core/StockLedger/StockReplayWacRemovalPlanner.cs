@@ -16,6 +16,7 @@ public sealed record StockReplayWacRemovalPlan(
 {
     internal long[] ExcludedReversedIssueValueFactIds { get; init; } = [];
     internal bool ExcludesReversedSaleCycle { get; init; }
+    internal long? PurchaseVarianceFactId { get; init; }
 }
 
 /// <summary>
@@ -45,7 +46,12 @@ public static class StockReplayWacRemovalPlanner
         string itemCode,
         StockReplayPhysicalRemovalPlan physicalPlan,
         CancellationToken cancellationToken = default) =>
-        BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, [], false, cancellationToken);
+        BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, [], false, null, cancellationToken);
+
+    internal static Task<StockReplayWacRemovalPlan> BuildForPurchaseVarianceAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayPhysicalRemovalPlan physicalPlan, long factId, CancellationToken cancellationToken = default) =>
+        BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, [], false, factId, cancellationToken);
 
     internal static Task<StockReplayWacRemovalPlan> BuildForReversedIssueAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
@@ -59,7 +65,7 @@ public static class StockReplayWacRemovalPlanner
             || proof.ProjectedQuantity != physicalPlan.Projection.FinalQuantity)
             throw Invalid("The reversed Production issue value pair is incomplete.");
         return BuildCoreAsync(db, companyCode, branchCode, itemCode,
-            physicalPlan, new[] { issueId, reversalId }.Order().ToArray(), false, cancellationToken);
+            physicalPlan, new[] { issueId, reversalId }.Order().ToArray(), false, null, cancellationToken);
     }
 
     internal static Task<StockReplayWacRemovalPlan> BuildForReversedSaleAsync(
@@ -76,12 +82,12 @@ public static class StockReplayWacRemovalPlanner
             || cycle.ReceiptQuantity != physicalPlan.RemovedActiveEvent.SignedDelta)
             throw Invalid("The reversed sale correction cycle differs from the removed receipt.");
         return BuildCoreAsync(db, companyCode, branchCode, itemCode,
-            physicalPlan, cycle.ValueIds, true, cancellationToken);
+            physicalPlan, cycle.ValueIds, true, null, cancellationToken);
     }
 
     private static async Task<StockReplayWacRemovalPlan> BuildCoreAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
-        StockReplayPhysicalRemovalPlan physicalPlan, long[] excludedValueIds, bool excludeSaleCycle,
+        StockReplayPhysicalRemovalPlan physicalPlan, long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);
@@ -97,16 +103,17 @@ public static class StockReplayWacRemovalPlanner
         if (pileItem != itemCode)
             throw Invalid("The removed pile belongs to another WAC item.");
         var (removed, tail) = await ReadAsync(db, companyCode, branchCode,
-            itemCode, physicalPlan.RemovedActiveEvent, excludedValueIds, excludeSaleCycle, cancellationToken);
+            itemCode, physicalPlan.RemovedActiveEvent, excludedValueIds, excludeSaleCycle, purchaseFactId, cancellationToken);
         var projection = StockReplayWacTailProjector.SimulateSinglePileRemoval(
             tail, physicalPlan, removed);
         var hash = Hash(companyCode, branchCode, itemCode, physicalPlan,
-            removed, tail, projection, excludedValueIds, excludeSaleCycle);
+            removed, tail, projection, excludedValueIds, excludeSaleCycle, purchaseFactId);
         return new(companyCode, branchCode, itemCode, physicalPlan,
             removed, tail, projection, hash)
         {
             ExcludedReversedIssueValueFactIds = excludedValueIds.ToArray(),
-            ExcludesReversedSaleCycle = excludeSaleCycle
+            ExcludesReversedSaleCycle = excludeSaleCycle,
+            PurchaseVarianceFactId = purchaseFactId
         };
     }
 
@@ -124,7 +131,7 @@ public static class StockReplayWacRemovalPlanner
             || !StringComparer.Ordinal.Equals(plan.PlanHash,
                 Hash(plan.CompanyCode, plan.BranchCode, plan.ItemCode,
                     plan.PhysicalPlan, plan.RemovedActiveEvent,
-                    plan.Tail, plan.Projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle)))
+                    plan.Tail, plan.Projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId)))
             throw Stale("The WAC removal evidence changed after planning.");
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(
             context, plan.PhysicalPlan, cancellationToken);
@@ -143,7 +150,7 @@ public static class StockReplayWacRemovalPlanner
         {
             (removed, tail) = await ReadAsync(context.Db, plan.CompanyCode,
                 plan.BranchCode, plan.ItemCode,
-                plan.PhysicalPlan.RemovedActiveEvent, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, cancellationToken);
+                plan.PhysicalPlan.RemovedActiveEvent, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId, cancellationToken);
             projection = StockReplayWacTailProjector.SimulateSinglePileRemoval(
                 tail, plan.PhysicalPlan, removed);
         }
@@ -153,7 +160,7 @@ public static class StockReplayWacRemovalPlanner
         }
         if (!StringComparer.Ordinal.Equals(plan.PlanHash,
             Hash(plan.CompanyCode, plan.BranchCode, plan.ItemCode,
-                plan.PhysicalPlan, removed, tail, projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle)))
+                plan.PhysicalPlan, removed, tail, projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId)))
             throw Stale("The active WAC removal dependencies changed after planning.");
     }
 
@@ -161,7 +168,7 @@ public static class StockReplayWacRemovalPlanner
         StockReplayWacFinancialTail Later)> ReadAsync(
         AppDbContext db, string companyCode, string branchCode,
         string itemCode, StockReplayPhysicalEvent physical,
-        long[] excludedValueIds, bool excludeSaleCycle, CancellationToken cancellationToken)
+        long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId, CancellationToken cancellationToken)
     {
         if (physical.Key.EffectiveAt == DateTime.MinValue)
             throw Invalid("A WAC removal has no earlier timeline instant.");
@@ -171,7 +178,10 @@ public static class StockReplayWacRemovalPlanner
         var before = new StockReplayEventKey(
             physical.Key.EffectiveAt.AddTicks(-1),
             StockReplayEventKey.OrdinaryClass, 0, "", 0);
-        var observed = excludedValueIds.Length == 0
+        var observed = purchaseFactId is long factId
+            ? await StockReplayWacFinancialTailReader.ReadLaterForPurchaseVarianceAsync(
+                db, companyCode, branchCode, itemCode, before, factId, cancellationToken)
+            : excludedValueIds.Length == 0
             ? await StockReplayWacFinancialTailReader.ReadLaterAsync(
                 db, companyCode, branchCode, itemCode, before, cancellationToken)
             : excludeSaleCycle
@@ -200,12 +210,12 @@ public static class StockReplayWacRemovalPlanner
         StockReplayPhysicalRemovalPlan physicalPlan,
         StockReplayWacEvent removed,
         StockReplayWacFinancialTail tail,
-        StockReplayWacRemovalResult projection, long[] excludedValueIds, bool excludeSaleCycle) =>
+        StockReplayWacRemovalResult projection, long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId) =>
         StockPostingFingerprint.Create(new
         {
             companyCode, branchCode, itemCode,
             physicalPlan.PlanHash,
-            excludedValueIds, excludeSaleCycle,
+            excludedValueIds, excludeSaleCycle, purchaseFactId,
             removed,
             tail.CurrentQuantity,
             tail.CurrentValue,

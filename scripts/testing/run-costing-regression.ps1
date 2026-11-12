@@ -84,7 +84,12 @@ $required = @(
     'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
     'SubconPostBlockedTests', 'SubconModeTests',
     'Backdated_wac_misc_receipt_replays_after_value_neutral_purchase_invoice',
-    'Backdated_wac_misc_receipt_rejects_purchase_invoice_price_variance',
+    'Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance',
+    'Backdated_wac_misc_receipt_rejects_partial_purchase_invoice_variance',
+    'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
+    'Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence',
+    'Backdated_purchase_invoice_price_variance_rejects_later_active_issue',
+    'Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback',
     'Backdated_wac_misc_receipt_rejects_damaged_purchase_evidence',
     'Backdated_wac_misc_receipt_before_purchase_invoice_respects_qa_hold',
     'Neutral_purchase_invoice_can_roll_back_before_backdated_receipt',
@@ -169,6 +174,9 @@ try {
     if ($IncludeSqlServer) {
         $sqlRunner = Join-Path $PSScriptRoot 'run-multi-wac-sql-scratch.ps1'
         & $sqlRunner -Server $SqlServer -NoBuild -NeutralLaterPurchaseInvoice
+        & $sqlRunner -Server $SqlServer -NoBuild -FullyCapitalizedPurchaseVariance
+        & $sqlRunner -Server $SqlServer -NoBuild -PartialPurchaseVariance
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts

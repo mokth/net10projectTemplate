@@ -13,18 +13,62 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
-    private sealed record NeutralLaterInvoicePlan(PoInvoice Invoice, string Fingerprint);
+    private sealed record UnchangedLaterInvoicePlan(PoInvoice Invoice, string Fingerprint, long? ValueEventId);
+
+    // This only selects a candidate for the read-only projection. It does not
+    // authorize a write; the complete invoice proof below is still mandatory.
+    private static async Task<long?> FindLaterPurchaseVarianceFactAsync(
+        AppDbContext db, string company, string branch, string item,
+        IReadOnlyList<StockReplayPhysicalEvent> physical, CancellationToken ct)
+    {
+        if (physical.Count == 0 || physical.Count > 100
+            || physical.Any(p => p.EventId is not (> 0 and <= int.MaxValue)))
+            return null;
+        var ids = physical.Select(p => (int)p.EventId).ToArray();
+        var goods = await db.IvTrxHistories.AsNoTracking().Where(h => ids.Contains(h.Id)
+            && h.CompanyCode == company && h.BranchCode == branch && h.ICode == item
+            && h.TrxType == IvTrxTypes.GoodsReceive).Select(h => h.Id).ToArrayAsync(ct);
+        if (goods.Length != 1)
+            return null;
+        var settlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s =>
+            s.CompanyCode == company && s.BranchCode == branch && s.ItemCode == item
+            && s.ReceiptInventoryHistoryId == goods[0] && s.ReversesSettlementId == null
+            && !db.PurchaseReceiptCostSettlements.Any(r => r.ReversesSettlementId == s.Id))
+            .ToArrayAsync(ct);
+        if (settlements.Length != 1)
+            return null;
+        var settlement = settlements[0];
+        var adjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+            a.CompanyCode == company && a.BranchCode == branch && a.ItemCode == item
+            && a.SourceDocumentType == "PO_INVOICE" && a.SourceDocumentNo == settlement.PiDocNo
+            && a.SourceDocumentLine == settlement.PiLineNo && a.SourceCostingRevision == settlement.PiCostingRevision
+            && a.StockPostingId == settlement.StockPostingId && a.ReversesAdjustmentId == null)
+            .ToArrayAsync(ct);
+        return adjustments.Length == 1 && adjustments[0].InventoryAdjustmentFactId is > 0
+            ? adjustments[0].InventoryAdjustmentFactId : null;
+    }
+
+    private static IReadOnlyList<StockReplayWacEvent> InventoryTailForProvenInvoice(
+        IReadOnlyList<StockReplayWacEvent> events, UnchangedLaterInvoicePlan? plan) =>
+        plan?.ValueEventId is long id ? events.Where(e => e.EventId != id).ToArray() : events;
 
     // A miscellaneous receipt does not change the GR candidates for an invoice.
-    // Preserve a single original, zero-variance settlement only after proving its
-    // complete owner and value evidence before and inside the branch transaction.
-    private async Task<(NeutralLaterInvoicePlan? Plan, string? Error)> PlanNeutralLaterInvoiceAsync(
+    // Preserve a single original invoice only if its entire price adjustment
+    // remains unchanged, with its evidence rechecked under the branch lock.
+    private async Task<(UnchangedLaterInvoicePlan? Plan, string? Error)> PlanUnchangedLaterInvoiceAsync(
         AppDbContext db, string company, string branch, string item, long epoch, int pile,
         DateTime receiptDate, IReadOnlyList<StockReplayPhysicalEvent> physical,
-        IReadOnlyList<StockReplayWacEvent> valued, CancellationToken ct,
+        IReadOnlyList<StockReplayWacEvent> valued, IReadOnlyList<StockReplayWacStep> projectedSteps,
+        decimal currentQty, decimal currentValue, long? purchaseFactId, CancellationToken ct,
         bool lockEvidence = false, string? expectedInvoiceNo = null)
     {
-        var tailHash = ReversedSaleTailFingerprint(physical, valued);
+        var purchaseEvents = valued.Where(e => e.EventId > int.MaxValue).ToArray();
+        if (purchaseFactId is long candidateFactId
+            && (purchaseEvents.Length != 1 || purchaseEvents[0].EventId != long.MaxValue - candidateFactId)
+            || purchaseFactId is null && purchaseEvents.Length != 0)
+            return (null, "The later purchase value adjustment needs a verified settlement replay.");
+        var inventoryEvents = valued.Where(e => e.EventId <= int.MaxValue).ToArray();
+        var tailHash = ReversedSaleTailFingerprint(physical, inventoryEvents);
         if (tailHash is null || physical.Count == 0)
             return (null, null);
         var ids = physical.Select(p => checked((int)p.EventId)).ToArray();
@@ -92,7 +136,7 @@ public sealed partial class IvInventoryPostingService
         if (invoiceResult.Invoice is not { } invoice)
             return (null, null);
 
-        const string unsupported = "The later purchase invoice is not an exact value-neutral settlement; purchase-cost replay is required.";
+        const string unsupported = "The later purchase invoice needs a changed price adjustment or settlement; purchase-cost replay is required.";
         if (invoice.DocDate < gr.TrxDtTime || invoice.DocDate.Year != receiptDate.Year
             || invoice.DocDate.Month != receiptDate.Month || invoice.CurrRate <= 0m
             || await db.PoInvoices.AsNoTracking().AnyAsync(x => x.CompanyCode == company
@@ -139,12 +183,38 @@ public sealed partial class IvInventoryPostingService
             return (null, unsupported);
         var root = roots[0];
         var actual = StockLedgerPrecision.Money(line.NetAmount * invoice.CurrRate);
+        var variance = StockLedgerPrecision.Money(actual - grProof.CostAmount);
+        var rootFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == root.Id).ToArrayAsync(ct);
+        StockValuationFact? purchaseValue = null;
+        StockReplayWacStep? purchaseStep = null;
+        if (variance != 0m)
+        {
+            if (purchaseFactId is not long factId || rootFacts.Length != 1 || rootFacts[0].Id != factId
+                || adjustment.InventoryAdjustmentFactId != factId || purchaseEvents.Length != 1)
+                return (null, unsupported);
+            purchaseValue = rootFacts[0];
+            purchaseStep = projectedSteps.SingleOrDefault(s => s.EventId == purchaseEvents[0].EventId);
+            var oldQty = StockLedgerPrecision.Quantity(currentQty - valued.Where(e =>
+                e.Key.CompareTo(purchaseEvents[0].Key) >= 0).Sum(e => e.OldSignedQuantity));
+            var oldValue = StockLedgerPrecision.Money(currentValue - valued.Where(e =>
+                e.Key.CompareTo(purchaseEvents[0].Key) >= 0).Sum(e => e.OldSignedValue));
+            if (purchaseStep is null || oldQty < line.StdQty || purchaseStep.QuantityBefore < line.StdQty
+                || variance < 0m && (oldValue < -variance || purchaseStep.ValueBefore < -variance)
+                || purchaseStep.SignedQuantity != 0m || purchaseStep.SignedValue != variance
+                || purchaseEvents[0].OldSignedValue != variance || purchaseEvents[0].FixedSignedValue != variance
+                || purchaseValue.SignedValue != variance || purchaseValue.OriginalValuationFactId != grProof.FactId
+                || purchaseValue.SourceDocumentLine != line.Line.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                || purchaseValue.PostingLineNo != line.Line || purchaseValue.SplitOrdinal != 0
+                || await db.StockValuationFacts.AsNoTracking().AnyAsync(f => f.ReversesValuationFactId == factId, ct))
+                return (null, unsupported);
+        }
+        else if (purchaseFactId is not null || rootFacts.Length != 0 || adjustment.InventoryAdjustmentFactId is not null)
+            return (null, unsupported);
         if (root.SourceDocumentNo != invoice.DocNo || root.CommandType != "PROCUREMENT_PO_INVOICE_PRIMARY"
             || root.LedgerEpochId != epoch || root.SealedAtUtc is null || root.EffectiveAt != invoice.DocDate
             || root.ReversesPostingId is not null
-            || !MatchesNeutralInvoiceSnapshot(root, invoice, line)
+            || !MatchesPurchaseInvoiceSnapshot(root, invoice, line)
             || await db.StockPostings.AsNoTracking().AnyAsync(p => p.ReversesPostingId == root.Id, ct)
-            || await db.StockValuationFacts.AsNoTracking().AnyAsync(f => f.StockPostingId == root.Id, ct)
             || gr.ToStdQty != line.StdQty || orderLine.InvoicedQty != line.StdQty
             || !string.Equals(line.StdUom, gr.ToStdUom, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(line.SellingUom, gr.ToStdUom, StringComparison.OrdinalIgnoreCase)
@@ -159,21 +229,21 @@ public sealed partial class IvInventoryPostingService
             || settlement.ReceiptValuationBaseAmount != grProof.CostAmount
             || settlement.ReceiptCommercialUnitCost != grProof.UnitCost
             || settlement.ReceiptCommercialBaseAmount != grProof.CostAmount
-            || settlement.AllocatedActualBaseAmount != actual || actual != grProof.CostAmount
-            || settlement.CommercialVarianceAmount != 0m || settlement.ValuationVarianceAmount != 0m
+            || settlement.AllocatedActualBaseAmount != actual
+            || settlement.CommercialVarianceAmount != variance || settlement.ValuationVarianceAmount != variance
             || adjustment.AdjustmentType != "PURCHASE_PRICE_VARIANCE" || adjustment.StockPostingId != root.Id
             || adjustment.SourceDocumentLine != line.Line || adjustment.SourceCostingRevision != invoice.CostingRevision
             || adjustment.PoNo != gr.PoNo || adjustment.PoRelNo != gr.PoRelNo || adjustment.PoLineNo != gr.PoLineNo
             || adjustment.ItemCode != item || adjustment.CostMethod != StockCostMethods.MovingAverage
             || adjustment.BaseQty != line.StdQty || adjustment.ActualBaseAmount != actual
-            || adjustment.ReferenceBaseAmount != actual || adjustment.CommercialReferenceAmount != actual
-            || adjustment.TotalAdjustmentAmount != 0m || adjustment.InventoryAdjustmentAmount != 0m
-            || adjustment.ConsumedVarianceAmount != 0m || adjustment.InventoryAdjustmentFactId is not null
+            || adjustment.ReferenceBaseAmount != grProof.CostAmount || adjustment.CommercialReferenceAmount != grProof.CostAmount
+            || adjustment.TotalAdjustmentAmount != variance || adjustment.InventoryAdjustmentAmount != variance
+            || adjustment.ConsumedVarianceAmount != 0m
             || adjustment.ReversesAdjustmentId is not null
             || await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(a => a.ReversesAdjustmentId == adjustment.Id, ct))
             return (null, unsupported);
 
-        var fingerprint = StockPostingFingerprint.Create(new { Kind = "WAC_MR_NEUTRAL_LATER_INVOICE" }, new
+        var fingerprint = StockPostingFingerprint.Create(new { Kind = "WAC_MR_UNCHANGED_LATER_INVOICE" }, new
         {
             tailHash, fixedReceipts, gr.Id, gr.BatchNo, gr.PoNo, gr.PoRelNo, gr.PoLineNo,
             invoice.DocNo, invoice.DocDate, invoice.Status, invoice.Type, invoice.CostingRevision,
@@ -190,12 +260,15 @@ public sealed partial class IvInventoryPostingService
                 settlement.AllocatedActualBaseAmount, settlement.CommercialVarianceAmount, settlement.ValuationVarianceAmount },
             Adjustment = new { adjustment.Id, adjustment.BaseQty, adjustment.ActualBaseAmount, adjustment.ReferenceBaseAmount,
                 adjustment.CommercialReferenceAmount, adjustment.TotalAdjustmentAmount, adjustment.InventoryAdjustmentAmount,
-                adjustment.ConsumedVarianceAmount, adjustment.InventoryAdjustmentFactId }
+                adjustment.ConsumedVarianceAmount, adjustment.InventoryAdjustmentFactId },
+            PurchaseValue = purchaseValue is null ? null : new { purchaseValue.Id, purchaseValue.SignedValue,
+                purchaseValue.OriginalValuationFactId, purchaseValue.EffectiveAt, purchaseValue.SourceDocumentLine },
+            PurchaseStep = purchaseStep
         }).SourceSnapshotHash;
-        return (new(invoice, fingerprint), null);
+        return (new(invoice, fingerprint, purchaseEvents.SingleOrDefault()?.EventId), null);
     }
 
-    private static bool MatchesNeutralInvoiceSnapshot(StockPosting root, PoInvoice invoice, PoInvoiceDetail line)
+    private static bool MatchesPurchaseInvoiceSnapshot(StockPosting root, PoInvoice invoice, PoInvoiceDetail line)
     {
         try
         {

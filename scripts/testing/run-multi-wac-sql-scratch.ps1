@@ -29,7 +29,10 @@ param(
     [switch]$ReversedSaleReceiptFirstMultipleIssues,
     [switch]$ReversedSaleMixedReceiptsAndIssues,
     [switch]$ReversedSaleReceiptFirstInterleaved,
-    [switch]$NeutralLaterPurchaseInvoice
+    [switch]$NeutralLaterPurchaseInvoice,
+    [switch]$FullyCapitalizedPurchaseVariance,
+    [switch]$PartialPurchaseVariance,
+    [switch]$BackdatedPurchaseInvoice
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,6 +43,9 @@ if ($BothItems -and (-not $MixedLocations -or $EditRace -or $InjectFailure)) { t
 if ($MoreLines -and -not $TwoPiles) { throw 'The multi-line case requires -TwoPiles.' }
 if ($InjectFailure -and ($EditRace -or -not ($RepeatedAndOther -or $TwoPiles -or $MixedLocations))) { throw 'Choose a receipt shape for failure injection.' }
 if ($NeutralLaterPurchaseInvoice -and @($SameItem, $RepeatedAndOther, $TwoPiles, $MoreLines, $MixedLocations, $BothItems, $EditRace, $InjectFailure, $SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 0) { throw 'Choose the purchase invoice case on its own.' }
+if ($FullyCapitalizedPurchaseVariance -and @($NeutralLaterPurchaseInvoice, $SameItem, $RepeatedAndOther, $TwoPiles, $MoreLines, $MixedLocations, $BothItems, $EditRace, $InjectFailure, $SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 0) { throw 'Choose the purchase variance case on its own.' }
+if ($PartialPurchaseVariance -and @($FullyCapitalizedPurchaseVariance, $NeutralLaterPurchaseInvoice, $SameItem, $RepeatedAndOther, $TwoPiles, $MoreLines, $MixedLocations, $BothItems, $EditRace, $InjectFailure, $SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 0) { throw 'Choose the partial purchase variance case on its own.' }
+if ($BackdatedPurchaseInvoice -and @($PartialPurchaseVariance, $FullyCapitalizedPurchaseVariance, $NeutralLaterPurchaseInvoice, $SameItem, $RepeatedAndOther, $TwoPiles, $MoreLines, $MixedLocations, $BothItems, $EditRace, $InjectFailure, $SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 0) { throw 'Choose the backdated purchase invoice case on its own.' }
 if (@($SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 1) { throw 'Choose one Sales case.' }
 if (($SalesReturn -or $SalesReturnRolledBack -or $SalesReturnFailure -or $ReversedSale -or $ReversedSaleEdit -or $ReversedSaleBusy -or $ReversedSaleSingle -or $ReversedSaleGoods -or $ReversedSaleCorrection -or $ReversedSaleCycle -or $ReversedSaleLate -or $ReversedSaleLaterReceipt -or $ReversedSaleLaterReceipts -or $ReversedSaleMixedReceipts -or $ReversedSaleLaterIssue -or $ReversedSaleReceiptFirstIssue -or $ReversedSaleMultipleIssues -or $ReversedSaleReceiptFirstMultipleIssues -or $ReversedSaleMixedReceiptsAndIssues -or $ReversedSaleReceiptFirstInterleaved) -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines -or $MixedLocations -or $BothItems -or $EditRace -or $InjectFailure)) { throw 'Choose the Sales case on its own.' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
@@ -69,7 +75,10 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($NeutralLaterPurchaseInvoice) { 'SqlServer_misc_receipt_before_neutral_purchase_invoice_is_atomic_and_avoids_busy_po' }
+    $testName = if ($BackdatedPurchaseInvoice) { 'SqlServer_backdated_purchase_invoice_variance_rejects_later_active_issue' }
+        elseif ($PartialPurchaseVariance) { 'SqlServer_misc_receipt_rejects_changed_purchase_variance_split' }
+        elseif ($FullyCapitalizedPurchaseVariance) { 'SqlServer_misc_receipt_before_purchase_variance_is_atomic_and_avoids_busy_po' }
+        elseif ($NeutralLaterPurchaseInvoice) { 'SqlServer_misc_receipt_before_neutral_purchase_invoice_is_atomic_and_avoids_busy_po' }
         elseif ($ReversedSaleReceiptFirstInterleaved) { 'SqlServer_receipt_first_rollback_reprices_issues_around_later_receipt_atomically' }
         elseif ($ReversedSaleMixedReceiptsAndIssues) { 'SqlServer_late_receipt_reprices_canceled_sale_and_mixed_receipts_and_issues_atomically' }
         elseif ($ReversedSaleReceiptFirstMultipleIssues) { 'SqlServer_receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues_atomically' }
