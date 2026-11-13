@@ -61,6 +61,9 @@ public static class StockValuationSnapshotBuilder
 
         try
         {
+            if (!await StockReplayInvoiceIssueAudit.ValidateForSnapshotAsync(
+                    db, company, branch, exclusiveEnd, watermark, cancellationToken))
+                return "Cannot close: a purchase invoice issue correction has incomplete evidence.";
             if (!await StockReplayPurchaseVarianceGenerationReader.ValidateForSnapshotAsync(
                     db, company, branch, exclusiveEnd, watermark, cancellationToken))
                 return "Cannot close: a purchase variance replay has incomplete correction evidence.";

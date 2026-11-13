@@ -1259,6 +1259,7 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                     : "Purchase receipt settlement failed."), null);
 
             IReadOnlyCollection<PurchaseCostAdjustmentRequest> adjustments = settlement.Adjustments;
+            var useIssueReplay = false;
             if (begin.Context.CostMethod == StockCostMethods.MovingAverage)
             {
                 // A later stock movement was valued without this historical
@@ -1279,12 +1280,15 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                         return ($"Cannot post purchase {(isCreditNote ? "credit note" : "invoice")} {invoice.DocNo} while later stock costing needs its price variance replayed.", null);
                     var original = settlement.Adjustments[0];
                     var positive = original.TotalAdjustmentAmount > 0m;
+                    var inventoryAmount = consumedPlan.IssueReplay?.InventoryVariance ?? 0m;
+                    var consumedAmount = consumedPlan.IssueReplay?.ConsumedVariance ?? original.TotalAdjustmentAmount;
+                    useIssueReplay = consumedPlan.IssueReplay is not null;
                     adjustments = [original with
                     {
-                        InventoryAdjustmentAmount = 0m,
-                        ConsumedVarianceAmount = original.TotalAdjustmentAmount,
+                        InventoryAdjustmentAmount = inventoryAmount,
+                        ConsumedVarianceAmount = consumedAmount,
                         ValueAdjustment = new StockValueAdjustmentRequest(original.SourceDocumentLine, 0,
-                            original.ItemCode, consumedPlan.BaseUom, 0m, positive ? 1 : -1,
+                            original.ItemCode, consumedPlan.BaseUom, Math.Abs(inventoryAmount), positive ? 1 : -1,
                             positive ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT",
                             StockValuationSources.PurchasePriceVariance,
                             SourceDocumentLine: original.SourceDocumentLine.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -1293,9 +1297,20 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                 }
             }
 
-            await _costAdjustments.AppendInTransactionAsync(
-                begin.Context, adjustments, cancellationToken);
-            await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            if (consumedPlan?.IssueReplay is not null && !useIssueReplay)
+                return ("The later issue changed after invoice replay planning. Retry the document.", null);
+            if (useIssueReplay)
+            {
+                var required = await WriteInvoiceIssueReplayAsync(begin.Context, consumedPlan!.Fingerprint,
+                    consumedPlan.Watermark, consumedPlan.IssueReplay!, adjustments.Single(), cancellationToken);
+                await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, required, cancellationToken);
+            }
+            else
+            {
+                await _costAdjustments.AppendInTransactionAsync(
+                    begin.Context, adjustments, cancellationToken);
+                await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            }
             completed = true;
             return (null, null);
         }
@@ -1322,10 +1337,52 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
         CancellationToken cancellationToken)
     {
         var docNo = (item.DocNo ?? string.Empty).Trim();
+        InvoiceIssueRemovalPlan? issueRemoval = null;
+        if (_openPeriodBackdatedReplayEnabled && _branchStockLock is not null && _receiptSettlements is not null)
+        {
+            try
+            {
+                await using var preview = await _dbFactory.CreateDbContextAsync(cancellationToken);
+                var posted = await preview.PoInvoices.AsNoTracking().Include(x => x.Details)
+                    .SingleOrDefaultAsync(x => x.CompanyCode == write.CompanyCode
+                        && x.BranchCode == write.BranchCode && x.DocNo == docNo, cancellationToken);
+                if (posted is not null)
+                    issueRemoval = await PlanInvoiceIssueRemovalAsync(preview, posted, cancellationToken);
+            }
+            catch (StockLedgerException) { /* The existing rollback guard remains authoritative. */ }
+            catch (ArgumentException) { /* Unprovable historical evidence stays blocked. */ }
+            catch (InvalidOperationException) { /* Ambiguous historical evidence stays blocked. */ }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Unable to plan purchase invoice rollback {DocNo}", docNo);
+                return PoInvoicePostingItemResult.Failed(docNo, "Unable to check the historical stock for this document.");
+            }
+        }
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            if (issueRemoval is not null)
+            {
+                await _branchStockLock!.AcquireAsync(db, write.CompanyCode, write.BranchCode!, cancellationToken);
+                if (db.Database.IsSqlServer())
+                {
+                    await db.PoInvoices.FromSqlInterpolated($@"SELECT * FROM dbo.POInvoice WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                        WHERE CompanyCode = {write.CompanyCode} AND BranchCode = {write.BranchCode} AND DocNo = {docNo}")
+                        .AsNoTracking().ToArrayAsync(cancellationToken);
+                    await db.PoInvoiceDetails.FromSqlInterpolated($@"SELECT * FROM dbo.POInvoiceDetail WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                        WHERE CompanyCode = {write.CompanyCode} AND BranchCode = {write.BranchCode} AND DocNo = {docNo}")
+                        .AsNoTracking().ToArrayAsync(cancellationToken);
+                    await db.PoOrders.FromSqlInterpolated($@"SELECT * FROM dbo.POOrder WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                        WHERE CompanyCode = {write.CompanyCode} AND BranchCode = {write.BranchCode}
+                            AND PONo = {issueRemoval.PoNo} AND PORelNo = {issueRemoval.PoRelNo}")
+                        .AsNoTracking().ToArrayAsync(cancellationToken);
+                    await db.PoOrderDetails.FromSqlInterpolated($@"SELECT * FROM dbo.PODetail WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                        WHERE CompanyCode = {write.CompanyCode} AND BranchCode = {write.BranchCode}
+                            AND PONo = {issueRemoval.PoNo} AND PORelNo = {issueRemoval.PoRelNo} AND Line = {issueRemoval.PoLineNo}")
+                        .AsNoTracking().ToArrayAsync(cancellationToken);
+                }
+            }
             var invoice = await _invoices.LockForUpdateAsync(db, write.CompanyCode, write.BranchCode, docNo, cancellationToken);
             if (invoice is null)
             {
@@ -1389,6 +1446,15 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
             }
 
             await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
+            if (issueRemoval is not null)
+            {
+                var lockedPlan = await PlanInvoiceIssueRemovalAsync(db, invoice, cancellationToken);
+                if (lockedPlan is null || lockedPlan.Fingerprint != issueRemoval.Fingerprint)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoInvoicePostingItemResult.Failed(docNo, "The historical stock or purchase evidence changed. Retry the invoice rollback.");
+                }
+            }
             // Rollback reverses the post sign.
             var applyError = await ApplyInvoiceQtyAsync(
                 db, write, invoice, sign: -1, cancellationToken);
@@ -1399,7 +1465,7 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
             }
 
             var (costingError, costingOperatorError) = await RollbackInvoiceCostingAsync(
-                db, write, invoice, cancellationToken);
+                db, write, invoice, cancellationToken, issueRemoval);
             if (costingError is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -1432,6 +1498,16 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
             await tx.RollbackAsync(cancellationToken);
             return PoInvoicePostingItemResult.Failed(docNo, "Database conflict. Try again.");
         }
+        catch (SqlException ex) when (ex.Number == 1222)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return PoInvoicePostingItemResult.Failed(docNo, "The purchase document is busy. Try again.");
+        }
+        catch (StockLedgerException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return PoInvoicePostingItemResult.Failed(docNo, ex.Error.Message);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "PO invoice rollback failed for {DocNo}", docNo);
@@ -1444,7 +1520,8 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
         AppDbContext db,
         InventoryTenantScope write,
         PoInvoice invoice,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        InvoiceIssueRemovalPlan? issueRemoval = null)
     {
         var isInvoice = string.Equals(invoice.Type, PoInvoiceTypes.Invoice, StringComparison.OrdinalIgnoreCase);
         var isCreditNote = string.Equals(invoice.Type, PoInvoiceTypes.CreditNote, StringComparison.OrdinalIgnoreCase);
@@ -1547,6 +1624,7 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
             var costingEffectiveAt = referencedInvoice?.DocDate ?? original.EffectiveAt;
             begin.Context.CostMethod = await _costMethods.ResolveAsync(
                 db, write.CompanyCode, write.BranchCode!, costingEffectiveAt, cancellationToken);
+            var useIssueRemoval = false;
             if (begin.Context.CostMethod == StockCostMethods.MovingAverage)
             {
                 // Reversing an inventory-affecting purchase value after a later active
@@ -1566,8 +1644,16 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                 if (affectedItems.Length > 0 && await HasLaterActiveWacCostAsync(db, write.CompanyCode,
                         write.BranchCode!, original.LedgerEpochId, original.EffectiveAt,
                         original.PostingSequence, affectedItems, cancellationToken, ownReplayFacts))
-                    return ($"Cannot roll back purchase {(isCreditNote ? "credit note" : "invoice")} {invoice.DocNo} while later stock costing depends on its price variance.", null);
+                {
+                    if (!isInvoice || issueRemoval is null || issueRemoval.OriginalPostingId != original.Id
+                        || begin.Context.Epoch.Id != issueRemoval.EpochId
+                        || begin.Context.Posting.PostingSequence != issueRemoval.Watermark + 1)
+                        return ($"Cannot roll back purchase {(isCreditNote ? "credit note" : "invoice")} {invoice.DocNo} while later stock costing depends on its price variance.", null);
+                    useIssueRemoval = true;
+                }
             }
+            if (issueRemoval is not null && !useIssueRemoval)
+                return ("The later issue changed after invoice rollback planning. Retry the document.", null);
             var reversal = isCreditNote
                 ? await _receiptSettlements.RollbackCreditNoteAsync(
                     db,
@@ -1587,9 +1673,23 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                     ? "Purchase credit-note costing rollback failed."
                     : "Purchase invoice costing reversal failed."), null);
 
-            await _costAdjustments.AppendInTransactionAsync(
-                begin.Context, reversal.Adjustments, cancellationToken);
-            await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            if (useIssueRemoval)
+            {
+                if (reversal.Adjustments.Count != 1 || reversal.Settlements.Count != 1
+                    || reversal.Adjustments[0].InventoryAdjustmentAmount != issueRemoval!.IssueReplay.InventoryVariance
+                    || reversal.Adjustments[0].ConsumedVarianceAmount != issueRemoval.IssueReplay.ConsumedVariance
+                    || reversal.Adjustments[0].ValueAdjustment?.ReversesValuationFactId != issueRemoval.OriginalFactId)
+                    return ("The invoice costing changed after rollback planning. Retry the document.", null);
+                var required = await WriteInvoiceIssueReplayAsync(begin.Context, issueRemoval.Fingerprint,
+                    issueRemoval.Watermark, issueRemoval.IssueReplay, reversal.Adjustments[0], cancellationToken);
+                await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, required, cancellationToken);
+            }
+            else
+            {
+                await _costAdjustments.AppendInTransactionAsync(
+                    begin.Context, reversal.Adjustments, cancellationToken);
+                await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            }
             completed = true;
             return (null, null);
         }

@@ -408,8 +408,8 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
             || active.Any(h => h.ValuationStatus != StockValuationStatuses.Valued))
             throw new StockLedgerException(new(StockLedgerErrorCodes.ValuationRequired,
                 "A required active replay history is missing or has invalid lineage."));
-        await StockReplayValuationGenerationResolver.ResolveAsync(
-            db, context.CompanyCode, context.BranchCode, active, cancellationToken);
+        await StockReplayValuationGenerationResolver.ResolveWithinReplayRootAsync(
+            context, active, cancellationToken);
 
         var rootReversals = rootHistories.Where(h => h.EntryRole == "REVERSAL").ToArray();
         if (rootReversals.Length > 0)

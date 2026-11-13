@@ -35,13 +35,17 @@ param(
     [switch]$PartialPurchaseVarianceLot,
     [switch]$FullyConsumedPurchaseVariance,
     [switch]$BackdatedConsumedInvoice,
+    [switch]$BackdatedInvoiceIssueReplay,
+    [switch]$BackdatedInvoiceIssueFirst,
+    [switch]$InvoiceBeforeIssue,
+    [switch]$BackdatedInvoiceDepleted,
     [switch]$BackdatedPurchaseInvoice,
     [switch]$BackdatedPurchaseCreditNotePost,
     [switch]$BackdatedPurchaseCreditNoteRollback
 )
 
 $ErrorActionPreference = 'Stop'
-if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice) {
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceDepleted) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
 }
@@ -84,7 +88,11 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($BackdatedConsumedInvoice) { 'SqlServer_backdated_consumed_invoice_posts_and_rolls_back_with_later_issue' }
+    $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($InvoiceBeforeIssue) { 'SqlServer_invoice_posted_before_later_issue_reprices_issue_on_rollback' }
+        elseif ($BackdatedInvoiceIssueFirst) { 'SqlServer_backdated_invoice_rolls_back_after_later_issue' }
+        elseif ($BackdatedInvoiceIssueReplay) { 'SqlServer_backdated_invoice_reprices_later_issue_and_rolls_back' }
+        elseif ($BackdatedConsumedInvoice) { 'SqlServer_backdated_consumed_invoice_posts_and_rolls_back_with_later_issue' }
         elseif ($FullyConsumedPurchaseVariance) { 'SqlServer_receipt_replays_fully_consumed_purchase_variance' }
         elseif ($PartialPurchaseVarianceLot) { 'SqlServer_lot_receipt_replays_changed_purchase_variance_split' }
         elseif ($BackdatedPurchaseCreditNotePost) { 'SqlServer_backdated_purchase_credit_note_post_rejects_later_issue_atomically' }

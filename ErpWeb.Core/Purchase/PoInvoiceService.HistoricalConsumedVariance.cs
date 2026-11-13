@@ -13,7 +13,12 @@ public sealed partial class PoInvoiceService
     private sealed record ConsumedInvoicePlan(
         string Fingerprint, long EpochId, long Watermark, string ItemCode,
         string PoNo, short PoRelNo, short PoLineNo, long ReceiptFactId,
-        string BaseUom, PurchaseCostAdjustmentRequest Adjustment);
+        string BaseUom, PurchaseCostAdjustmentRequest Adjustment, InvoiceIssueReplay? IssueReplay);
+
+    private sealed record InvoiceIssueReplay(
+        StockReplayWacEvent Issue, StockReplayWacStep IssueStep, long IssueOwnerId, long PriorFactId,
+        decimal InventoryVariance, decimal ConsumedVariance, int BalanceId, decimal BalanceQty,
+        decimal CurrentQuantity, decimal CurrentValue, decimal FinalQuantity, decimal FinalValue);
 
     // A price variance has no stock-value effect when the item was completely
     // consumed at invoice time. Prove that state from the complete active WAC
@@ -181,14 +186,56 @@ public sealed partial class PoInvoiceService
         var candidate = new StockReplayWacEvent(long.MaxValue, key, 0m, 0m, 0m, 0m);
         var projection = StockReplayWacSimulator.SimulateInsertion(
             tail.CurrentQuantity, tail.CurrentValue, candidate, tail.LaterEvents);
-        if (projection.HistoricalQuantityBeforeCandidate != 0m || projection.HistoricalValueBeforeCandidate != 0m
-            || projection.FinalQuantity != tail.CurrentQuantity || projection.FinalValue != tail.CurrentValue
+        if (projection.FinalQuantity != tail.CurrentQuantity || projection.FinalValue != tail.CurrentValue
             || projection.LaterSteps.Any(step => !tail.LaterEvents.Any(e => e.EventId == step.EventId
                 && e.OldSignedQuantity == step.SignedQuantity && e.OldSignedValue == step.SignedValue)))
             return null;
         var balances = await db.IvBalLocs.AsNoTracking().Where(b =>
             b.CompanyCode == invoice.CompanyCode && b.BranchCode == invoice.BranchCode && b.ICode == item)
             .OrderBy(b => b.Id).Select(b => new { b.Id, b.StdQty, b.RowVersion }).ToArrayAsync(ct);
+        InvoiceIssueReplay? issueReplay = null;
+        if (projection.HistoricalQuantityBeforeCandidate != 0m || projection.HistoricalValueBeforeCandidate != 0m)
+        {
+            // The first price-changing route is deliberately bounded to one
+            // ordinary Inventory issue on one pile. Other descendants retain
+            // the existing fail-closed purchase replay guard.
+            if (tail.LaterEvents.Count != 1 || histories.Length != 1 || balances.Length != 1
+                || histories[0].TrxType != IvTrxTypes.MiscellaneousIssue
+                || tail.LaterEvents[0].OldSignedQuantity >= 0m)
+                return null;
+            var issue = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == ids[0], ct);
+            if (issue is null || issue.StockPostingId is not long issueOwnerId
+                || issue.FromBalLocId != balances[0].Id || issue.ToBalLocId is not null)
+                return null;
+            var owner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p =>
+                p.Id == issueOwnerId && p.CompanyCode == invoice.CompanyCode && p.BranchCode == invoice.BranchCode, ct);
+            if (owner is null || owner.SealedAtUtc is null || owner.LedgerEpochId != epoch[0].Id
+                || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
+                || owner.CommandType != "IV_POST_MI" || owner.PostingRole != "PRIMARY"
+                || owner.ReversesPostingId is not null || owner.EffectiveAt != issue.TrxDtTime
+                || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(owner.SourceSnapshotJson))
+                    != owner.SourceSnapshotHash)
+                return null;
+            var active = await StockReplayValuationGenerationResolver.ResolveAsync(db,
+                invoice.CompanyCode, invoice.BranchCode, [issue], ct);
+            var issueFacts = active[issue.Id];
+            if (issueFacts.Count != 1 || issueFacts[0].ProductionMovementId is not null
+                || issueFacts[0].WorkOrderId is not null || issueFacts[0].ProductionPostingLinkId is not null)
+                return null;
+            var split = StockPurchaseVarianceAllocator.Allocate(adjustment.TotalAdjustmentAmount,
+                adjustment.BaseQty, Math.Min(projection.HistoricalQuantityBeforeCandidate, adjustment.BaseQty),
+                projection.HistoricalValueBeforeCandidate, StockCostMethods.MovingAverage);
+            if (split.Inventory == 0m)
+                return null;
+            var repriced = StockReplayWacSimulator.SimulateInsertion(tail.CurrentQuantity, tail.CurrentValue,
+                candidate with { FixedSignedValue = split.Inventory }, tail.LaterEvents);
+            var issueStep = repriced.LaterSteps.Single();
+            if (issueStep.SignedValue == tail.LaterEvents[0].OldSignedValue)
+                return null;
+            issueReplay = new(tail.LaterEvents[0], issueStep, issueOwnerId, issueFacts[0].Id,
+                split.Inventory, split.Consumed, balances[0].Id, balances[0].StdQty,
+                tail.CurrentQuantity, tail.CurrentValue, repriced.FinalQuantity, repriced.FinalValue);
+        }
         var fingerprint = StockPostingFingerprint.Create(new { Kind = "PI_FULLY_CONSUMED_WAC" }, new
         {
             invoice.DocNo, invoice.DocDate, invoice.RowVersion, invoice.CostingRevision,
@@ -197,9 +244,10 @@ public sealed partial class PoInvoiceService
             line.PoLineNo, Epoch = epoch[0].Id, watermark,
             State = new { state[0].Id, state[0].OnHandBaseQty, state[0].InventoryValue,
                 state[0].LastValuationFactId, state[0].LastPostingSequence, state[0].RowVersion },
-            policies, order, orderLine, balances, receipt, receiptHistory, adjustment, tail.LaterEvents, projection
+            policies, order, orderLine, balances, receipt, receiptHistory, adjustment, tail.LaterEvents, projection,
+            issueReplay
         }).SourceSnapshotHash;
         return new(fingerprint, epoch[0].Id, watermark, item, line.PoNo.Trim(),
-            line.PoRelNo.Value, line.PoLineNo.Value, receipt.Id, receipt.BaseUom, adjustment);
+            line.PoRelNo.Value, line.PoLineNo.Value, receipt.Id, receipt.BaseUom, adjustment, issueReplay);
     }
 }
