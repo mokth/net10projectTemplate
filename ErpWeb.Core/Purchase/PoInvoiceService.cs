@@ -1187,14 +1187,18 @@ public sealed class PoInvoiceService : IPoInvoiceService
                     ? "Purchase credit-note settlement reversal failed."
                     : "Purchase receipt settlement failed."), null);
 
-            if (isInvoice && begin.Context.CostMethod == StockCostMethods.MovingAverage)
+            if (begin.Context.CostMethod == StockCostMethods.MovingAverage)
             {
-                var affectedItems = settlement.Adjustments.Where(a => a.TotalAdjustmentAmount != 0m)
+                // A later stock movement was valued without this historical
+                // price change. The same rule applies to a purchase invoice
+                // and a credit note until their descendants can be replayed.
+                var affectedItems = settlement.Adjustments.Where(a => a.TotalAdjustmentAmount != 0m
+                        || a.InventoryAdjustmentAmount != 0m)
                     .Select(a => a.ItemCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 if (affectedItems.Length > 0 && await HasLaterActiveWacCostAsync(db, write.CompanyCode,
                         write.BranchCode!, begin.Context.Epoch.Id, begin.Context.Posting.EffectiveAt,
                         begin.Context.Posting.PostingSequence, affectedItems, cancellationToken))
-                    return ($"Cannot post purchase invoice {invoice.DocNo} while later stock costing needs its price variance replayed.", null);
+                    return ($"Cannot post purchase {(isCreditNote ? "credit note" : "invoice")} {invoice.DocNo} while later stock costing needs its price variance replayed.", null);
             }
 
             await _costAdjustments.AppendInTransactionAsync(
@@ -1451,21 +1455,22 @@ public sealed class PoInvoiceService : IPoInvoiceService
             var costingEffectiveAt = referencedInvoice?.DocDate ?? original.EffectiveAt;
             begin.Context.CostMethod = await _costMethods.ResolveAsync(
                 db, write.CompanyCode, write.BranchCode!, costingEffectiveAt, cancellationToken);
-            if (isInvoice && begin.Context.CostMethod == StockCostMethods.MovingAverage)
+            if (begin.Context.CostMethod == StockCostMethods.MovingAverage)
             {
-                // Reversing an inventory-affecting PI value after a later active
+                // Reversing an inventory-affecting purchase value after a later active
                 // valuation would leave that descendant at its old WAC cost.
-                // Until PI-root historical repricing is supported, refuse it
+                // Until purchase-root historical repricing is supported, refuse it
                 // under the branch lock before writing settlement reversals.
                 var affectedItems = await db.PurchaseCostAdjustments.AsNoTracking()
                     .Where(a => a.CompanyCode == write.CompanyCode && a.BranchCode == write.BranchCode
-                        && a.SourceDocumentType == "PO_INVOICE" && a.SourceDocumentNo == invoice.DocNo
-                        && a.SourceCostingRevision == invoice.CostingRevision && a.InventoryAdjustmentAmount != 0m)
+                        && a.SourceDocumentType == sourceDocumentType && a.SourceDocumentNo == invoice.DocNo
+                        && a.SourceCostingRevision == invoice.CostingRevision
+                        && (a.InventoryAdjustmentAmount != 0m || isCreditNote && a.TotalAdjustmentAmount != 0m))
                     .Select(a => a.ItemCode).Distinct().ToArrayAsync(cancellationToken);
                 if (affectedItems.Length > 0 && await HasLaterActiveWacCostAsync(db, write.CompanyCode,
                         write.BranchCode!, original.LedgerEpochId, original.EffectiveAt,
                         original.PostingSequence, affectedItems, cancellationToken))
-                    return ($"Cannot roll back purchase invoice {invoice.DocNo} while later stock costing depends on its price variance.", null);
+                    return ($"Cannot roll back purchase {(isCreditNote ? "credit note" : "invoice")} {invoice.DocNo} while later stock costing depends on its price variance.", null);
             }
             var reversal = isCreditNote
                 ? await _receiptSettlements.RollbackCreditNoteAsync(

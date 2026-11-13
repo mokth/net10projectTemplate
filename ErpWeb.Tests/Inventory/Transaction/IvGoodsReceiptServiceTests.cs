@@ -2261,6 +2261,17 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedInvoicePosting: true);
 
+    [Theory]
+    [InlineData("post", 11)]
+    [InlineData("rollback", 11)]
+    [InlineData("post", 9)]
+    [InlineData("rollback", 9)]
+    [InlineData("neutral", 10)]
+    public Task Backdated_purchase_credit_note_preserves_later_issue_cost(
+        string scenario, decimal invoiceUnitPrice) =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: invoiceUnitPrice, testBackdatedCreditNote: scenario);
+
     [Fact]
     public Task Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback() =>
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 5.565217m, 122.434783m,
@@ -2332,6 +2343,24 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             invoiceUnitPrice: 11m, testBackdatedInvoicePosting: true);
     }
 
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_backdated_purchase_credit_note_post_rejects_later_issue_atomically()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "post");
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_backdated_purchase_credit_note_rollback_rejects_later_issue_atomically()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "rollback");
+    }
+
     private async Task<IvMultiWacReceiptSqlServerTests.ReceiptBatchLockBarrier> PreparePurchaseReplaySqlFixtureAsync()
     {
         var connectionString = Environment.GetEnvironmentVariable(IvMultiWacReceiptSqlServerTests.ConnectionEnvironment)
@@ -2364,7 +2393,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         string? damage = null, IvMultiWacReceiptSqlServerTests.ReceiptBatchLockBarrier? contentionBarrier = null,
         bool testQaHold = false, bool rollbackInvoiceFirst = false, bool allowFullyCapitalizedVariance = false,
         decimal priorIssueQuantity = 0m, bool testBackdatedInvoicePosting = false,
-        bool invoiceBeforeReceiptAfterIssue = false)
+        bool invoiceBeforeReceiptAfterIssue = false, string? testBackdatedCreditNote = null)
     {
         await EnsureActiveStockLedgerAsync();
         var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday.AddDays(1),
@@ -2521,6 +2550,125 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             DocNo = piDocNo, RowVersion = savedInvoice.Document!.RowVersion
         }]);
         Assert.True(postedInvoice.Succeeded, postedInvoice.ErrorMessage);
+
+        if (testBackdatedCreditNote is not null)
+        {
+            var savedCredit = await invoiceService.SaveNewAsync(new PoInvoiceSaveRequest
+            {
+                Type = PoInvoiceTypes.CreditNote, DocDate = FixedToday, VendorCode = "SUP01",
+                InvNo = piDocNo, Currency = "MYR", CurrRate = 1m, PriceTolerance = 20m,
+                Lines = [new PoInvoiceLineRequest
+                {
+                    ICode = "A100", IDesc = "Stock A", Qty = 3m, UnitPrice = invoiceUnitPrice,
+                    SellingUom = "EA", PoNo = po.PoNo, PoRelNo = po.PoRelNo,
+                    PoLineNo = po.PoLineNo, ReferencedInvoiceLineNo = 1,
+                    TaxGroup = "SR", ItemGlCode = "GLPUR"
+                }]
+            });
+            Assert.True(savedCredit.Succeeded, savedCredit.ErrorMessage);
+            var creditNo = savedCredit.DocNo!;
+            if (testBackdatedCreditNote == "rollback")
+            {
+                var postedCredit = await invoiceService.PostAsync([new PoInvoiceKeyedRequest
+                {
+                    DocNo = creditNo, RowVersion = savedCredit.Document!.RowVersion
+                }]);
+                Assert.True(postedCredit.Succeeded, postedCredit.ErrorMessage);
+            }
+
+            var laterIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+            {
+                TrxDate = FixedToday.AddDays(1),
+                Lines = [new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = 1m, Uom = "EA", IClassCode = "RAW",
+                    IStatus = "ACTIVE", UnitPrice = 3m
+                }]
+            });
+            Assert.True(laterIssue.Succeeded, laterIssue.ErrorMessage);
+            var issuedAfterCreditDate = await issue.PostAsync([laterIssue.BatchNo]);
+            Assert.True(issuedAfterCreditDate.Succeeded, issuedAfterCreditDate.ErrorMessage);
+
+            var credit = (await invoiceService.GetAsync(creditNo)).Document!;
+            var before = await CreditEvidenceAsync();
+            var issueCostBefore = await ActiveIssueCostAsync();
+            Assert.Equal(testBackdatedCreditNote == "rollback" || invoiceUnitPrice == 10m
+                ? 4.166667m : invoiceUnitPrice == 11m ? 4.333333m : 4m, issueCostBefore);
+            var action = testBackdatedCreditNote == "rollback"
+                ? await invoiceService.RollbackAsync([new PoInvoiceKeyedRequest
+                    { DocNo = creditNo, RowVersion = credit.RowVersion }])
+                : await invoiceService.PostAsync([new PoInvoiceKeyedRequest
+                    { DocNo = creditNo, RowVersion = credit.RowVersion }]);
+            if (testBackdatedCreditNote == "neutral")
+            {
+                Assert.True(action.Succeeded, action.ErrorMessage);
+                credit = (await invoiceService.GetAsync(creditNo)).Document!;
+                var neutralRollback = await invoiceService.RollbackAsync([new PoInvoiceKeyedRequest
+                    { DocNo = creditNo, RowVersion = credit.RowVersion }]);
+                Assert.True(neutralRollback.Succeeded, neutralRollback.ErrorMessage);
+                var after = await CreditEvidenceAsync();
+                Assert.Equal((before.Quantity, before.Value, before.Balance, before.Invoiced),
+                    (after.Quantity, after.Value, after.Balance, after.Invoiced));
+            }
+            else
+            {
+                Assert.False(action.Succeeded, "A price-affecting credit note must not leave a later issue at its old cost.");
+                Assert.Equal(before, await CreditEvidenceAsync());
+                await using var db = await _factory.CreateDbContextAsync();
+                if (db.Database.IsSqlServer())
+                {
+                    await db.Database.OpenConnectionAsync();
+                    await using var command = db.Database.GetDbConnection().CreateCommand();
+                    command.CommandText = "SELECT SESSION_CONTEXT(N'STOCK_LEDGER_V2_POSTING_ID')";
+                    Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
+                }
+            }
+            Assert.Equal(issueCostBefore, await ActiveIssueCostAsync());
+
+            var issueRollback = await issue.RollbackAsync([laterIssue.BatchNo]);
+            Assert.True(issueRollback.Succeeded, issueRollback.ErrorMessage);
+            if (testBackdatedCreditNote == "post")
+            {
+                credit = (await invoiceService.GetAsync(creditNo)).Document!;
+                var retry = await invoiceService.PostAsync([new PoInvoiceKeyedRequest
+                    { DocNo = creditNo, RowVersion = credit.RowVersion }]);
+                Assert.True(retry.Succeeded, retry.ErrorMessage);
+            }
+            if (testBackdatedCreditNote != "neutral")
+            {
+                credit = (await invoiceService.GetAsync(creditNo)).Document!;
+                var retryRollback = await invoiceService.RollbackAsync([new PoInvoiceKeyedRequest
+                    { DocNo = creditNo, RowVersion = credit.RowVersion }]);
+                Assert.True(retryRollback.Succeeded, retryRollback.ErrorMessage);
+            }
+            var restored = await CreditEvidenceAsync();
+            Assert.Equal((18m, invoiceUnitPrice == 11m ? 78m : invoiceUnitPrice == 9m ? 72m : 75m, 18m, 3m),
+                (restored.Quantity, restored.Value, restored.Balance, restored.Invoiced));
+            Assert.Equal(PoInvoiceStatuses.New, restored.Status);
+            return;
+
+            async Task<decimal> ActiveIssueCostAsync()
+            {
+                await using var db = await _factory.CreateDbContextAsync();
+                var history = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == laterIssue.BatchNo
+                    && h.EntryRole == "ORIGINAL");
+                var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                return Assert.Single(active[history.Id]).CostAmount;
+            }
+
+            async Task<(decimal Quantity, decimal Value, decimal Balance, decimal Invoiced,
+                string Status, int Postings, int Facts, int Settlements, int Adjustments)> CreditEvidenceAsync()
+            {
+                await using var db = await _factory.CreateDbContextAsync();
+                var state = await db.StockCostStates.SingleAsync();
+                return (state.OnHandBaseQty, state.InventoryValue, (await db.IvBalLocs.SingleAsync()).StdQty,
+                    (await db.PoOrderDetails.SingleAsync()).InvoicedQty,
+                    (await db.PoInvoices.SingleAsync(i => i.DocNo == creditNo)).Status,
+                    await db.StockPostings.CountAsync(), await db.StockValuationFacts.CountAsync(),
+                    await db.PurchaseReceiptCostSettlements.CountAsync(), await db.PurchaseCostAdjustments.CountAsync());
+            }
+        }
 
         long settlementId, adjustmentId;
         long? originalGoodsSequence = null;

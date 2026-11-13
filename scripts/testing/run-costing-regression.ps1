@@ -89,6 +89,7 @@ $required = @(
     'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
     'Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence',
     'Backdated_purchase_invoice_price_variance_rejects_later_active_issue',
+    'Backdated_purchase_credit_note_preserves_later_issue_cost',
     'Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback',
     'Backdated_wac_misc_receipt_rejects_damaged_purchase_evidence',
     'Backdated_wac_misc_receipt_before_purchase_invoice_respects_qa_hold',
@@ -177,6 +178,8 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -FullyCapitalizedPurchaseVariance
         & $sqlRunner -Server $SqlServer -NoBuild -PartialPurchaseVariance
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNoteRollback
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts
