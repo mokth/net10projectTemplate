@@ -1,4 +1,5 @@
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
 
@@ -7,6 +8,135 @@ namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
 public sealed class StockReplayWacSimulatorTests
 {
+    [Theory]
+    [InlineData("MOVING_AVERAGE", 1, 3, 1, 5, 0.333333, 0.666667)]
+    [InlineData("MOVING_AVERAGE", -3, 3, 2, 1, -1, -2)]
+    [InlineData("STANDARD", 3, 3, 2, 8, 0, 3)]
+    [InlineData("FIFO", 3, 3, 2, 8, 2, 1)]
+    public void Purchase_variance_split_preserves_existing_cost_method_rules(
+        string method, decimal variance, decimal settled, decimal available, decimal value,
+        decimal inventory, decimal consumed)
+    {
+        Assert.Equal((inventory, consumed),
+            StockPurchaseVarianceAllocator.Allocate(variance, settled, available, value, method));
+    }
+
+    [Fact]
+    public void Existing_wac_event_fingerprints_remain_stable_without_purchase_variance()
+    {
+        var movement = new StockReplayWacEvent(1, Key(new DateTime(2026, 10, 1), 1),
+            0m, 0m, 5m, FixedSignedValue: 50m);
+        var priorShape = new
+        {
+            movement.EventId, movement.Key, movement.OldSignedQuantity, movement.OldSignedValue,
+            movement.ReplaySignedQuantity, movement.FixedSignedValue, movement.AbsoluteCountQty,
+            movement.CountFallbackUnitCost, movement.CountPreQuantity, movement.ReturnOfSaleEventId,
+            movement.SalesReturnAllocationId, movement.ReversedProductionIssueEventId
+        };
+        Assert.Equal(StockPostingFingerprint.Create(priorShape, new { }).RequestFingerprint,
+            StockPostingFingerprint.Create(movement, new { }).RequestFingerprint);
+        Assert.NotEqual(StockPostingFingerprint.Create(movement, new { }).RequestFingerprint,
+            StockPostingFingerprint.Create(movement with
+            {
+                PurchaseVariance = new StockReplayPurchaseVariance(3m, 3m)
+            }, new { }).RequestFingerprint);
+    }
+
+    [Theory]
+    [InlineData(3, 2, 5.166664, 3, 5.863353, 35.180119)]
+    [InlineData(-3, -2, 3.166664, -3, 5.006210, 30.037262)]
+    public void Purchase_variance_is_reallocated_at_invoice_time_on_receipt_post_and_rollback(
+        decimal variance, decimal originalInventoryVariance, decimal originalFinalValue,
+        decimal replayedInventoryVariance, decimal replayedLaterIssueCost, decimal replayedFinalValue)
+    {
+        var receipt = new StockReplayWacEvent(1, Key(new DateTime(2026, 10, 1), 1),
+            0m, 0m, 5m, FixedSignedValue: 50m);
+        var goods = new StockReplayWacEvent(2, Key(new DateTime(2026, 10, 2), 2),
+            3m, 30m, 3m, FixedSignedValue: 30m);
+        var earlierIssue = new StockReplayWacEvent(3, Key(new DateTime(2026, 10, 3), 3),
+            -16m, -66.666672m, -16m);
+        var invoice = new StockReplayWacEvent(long.MaxValue - 1,
+            Key(new DateTime(2026, 10, 4), 4), 0m, originalInventoryVariance, 0m,
+            FixedSignedValue: originalInventoryVariance,
+            PurchaseVariance: new StockReplayPurchaseVariance(variance, 3m));
+        var laterIssue = new StockReplayWacEvent(4, Key(new DateTime(2026, 10, 5), 5),
+            -1m, -originalFinalValue, -1m);
+
+        var inserted = StockReplayWacSimulator.SimulateInsertion(
+            1m, originalFinalValue, receipt, [goods, earlierIssue, invoice, laterIssue]);
+        Assert.Equal(-86.956528m, inserted.LaterSteps[1].SignedValue);
+        Assert.Equal(7m, inserted.LaterSteps[2].QuantityBefore);
+        Assert.Equal(38.043472m, inserted.LaterSteps[2].ValueBefore);
+        Assert.Equal(replayedInventoryVariance, inserted.LaterSteps[2].SignedValue);
+        Assert.Equal(-replayedLaterIssueCost, inserted.LaterSteps[3].SignedValue);
+        Assert.Equal(6m, inserted.FinalQuantity);
+        Assert.Equal(replayedFinalValue, inserted.FinalValue);
+
+        var removed = StockReplayWacSimulator.SimulateRemoval(inserted.FinalQuantity,
+            inserted.FinalValue, receipt with { OldSignedQuantity = 5m, OldSignedValue = 50m },
+            [goods, earlierIssue with { OldSignedValue = -86.956528m },
+             invoice with { OldSignedValue = replayedInventoryVariance, FixedSignedValue = replayedInventoryVariance },
+             laterIssue with { OldSignedValue = -replayedLaterIssueCost }]);
+        Assert.Equal(originalInventoryVariance, removed.LaterSteps[2].SignedValue);
+        Assert.Equal(-originalFinalValue, removed.LaterSteps[3].SignedValue);
+        Assert.Equal(1m, removed.FinalQuantity);
+        Assert.Equal(originalFinalValue, removed.FinalValue);
+    }
+
+    [Fact]
+    public void Purchase_variance_respects_available_value_and_rejects_invalid_authority()
+    {
+        var receipt = new StockReplayWacEvent(1, Key(new DateTime(2026, 10, 1), 1),
+            0m, 0m, 1m, FixedSignedValue: 0m);
+        var invoice = new StockReplayWacEvent(long.MaxValue - 1, Key(new DateTime(2026, 10, 2), 2),
+            0m, -0.1m, 0m, FixedSignedValue: -0.1m,
+            PurchaseVariance: new StockReplayPurchaseVariance(-3m, 3m));
+
+        var result = StockReplayWacSimulator.SimulateInsertion(1m, 0m, receipt, [invoice]);
+        Assert.Equal(-0.1m, Assert.Single(result.LaterSteps).SignedValue);
+        Assert.Equal((2m, 0m), (result.FinalQuantity, result.FinalValue));
+        Assert.Throws<ArgumentException>(() => StockReplayWacSimulator.SimulateInsertion(
+            1m, 0m, receipt, [invoice with { PurchaseVariance = new(-3m, 0m) }]));
+        Assert.Throws<ArgumentException>(() => StockReplayWacSimulator.SimulateInsertion(
+            1m, 0m, receipt, [invoice with { PurchaseVariance = new(3m, 3m) }]));
+        Assert.Throws<ArgumentException>(() => StockReplayWacSimulator.SimulateInsertion(
+            1m, 0m, receipt, [invoice with { FixedSignedValue = -0.2m }]));
+    }
+
+    [Fact]
+    public void Purchase_variance_moves_from_consumed_to_inventory_when_stock_is_restored()
+    {
+        var receipt = new StockReplayWacEvent(1, Key(new DateTime(2026, 10, 1), 1),
+            0m, 0m, 5m, FixedSignedValue: 50m);
+        var goods = new StockReplayWacEvent(2, Key(new DateTime(2026, 10, 2), 2),
+            3m, 30m, 3m, FixedSignedValue: 30m);
+        var depletion = new StockReplayWacEvent(3, Key(new DateTime(2026, 10, 3), 3),
+            -18m, -75m, -18m);
+        var invoice = new StockReplayWacEvent(long.MaxValue - 1,
+            Key(new DateTime(2026, 10, 4), 4), 0m, 0m, 0m, FixedSignedValue: 0m,
+            PurchaseVariance: new StockReplayPurchaseVariance(3m, 3m));
+        var laterReceipt = new StockReplayWacEvent(4, Key(new DateTime(2026, 10, 5), 5),
+            2m, 20m, 2m, FixedSignedValue: 20m);
+        var issue = new StockReplayWacEvent(5, Key(new DateTime(2026, 10, 6), 6),
+            -1m, -10m, -1m);
+
+        var inserted = StockReplayWacSimulator.SimulateInsertion(1m, 10m, receipt,
+            [goods, depletion, invoice, laterReceipt, issue]);
+        Assert.Equal(-97.826094m, inserted.LaterSteps[1].SignedValue);
+        Assert.Equal(3m, inserted.LaterSteps[2].SignedValue);
+        Assert.Equal(-7.167701m, inserted.LaterSteps[4].SignedValue);
+        Assert.Equal((6m, 43.006205m), (inserted.FinalQuantity, inserted.FinalValue));
+
+        var removed = StockReplayWacSimulator.SimulateRemoval(inserted.FinalQuantity,
+            inserted.FinalValue, receipt with { OldSignedQuantity = 5m, OldSignedValue = 50m },
+            [goods, depletion with { OldSignedValue = -97.826094m },
+             invoice with { OldSignedValue = 3m, FixedSignedValue = 3m }, laterReceipt,
+             issue with { OldSignedValue = -7.167701m }]);
+        Assert.Equal(0m, removed.LaterSteps[2].SignedValue);
+        Assert.Equal(-10m, removed.LaterSteps[4].SignedValue);
+        Assert.Equal((1m, 10m), (removed.FinalQuantity, removed.FinalValue));
+    }
+
     [Theory]
     [InlineData(10, 14.4)]
     [InlineData(1, 7.2)]

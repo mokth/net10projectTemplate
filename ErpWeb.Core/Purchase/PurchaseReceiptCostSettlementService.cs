@@ -1947,17 +1947,8 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                 var variance = StockLedgerPrecision.Money(row.AllocatedActualBaseAmount - referenceAmount);
                 var capitalizableQty = StockLedgerPrecision.Quantity(
                     Math.Min(remainingCapitalizableQty, row.SettledBaseQty));
-                var inventoryAmount = variance == 0m || capitalizableQty <= 0m
-                    ? 0m
-                    : StockLedgerPrecision.Money(variance * capitalizableQty / row.SettledBaseQty);
-
-                if (method == StockCostMethods.Standard)
-                    inventoryAmount = 0m;
-                else if (inventoryAmount < 0m)
-                    inventoryAmount = Math.Max(-runningValue, inventoryAmount);
-
-                inventoryAmount = StockLedgerPrecision.Money(inventoryAmount);
-                var consumedAmount = StockLedgerPrecision.Money(variance - inventoryAmount);
+                var (inventoryAmount, consumedAmount) = StockPurchaseVarianceAllocator.Allocate(
+                    variance, row.SettledBaseQty, capitalizableQty, runningValue, method);
                 runningValue = StockLedgerPrecision.Money(runningValue + inventoryAmount);
                 remainingCapitalizableQty = StockLedgerPrecision.Quantity(
                     remainingCapitalizableQty - capitalizableQty);
