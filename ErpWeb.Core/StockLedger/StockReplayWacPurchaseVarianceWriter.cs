@@ -54,8 +54,8 @@ internal static class StockReplayWacPurchaseVarianceWriter
             || movement.FixedSignedValue != movement.OldSignedValue || movement.OldSignedQuantity != 0m
             || movement.PurchaseVariance != new StockReplayPurchaseVariance(
                 expected.Original.TotalAdjustmentAmount, expected.Original.BaseQty)
-            || step.SignedQuantity != 0m || step.SignedValue == 0m || step.SignedValue == movement.OldSignedValue
-            || step.QuantityBefore <= 0m || step.ValueBefore < 0m
+            || step.SignedQuantity != 0m || step.SignedValue == movement.OldSignedValue
+            || step.QuantityBefore < 0m || step.ValueBefore < 0m
             || reversalLine <= 0 || replacementLine <= 0 || reversalLine == replacementLine
             || purchasePermit.LatestEffectiveAt < expected.OriginalFact.EffectiveAt)
             throw Invalid("The purchase variance has no matching locked replay authority.");
@@ -91,7 +91,7 @@ internal static class StockReplayWacPurchaseVarianceWriter
         var reverseFact = CopyFact(oldFact, context, reversalLine, -oldFact.Direction, oldFact.CostAmount,
             StockValuationSources.OriginalReversal, StockValuationStatuses.Reversed, oldFact.ValuationVersion,
             rootFact.Id, oldFact.Id);
-        var replacementFact = CopyFact(rootFact, context, replacementLine, step.SignedValue > 0m ? 1 : -1,
+        var replacementFact = CopyFact(rootFact, context, replacementLine, rootFact.Direction,
             Math.Abs(step.SignedValue), StockValuationSources.PurchasePriceVariance, StockValuationStatuses.Valued,
             checked(oldFact.ValuationVersion + 1), rootFact.Id, null);
         db.StockValuationFacts.AddRange(reverseFact, replacementFact);

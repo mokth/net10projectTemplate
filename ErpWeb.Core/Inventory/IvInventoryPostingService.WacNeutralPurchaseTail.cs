@@ -242,7 +242,7 @@ public sealed partial class IvInventoryPostingService
                 Math.Min(purchaseStep.QuantityBefore, line.StdQty), purchaseStep.ValueBefore, StockCostMethods.MovingAverage);
             if (oldSplit.Inventory != generation.Active.InventoryAdjustmentAmount
                 || oldSplit.Consumed != generation.Active.ConsumedVarianceAmount
-                || newSplit.Inventory == 0m || purchaseStep.SignedQuantity != 0m
+                || purchaseStep.SignedQuantity != 0m
                 || purchaseStep.SignedValue != newSplit.Inventory
                 || purchaseEvents[0].OldSignedValue != generation.ActiveFact.SignedValue
                 || purchaseEvents[0].FixedSignedValue != generation.ActiveFact.SignedValue

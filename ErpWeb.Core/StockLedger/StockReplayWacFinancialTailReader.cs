@@ -330,6 +330,34 @@ public static class StockReplayWacFinancialTailReader
                 throw Corrupt("This transaction cannot yet replay an existing reversed-sale cost correction.");
             if (!postings.TryGetValue(fact.StockPostingId, out var owner))
                 throw Corrupt($"Value fact {fact.Id} has no sealed posting.");
+
+            // The read includes the previous calendar day when a removal is
+            // immediately after midnight. An earlier invoice generation must
+            // be proved before it is omitted from the replay tail; its replay
+            // writer owns the correction, but the invoice owns its date.
+            var invoiceFact = fact;
+            var invoiceOwner = owner;
+            if (fact.SourceDocumentType == "PO_INVOICE"
+                && fact.OriginalValuationFactId is long invoiceOriginalId
+                && originalValueFacts.TryGetValue(invoiceOriginalId, out var candidateOriginal)
+                && candidateOriginal.SourceDocumentType == "PO_INVOICE"
+                && candidateOriginal.InventoryHistoryId is null
+                && originalPostings.TryGetValue(candidateOriginal.StockPostingId, out var candidateOwner))
+            {
+                invoiceFact = candidateOriginal;
+                invoiceOwner = candidateOwner;
+            }
+            if (fact.SourceDocumentType == "PO_INVOICE" && invoiceOwner.SourceModule == "PROCUREMENT"
+                && invoiceOwner.SourceDocumentType == "PO_INVOICE" && invoiceFact.Id > 0
+                && invoiceFact.Id < long.MaxValue - int.MaxValue
+                && new StockReplayEventKey(invoiceOwner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                    invoiceOwner.PostingSequence, $"V{invoiceFact.Id:D20}", 0).CompareTo(after) <= 0)
+            {
+                if (!await StockReplayPurchaseVarianceGenerationReader.IsProvenActiveFactAsync(db,
+                        companyCode, branchCode, invoiceFact.Id, fact.Id, cancellationToken))
+                    throw Corrupt($"Earlier purchase value fact {fact.Id} has invalid invoice evidence.");
+                continue;
+            }
             StockReplayWacEvent valueEvent;
             if (fact.OriginalValuationFactId is long originalId)
             {

@@ -35,8 +35,7 @@ internal static class StockReplayPurchaseVarianceGenerationReader
             || StockLedgerPrecision.Money(original.TotalAdjustmentAmount) != original.TotalAdjustmentAmount
             || StockLedgerPrecision.Money(original.InventoryAdjustmentAmount) != original.InventoryAdjustmentAmount
             || StockLedgerPrecision.Money(original.ConsumedVarianceAmount) != original.ConsumedVarianceAmount
-            || original.InventoryAdjustmentAmount == 0m
-            || original.InventoryAdjustmentAmount * Math.Sign(original.TotalAdjustmentAmount) <= 0m
+            || original.InventoryAdjustmentAmount * Math.Sign(original.TotalAdjustmentAmount) < 0m
             || Math.Abs(original.InventoryAdjustmentAmount) > Math.Abs(original.TotalAdjustmentAmount)
             || StockLedgerPrecision.Money(original.ActualBaseAmount - original.ReferenceBaseAmount)
                 != original.TotalAdjustmentAmount
@@ -51,7 +50,13 @@ internal static class StockReplayPurchaseVarianceGenerationReader
             .ToDictionaryAsync(f => f.Id, cancellationToken);
         if (facts.Count != factIds.Length || !facts.TryGetValue(originalFactId, out var originalFact)
             || originalFact.StockPostingId != original.StockPostingId
+            || originalFact.CompanyCode != original.CompanyCode || originalFact.BranchCode != original.BranchCode
+            || originalFact.ItemCode != original.ItemCode || originalFact.CostMethod != original.CostMethod
+            || originalFact.SourceDocumentNo != original.SourceDocumentNo
+            || originalFact.SourceDocumentLine != original.SourceDocumentLine.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
             || originalFact.SignedValue != original.InventoryAdjustmentAmount
+            || originalFact.Direction != Math.Sign(original.TotalAdjustmentAmount)
             || originalFact.OriginalValuationFactId is not long receiptFactId)
             return null;
         var invoiceOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p =>
@@ -109,12 +114,11 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 || reversal.InventoryAdjustmentAmount != -prior.InventoryAdjustmentAmount
                 || reversal.ConsumedVarianceAmount != -prior.ConsumedVarianceAmount
                 || replacement.TotalAdjustmentAmount != original.TotalAdjustmentAmount
-                || replacement.InventoryAdjustmentAmount == 0m
                 || StockLedgerPrecision.Money(replacement.InventoryAdjustmentAmount) != replacement.InventoryAdjustmentAmount
                 || StockLedgerPrecision.Money(replacement.ConsumedVarianceAmount) != replacement.ConsumedVarianceAmount
                 || StockLedgerPrecision.Money(replacement.InventoryAdjustmentAmount + replacement.ConsumedVarianceAmount)
                     != original.TotalAdjustmentAmount
-                || replacement.InventoryAdjustmentAmount * Math.Sign(original.TotalAdjustmentAmount) <= 0m
+                || replacement.InventoryAdjustmentAmount * Math.Sign(original.TotalAdjustmentAmount) < 0m
                 || Math.Abs(replacement.InventoryAdjustmentAmount) > Math.Abs(original.TotalAdjustmentAmount)
                 || reversal.InventoryAdjustmentFactId is not long reverseFactId
                 || replacement.InventoryAdjustmentFactId is not long replacementFactId
@@ -150,6 +154,7 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 || replacementFact.OriginalValuationFactId != originalFact.Id
                 || replacementFact.ReversesValuationFactId is not null
                 || replacementFact.SignedValue != replacement.InventoryAdjustmentAmount
+                || replacementFact.Direction != originalFact.Direction
                 || replacementFact.ValuationVersion <= priorFact.ValuationVersion
                 || effects.Count(e => e.ReplayRunId == run.Id) != 4
                 || !HasEffect(run, reversal.Id, StockReplayEffectTypes.PurchaseCostAdjustment, prior.Id)
@@ -231,6 +236,41 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 && prior.BatchNo == h.BatchNo && prior.ICode == h.ICode && prior.EntryRole == "ORIGINAL"
                 && prior.ToStdQty == h.FrStdQty && prior.ToBalLocId == h.FromBalLocId;
         }
+    }
+
+    internal static async Task<bool> IsProvenActiveFactAsync(AppDbContext db,
+        string company, string branch, long originalFactId, long activeFactId, CancellationToken ct)
+    {
+        var roots = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+            a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE"
+            && a.InventoryAdjustmentFactId == originalFactId && a.ReversesAdjustmentId == null).ToArrayAsync(ct);
+        if (roots.Length != 1)
+            return false;
+        var root = roots[0];
+        var rows = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+            a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE"
+            && a.SourceDocumentNo == root.SourceDocumentNo && a.SourceCostingRevision == root.SourceCostingRevision)
+            .ToArrayAsync(ct);
+        var groups = rows.Where(a => a.ReversesAdjustmentId.HasValue)
+            .GroupBy(a => a.ReversesAdjustmentId!.Value).ToArray();
+        if (groups.Any(g => g.Count() != 1))
+            return false;
+        var children = groups.ToDictionary(g => g.Key, g => g.Single());
+        var chain = new List<PurchaseCostAdjustment> { root };
+        while (children.TryGetValue(chain[^1].Id, out var child))
+        {
+            if (chain.Count >= 101 || chain.Any(a => a.Id == child.Id))
+                return false;
+            chain.Add(child);
+        }
+        var ids = chain.Select(a => a.Id).ToArray();
+        if (await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(a =>
+                a.ReversesAdjustmentId.HasValue && ids.Contains(a.ReversesAdjustmentId.Value)
+                && !ids.Contains(a.Id), ct))
+            return false;
+        var generation = await TryReadAsync(db, chain, ct);
+        return generation is not null && generation.OriginalFact.Id == originalFactId
+            && generation.ActiveFact.Id == activeFactId;
     }
 
     internal static async Task<long[]> ValidatedActiveFactIdsAsync(AppDbContext db,
@@ -402,7 +442,7 @@ internal static class StockReplayPurchaseVarianceGenerationReader
         && fact.WorkOrderOperationId == root.WorkOrderOperationId
         && fact.ProductionPostingLinkId == root.ProductionPostingLinkId
         && fact.BaseQty == 0m && fact.UnitCost == 0m && fact.Direction is (-1 or 1)
-        && fact.CostAmount > 0m && StockLedgerPrecision.Money(fact.CostAmount) == fact.CostAmount
+        && fact.CostAmount >= 0m && StockLedgerPrecision.Money(fact.CostAmount) == fact.CostAmount
         && fact.BaseCostAmount == fact.CostAmount
         && fact.BaseCurrency == root.BaseCurrency && fact.TransactionCurrency == root.TransactionCurrency
         && fact.TransactionCostAmount == root.TransactionCostAmount && fact.ExchangeRate == root.ExchangeRate;

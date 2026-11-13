@@ -67,7 +67,7 @@ public static class StockReplayWacValueEventFactory
             || string.IsNullOrWhiteSpace(fact.SourceDocumentLine)
             || fact.ValuationSource != StockValuationSources.PurchasePriceVariance
             || fact.MovementCode != (fact.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
-            || fact.ValuationVersion != 1 || fact.CostAmount <= 0m || fact.BaseCostAmount != fact.CostAmount
+            || fact.ValuationVersion != 1 || fact.CostAmount < 0m || fact.BaseCostAmount != fact.CostAmount
             || fact.InventoryHistoryId is not null || fact.FromBalLocId is not null || fact.ToBalLocId is not null
             || receipt.Id <= 0 || receipt.InventoryHistoryId != history.Id || history.TrxType != IvTrxTypes.GoodsReceive
             || history.EntryRole != "ORIGINAL" || history.BatchStatus != IvBatchStatuses.Posted
@@ -108,7 +108,7 @@ public static class StockReplayWacValueEventFactory
         var originalEvent = CreatePurchaseInvoiceAdjustment(original, receipt,
             history, receiptOwner, invoiceOwner);
         if (active.ValuationSource != StockValuationSources.PurchasePriceVariance
-            || active.BaseCostAmount != active.CostAmount || active.CostAmount <= 0m
+            || active.BaseCostAmount != active.CostAmount || active.CostAmount < 0m
             || active.ValuationVersion <= original.ValuationVersion)
             throw Corrupt($"Purchase value fact {active.Id} has invalid replacement evidence.");
         return CreateCorrectedCore(active, original, invoiceOwner, correctionOwner, originalEvent);
