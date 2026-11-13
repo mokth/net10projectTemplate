@@ -13,7 +13,8 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
-    private sealed record UnchangedLaterInvoicePlan(PoInvoice Invoice, string Fingerprint, long? ValueEventId);
+    private sealed record LaterInvoicePlan(PoInvoice Invoice, string Fingerprint, long? ValueEventId,
+        StockReplayPurchaseVarianceGeneration? VarianceGeneration, StockReplayWacStep? PurchaseStep);
 
     // This only selects a candidate for the read-only projection. It does not
     // authorize a write; the complete invoice proof below is still mandatory.
@@ -49,13 +50,26 @@ public sealed partial class IvInventoryPostingService
     }
 
     private static IReadOnlyList<StockReplayWacEvent> InventoryTailForProvenInvoice(
-        IReadOnlyList<StockReplayWacEvent> events, UnchangedLaterInvoicePlan? plan) =>
+        IReadOnlyList<StockReplayWacEvent> events, LaterInvoicePlan? plan) =>
         plan?.ValueEventId is long id ? events.Where(e => e.EventId != id).ToArray() : events;
 
-    // A miscellaneous receipt does not change the GR candidates for an invoice.
-    // Preserve a single original invoice only if its entire price adjustment
-    // remains unchanged, with its evidence rechecked under the branch lock.
-    private async Task<(UnchangedLaterInvoicePlan? Plan, string? Error)> PlanUnchangedLaterInvoiceAsync(
+    private static StockReplayPurchaseVarianceWritePermit? PreparePurchaseVarianceWrite(
+        StockPostingContext context, LaterInvoicePlan? plan, string planHash, long watermark,
+        IReadOnlyList<StockReplayWacEvent> events, IReadOnlyList<StockReplayWacStep> steps)
+    {
+        if (plan?.VarianceGeneration is not { } generation || plan.PurchaseStep is not { } step
+            || step.SignedValue == generation.Active.InventoryAdjustmentAmount)
+            return null;
+        var byId = steps.ToDictionary(s => s.EventId);
+        var changedHistories = events.Count(e => e.EventId is > 0 and <= int.MaxValue
+            && byId.TryGetValue(e.EventId, out var projected) && projected.SignedValue != e.OldSignedValue);
+        return new StockReplayPurchaseVarianceWritePermit(context, generation, step, planHash, watermark,
+            events.Max(e => e.Key.EffectiveAt), changedHistories + 1);
+    }
+
+    // A miscellaneous receipt leaves GR allocation and invoice amounts unchanged.
+    // Prove the single invoice and its active variance before and under the lock.
+    private async Task<(LaterInvoicePlan? Plan, string? Error)> PlanLaterInvoiceAsync(
         AppDbContext db, string company, string branch, string item, long epoch, int pile,
         DateTime receiptDate, IReadOnlyList<StockReplayPhysicalEvent> physical,
         IReadOnlyList<StockReplayWacEvent> valued, IReadOnlyList<StockReplayWacStep> projectedSteps,
@@ -170,10 +184,28 @@ public sealed partial class IvInventoryPostingService
             .Where(a => a.CompanyCode == company && a.BranchCode == branch
                 && a.SourceDocumentType == "PO_INVOICE" && a.SourceDocumentNo == invoice.DocNo)
             .ToArrayAsync(ct);
-        if (grProof is null || order is null || orderLine is null || settlements.Length != 1 || adjustments.Length != 1)
+        if (grProof is null || order is null || orderLine is null || settlements.Length != 1
+            || adjustments.Count(a => a.ReversesAdjustmentId is null) != 1)
             return (null, unsupported);
         var settlement = settlements[0];
-        var adjustment = adjustments[0];
+        var adjustment = adjustments.Single(a => a.ReversesAdjustmentId is null);
+        var children = adjustments.Where(a => a.ReversesAdjustmentId.HasValue)
+            .GroupBy(a => a.ReversesAdjustmentId!.Value).ToArray();
+        if (children.Any(g => g.Count() != 1))
+            return (null, unsupported);
+        var childByParent = children.ToDictionary(g => g.Key, g => g.Single());
+        var chain = new List<PurchaseCostAdjustment> { adjustment };
+        while (childByParent.TryGetValue(chain[^1].Id, out var child))
+        {
+            if (chain.Any(a => a.Id == child.Id) || chain.Count >= 101)
+                return (null, unsupported);
+            chain.Add(child);
+        }
+        var chainIds = chain.Select(a => a.Id).ToArray();
+        if (chain.Count != adjustments.Length || await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(a =>
+                a.ReversesAdjustmentId.HasValue && chainIds.Contains(a.ReversesAdjustmentId.Value)
+                && !chainIds.Contains(a.Id), ct))
+            return (null, unsupported);
         var roots = await db.StockPostings.AsNoTracking().Where(p => p.CompanyCode == company
             && p.BranchCode == branch && p.SourceModule == "PROCUREMENT"
             && p.SourceDocumentType == "PO_INVOICE" && p.SourceDocumentId == invoice.DocNo
@@ -187,28 +219,41 @@ public sealed partial class IvInventoryPostingService
         var rootFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == root.Id).ToArrayAsync(ct);
         StockValuationFact? purchaseValue = null;
         StockReplayWacStep? purchaseStep = null;
+        StockReplayPurchaseVarianceGeneration? generation = null;
         if (variance != 0m)
         {
             if (purchaseFactId is not long factId || rootFacts.Length != 1 || rootFacts[0].Id != factId
                 || adjustment.InventoryAdjustmentFactId != factId || purchaseEvents.Length != 1)
                 return (null, unsupported);
             purchaseValue = rootFacts[0];
+            generation = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(db, chain, ct);
+            if (generation is null || generation.OriginalFact.Id != factId)
+                return (null, unsupported);
             purchaseStep = projectedSteps.SingleOrDefault(s => s.EventId == purchaseEvents[0].EventId);
             var oldQty = StockLedgerPrecision.Quantity(currentQty - valued.Where(e =>
                 e.Key.CompareTo(purchaseEvents[0].Key) >= 0).Sum(e => e.OldSignedQuantity));
             var oldValue = StockLedgerPrecision.Money(currentValue - valued.Where(e =>
                 e.Key.CompareTo(purchaseEvents[0].Key) >= 0).Sum(e => e.OldSignedValue));
-            if (purchaseStep is null || oldQty < line.StdQty || purchaseStep.QuantityBefore < line.StdQty
-                || variance < 0m && (oldValue < -variance || purchaseStep.ValueBefore < -variance)
-                || purchaseStep.SignedQuantity != 0m || purchaseStep.SignedValue != variance
-                || purchaseEvents[0].OldSignedValue != variance || purchaseEvents[0].FixedSignedValue != variance
-                || purchaseValue.SignedValue != variance || purchaseValue.OriginalValuationFactId != grProof.FactId
+            if (purchaseStep is null || oldQty < 0m || oldValue < 0m)
+                return (null, unsupported);
+            var oldSplit = StockPurchaseVarianceAllocator.Allocate(variance, line.StdQty,
+                Math.Min(oldQty, line.StdQty), oldValue, StockCostMethods.MovingAverage);
+            var newSplit = StockPurchaseVarianceAllocator.Allocate(variance, line.StdQty,
+                Math.Min(purchaseStep.QuantityBefore, line.StdQty), purchaseStep.ValueBefore, StockCostMethods.MovingAverage);
+            if (oldSplit.Inventory != generation.Active.InventoryAdjustmentAmount
+                || oldSplit.Consumed != generation.Active.ConsumedVarianceAmount
+                || newSplit.Inventory == 0m || purchaseStep.SignedQuantity != 0m
+                || purchaseStep.SignedValue != newSplit.Inventory
+                || purchaseEvents[0].OldSignedValue != generation.ActiveFact.SignedValue
+                || purchaseEvents[0].FixedSignedValue != generation.ActiveFact.SignedValue
+                || purchaseEvents[0].PurchaseVariance != new StockReplayPurchaseVariance(variance, line.StdQty)
+                || purchaseValue.OriginalValuationFactId != grProof.FactId
                 || purchaseValue.SourceDocumentLine != line.Line.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                || purchaseValue.PostingLineNo != line.Line || purchaseValue.SplitOrdinal != 0
-                || await db.StockValuationFacts.AsNoTracking().AnyAsync(f => f.ReversesValuationFactId == factId, ct))
+                || purchaseValue.PostingLineNo != line.Line || purchaseValue.SplitOrdinal != 0)
                 return (null, unsupported);
         }
-        else if (purchaseFactId is not null || rootFacts.Length != 0 || adjustment.InventoryAdjustmentFactId is not null)
+        else if (purchaseFactId is not null || rootFacts.Length != 0 || adjustments.Length != 1
+            || adjustment.InventoryAdjustmentFactId is not null)
             return (null, unsupported);
         if (root.SourceDocumentNo != invoice.DocNo || root.CommandType != "PROCUREMENT_PO_INVOICE_PRIMARY"
             || root.LedgerEpochId != epoch || root.SealedAtUtc is null || root.EffectiveAt != invoice.DocDate
@@ -237,10 +282,9 @@ public sealed partial class IvInventoryPostingService
             || adjustment.ItemCode != item || adjustment.CostMethod != StockCostMethods.MovingAverage
             || adjustment.BaseQty != line.StdQty || adjustment.ActualBaseAmount != actual
             || adjustment.ReferenceBaseAmount != grProof.CostAmount || adjustment.CommercialReferenceAmount != grProof.CostAmount
-            || adjustment.TotalAdjustmentAmount != variance || adjustment.InventoryAdjustmentAmount != variance
-            || adjustment.ConsumedVarianceAmount != 0m
-            || adjustment.ReversesAdjustmentId is not null
-            || await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(a => a.ReversesAdjustmentId == adjustment.Id, ct))
+            || adjustment.TotalAdjustmentAmount != variance
+            || variance == 0m && (adjustment.InventoryAdjustmentAmount != 0m || adjustment.ConsumedVarianceAmount != 0m)
+            || adjustment.ReversesAdjustmentId is not null)
             return (null, unsupported);
 
         var fingerprint = StockPostingFingerprint.Create(new { Kind = "WAC_MR_UNCHANGED_LATER_INVOICE" }, new
@@ -263,9 +307,9 @@ public sealed partial class IvInventoryPostingService
                 adjustment.ConsumedVarianceAmount, adjustment.InventoryAdjustmentFactId },
             PurchaseValue = purchaseValue is null ? null : new { purchaseValue.Id, purchaseValue.SignedValue,
                 purchaseValue.OriginalValuationFactId, purchaseValue.EffectiveAt, purchaseValue.SourceDocumentLine },
-            PurchaseStep = purchaseStep
+            PurchaseStep = purchaseStep, Generation = generation?.Fingerprint
         }).SourceSnapshotHash;
-        return (new(invoice, fingerprint, purchaseEvents.SingleOrDefault()?.EventId), null);
+        return (new(invoice, fingerprint, purchaseEvents.SingleOrDefault()?.EventId, generation, purchaseStep), null);
     }
 
     private static bool MatchesPurchaseInvoiceSnapshot(StockPosting root, PoInvoice invoice, PoInvoiceDetail line)

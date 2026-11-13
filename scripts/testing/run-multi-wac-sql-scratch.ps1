@@ -32,15 +32,16 @@ param(
     [switch]$NeutralLaterPurchaseInvoice,
     [switch]$FullyCapitalizedPurchaseVariance,
     [switch]$PartialPurchaseVariance,
+    [switch]$PartialPurchaseVarianceLot,
     [switch]$BackdatedPurchaseInvoice,
     [switch]$BackdatedPurchaseCreditNotePost,
     [switch]$BackdatedPurchaseCreditNoteRollback
 )
 
 $ErrorActionPreference = 'Stop'
-if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback) {
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
-    if ($cases.Count -ne 1) { throw 'Choose one purchase credit-note case on its own.' }
+    if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
 }
 if ($SameItem -and $RepeatedAndOther) { throw 'Choose one receipt shape.' }
 if ($TwoPiles -and ($SameItem -or $RepeatedAndOther)) { throw 'Two-pile tests use their own receipt shape.' }
@@ -81,10 +82,11 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($BackdatedPurchaseCreditNotePost) { 'SqlServer_backdated_purchase_credit_note_post_rejects_later_issue_atomically' }
+    $testName = if ($PartialPurchaseVarianceLot) { 'SqlServer_lot_receipt_replays_changed_purchase_variance_split' }
+        elseif ($BackdatedPurchaseCreditNotePost) { 'SqlServer_backdated_purchase_credit_note_post_rejects_later_issue_atomically' }
         elseif ($BackdatedPurchaseCreditNoteRollback) { 'SqlServer_backdated_purchase_credit_note_rollback_rejects_later_issue_atomically' }
         elseif ($BackdatedPurchaseInvoice) { 'SqlServer_backdated_purchase_invoice_variance_rejects_later_active_issue' }
-        elseif ($PartialPurchaseVariance) { 'SqlServer_misc_receipt_rejects_changed_purchase_variance_split' }
+        elseif ($PartialPurchaseVariance) { 'SqlServer_misc_receipt_replays_changed_purchase_variance_split_atomically' }
         elseif ($FullyCapitalizedPurchaseVariance) { 'SqlServer_misc_receipt_before_purchase_variance_is_atomic_and_avoids_busy_po' }
         elseif ($NeutralLaterPurchaseInvoice) { 'SqlServer_misc_receipt_before_neutral_purchase_invoice_is_atomic_and_avoids_busy_po' }
         elseif ($ReversedSaleReceiptFirstInterleaved) { 'SqlServer_receipt_first_rollback_reprices_issues_around_later_receipt_atomically' }

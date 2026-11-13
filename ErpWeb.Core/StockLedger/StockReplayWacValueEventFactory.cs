@@ -52,7 +52,7 @@ public static class StockReplayWacValueEventFactory
 
     // A purchase invoice's PPV refers to a GR for settlement, but its value
     // belongs at the invoice's key, not immediately after the GR. Callers must
-    // separately prove the complete settlement and unchanged allocation.
+    // separately prove the complete settlement and any replacement generation.
     internal static StockReplayWacEvent CreatePurchaseInvoiceAdjustment(
         StockValuationFact fact, StockValuationFact receipt, IvTrxHistory history,
         StockPosting receiptOwner, StockPosting invoiceOwner)
@@ -96,13 +96,35 @@ public static class StockReplayWacValueEventFactory
         StockValuationFact active,
         StockValuationFact original,
         StockPosting originalOwner,
-        StockPosting correctionOwner)
+        StockPosting correctionOwner) =>
+        CreateCorrectedCore(active, original, originalOwner, correctionOwner,
+            Create(original, originalOwner));
+
+    internal static StockReplayWacEvent CreateCorrectedPurchaseInvoiceAdjustment(
+        StockValuationFact active, StockValuationFact original,
+        StockValuationFact receipt, IvTrxHistory history,
+        StockPosting receiptOwner, StockPosting invoiceOwner, StockPosting correctionOwner)
+    {
+        var originalEvent = CreatePurchaseInvoiceAdjustment(original, receipt,
+            history, receiptOwner, invoiceOwner);
+        if (active.ValuationSource != StockValuationSources.PurchasePriceVariance
+            || active.BaseCostAmount != active.CostAmount || active.CostAmount <= 0m
+            || active.ValuationVersion <= original.ValuationVersion)
+            throw Corrupt($"Purchase value fact {active.Id} has invalid replacement evidence.");
+        return CreateCorrectedCore(active, original, invoiceOwner, correctionOwner, originalEvent);
+    }
+
+    private static StockReplayWacEvent CreateCorrectedCore(
+        StockValuationFact active,
+        StockValuationFact original,
+        StockPosting originalOwner,
+        StockPosting correctionOwner,
+        StockReplayWacEvent originalEvent)
     {
         ArgumentNullException.ThrowIfNull(active);
         ArgumentNullException.ThrowIfNull(original);
         ArgumentNullException.ThrowIfNull(originalOwner);
         ArgumentNullException.ThrowIfNull(correctionOwner);
-        var originalEvent = Create(original, originalOwner);
         if (active.Id <= 0 || active.StockPostingId != correctionOwner.Id
             || correctionOwner.Id == originalOwner.Id
             || correctionOwner.SealedAtUtc is null

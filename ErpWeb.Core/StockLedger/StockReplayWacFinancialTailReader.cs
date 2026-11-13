@@ -354,8 +354,28 @@ public static class StockReplayWacFinancialTailReader
                 {
                     if (!reversedIds.Contains(originalId))
                         throw Corrupt($"Value fact {fact.Id} has no reversed original adjustment.");
-                    valueEvent = StockReplayWacValueEventFactory.CreateCorrected(
-                        fact, original, originalOwner, owner);
+                    if (originalId == permittedPurchaseFactId
+                        && original.OriginalValuationFactId is long receiptId)
+                    {
+                        var receipt = await db.StockValuationFacts.AsNoTracking()
+                            .SingleOrDefaultAsync(f => f.Id == receiptId
+                                && f.CompanyCode == companyCode && f.BranchCode == branchCode, cancellationToken);
+                        var history = receipt?.InventoryHistoryId is int historyId
+                            ? await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
+                                h.Id == historyId && h.CompanyCode == companyCode
+                                && h.BranchCode == branchCode, cancellationToken)
+                            : null;
+                        var receiptOwner = receipt is null ? null : await db.StockPostings.AsNoTracking()
+                            .SingleOrDefaultAsync(p => p.Id == receipt.StockPostingId
+                                && p.CompanyCode == companyCode && p.BranchCode == branchCode, cancellationToken);
+                        if (receipt is null || history is null || receiptOwner is null)
+                            throw Corrupt($"Purchase value fact {fact.Id} has no original receipt authority.");
+                        valueEvent = StockReplayWacValueEventFactory.CreateCorrectedPurchaseInvoiceAdjustment(
+                            fact, original, receipt, history, receiptOwner, originalOwner, owner);
+                    }
+                    else
+                        valueEvent = StockReplayWacValueEventFactory.CreateCorrected(
+                            fact, original, originalOwner, owner);
                 }
             }
             else
@@ -368,6 +388,22 @@ public static class StockReplayWacFinancialTailReader
         if (permittedPurchaseFactId is long permitted
             && ordered.Count(e => e.EventId == long.MaxValue - permitted) != 1)
             throw Corrupt("The authorized purchase adjustment is not an active later value event.");
+        if (permittedPurchaseFactId is long purchaseFactId)
+        {
+            var purchase = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+                a.CompanyCode == companyCode && a.BranchCode == branchCode && a.ItemCode == itemCode
+                && a.InventoryAdjustmentFactId == purchaseFactId && a.ReversesAdjustmentId == null
+                && a.SourceDocumentType == "PO_INVOICE").ToArrayAsync(cancellationToken);
+            if (purchase.Length != 1 || purchase[0].BaseQty <= 0m
+                || purchase[0].TotalAdjustmentAmount == 0m)
+                throw Corrupt("The purchase variance has no unique invoice allocation evidence.");
+            var index = Array.FindIndex(ordered, e => e.EventId == long.MaxValue - purchaseFactId);
+            ordered[index] = ordered[index] with
+            {
+                PurchaseVariance = new StockReplayPurchaseVariance(
+                    purchase[0].TotalAdjustmentAmount, purchase[0].BaseQty)
+            };
+        }
         if (ordered.Select(e => e.EventId).Distinct().Count() != ordered.Length
             || ordered.Zip(ordered.Skip(1), (a, b) => a.Key == b.Key).Any(equal => equal))
             throw Corrupt($"Item {itemCode} has duplicate WAC event identity or key.");

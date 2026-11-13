@@ -133,7 +133,8 @@ public static class StockReplayWacTailRepricingWriter
         StockReplayWacInsertionPlan plan,
         int firstRootPostingLineNo,
         CancellationToken cancellationToken = default,
-        bool allowSalesReturn = false)
+        bool allowSalesReturn = false,
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(wacPermit);
@@ -152,7 +153,7 @@ public static class StockReplayWacTailRepricingWriter
             throw Invalid("The prepared WAC insertion tail has no matching root permit.");
         return AppendTailAsync(context, wacPermit, plan.Tail.LaterEvents,
             plan.Projection.LaterSteps, firstRootPostingLineNo,
-            null, null, cancellationToken, allowSalesReturn);
+            null, null, cancellationToken, allowSalesReturn, purchasePermit);
     }
 
     public static Task<StockReplayWacTailRepricingResult> AppendPreparedInsertionTailAsync(
@@ -264,7 +265,8 @@ public static class StockReplayWacTailRepricingWriter
         StockPostingContext context, StockReplayWacWritePermit permit,
         StockReplayWacRemovalPlan plan, int firstRootPostingLineNo,
         CancellationToken cancellationToken = default,
-        bool allowSalesReturn = false)
+        bool allowSalesReturn = false,
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
@@ -282,7 +284,7 @@ public static class StockReplayWacTailRepricingWriter
             throw Invalid("The prepared WAC removal tail has no matching root permit.");
         return AppendTailAsync(context, permit, plan.Tail.LaterEvents,
             plan.Projection.LaterSteps, firstRootPostingLineNo,
-            null, null, cancellationToken, allowSalesReturn);
+            null, null, cancellationToken, allowSalesReturn, purchasePermit);
     }
 
     private static async Task<StockReplayWacTailRepricingResult> AppendTailAsync(
@@ -294,14 +296,18 @@ public static class StockReplayWacTailRepricingWriter
         StockReplayWacInsertionPlan? changedCountPlan,
         StockCountCorrectionWritePermit? countPermit,
         CancellationToken cancellationToken,
-        bool allowSalesReturn = false)
+        bool allowSalesReturn = false,
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
     {
         if (allowSalesReturn && (context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType is not
                 (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)))
             throw Invalid("Sales return repricing requires an Inventory receipt root.");
+        if (purchasePermit is not null && (purchasePermit.RootPostingId != context.Posting.Id
+            || purchasePermit.PlanHash != permit.PlanHash))
+            throw Invalid("The purchase variance has no matching replay root.");
         var steps = ValidateTail(laterEvents, laterSteps,
-            changedCountPlan, countPermit, allowSalesReturn);
+            changedCountPlan, countPermit, allowSalesReturn, purchasePermit);
 
         var histories = new List<int>();
         var countLines = new List<int>();
@@ -363,6 +369,9 @@ public static class StockReplayWacTailRepricingWriter
                         histories.Add(checked((int)movement.EventId));
                 }
             }
+            else if (step.SignedValue != movement.OldSignedValue)
+                await StockReplayWacPurchaseVarianceWriter.AppendAsync(context, permit, purchasePermit!,
+                    movement, step, reversalLine, replacementLine, cancellationToken);
         }
         return new(permit, histories, countLines);
     }
@@ -372,7 +381,8 @@ public static class StockReplayWacTailRepricingWriter
         IReadOnlyList<StockReplayWacStep> laterSteps,
         StockReplayWacInsertionPlan? changedCountPlan,
         StockCountCorrectionWritePermit? countPermit,
-        bool allowSalesReturn = false)
+        bool allowSalesReturn = false,
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
     {
         var steps = laterSteps.ToDictionary(s => s.EventId);
         if (steps.Count != laterEvents.Count
@@ -382,6 +392,7 @@ public static class StockReplayWacTailRepricingWriter
         // Check unsupported quantity changes before appending any valuation
         // facts. The caller can then route those count generations separately.
         var changedCountLines = new HashSet<int>();
+        var changedPurchaseCount = 0;
         foreach (var movement in laterEvents)
         {
             var step = steps[movement.EventId];
@@ -400,9 +411,13 @@ public static class StockReplayWacTailRepricingWriter
                         && l.NewSignedAdjustmentQty == step.SignedQuantity) != 1)
                     throw Invalid($"Count line {countLineId} has no matching physical correction permit.");
             }
-            if (movement.EventId > int.MaxValue
-                && (step.SignedQuantity != 0m
-                    || step.SignedValue != movement.OldSignedValue)
+            if (movement.EventId > int.MaxValue && step.SignedValue != movement.OldSignedValue)
+            {
+                changedPurchaseCount++;
+                if (purchasePermit is null || purchasePermit.Step != step)
+                    throw Invalid($"WAC event {movement.EventId} needs separate purchase settlement authority.");
+            }
+            if (movement.EventId > int.MaxValue && step.SignedQuantity != 0m
                 || movement.EventId > 0 && movement.EventId <= int.MaxValue
                     && movement.OldSignedQuantity > 0m
                     && step.SignedValue != movement.OldSignedValue
@@ -424,6 +439,8 @@ public static class StockReplayWacTailRepricingWriter
             && (changedCountPlan is null
                 || countPermit.Lines.Length != changedCountLines.Count))
             throw Invalid("A physical count correction has no matching WAC descendant.");
+        if (purchasePermit is not null && changedPurchaseCount != 1)
+            throw Invalid("The purchase variance permit has no unique changed value event.");
 
         return steps;
     }

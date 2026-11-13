@@ -1467,9 +1467,13 @@ public sealed class PoInvoiceService : IPoInvoiceService
                         && a.SourceCostingRevision == invoice.CostingRevision
                         && (a.InventoryAdjustmentAmount != 0m || isCreditNote && a.TotalAdjustmentAmount != 0m))
                     .Select(a => a.ItemCode).Distinct().ToArrayAsync(cancellationToken);
+                var ownReplayFacts = isInvoice
+                    ? await StockReplayPurchaseVarianceGenerationReader.ValidatedActiveFactIdsAsync(db,
+                        write.CompanyCode, write.BranchCode!, invoice.DocNo, invoice.CostingRevision, cancellationToken)
+                    : [];
                 if (affectedItems.Length > 0 && await HasLaterActiveWacCostAsync(db, write.CompanyCode,
                         write.BranchCode!, original.LedgerEpochId, original.EffectiveAt,
-                        original.PostingSequence, affectedItems, cancellationToken))
+                        original.PostingSequence, affectedItems, cancellationToken, ownReplayFacts))
                     return ($"Cannot roll back purchase {(isCreditNote ? "credit note" : "invoice")} {invoice.DocNo} while later stock costing depends on its price variance.", null);
             }
             var reversal = isCreditNote
@@ -1516,8 +1520,9 @@ public sealed class PoInvoiceService : IPoInvoiceService
 
     private static async Task<bool> HasLaterActiveWacCostAsync(
         AppDbContext db, string company, string branch, long epoch, DateTime effectiveAt,
-        long sequence, string[] affectedItems, CancellationToken cancellationToken)
+        long sequence, string[] affectedItems, CancellationToken cancellationToken, long[]? ownReplayFacts = null)
     {
+        ownReplayFacts ??= [];
         // Check the active physical timeline independently of valuation rows.
         // A missing or damaged valuation must never hide a later stock movement.
         var piles = await db.IvBalLocs.AsNoTracking().Where(b => b.CompanyCode == company
@@ -1531,7 +1536,8 @@ public sealed class PoInvoiceService : IPoInvoiceService
                 return true;
         return await db.StockValuationFacts.AsNoTracking().AnyAsync(f =>
             f.CompanyCode == company && f.BranchCode == branch && f.LedgerEpochId == epoch
-            && affectedItems.Contains(f.ItemCode) && f.StockPosting!.SealedAtUtc != null
+            && affectedItems.Contains(f.ItemCode) && !ownReplayFacts.Contains(f.Id)
+            && f.StockPosting!.SealedAtUtc != null
             && f.ReversesValuationFactId == null
             && (f.EffectiveAt > effectiveAt || f.EffectiveAt == effectiveAt
                 && (f.InventoryHistoryId == null

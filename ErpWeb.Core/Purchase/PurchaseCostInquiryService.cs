@@ -10,9 +10,9 @@ namespace ErpWeb.Core.Purchase;
 /// Stage 5 procurement costing read model.
 ///
 /// <para>
-/// Settlement and adjustment tables are append-only. A reversal row therefore cannot simply be
-/// included in a SUM: it is a copy of the original slice with a parent link. This service collapses
-/// each root/child chain using alternating signs before it builds the inquiry rows.
+/// Settlement quantities and commercial amounts are stored as magnitudes, while adjustment
+/// amounts carry their own signs. This service collapses each append-only reversal chain using
+/// those conventions before it builds the inquiry rows.
 /// </para>
 /// </summary>
 public sealed class PurchaseCostInquiryService : IPurchaseCostInquiryService
@@ -396,9 +396,9 @@ public sealed class PurchaseCostInquiryService : IPurchaseCostInquiryService
             {
                 actual += sign * row.ActualBaseAmount;
                 reference += sign * row.ReferenceBaseAmount;
-                total += sign * row.TotalAdjustmentAmount;
-                inventory += sign * row.InventoryAdjustmentAmount;
-                consumed += sign * row.ConsumedVarianceAmount;
+                total += row.TotalAdjustmentAmount;
+                inventory += row.InventoryAdjustmentAmount;
+                consumed += row.ConsumedVarianceAmount;
                 sign = -sign;
             }
 

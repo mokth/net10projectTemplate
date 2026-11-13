@@ -59,6 +59,17 @@ public static class StockValuationSnapshotBuilder
             })
             .ToListAsync(cancellationToken);
 
+        try
+        {
+            if (!await StockReplayPurchaseVarianceGenerationReader.ValidateForSnapshotAsync(
+                    db, company, branch, exclusiveEnd, watermark, cancellationToken))
+                return "Cannot close: a purchase variance replay has incomplete correction evidence.";
+        }
+        catch (System.Data.Common.DbException)
+        {
+            return "Cannot close: purchase variance replay evidence is unavailable.";
+        }
+
         var fifoCorrectionRoots = facts.Where(f =>
                 f.MovementCode == StockReplayFifoReversedIssueGenerationReader.ValueMovement)
             .Select(f => f.StockPostingId).Distinct().ToArray();

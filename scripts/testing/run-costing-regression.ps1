@@ -85,7 +85,11 @@ $required = @(
     'SubconPostBlockedTests', 'SubconModeTests',
     'Backdated_wac_misc_receipt_replays_after_value_neutral_purchase_invoice',
     'Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance',
-    'Backdated_wac_misc_receipt_rejects_partial_purchase_invoice_variance',
+    'Backdated_wac_misc_receipt_replays_partial_purchase_invoice_variance',
+    'Backdated_wac_misc_receipt_rejects_damaged_partial_purchase_variance',
+    'Backdated_wac_misc_receipt_rejects_damaged_purchase_replay_generation',
+    'Backdated_wac_lot_receipt_replays_partial_purchase_variance',
+    'Backdated_wac_receipt_rejects_purchase_variance_without_original_stock_value',
     'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
     'Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence',
     'Backdated_purchase_invoice_price_variance_rejects_later_active_issue',
@@ -177,6 +181,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -NeutralLaterPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -FullyCapitalizedPurchaseVariance
         & $sqlRunner -Server $SqlServer -NoBuild -PartialPurchaseVariance
+        & $sqlRunner -Server $SqlServer -NoBuild -PartialPurchaseVarianceLot
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNoteRollback
