@@ -21,9 +21,10 @@ public sealed partial class PoInvoiceService
             || context.Posting.PostingRole is not ("PRIMARY" or "REVERSAL")
             || (context.Posting.PostingRole == "PRIMARY") != (context.Posting.ReversesPostingId is null)
             || context.Posting.PostingSequence != checked(watermark + 1)
-            || context.Posting.EffectiveAt > replay.Issue.Key.EffectiveAt
-            || context.Posting.EffectiveAt.Year != replay.Issue.Key.EffectiveAt.Year
-            || context.Posting.EffectiveAt.Month != replay.Issue.Key.EffectiveAt.Month
+            || replay.Changes.Count is 0 or > 2
+            || replay.Changes.Any(c => context.Posting.EffectiveAt > c.Issue.Key.EffectiveAt
+                || context.Posting.EffectiveAt.Year != c.Issue.Key.EffectiveAt.Year
+                || context.Posting.EffectiveAt.Month != c.Issue.Key.EffectiveAt.Month)
             || planHash.Length != 64 || value is null || value.PostingLineNo != request.SourceDocumentLine
             || value.SplitOrdinal != 0 || value.ItemCode != request.ItemCode
             || value.Amount != Math.Abs(request.InventoryAdjustmentAmount)
@@ -41,21 +42,25 @@ public sealed partial class PoInvoiceService
             || request.ConsumedVarianceAmount != replay.ConsumedVariance
             || StockLedgerPrecision.Money(request.InventoryAdjustmentAmount + request.ConsumedVarianceAmount)
                 != request.TotalAdjustmentAmount
-            || replay.Issue.EventId is not (> 0 and <= int.MaxValue)
-            || replay.IssueStep.EventId != replay.Issue.EventId || replay.Issue.OldSignedQuantity >= 0m
-            || replay.IssueStep.SignedQuantity != replay.Issue.OldSignedQuantity
-            || replay.IssueStep.SignedValue == replay.Issue.OldSignedValue)
+            || replay.Changes.Select(c => c.Issue.EventId).Distinct().Count() != replay.Changes.Count
+            || replay.Changes.Any(c => c.Issue.EventId is not (> 0 and <= int.MaxValue)
+                || c.IssueStep.EventId != c.Issue.EventId || c.Issue.OldSignedQuantity >= 0m
+                || c.IssueStep.SignedQuantity != c.Issue.OldSignedQuantity
+                || c.IssueStep.SignedValue == c.Issue.OldSignedValue))
             throw InvoiceReplayInvalid("The purchase invoice has no matching locked issue replay authority.");
 
         var db = context.Db;
-        var issue = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
-            h.Id == (int)replay.Issue.EventId && h.CompanyCode == context.CompanyCode
-            && h.BranchCode == context.BranchCode, ct);
-        if (issue is null || issue.StockPostingId != replay.IssueOwnerId || issue.FromBalLocId != replay.BalanceId)
+        var changes = replay.Changes.OrderBy(c => c.Issue.Key).ToArray();
+        var issueIds = changes.Select(c => (int)c.Issue.EventId).ToArray();
+        var issues = await db.IvTrxHistories.AsNoTracking().Where(h => issueIds.Contains(h.Id)
+            && h.CompanyCode == context.CompanyCode && h.BranchCode == context.BranchCode).ToArrayAsync(ct);
+        if (issues.Length != changes.Length || changes.Any(c => !issues.Any(h =>
+                h.Id == c.Issue.EventId && h.StockPostingId == c.IssueOwnerId && h.FromBalLocId == replay.BalanceId)))
             throw InvoiceReplayInvalid("The later issue changed after invoice replay planning.");
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(db,
-            context.CompanyCode, context.BranchCode, [issue], ct);
-        if (active[issue.Id].Count != 1 || active[issue.Id][0].Id != replay.PriorFactId)
+            context.CompanyCode, context.BranchCode, issues, ct);
+        if (changes.Any(c => active[(int)c.Issue.EventId].Count != 1
+                || active[(int)c.Issue.EventId][0].Id != c.PriorFactId))
             throw InvoiceReplayInvalid("The later issue cost changed after invoice replay planning.");
 
         var fact = new StockValuationFact
@@ -88,39 +93,47 @@ public sealed partial class PoInvoiceService
             InventoryAdjustmentFact = fact, ReversesAdjustmentId = request.ReversesAdjustmentId,
             CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
         });
-        var replacements = await StockReplayWacIssueRepricingWriter.AppendAsync(context, issue.Id,
-            replay.Issue, replay.IssueStep, 2, 3, ct);
-        if (replacements.Count != 1)
-            throw InvoiceReplayInvalid("The later issue has no unique replacement valuation.");
-        await db.SaveChangesAsync(ct);
-        var reversal = await db.StockValuationFacts.AsNoTracking().SingleAsync(f =>
-            f.StockPostingId == context.Posting.Id && f.InventoryHistoryId == issue.Id
-            && f.ReversesValuationFactId == replay.PriorFactId, ct);
+        var changedFacts = new List<(InvoiceIssueChange Change, long ReversalId, long ReplacementId)>(changes.Length);
+        for (var i = 0; i < changes.Length; i++)
+        {
+            var change = changes[i];
+            var issueId = (int)change.Issue.EventId;
+            var replacements = await StockReplayWacIssueRepricingWriter.AppendAsync(context, issueId,
+                change.Issue, change.IssueStep, 2 + i * 2, 3 + i * 2, ct);
+            if (replacements.Count != 1)
+                throw InvoiceReplayInvalid("A later issue has no unique replacement valuation.");
+            await db.SaveChangesAsync(ct);
+            var reversal = await db.StockValuationFacts.AsNoTracking().SingleAsync(f =>
+                f.StockPostingId == context.Posting.Id && f.InventoryHistoryId == issueId
+                && f.ReversesValuationFactId == change.PriorFactId, ct);
+            changedFacts.Add((change, reversal.Id, replacements[0].Id));
+        }
         var run = new StockReplayRun
         {
             CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
             RootStockPostingId = context.Posting.Id, RootRequestId = context.Posting.RequestId,
             RootDocumentType = context.Posting.SourceDocumentType, RootDocumentId = context.Posting.SourceDocumentId,
-            EarliestEffectiveAt = context.Posting.EffectiveAt, LatestEffectiveAt = replay.Issue.Key.EffectiveAt,
-            PlanWatermark = watermark, PlanHash = planHash, AffectedHistoryCount = 1,
+            EarliestEffectiveAt = context.Posting.EffectiveAt, LatestEffectiveAt = changes.Max(c => c.Issue.Key.EffectiveAt),
+            PlanWatermark = watermark, PlanHash = planHash, AffectedHistoryCount = changes.Length,
             AffectedItemCount = 1, AffectedProductionMovementCount = 0,
             CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
         };
         db.StockReplayRuns.Add(run);
         await db.SaveChangesAsync(ct);
-        foreach (var changedFact in new[] { reversal.Id, replacements[0].Id })
-            db.StockReplayEffects.Add(new StockReplayEffect
-            {
-                CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, ReplayRunId = run.Id,
-                RootStockPostingId = context.Posting.Id, BusinessOwnerPostingId = replay.IssueOwnerId,
-                EffectKind = StockReplayInvoiceIssueAudit.EffectKind, AffectedEntityType = StockReplayEffectTypes.StockValuationFact,
-                AffectedEntityId = changedFact, OriginalEntityId = replay.PriorFactId, CreatedAtUtc = DateTime.UtcNow
-            });
+        foreach (var changed in changedFacts)
+            foreach (var changedFact in new[] { changed.ReversalId, changed.ReplacementId })
+                db.StockReplayEffects.Add(new StockReplayEffect
+                {
+                    CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, ReplayRunId = run.Id,
+                    RootStockPostingId = context.Posting.Id, BusinessOwnerPostingId = changed.Change.IssueOwnerId,
+                    EffectKind = StockReplayInvoiceIssueAudit.EffectKind, AffectedEntityType = StockReplayEffectTypes.StockValuationFact,
+                    AffectedEntityId = changedFact, OriginalEntityId = changed.Change.PriorFactId, CreatedAtUtc = DateTime.UtcNow
+                });
         var permit = new StockReplayWacWritePermit(context, request.ItemCode, planHash,
             replay.CurrentQuantity, replay.CurrentValue, replay.FinalQuantity, replay.FinalValue,
             replay.BalanceId, replay.BalanceQty);
         await StockReplayWacCostStateWriter.ApplyAsync(context, permit, ct);
-        return [issue.Id];
+        return issueIds;
     }
 
     private static StockLedgerException InvoiceReplayInvalid(string message) =>

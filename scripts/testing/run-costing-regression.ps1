@@ -100,6 +100,8 @@ $required = @(
     'Backdated_purchase_invoice_can_roll_back_after_later_issue_rollback',
     'Purchase_invoice_posted_before_later_issue_reprices_issue_on_rollback',
     'Backdated_purchase_invoice_reprices_fully_depleted_later_issue',
+    'Backdated_purchase_invoice_reprices_two_later_issues_and_rollback',
+    'Purchase_invoice_posted_before_two_issues_reprices_both_on_rollback',
     'Fully_consumed_wac_invoice_reverses_its_zero_value_anchor',
     'Backdated_wac_receipt_rejects_purchase_variance_without_original_stock_value',
     'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
@@ -199,6 +201,8 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceIssueReplay
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceIssueFirst
         & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeIssue
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceTwoIssues
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeTwoIssues
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDepleted
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost

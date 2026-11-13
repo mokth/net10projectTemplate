@@ -38,6 +38,8 @@ param(
     [switch]$BackdatedInvoiceIssueReplay,
     [switch]$BackdatedInvoiceIssueFirst,
     [switch]$InvoiceBeforeIssue,
+    [switch]$BackdatedInvoiceTwoIssues,
+    [switch]$InvoiceBeforeTwoIssues,
     [switch]$BackdatedInvoiceDepleted,
     [switch]$BackdatedPurchaseInvoice,
     [switch]$BackdatedPurchaseCreditNotePost,
@@ -45,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceDepleted) {
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
 }
@@ -89,6 +91,8 @@ try {
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($InvoiceBeforeTwoIssues) { 'SqlServer_invoice_before_two_issues_reprices_rollback_atomically' }
+        elseif ($BackdatedInvoiceTwoIssues) { 'SqlServer_backdated_invoice_reprices_two_later_issues_atomically' }
         elseif ($InvoiceBeforeIssue) { 'SqlServer_invoice_posted_before_later_issue_reprices_issue_on_rollback' }
         elseif ($BackdatedInvoiceIssueFirst) { 'SqlServer_backdated_invoice_rolls_back_after_later_issue' }
         elseif ($BackdatedInvoiceIssueReplay) { 'SqlServer_backdated_invoice_reprices_later_issue_and_rolls_back' }

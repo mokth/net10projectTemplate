@@ -62,7 +62,7 @@ internal static class StockReplayInvoiceIssueAudit
                 || (root.PostingRole == "PRIMARY") != (root.ReversesPostingId is null)
                 || root.SealedAtUtc is null && (unsealedRootId != root.Id || db.Database.CurrentTransaction is null)
                 || root.PostingSequence <= 0 || string.IsNullOrWhiteSpace(root.SourceSnapshotJson)
-                || runs.Length != 1 || effects.Length != 2 || facts.Length != 3
+                || runs.Length != 1
                 || adjustments.Length != 1 || settlements.Length != 1)
                 return false;
             try
@@ -77,64 +77,83 @@ internal static class StockReplayInvoiceIssueAudit
                 || run.RootDocumentType != root.SourceDocumentType || run.RootDocumentId != root.SourceDocumentId
                 || run.EarliestEffectiveAt != root.EffectiveAt || run.LatestEffectiveAt < root.EffectiveAt
                 || run.LatestEffectiveAt.Year != root.EffectiveAt.Year || run.LatestEffectiveAt.Month != root.EffectiveAt.Month
-                || run.PlanWatermark != root.PostingSequence - 1 || run.PlanHash.Length != 64
-                || run.AffectedHistoryCount != 1 || run.AffectedItemCount != 1 || run.AffectedProductionMovementCount != 0)
+                || run.PlanWatermark != root.PostingSequence - 1 || run.PlanHash is null || run.PlanHash.Length != 64
+                || run.AffectedHistoryCount is < 1 or > 2 || run.AffectedItemCount != 1 || run.AffectedProductionMovementCount != 0)
                 return false;
             var issueFacts = facts.Where(f => f.InventoryHistoryId.HasValue).ToArray();
             var valueFacts = facts.Where(f => f.InventoryHistoryId is null).ToArray();
-            if (issueFacts.Length != 2 || valueFacts.Length != 1
-                || issueFacts.Select(f => f.InventoryHistoryId).Distinct().Count() != 1)
-                return false;
-            var reverse = issueFacts.SingleOrDefault(f => f.ReversesValuationFactId.HasValue);
-            var replacement = issueFacts.SingleOrDefault(f => f.ReversesValuationFactId is null);
-            if (reverse?.ReversesValuationFactId is not long priorId || replacement is null)
-                return false;
-            var prior = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f => f.Id == priorId
-                && f.CompanyCode == company && f.BranchCode == branch, ct);
-            var history = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
-                h.Id == replacement.InventoryHistoryId && h.CompanyCode == company && h.BranchCode == branch, ct);
-            var owner = history?.StockPostingId is long ownerId
-                ? await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == ownerId
-                    && p.CompanyCode == company && p.BranchCode == branch, ct) : null;
-            if (prior is null || history is null || owner is null || owner.SealedAtUtc is null
-                || history.LedgerVersion != 2 || history.LedgerEpochId != root.LedgerEpochId
-                || history.EntryRole != "ORIGINAL" || history.TrxType != IvTrxTypes.MiscellaneousIssue
-                || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
-                || owner.CommandType != "IV_POST_MI" || owner.PostingRole != "PRIMARY"
-                || owner.Id != history.StockPostingId || owner.EffectiveAt != history.TrxDtTime
-                || run.LatestEffectiveAt != history.TrxDtTime || prior.InventoryHistoryId != history.Id
-                || prior.Direction != -1 || prior.CostMethod != StockCostMethods.MovingAverage
-                || prior.ValuationStatus != StockValuationStatuses.Valued || prior.ReversesValuationFactId is not null
-                || reverse.ValuationStatus != StockValuationStatuses.Reversed
-                || reverse.ValuationSource != StockValuationSources.OriginalReversal
-                || reverse.Direction != 1 || reverse.BaseQty != prior.BaseQty || reverse.CostAmount != prior.CostAmount
-                || reverse.OriginalValuationFactId != (prior.OriginalValuationFactId ?? prior.Id)
-                || reverse.ValuationVersion != prior.ValuationVersion
-                || replacement.ValuationStatus != StockValuationStatuses.Valued || replacement.Direction != -1
-                || replacement.ValuationSource != StockValuationSources.MovingAverage || replacement.BaseQty != prior.BaseQty
-                || replacement.OriginalValuationFactId != (prior.OriginalValuationFactId ?? prior.Id)
-                || replacement.ValuationVersion != prior.ValuationVersion + 1
-                || issueFacts.Any(f => f.CompanyCode != company || f.BranchCode != branch
-                    || f.LedgerEpochId != root.LedgerEpochId || f.ItemCode != history.ICode
-                    || f.EffectiveAt != history.TrxDtTime || f.CostMethod != StockCostMethods.MovingAverage
-                    || f.SourceLineId != prior.SourceLineId || f.SourceDocumentType != prior.SourceDocumentType
-                    || f.SourceDocumentId != prior.SourceDocumentId || f.SourceDocumentNo != prior.SourceDocumentNo
-                    || f.SourceDocumentLine != prior.SourceDocumentLine || f.MovementCode != prior.MovementCode
-                    || f.BaseUom != prior.BaseUom || f.FromBalLocId != prior.FromBalLocId
-                    || f.BaseCostAmount != f.CostAmount || f.CostAmount < 0m)
-                || effects.Any(e => e.CompanyCode != company || e.BranchCode != branch || e.ReplayRunId != run.Id
-                    || e.BusinessOwnerPostingId != owner.Id || e.AffectedEntityType != StockReplayEffectTypes.StockValuationFact
-                    || e.OriginalEntityId != prior.Id)
+            var issueGroups = issueFacts.GroupBy(f => f.InventoryHistoryId!.Value).ToArray();
+            if (issueFacts.Length != run.AffectedHistoryCount * 2 || valueFacts.Length != 1
+                || issueGroups.Length != run.AffectedHistoryCount || effects.Length != issueFacts.Length
                 || !effects.Select(e => e.AffectedEntityId).Order().SequenceEqual(issueFacts.Select(f => f.Id).Order()))
                 return false;
             var value = valueFacts[0];
+            var latestIssue = DateTime.MinValue;
+            foreach (var group in issueGroups)
+            {
+                var reversals = group.Where(f => f.ReversesValuationFactId.HasValue).ToArray();
+                var replacements = group.Where(f => f.ReversesValuationFactId is null).ToArray();
+                if (reversals.Length != 1 || replacements.Length != 1
+                    || reversals[0].ReversesValuationFactId is not long priorId)
+                    return false;
+                var reverse = reversals[0];
+                var replacement = replacements[0];
+                var prior = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f => f.Id == priorId
+                    && f.CompanyCode == company && f.BranchCode == branch, ct);
+                var history = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
+                    h.Id == group.Key && h.CompanyCode == company && h.BranchCode == branch, ct);
+                var owner = history?.StockPostingId is long ownerId
+                    ? await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == ownerId
+                        && p.CompanyCode == company && p.BranchCode == branch, ct) : null;
+                var groupEffects = effects.Where(e => e.AffectedEntityId == reverse.Id
+                    || e.AffectedEntityId == replacement.Id).ToArray();
+                if (prior is null || history is null || owner is null || owner.SealedAtUtc is null
+                    || owner.LedgerEpochId != root.LedgerEpochId || history.ICode != value.ItemCode
+                    || history.LedgerVersion != 2 || history.LedgerEpochId != root.LedgerEpochId
+                    || history.EntryRole != "ORIGINAL" || history.TrxType != IvTrxTypes.MiscellaneousIssue
+                    || history.TrxDtTime < root.EffectiveAt || history.TrxDtTime.Year != root.EffectiveAt.Year
+                    || history.TrxDtTime.Month != root.EffectiveAt.Month
+                    || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
+                    || owner.CommandType != "IV_POST_MI" || owner.PostingRole != "PRIMARY"
+                    || owner.ReversesPostingId is not null || owner.Id != history.StockPostingId
+                    || owner.EffectiveAt != history.TrxDtTime
+                    || prior.InventoryHistoryId != history.Id
+                    || prior.Direction != -1 || prior.CostMethod != StockCostMethods.MovingAverage
+                    || prior.ValuationStatus != StockValuationStatuses.Valued || prior.ReversesValuationFactId is not null
+                    || reverse.ValuationStatus != StockValuationStatuses.Reversed
+                    || reverse.ValuationSource != StockValuationSources.OriginalReversal
+                    || reverse.Direction != 1 || reverse.BaseQty != prior.BaseQty || reverse.CostAmount != prior.CostAmount
+                    || reverse.OriginalValuationFactId != (prior.OriginalValuationFactId ?? prior.Id)
+                    || reverse.ValuationVersion != prior.ValuationVersion
+                    || replacement.ValuationStatus != StockValuationStatuses.Valued || replacement.Direction != -1
+                    || replacement.ValuationSource != StockValuationSources.MovingAverage || replacement.BaseQty != prior.BaseQty
+                    || replacement.OriginalValuationFactId != (prior.OriginalValuationFactId ?? prior.Id)
+                    || replacement.ValuationVersion != prior.ValuationVersion + 1
+                    || group.Any(f => f.CompanyCode != company || f.BranchCode != branch
+                        || f.LedgerEpochId != root.LedgerEpochId || f.ItemCode != history.ICode
+                        || f.EffectiveAt != history.TrxDtTime || f.CostMethod != StockCostMethods.MovingAverage
+                        || f.BusinessDate != prior.BusinessDate || f.PeriodKey != prior.PeriodKey
+                        || f.SourceLineId != prior.SourceLineId || f.SourceDocumentType != prior.SourceDocumentType
+                        || f.SourceDocumentId != prior.SourceDocumentId || f.SourceDocumentNo != prior.SourceDocumentNo
+                        || f.SourceDocumentLine != prior.SourceDocumentLine || f.MovementCode != prior.MovementCode
+                        || f.BaseUom != prior.BaseUom || f.FromBalLocId != prior.FromBalLocId
+                        || f.BaseCostAmount != f.CostAmount || f.CostAmount < 0m)
+                    || groupEffects.Length != 2 || groupEffects.Any(e => e.CompanyCode != company
+                        || e.BranchCode != branch || e.ReplayRunId != run.Id || e.BusinessOwnerPostingId != owner.Id
+                        || e.AffectedEntityType != StockReplayEffectTypes.StockValuationFact || e.OriginalEntityId != prior.Id))
+                    return false;
+                if (history.TrxDtTime > latestIssue)
+                    latestIssue = history.TrxDtTime;
+            }
+            if (run.LatestEffectiveAt != latestIssue)
+                return false;
             var adjustment = adjustments[0];
             var settlement = settlements[0];
             if (value.CompanyCode != company || value.BranchCode != branch || value.LedgerEpochId != root.LedgerEpochId
                 || value.SourceDocumentType != "PO_INVOICE" || value.SourceDocumentId != root.SourceDocumentId
                 || value.SourceDocumentNo != root.SourceDocumentNo || value.EffectiveAt != root.EffectiveAt
                 || value.BusinessDate != root.BusinessDate || value.PeriodKey != root.PeriodKey
-                || value.ItemCode != history.ICode || value.BaseQty != 0m || value.CostMethod != StockCostMethods.MovingAverage
+                || value.BaseQty != 0m || value.CostMethod != StockCostMethods.MovingAverage
                 || value.BaseCostAmount != value.CostAmount || value.CostAmount < 0m || value.Direction is not (-1 or 1)
                 || value.ValuationSource != StockValuationSources.PurchasePriceVariance
                 || value.MovementCode != (value.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")

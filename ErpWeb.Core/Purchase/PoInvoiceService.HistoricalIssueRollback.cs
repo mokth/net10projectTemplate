@@ -13,7 +13,7 @@ public sealed partial class PoInvoiceService
         string Fingerprint, long EpochId, long Watermark, string PoNo, short PoRelNo, short PoLineNo,
         long OriginalPostingId, long OriginalFactId, InvoiceIssueReplay IssueReplay);
 
-    // Prove the original invoice and one later ordinary issue before removing
+    // Prove the original invoice and its later ordinary issues before removing
     // the invoice value at its own business position.
     private async Task<InvoiceIssueRemovalPlan?> PlanInvoiceIssueRemovalAsync(
         AppDbContext db, PoInvoice invoice, CancellationToken ct)
@@ -106,36 +106,14 @@ public sealed partial class PoInvoiceService
             root.PostingSequence, $"V{factId:D20}", 0);
         var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db,
             invoice.CompanyCode, invoice.BranchCode, item, key, ct);
-        if (tail.LaterEvents.Count != 1 || tail.LaterEvents[0].EventId is not (> 0 and <= int.MaxValue)
-            || tail.LaterEvents[0].OldSignedQuantity >= 0m
-            || tail.LaterEvents[0].Key.EffectiveAt.Year != root.EffectiveAt.Year
-            || tail.LaterEvents[0].Key.EffectiveAt.Month != root.EffectiveAt.Month)
-            return null;
-        var issue = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
-            h.Id == (int)tail.LaterEvents[0].EventId && h.CompanyCode == invoice.CompanyCode
-            && h.BranchCode == invoice.BranchCode, ct);
-        if (issue is null || issue.TrxType != IvTrxTypes.MiscellaneousIssue
-            || issue.StockPostingId is not long ownerId || issue.FromBalLocId != balances[0].Id
-            || issue.ToBalLocId is not null)
-            return null;
-        var owner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == ownerId
-            && p.CompanyCode == invoice.CompanyCode && p.BranchCode == invoice.BranchCode, ct);
-        if (owner is null || owner.SealedAtUtc is null || owner.LedgerEpochId != root.LedgerEpochId
-            || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
-            || owner.CommandType != "IV_POST_MI" || owner.PostingRole != "PRIMARY"
-            || owner.ReversesPostingId is not null || owner.EffectiveAt != issue.TrxDtTime
-            || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(owner.SourceSnapshotJson)) != owner.SourceSnapshotHash)
-            return null;
-        var active = await StockReplayValuationGenerationResolver.ResolveAsync(db,
-            invoice.CompanyCode, invoice.BranchCode, [issue], ct);
-        if (active[issue.Id].Count != 1 || active[issue.Id][0].ProductionMovementId is not null
-            || active[issue.Id][0].WorkOrderId is not null || active[issue.Id][0].ProductionPostingLinkId is not null)
+        if (tail.LaterEvents.Count is 0 or > 2 || tail.LaterEvents.Any(e =>
+                e.Key.EffectiveAt.Year != root.EffectiveAt.Year || e.Key.EffectiveAt.Month != root.EffectiveAt.Month))
             return null;
         var policies = await db.StockCostPolicyRevisions.AsNoTracking().Where(p => p.CompanyCode == invoice.CompanyCode
             && p.BranchCode == invoice.BranchCode && p.Status == StockCostPolicyStatuses.Active
             && p.EffectiveFrom <= root.EffectiveAt.Date && (p.EffectiveTo == null || p.EffectiveTo > root.EffectiveAt.Date))
             .Select(p => new { p.Id, p.CostMethod, p.EffectiveFrom, p.EffectiveTo, p.Status }).ToArrayAsync(ct);
-        var lastDate = tail.LaterEvents[0].Key.EffectiveAt.Date;
+        var lastDate = tail.LaterEvents.Max(e => e.Key.EffectiveAt.Date);
         if (policies.Length != 1 || policies[0].EffectiveTo is DateTime end && end.Date <= lastDate
             || await db.StockCostPolicyRevisions.AsNoTracking().AnyAsync(p => p.CompanyCode == invoice.CompanyCode
                 && p.BranchCode == invoice.BranchCode && p.Status == StockCostPolicyStatuses.Active
@@ -145,18 +123,18 @@ public sealed partial class PoInvoiceService
         var removed = new StockReplayWacEvent(long.MaxValue - factId, key, 0m,
             generation.ActiveFact.SignedValue, 0m, generation.ActiveFact.SignedValue);
         var projection = StockReplayWacSimulator.SimulateRemoval(tail.CurrentQuantity, tail.CurrentValue, removed, tail.LaterEvents);
-        var issueStep = projection.LaterSteps.Single();
-        if (issueStep.SignedValue == tail.LaterEvents[0].OldSignedValue)
+        // Recompute the complete old tail before authorizing any replacement.
+        var oldTail = StockReplayWacSimulator.SimulateInsertion(tail.CurrentQuantity, tail.CurrentValue,
+            removed with { OldSignedValue = 0m, FixedSignedValue = 0m }, tail.LaterEvents);
+        if (oldTail.FinalQuantity != tail.CurrentQuantity || oldTail.FinalValue != tail.CurrentValue
+            || oldTail.LaterSteps.Any(step => !tail.LaterEvents.Any(e => e.EventId == step.EventId
+                && e.OldSignedQuantity == step.SignedQuantity && e.OldSignedValue == step.SignedValue)))
             return null;
-        // Recompute the old issue at its original state, before authorizing its replacement.
-        var oldIssue = StockReplayWacSimulator.SimulateInsertion(
-            projection.HistoricalQuantityBeforeRemovedEvent,
-            projection.HistoricalValueBeforeRemovedEvent + generation.ActiveFact.SignedValue,
-            tail.LaterEvents[0] with { OldSignedQuantity = 0m, OldSignedValue = 0m }, []);
-        if (oldIssue.Candidate.SignedValue != tail.LaterEvents[0].OldSignedValue
-            || oldIssue.FinalQuantity != tail.CurrentQuantity || oldIssue.FinalValue != tail.CurrentValue)
+        var changes = await PlanInvoiceIssueChangesAsync(db, invoice.CompanyCode, invoice.BranchCode,
+            item, root.LedgerEpochId, balances[0].Id, tail.LaterEvents, projection.LaterSteps, ct);
+        if (changes is null)
             return null;
-        var replay = new InvoiceIssueReplay(tail.LaterEvents[0], issueStep, ownerId, active[issue.Id][0].Id,
+        var replay = new InvoiceIssueReplay(changes,
             -generation.Active.InventoryAdjustmentAmount, -generation.Active.ConsumedVarianceAmount,
             balances[0].Id, balances[0].StdQty, tail.CurrentQuantity, tail.CurrentValue,
             projection.FinalQuantity, projection.FinalValue);
