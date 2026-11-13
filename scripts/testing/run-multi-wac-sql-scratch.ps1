@@ -34,13 +34,14 @@ param(
     [switch]$PartialPurchaseVariance,
     [switch]$PartialPurchaseVarianceLot,
     [switch]$FullyConsumedPurchaseVariance,
+    [switch]$BackdatedConsumedInvoice,
     [switch]$BackdatedPurchaseInvoice,
     [switch]$BackdatedPurchaseCreditNotePost,
     [switch]$BackdatedPurchaseCreditNoteRollback
 )
 
 $ErrorActionPreference = 'Stop'
-if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance) {
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
 }
@@ -83,7 +84,8 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($FullyConsumedPurchaseVariance) { 'SqlServer_receipt_replays_fully_consumed_purchase_variance' }
+    $testName = if ($BackdatedConsumedInvoice) { 'SqlServer_backdated_consumed_invoice_posts_and_rolls_back_with_later_issue' }
+        elseif ($FullyConsumedPurchaseVariance) { 'SqlServer_receipt_replays_fully_consumed_purchase_variance' }
         elseif ($PartialPurchaseVarianceLot) { 'SqlServer_lot_receipt_replays_changed_purchase_variance_split' }
         elseif ($BackdatedPurchaseCreditNotePost) { 'SqlServer_backdated_purchase_credit_note_post_rejects_later_issue_atomically' }
         elseif ($BackdatedPurchaseCreditNoteRollback) { 'SqlServer_backdated_purchase_credit_note_rollback_rejects_later_issue_atomically' }

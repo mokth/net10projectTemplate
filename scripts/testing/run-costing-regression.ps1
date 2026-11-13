@@ -90,6 +90,11 @@ $required = @(
     'Backdated_wac_misc_receipt_rejects_damaged_purchase_replay_generation',
     'Backdated_wac_lot_receipt_replays_partial_purchase_variance',
     'Backdated_wac_receipt_replays_fully_consumed_purchase_variance',
+    'Backdated_purchase_invoice_with_later_issue_uses_historical_consumed_variance',
+    'Backdated_consumed_invoice_rejects_change_after_planning',
+    'Backdated_consumed_invoice_rejects_cost_policy_change_in_later_tail',
+    'Backdated_consumed_invoice_rejects_receipt_with_inconsistent_time',
+    'Backdated_consumed_invoice_rejects_damaged_receipt_cost',
     'Fully_consumed_wac_invoice_reverses_its_zero_value_anchor',
     'Backdated_wac_receipt_rejects_purchase_variance_without_original_stock_value',
     'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
@@ -185,6 +190,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -PartialPurchaseVariance
         & $sqlRunner -Server $SqlServer -NoBuild -PartialPurchaseVarianceLot
         & $sqlRunner -Server $SqlServer -NoBuild -FullyConsumedPurchaseVariance
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedConsumedInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNoteRollback
