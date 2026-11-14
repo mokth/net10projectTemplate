@@ -18,14 +18,15 @@ public sealed partial class PoInvoiceService
     private sealed record InvoiceIssueChange(
         StockReplayWacEvent Issue, StockReplayWacStep IssueStep, long IssueOwnerId, long PriorFactId);
 
+    private sealed record InvoiceIssueTailProof(IReadOnlyList<InvoiceIssueChange> Changes, string EvidenceHash);
+
     private sealed record InvoiceIssueReplay(
-        IReadOnlyList<InvoiceIssueChange> Changes,
+        IReadOnlyList<InvoiceIssueChange> Changes, string TailEvidenceHash,
         decimal InventoryVariance, decimal ConsumedVariance, int BalanceId, decimal BalanceQty,
         decimal CurrentQuantity, decimal CurrentValue, decimal FinalQuantity, decimal FinalValue);
 
-    // A price variance has no stock-value effect when the item was completely
-    // consumed at invoice time. Prove that state from the complete active WAC
-    // tail, before the branch lock and again inside the same locked transaction.
+    // Prove the historical variance and complete active WAC tail before the
+    // branch lock and again inside the same locked transaction.
     private async Task<ConsumedInvoicePlan?> PlanConsumedInvoiceAsync(
         AppDbContext db, PoInvoice invoice, CancellationToken ct)
     {
@@ -199,9 +200,8 @@ public sealed partial class PoInvoiceService
         InvoiceIssueReplay? issueReplay = null;
         if (projection.HistoricalQuantityBeforeCandidate != 0m || projection.HistoricalValueBeforeCandidate != 0m)
         {
-            // This route is bounded to ordinary Inventory issues on one pile.
-            // Other descendants retain
-            // the existing fail-closed purchase replay guard.
+            // This route accepts ordinary Inventory issues and unchanged-cost
+            // misc receipts on one pile. Other descendants stay blocked.
             if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || balances.Length != 1)
                 return null;
             var split = StockPurchaseVarianceAllocator.Allocate(adjustment.TotalAdjustmentAmount,
@@ -211,11 +211,11 @@ public sealed partial class PoInvoiceService
                 return null;
             var repriced = StockReplayWacSimulator.SimulateInsertion(tail.CurrentQuantity, tail.CurrentValue,
                 candidate with { FixedSignedValue = split.Inventory }, tail.LaterEvents);
-            var changes = await PlanInvoiceIssueChangesAsync(db, invoice.CompanyCode, invoice.BranchCode,
+            var proof = await PlanInvoiceIssueChangesAsync(db, invoice.CompanyCode, invoice.BranchCode,
                 item, epoch[0].Id, balances[0].Id, tail.LaterEvents, repriced.LaterSteps, ct);
-            if (changes is null)
+            if (proof is null)
                 return null;
-            issueReplay = new(changes,
+            issueReplay = new(proof.Changes, proof.EvidenceHash,
                 split.Inventory, split.Consumed, balances[0].Id, balances[0].StdQty,
                 tail.CurrentQuantity, tail.CurrentValue, repriced.FinalQuantity, repriced.FinalValue);
         }
@@ -234,12 +234,12 @@ public sealed partial class PoInvoiceService
             line.PoRelNo.Value, line.PoLineNo.Value, receipt.Id, receipt.BaseUom, adjustment, issueReplay);
     }
 
-    private static async Task<IReadOnlyList<InvoiceIssueChange>?> PlanInvoiceIssueChangesAsync(
+    private static async Task<InvoiceIssueTailProof?> PlanInvoiceIssueChangesAsync(
         AppDbContext db, string company, string branch, string item, long epochId, int balanceId,
         IReadOnlyList<StockReplayWacEvent> events, IReadOnlyList<StockReplayWacStep> steps, CancellationToken ct)
     {
         if (events.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || steps.Count != events.Count
-            || events.Any(e => e.EventId is not (> 0 and <= int.MaxValue) || e.OldSignedQuantity >= 0m)
+            || events.Any(e => e.EventId is not (> 0 and <= int.MaxValue) || e.OldSignedQuantity == 0m)
             || events.Select(e => e.EventId).Distinct().Count() != events.Count
             || steps.Select(s => s.EventId).Distinct().Count() != steps.Count)
             return null;
@@ -247,10 +247,9 @@ public sealed partial class PoInvoiceService
         var issues = await db.IvTrxHistories.AsNoTracking().Where(h => ids.Contains(h.Id)
             && h.CompanyCode == company && h.BranchCode == branch).ToArrayAsync(ct);
         if (issues.Length != ids.Length || issues.Any(h => h.ICode != item || h.LedgerEpochId != epochId
-                || h.LedgerVersion != 2 || h.TrxType != IvTrxTypes.MiscellaneousIssue
+                || h.LedgerVersion != 2 || h.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.MiscellaneousReceipt)
                 || h.EntryRole != "ORIGINAL" || h.BatchStatus != IvBatchStatuses.Posted
-                || h.ValuationStatus != StockValuationStatuses.Valued || h.StockPostingId is null
-                || h.FromBalLocId != balanceId || h.ToBalLocId is not null))
+                || h.ValuationStatus != StockValuationStatuses.Valued || h.StockPostingId is null))
             return null;
         var ownerIds = issues.Select(h => h.StockPostingId!.Value).Distinct().ToArray();
         var owners = await db.StockPostings.AsNoTracking().Where(p => ownerIds.Contains(p.Id)
@@ -262,6 +261,7 @@ public sealed partial class PoInvoiceService
         var stepsById = steps.ToDictionary(s => s.EventId);
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, company, branch, issues, ct);
         var changes = new List<InvoiceIssueChange>(events.Count);
+        var receipts = new List<IvInventoryPostingService.WacFixedReceiptProof>();
         foreach (var movement in events)
         {
             var issue = issuesById[(int)movement.EventId];
@@ -270,16 +270,45 @@ public sealed partial class PoInvoiceService
             var facts = active[issue.Id];
             if (step is null || step.SignedQuantity != movement.OldSignedQuantity
                 || owner.SealedAtUtc is null || owner.LedgerEpochId != epochId
-                || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
-                || owner.CommandType != "IV_POST_MI" || owner.PostingRole != "PRIMARY"
+                || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != issue.TrxType
+                || owner.CommandType != $"IV_POST_{issue.TrxType}" || owner.PostingRole != "PRIMARY"
                 || owner.ReversesPostingId is not null || owner.EffectiveAt != issue.TrxDtTime
                 || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(owner.SourceSnapshotJson))
                     != owner.SourceSnapshotHash || facts.Count != 1 || facts[0].ProductionMovementId is not null
-                || facts[0].WorkOrderId is not null || facts[0].ProductionPostingLinkId is not null)
+                || facts[0].WorkOrderId is not null || facts[0].WorkOrderOperationId is not null
+                || facts[0].ProductionPostingLinkId is not null)
                 return null;
-            if (step.SignedValue != movement.OldSignedValue)
+            if (movement.OldSignedQuantity > 0m)
+            {
+                if (issue.TrxType != IvTrxTypes.MiscellaneousReceipt || step.SignedValue != movement.OldSignedValue)
+                    return null;
+                var receipt = IvInventoryPostingService.ValidateOriginalWacFixedReceipt(
+                    company, branch, item, epochId, balanceId, issue, movement, owner, facts[0]);
+                if (receipt is null)
+                    return null;
+                receipts.Add(receipt);
+            }
+            else if (issue.TrxType != IvTrxTypes.MiscellaneousIssue
+                || issue.FromBalLocId != balanceId || issue.ToBalLocId is not null)
+                return null;
+            else if (step.SignedValue != movement.OldSignedValue)
                 changes.Add(new(movement, step, owner.Id, facts[0].Id));
         }
-        return changes.Count == 0 ? null : changes;
+        if (changes.Count == 0)
+            return null;
+        var evidenceHash = StockPostingFingerprint.Create(new { Kind = "PI_WAC_ISSUE_TAIL" }, new
+        {
+            Owners = owners.OrderBy(p => p.Id).Select(p => new
+            {
+                p.Id, p.PostingSequence, p.RequestFingerprint, p.SourceSnapshotHash, p.SealedAtUtc
+            }).ToArray(),
+            Histories = issues.OrderBy(h => h.Id).Select(h => new
+            {
+                h.Id, h.StockPostingId, h.BatchNo, h.TrxType, h.TrxDtTime, h.FromBalLocId, h.ToBalLocId,
+                h.FrStdQty, h.ToStdQty, FactId = active[h.Id][0].Id, FactOwnerId = active[h.Id][0].StockPostingId
+            }).ToArray(),
+            Receipts = receipts.OrderBy(r => r.HistoryId).ToArray()
+        }).SourceSnapshotHash;
+        return new(changes, evidenceHash);
     }
 }

@@ -42,6 +42,8 @@ param(
     [switch]$BackdatedInvoiceTenIssues,
     [switch]$BackdatedInvoiceTenConcurrent,
     [switch]$BackdatedInvoiceIssueBoundary,
+    [switch]$BackdatedInvoiceMixedReceipt,
+    [switch]$BackdatedInvoiceMixedReceiptFirst,
     [switch]$InvoiceBeforeTwoIssues,
     [switch]$BackdatedInvoiceDepleted,
     [switch]$BackdatedPurchaseInvoice,
@@ -50,7 +52,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $BackdatedInvoiceTenIssues -or $BackdatedInvoiceTenConcurrent -or $BackdatedInvoiceIssueBoundary -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $BackdatedInvoiceTenIssues -or $BackdatedInvoiceTenConcurrent -or $BackdatedInvoiceIssueBoundary -or $BackdatedInvoiceMixedReceipt -or $BackdatedInvoiceMixedReceiptFirst -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
 }
@@ -94,6 +96,8 @@ try {
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($BackdatedInvoiceMixedReceiptFirst) { 'SqlServer_backdated_invoice_rolls_back_after_later_receipt' }
+        elseif ($BackdatedInvoiceMixedReceipt) { 'SqlServer_backdated_invoice_reprices_issues_around_later_receipt_atomically' }
         elseif ($BackdatedInvoiceTenConcurrent) { 'SqlServer_concurrent_backdated_invoice_with_ten_issues_posts_once' }
         elseif ($BackdatedInvoiceIssueBoundary) { 'SqlServer_backdated_invoice_replays_one_hundred_issues_and_rejects_more' }
         elseif ($BackdatedInvoiceTenIssues) { 'SqlServer_backdated_invoice_reprices_ten_issues_atomically' }

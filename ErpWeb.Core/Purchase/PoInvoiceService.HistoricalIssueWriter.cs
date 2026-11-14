@@ -25,7 +25,8 @@ public sealed partial class PoInvoiceService
             || replay.Changes.Any(c => context.Posting.EffectiveAt > c.Issue.Key.EffectiveAt
                 || context.Posting.EffectiveAt.Year != c.Issue.Key.EffectiveAt.Year
                 || context.Posting.EffectiveAt.Month != c.Issue.Key.EffectiveAt.Month)
-            || planHash.Length != 64 || value is null || value.PostingLineNo != request.SourceDocumentLine
+            || planHash.Length != 64 || replay.TailEvidenceHash.Length != 64
+            || value is null || value.PostingLineNo != request.SourceDocumentLine
             || value.SplitOrdinal != 0 || value.ItemCode != request.ItemCode
             || value.Amount != Math.Abs(request.InventoryAdjustmentAmount)
             || value.Direction is not (-1 or 1)

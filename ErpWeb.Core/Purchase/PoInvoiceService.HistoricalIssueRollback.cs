@@ -13,8 +13,8 @@ public sealed partial class PoInvoiceService
         string Fingerprint, long EpochId, long Watermark, string PoNo, short PoRelNo, short PoLineNo,
         long OriginalPostingId, long OriginalFactId, InvoiceIssueReplay IssueReplay);
 
-    // Prove the original invoice and its later ordinary issues before removing
-    // the invoice value at its own business position.
+    // Prove the original invoice and its later issues and receipts before
+    // removing the invoice value at its own business position.
     private async Task<InvoiceIssueRemovalPlan?> PlanInvoiceIssueRemovalAsync(
         AppDbContext db, PoInvoice invoice, CancellationToken ct)
     {
@@ -130,11 +130,11 @@ public sealed partial class PoInvoiceService
             || oldTail.LaterSteps.Any(step => !tail.LaterEvents.Any(e => e.EventId == step.EventId
                 && e.OldSignedQuantity == step.SignedQuantity && e.OldSignedValue == step.SignedValue)))
             return null;
-        var changes = await PlanInvoiceIssueChangesAsync(db, invoice.CompanyCode, invoice.BranchCode,
+        var proof = await PlanInvoiceIssueChangesAsync(db, invoice.CompanyCode, invoice.BranchCode,
             item, root.LedgerEpochId, balances[0].Id, tail.LaterEvents, projection.LaterSteps, ct);
-        if (changes is null)
+        if (proof is null)
             return null;
-        var replay = new InvoiceIssueReplay(changes,
+        var replay = new InvoiceIssueReplay(proof.Changes, proof.EvidenceHash,
             -generation.Active.InventoryAdjustmentAmount, -generation.Active.ConsumedVarianceAmount,
             balances[0].Id, balances[0].StdQty, tail.CurrentQuantity, tail.CurrentValue,
             projection.FinalQuantity, projection.FinalValue);
