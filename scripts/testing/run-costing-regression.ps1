@@ -110,6 +110,18 @@ $required = @(
     'Purchase_invoice_posted_before_mixed_tail_reprices_issues_on_rollback',
     'Backdated_purchase_invoice_rejects_damaged_later_receipt_value',
     'Backdated_purchase_invoice_can_roll_back_after_later_receipt_is_removed',
+    'Backdated_purchase_invoice_reprices_issues_around_later_goods_receipt',
+    'Purchase_invoice_before_goods_receipt_reprices_issues_on_rollback',
+    'Backdated_purchase_invoice_can_roll_back_after_later_goods_receipt_is_removed',
+    'Backdated_purchase_invoice_rejects_invoiced_later_goods_receipt',
+    'Backdated_purchase_invoice_rejects_damaged_later_goods_receipt',
+    'Backdated_purchase_invoice_rejects_changed_later_goods_purchase_evidence',
+    'Backdated_purchase_invoice_replays_later_goods_on_same_order_line',
+    'Backdated_purchase_invoice_rolls_back_after_same_order_goods_receipt',
+    'Purchase_invoice_before_same_order_goods_receipt_reprices_issues_on_rollback',
+    'Purchase_invoice_rejects_another_invoice_on_later_same_order_goods',
+    'Backdated_purchase_invoice_before_later_goods_respects_disabled_replay',
+    'Same_order_goods_rollback_rejects_damaged_earlier_invoice',
     'Fully_consumed_wac_invoice_reverses_its_zero_value_anchor',
     'Backdated_wac_receipt_rejects_purchase_variance_without_original_stock_value',
     'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
@@ -216,6 +228,10 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceIssueBoundary
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedReceipt
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedReceiptFirst
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedGoods
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedGoodsFirst
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSameOrder
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSameOrderGoodsFirst
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDepleted
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost

@@ -44,6 +44,10 @@ param(
     [switch]$BackdatedInvoiceIssueBoundary,
     [switch]$BackdatedInvoiceMixedReceipt,
     [switch]$BackdatedInvoiceMixedReceiptFirst,
+    [switch]$BackdatedInvoiceMixedGoods,
+    [switch]$BackdatedInvoiceMixedGoodsFirst,
+    [switch]$BackdatedInvoiceSameOrder,
+    [switch]$BackdatedInvoiceSameOrderGoodsFirst,
     [switch]$InvoiceBeforeTwoIssues,
     [switch]$BackdatedInvoiceDepleted,
     [switch]$BackdatedPurchaseInvoice,
@@ -52,7 +56,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $BackdatedInvoiceTenIssues -or $BackdatedInvoiceTenConcurrent -or $BackdatedInvoiceIssueBoundary -or $BackdatedInvoiceMixedReceipt -or $BackdatedInvoiceMixedReceiptFirst -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $BackdatedInvoiceTenIssues -or $BackdatedInvoiceTenConcurrent -or $BackdatedInvoiceIssueBoundary -or $BackdatedInvoiceMixedReceipt -or $BackdatedInvoiceMixedReceiptFirst -or $BackdatedInvoiceMixedGoods -or $BackdatedInvoiceMixedGoodsFirst -or $BackdatedInvoiceSameOrder -or $BackdatedInvoiceSameOrderGoodsFirst -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
 }
@@ -96,6 +100,10 @@ try {
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($BackdatedInvoiceSameOrderGoodsFirst) { 'SqlServer_same_order_goods_receipt_rolls_back_before_invoice_atomically' }
+        elseif ($BackdatedInvoiceSameOrder) { 'SqlServer_backdated_invoice_reprices_later_goods_on_same_order_atomically' }
+        elseif ($BackdatedInvoiceMixedGoodsFirst) { 'SqlServer_backdated_invoice_rolls_back_after_later_goods_receipt' }
+        elseif ($BackdatedInvoiceMixedGoods) { 'SqlServer_backdated_invoice_reprices_issues_around_later_goods_receipt_atomically' }
         elseif ($BackdatedInvoiceMixedReceiptFirst) { 'SqlServer_backdated_invoice_rolls_back_after_later_receipt' }
         elseif ($BackdatedInvoiceMixedReceipt) { 'SqlServer_backdated_invoice_reprices_issues_around_later_receipt_atomically' }
         elseif ($BackdatedInvoiceTenConcurrent) { 'SqlServer_concurrent_backdated_invoice_with_ten_issues_posts_once' }

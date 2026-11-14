@@ -742,6 +742,9 @@ public sealed partial class IvInventoryPostingService
                     invoiceCheck.Error);
             replayInvoice = invoiceCheck.Invoice;
         }
+        var earlierInvoiceProof = replayInvoice is null ? null
+            : await ProveEarlierInvoiceIndependentOfReceiptAsync(read, companyCode, branchCode,
+                replayInvoice, original.Id, owner.Id, cancellationToken);
         if (hasReversedSale && replayInvoice is not null)
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 "This goods receipt cannot yet replay both a reversed sale and a purchase invoice settlement.");
@@ -781,6 +784,31 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (earlierInvoiceProof is not null && write.Database.IsSqlServer())
+        {
+            try
+            {
+                // Purchase posting may hold these rows while waiting for the
+                // branch; never wait on that inverted lock order.
+                var lockedOrders = await write.PoOrders.FromSqlInterpolated($@"SELECT * FROM dbo.POOrder WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                    WHERE CompanyCode = {companyCode} AND BranchCode = {branchCode}
+                        AND PONo = {original.PoNo} AND PORelNo = {original.PoRelNo}")
+                    .AsNoTracking().ToArrayAsync(cancellationToken);
+                var lockedLines = await write.PoOrderDetails.FromSqlInterpolated($@"SELECT * FROM dbo.PODetail WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                    WHERE CompanyCode = {companyCode} AND BranchCode = {branchCode}
+                        AND PONo = {original.PoNo} AND PORelNo = {original.PoRelNo} AND Line = {original.PoLineNo}")
+                    .AsNoTracking().ToArrayAsync(cancellationToken);
+                var lockedInvoices = await write.PoInvoices.FromSqlInterpolated($@"SELECT * FROM dbo.POInvoice WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                    WHERE CompanyCode = {companyCode} AND BranchCode = {branchCode} AND DocNo = {replayInvoice!.DocNo}")
+                    .AsNoTracking().ToArrayAsync(cancellationToken);
+                if (lockedOrders.Length != 1 || lockedLines.Length != 1 || lockedInvoices.Length != 1)
+                    return IvInventoryPostingBatchResult.Fail(batchNo, "The earlier invoice or purchase order changed. Retry rollback.");
+            }
+            catch (Microsoft.Data.SqlClient.SqlException error) when (error.Number == 1222)
+            {
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The purchase document is busy. Try again.");
+            }
+        }
         IvTrxBatch? lockedBatch = null;
         if (isReceipt)
         {
@@ -1018,6 +1046,13 @@ public sealed partial class IvInventoryPostingService
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     currentInvoice.Error ?? "The posted invoice changed after GR rollback planning.");
             }
+            if (earlierInvoiceProof is not null && (currentInvoice.Invoice is null
+                || earlierInvoiceProof != await ProveEarlierInvoiceIndependentOfReceiptAsync(write,
+                    companyCode, branchCode, currentInvoice.Invoice, original.Id, owner.Id, cancellationToken)))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The earlier invoice settlement changed. Retry rollback.");
+            }
             if (financial.Tail.LaterEvents.Count > 0
                 && await CheckSimpleWacTailAsync(write,
                     financial.Tail.LaterEvents, original.TrxDtTime,
@@ -1135,7 +1170,7 @@ public sealed partial class IvInventoryPostingService
         if (reversedIssuePlan is { IsCostNeutral: false })
             await AppendWacReversedIssueCorrectionAsync(context, reversedIssuePlan,
                 financial.PlanHash, physical.BranchWatermark, cancellationToken);
-        if (replayInvoice is not null)
+        if (replayInvoice is not null && earlierInvoiceProof is null)
         {
             var remap = await new PurchaseReceiptCostSettlementService()
                 .RemapValueNeutralInvoiceAsync(context, replayInvoice,

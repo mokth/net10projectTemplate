@@ -18,10 +18,12 @@ public sealed partial class PoInvoiceService
     private sealed record InvoiceIssueChange(
         StockReplayWacEvent Issue, StockReplayWacStep IssueStep, long IssueOwnerId, long PriorFactId);
 
-    private sealed record InvoiceIssueTailProof(IReadOnlyList<InvoiceIssueChange> Changes, string EvidenceHash);
+    private sealed record InvoiceIssueTailProof(IReadOnlyList<InvoiceIssueChange> Changes, string EvidenceHash,
+        IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts);
 
     private sealed record InvoiceIssueReplay(
         IReadOnlyList<InvoiceIssueChange> Changes, string TailEvidenceHash,
+        IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts,
         decimal InventoryVariance, decimal ConsumedVariance, int BalanceId, decimal BalanceQty,
         decimal CurrentQuantity, decimal CurrentValue, decimal FinalQuantity, decimal FinalValue);
 
@@ -201,7 +203,7 @@ public sealed partial class PoInvoiceService
         if (projection.HistoricalQuantityBeforeCandidate != 0m || projection.HistoricalValueBeforeCandidate != 0m)
         {
             // This route accepts ordinary Inventory issues and unchanged-cost
-            // misc receipts on one pile. Other descendants stay blocked.
+            // fixed-cost receipts on one pile. Other descendants stay blocked.
             if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || balances.Length != 1)
                 return null;
             var split = StockPurchaseVarianceAllocator.Allocate(adjustment.TotalAdjustmentAmount,
@@ -212,10 +214,12 @@ public sealed partial class PoInvoiceService
             var repriced = StockReplayWacSimulator.SimulateInsertion(tail.CurrentQuantity, tail.CurrentValue,
                 candidate with { FixedSignedValue = split.Inventory }, tail.LaterEvents);
             var proof = await PlanInvoiceIssueChangesAsync(db, invoice.CompanyCode, invoice.BranchCode,
-                item, epoch[0].Id, balances[0].Id, tail.LaterEvents, repriced.LaterSteps, ct);
+                item, epoch[0].Id, balances[0].Id, invoice.DocNo, line.PoNo, line.PoRelNo.Value,
+                line.PoLineNo.Value, PoOrderCalc.RoundQty(line.Qty), invoicePosted: false,
+                tail.LaterEvents, repriced.LaterSteps, ct);
             if (proof is null)
                 return null;
-            issueReplay = new(proof.Changes, proof.EvidenceHash,
+            issueReplay = new(proof.Changes, proof.EvidenceHash, proof.GoodsReceipts,
                 split.Inventory, split.Consumed, balances[0].Id, balances[0].StdQty,
                 tail.CurrentQuantity, tail.CurrentValue, repriced.FinalQuantity, repriced.FinalValue);
         }
@@ -236,6 +240,8 @@ public sealed partial class PoInvoiceService
 
     private static async Task<InvoiceIssueTailProof?> PlanInvoiceIssueChangesAsync(
         AppDbContext db, string company, string branch, string item, long epochId, int balanceId,
+        string invoiceDocNo, string invoicePoNo, short invoicePoRelNo, short invoicePoLineNo,
+        decimal invoiceQty, bool invoicePosted,
         IReadOnlyList<StockReplayWacEvent> events, IReadOnlyList<StockReplayWacStep> steps, CancellationToken ct)
     {
         if (events.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || steps.Count != events.Count
@@ -247,7 +253,7 @@ public sealed partial class PoInvoiceService
         var issues = await db.IvTrxHistories.AsNoTracking().Where(h => ids.Contains(h.Id)
             && h.CompanyCode == company && h.BranchCode == branch).ToArrayAsync(ct);
         if (issues.Length != ids.Length || issues.Any(h => h.ICode != item || h.LedgerEpochId != epochId
-                || h.LedgerVersion != 2 || h.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.MiscellaneousReceipt)
+                || h.LedgerVersion != 2 || h.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
                 || h.EntryRole != "ORIGINAL" || h.BatchStatus != IvBatchStatuses.Posted
                 || h.ValuationStatus != StockValuationStatuses.Valued || h.StockPostingId is null))
             return null;
@@ -280,7 +286,8 @@ public sealed partial class PoInvoiceService
                 return null;
             if (movement.OldSignedQuantity > 0m)
             {
-                if (issue.TrxType != IvTrxTypes.MiscellaneousReceipt || step.SignedValue != movement.OldSignedValue)
+                if (issue.TrxType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+                    || step.SignedValue != movement.OldSignedValue)
                     return null;
                 var receipt = IvInventoryPostingService.ValidateOriginalWacFixedReceipt(
                     company, branch, item, epochId, balanceId, issue, movement, owner, facts[0]);
@@ -296,6 +303,11 @@ public sealed partial class PoInvoiceService
         }
         if (changes.Count == 0)
             return null;
+        var purchaseReceipts = await ProveInvoiceLaterGoodsReceiptsAsync(db, company, branch, item,
+            invoiceDocNo, invoicePoNo, invoicePoRelNo, invoicePoLineNo, invoiceQty, invoicePosted,
+            issues, ownersById, active, ct);
+        if (purchaseReceipts is null)
+            return null;
         var evidenceHash = StockPostingFingerprint.Create(new { Kind = "PI_WAC_ISSUE_TAIL" }, new
         {
             Owners = owners.OrderBy(p => p.Id).Select(p => new
@@ -307,8 +319,9 @@ public sealed partial class PoInvoiceService
                 h.Id, h.StockPostingId, h.BatchNo, h.TrxType, h.TrxDtTime, h.FromBalLocId, h.ToBalLocId,
                 h.FrStdQty, h.ToStdQty, FactId = active[h.Id][0].Id, FactOwnerId = active[h.Id][0].StockPostingId
             }).ToArray(),
-            Receipts = receipts.OrderBy(r => r.HistoryId).ToArray()
+            Receipts = receipts.OrderBy(r => r.HistoryId).ToArray(),
+            PurchaseReceipts = purchaseReceipts
         }).SourceSnapshotHash;
-        return new(changes, evidenceHash);
+        return new(changes, evidenceHash, purchaseReceipts);
     }
 }

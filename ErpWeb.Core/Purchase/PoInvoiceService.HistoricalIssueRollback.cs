@@ -131,10 +131,12 @@ public sealed partial class PoInvoiceService
                 && e.OldSignedQuantity == step.SignedQuantity && e.OldSignedValue == step.SignedValue)))
             return null;
         var proof = await PlanInvoiceIssueChangesAsync(db, invoice.CompanyCode, invoice.BranchCode,
-            item, root.LedgerEpochId, balances[0].Id, tail.LaterEvents, projection.LaterSteps, ct);
+            item, root.LedgerEpochId, balances[0].Id, invoice.DocNo, line.PoNo, line.PoRelNo.Value,
+            line.PoLineNo.Value, PoOrderCalc.RoundQty(line.Qty), invoicePosted: true,
+            tail.LaterEvents, projection.LaterSteps, ct);
         if (proof is null)
             return null;
-        var replay = new InvoiceIssueReplay(proof.Changes, proof.EvidenceHash,
+        var replay = new InvoiceIssueReplay(proof.Changes, proof.EvidenceHash, proof.GoodsReceipts,
             -generation.Active.InventoryAdjustmentAmount, -generation.Active.ConsumedVarianceAmount,
             balances[0].Id, balances[0].StdQty, tail.CurrentQuantity, tail.CurrentValue,
             projection.FinalQuantity, projection.FinalValue);

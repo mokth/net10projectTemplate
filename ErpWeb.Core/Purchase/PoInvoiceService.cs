@@ -1034,6 +1034,12 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                         WHERE CompanyCode = {write.CompanyCode} AND BranchCode = {write.BranchCode}
                             AND PONo = {consumedPlan.PoNo} AND PORelNo = {consumedPlan.PoRelNo} AND Line = {consumedPlan.PoLineNo}")
                         .AsNoTracking().ToArrayAsync(cancellationToken);
+                    if (!await LockInvoiceLaterGoodsReceiptOrdersAsync(db, write.CompanyCode, write.BranchCode!,
+                            consumedPlan.IssueReplay?.GoodsReceipts, cancellationToken))
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return PoInvoicePostingItemResult.Failed(docNo, "The later receipt purchase evidence changed. Retry the invoice.");
+                    }
                 }
             }
             var invoice = await _invoices.LockForUpdateAsync(db, write.CompanyCode, write.BranchCode, docNo, cancellationToken);
@@ -1381,6 +1387,12 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                         WHERE CompanyCode = {write.CompanyCode} AND BranchCode = {write.BranchCode}
                             AND PONo = {issueRemoval.PoNo} AND PORelNo = {issueRemoval.PoRelNo} AND Line = {issueRemoval.PoLineNo}")
                         .AsNoTracking().ToArrayAsync(cancellationToken);
+                    if (!await LockInvoiceLaterGoodsReceiptOrdersAsync(db, write.CompanyCode, write.BranchCode!,
+                            issueRemoval.IssueReplay.GoodsReceipts, cancellationToken))
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return PoInvoicePostingItemResult.Failed(docNo, "The later receipt purchase evidence changed. Retry the invoice rollback.");
+                    }
                 }
             }
             var invoice = await _invoices.LockForUpdateAsync(db, write.CompanyCode, write.BranchCode, docNo, cancellationToken);
