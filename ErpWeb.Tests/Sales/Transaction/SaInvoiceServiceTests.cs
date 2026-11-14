@@ -2916,6 +2916,50 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     public Task Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost() =>
         ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, returnAfterPurchase: true);
 
+    [Theory]
+    [InlineData(false, 11)]
+    [InlineData(false, 9)]
+    [InlineData(true, 11)]
+    [InlineData(true, 9)]
+    public Task Backdated_purchase_invoice_reprices_delivery_and_rolls_back(bool billed, decimal invoicePrice) =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(invoicePrice, viaDelivery: true, billingMode: billed ? 1 : 0);
+
+    [Fact]
+    public Task Purchase_invoice_before_delivery_reprices_cost_on_rollback() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, purchaseBeforeSale: true);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_rejects_partially_billed_delivery() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 2);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_rejects_damaged_delivery_billing() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 1, damageApplication: true);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_rejects_delivery_billing_changed_after_planning() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 1, changeBillingAfterPlan: true);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_rejects_damaged_delivery_line() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, damageSale: true);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_delivery_replay_blocks_damaged_audit() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 1, damageReplayAudit: true);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_before_delivery_respects_disabled_replay() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, enabled: false);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_rejects_return_draft_on_billed_delivery() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 1, returnDraft: true);
+
+    [Fact]
+    public Task Sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost() =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 1, returnAfterPurchase: true);
+
     [MultiWacReceiptSqlFact]
     [Trait(TestCategories.Name, TestCategories.SqlServer)]
     public async Task SqlServer_backdated_purchase_invoice_reprices_direct_sale_atomically()
@@ -2940,9 +2984,35 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         await ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, returnAfterPurchase: true);
     }
 
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, TestCategories.SqlServer)]
+    public async Task SqlServer_backdated_purchase_invoice_reprices_unbilled_delivery_atomically()
+    {
+        await PrepareSqlReceiptFixtureAsync();
+        await ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true);
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, TestCategories.SqlServer)]
+    public async Task SqlServer_backdated_purchase_invoice_reprices_billed_delivery_atomically()
+    {
+        await PrepareSqlReceiptFixtureAsync();
+        await ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 1);
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, TestCategories.SqlServer)]
+    public async Task SqlServer_sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost()
+    {
+        await PrepareSqlReceiptFixtureAsync();
+        await ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 1, returnAfterPurchase: true);
+    }
+
     private async Task ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(decimal invoicePrice,
         bool enabled = true, bool damageSale = false, bool laterIssue = false, bool returnDraft = false,
-        bool purchaseBeforeSale = false, bool returnAfterPurchase = false)
+        bool purchaseBeforeSale = false, bool returnAfterPurchase = false, bool viaDelivery = false,
+        int billingMode = 0, bool damageApplication = false, bool changeBillingAfterPlan = false,
+        bool damageReplayAudit = false)
     {
         var balanceId = await SeedBalLocAsync(0m, FixedToday.AddDays(-5));
         await using (var db = await _factory.CreateDbContextAsync())
@@ -3002,7 +3072,24 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         Assert.True(received.Succeeded, received.ErrorMessage);
         var goodsPost = await goods.PostAsync([received.BatchNo]);
         Assert.True(goodsPost.Succeeded, goodsPost.ErrorMessage);
-        var branchLock = new BranchStockTransactionLock();
+        IBranchStockTransactionLock branchLock = new BranchStockTransactionLock();
+        if (changeBillingAfterPlan)
+        {
+            var actualLock = branchLock;
+            var changed = false;
+            var mock = new Mock<IBranchStockTransactionLock>();
+            mock.Setup(x => x.AcquireAsync(It.IsAny<AppDbContext>(), It.IsAny<string>(),
+                    It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns(async (AppDbContext lockedDb, string company, string branch, CancellationToken ct) =>
+                {
+                    await actualLock.AcquireAsync(lockedDb, company, branch, ct);
+                    if (changed) return;
+                    changed = true;
+                    await lockedDb.SaDocApplications.Where(a => a.SourceDocType == SaDocTypes.Do)
+                        .ExecuteUpdateAsync(u => u.SetProperty(a => a.AppliedAmount, a => (a.AppliedAmount ?? 0m) + 1m), ct);
+                });
+            branchLock = mock.Object;
+        }
         var coordinator = new StockPostingCoordinator(_factory, tenant, branchLock,
             new StockPeriodGuard(), new NoActiveStockFreezeGuard(), new InventoryValuationService());
         var purchase = new PoInvoiceService(_factory, tenant, Access().Object,
@@ -3034,12 +3121,64 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         }
         var sale = CreateSut(posting: InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
             enableBackdatedReplay: true));
-        var saleDoc = await sale.SaveNewAsync(Request(qty: 4m, price: 10m));
-        Assert.True(saleDoc.Succeeded, saleDoc.ErrorMessage);
-        var shipped = await ShipAsync(sale, saleDoc.InvNo!);
-        Assert.True(shipped.Succeeded, shipped.ErrorMessage);
-        var salePost = await sale.PostAsync([saleDoc.InvNo!]);
-        Assert.True(salePost.Succeeded, salePost.ErrorMessage);
+        SaDoService? delivery = null;
+        string? deliveryNo = null;
+        string? salesInvoiceNo = null;
+        string saleHistoryNo;
+        if (viaDelivery)
+        {
+            var postingRepo = new IvStockPostingRepository();
+            var salesOrders = new SaSoRepository();
+            delivery = new SaDoService(_factory, tenant, Access().Object,
+                new FakeDoDocumentNumberingService(), new FixedCurrentDateService(FixedToday),
+                new SaDoRepository(), new SaCustRepository(_factory), new IvStockMasterRepository(_factory),
+                new IvStockCommonRepository(_factory), new IvStockTransactionRepository(), postingRepo,
+                InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true),
+                new IvSpShipmentService(postingRepo, new IvStockTransactionRepository(), new RunningNumberService()),
+                salesOrders, new SaDocApplicationService(salesOrders, new SaDoRepository()),
+                new SaCustLookupService(_factory, tenant), NullLogger<SaDoService>.Instance);
+            var saved = await delivery.SaveNewAsync(new SaDoSaveRequest
+            {
+                DoDate = FixedToday, CustCode = "CUST01", Currency = "MYR", PayCode = "NET30", SalesRep = "SM1",
+                Lines = [new SaDoLineRequest { ICode = "A100", Qty = 4m, UnitPrice = 10m, FrWarehouse = "MAIN" }]
+            });
+            Assert.True(saved.Succeeded, saved.ErrorMessage);
+            deliveryNo = saved.DoNo!;
+            var token = (await delivery.GetAsync(deliveryNo)).Document!.RowVersion;
+            var shipment = await delivery.AddShipmentAsync(deliveryNo, false, token);
+            Assert.True(shipment.Succeeded, shipment.ErrorMessage);
+            token = (await delivery.GetAsync(deliveryNo)).Document!.RowVersion;
+            var posted = await delivery.PostAsync([new SaDoKeyedRequest { DoNo = deliveryNo, RowVersion = token }]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            saleHistoryNo = deliveryNo;
+            if (billingMode != 0)
+            {
+                var invoice = await sale.SaveNewAsync(new SaInvoiceSaveRequest
+                {
+                    InvDate = FixedToday, CustCode = "CUST01", Currency = "MYR", PayCode = "NET30", SalesmanCode = "SM1",
+                    Lines = [new SaInvoiceLineRequest
+                    {
+                        ICode = "A100", Qty = billingMode == 2 ? 2m : 4m, UnitPrice = 10m,
+                        FrWarehouse = "MAIN", LinkDo = true, DoNo = deliveryNo, DoLine = 1
+                    }]
+                });
+                Assert.True(invoice.Succeeded, invoice.ErrorMessage);
+                salesInvoiceNo = invoice.InvNo!;
+                var billed = await sale.PostAsync([salesInvoiceNo]);
+                Assert.True(billed.Succeeded, billed.ErrorMessage);
+            }
+        }
+        else
+        {
+            var saleDoc = await sale.SaveNewAsync(Request(qty: 4m, price: 10m));
+            Assert.True(saleDoc.Succeeded, saleDoc.ErrorMessage);
+            salesInvoiceNo = saleDoc.InvNo!;
+            saleHistoryNo = salesInvoiceNo;
+            var shipped = await ShipAsync(sale, salesInvoiceNo);
+            Assert.True(shipped.Succeeded, shipped.ErrorMessage);
+            var salePost = await sale.PostAsync([salesInvoiceNo]);
+            Assert.True(salePost.Succeeded, salePost.ErrorMessage);
+        }
         if (laterIssue)
         {
             var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday, enableBackdatedReplay: true);
@@ -3068,7 +3207,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             var saved = await note.SaveNewAsync(new SaCdnSaveRequest
             {
                 Type = "CN", DocDate = FixedToday, CustCode = "CUST01", Currency = "MYR",
-                InvNo = saleDoc.InvNo, SalesmanCode = "SM1", ReturnStock = true,
+                InvNo = salesInvoiceNo, SalesmanCode = "SM1", ReturnStock = true,
                 Lines = [new SaCdnLineRequest
                 {
                     ICode = "A100", Qty = 1m, UnitPrice = 10m, SourceInvLine = 1,
@@ -3084,7 +3223,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             await using var db = await _factory.CreateDbContextAsync();
             var state = await db.StockCostStates.SingleAsync();
             var history = await db.IvTrxHistories.SingleAsync(h => h.TrxType == IvTrxTypes.SalesOut
-                && h.EntryRole == "ORIGINAL" && h.InvNo == saleDoc.InvNo);
+                && h.EntryRole == "ORIGINAL" && h.InvNo == saleHistoryNo);
             var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
             return (state.OnHandBaseQty, state.InventoryValue, (await db.IvBalLocs.SingleAsync(b => b.Id == balanceId)).StdQty,
                 (await db.PoOrderDetails.SingleAsync()).InvoicedQty,
@@ -3099,11 +3238,14 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             var state = await CaptureAsync();
             Assert.Equal((14m, value, 14m, invoiced, saleCost),
                 (state.Qty, state.Value, state.Balance, state.Invoiced, state.SaleCost));
-            var inquiry = new SalesGrossProfitInquiryService(_factory, tenant);
-            var row = Assert.Single((await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery
-                { InvoiceNo = saleDoc.InvNo })).Rows);
-            Assert.True(row.CogsResolved);
-            Assert.Equal(saleCost, row.Cogs);
+            if (salesInvoiceNo is not null)
+            {
+                var inquiry = new SalesGrossProfitInquiryService(_factory, tenant);
+                var row = Assert.Single((await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery
+                    { InvoiceNo = salesInvoiceNo })).Rows);
+                Assert.True(row.CogsResolved);
+                Assert.Equal(saleCost, row.Cogs);
+            }
             await using var db = await _factory.CreateDbContextAsync();
             var first = new DateTime(FixedToday.Year, FixedToday.Month, 1);
             Assert.Null(await StockValuationSnapshotBuilder.AppendAsync(db, "DEMO", "HQ", first,
@@ -3115,15 +3257,25 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             var key = new PoInvoiceKeyedRequest { DocNo = draft.DocNo!, RowVersion = current.RowVersion };
             return posting ? await purchase.PostAsync([key]) : await purchase.RollbackAsync([key]);
         }
-        async Task AssertSaleBusyAsync(bool posting)
+        async Task AssertSaleBusyAsync(bool posting, bool holdInvoice = false)
         {
             var before = await CaptureAsync();
             await using var holding = await _factory.CreateDbContextAsync();
             await using var tx = await holding.Database.BeginTransactionAsync();
-            var held = await holding.SaInvoices.FromSqlInterpolated($@"SELECT * FROM dbo.SaInvoice WITH (UPDLOCK, HOLDLOCK)
-                WHERE CompanyCode = {"DEMO"} AND BranchCode = {"HQ"} AND InvNo = {saleDoc.InvNo}")
-                .AsNoTracking().ToArrayAsync();
-            Assert.Single(held);
+            if (deliveryNo is not null && !holdInvoice)
+            {
+                var held = await holding.SaDos.FromSqlInterpolated($@"SELECT * FROM dbo.SaDO WITH (UPDLOCK, HOLDLOCK)
+                    WHERE CompanyCode = {"DEMO"} AND BranchCode = {"HQ"} AND DONo = {deliveryNo}")
+                    .AsNoTracking().ToArrayAsync();
+                Assert.Single(held);
+            }
+            else
+            {
+                var held = await holding.SaInvoices.FromSqlInterpolated($@"SELECT * FROM dbo.SaInvoice WITH (UPDLOCK, HOLDLOCK)
+                    WHERE CompanyCode = {"DEMO"} AND BranchCode = {"HQ"} AND InvNo = {salesInvoiceNo}")
+                    .AsNoTracking().ToArrayAsync();
+                Assert.Single(held);
+            }
             var result = await ChangeInvoiceAsync(posting).WaitAsync(TimeSpan.FromSeconds(15));
             Assert.False(result.Succeeded);
             Assert.Contains("busy", result.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
@@ -3154,7 +3306,23 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
         }
 
-        if (laterIssue || returnDraft)
+        async Task RollbackSaleAsync()
+        {
+            if (salesInvoiceNo is not null)
+            {
+                var invoiceRollback = await sale.RollbackAsync([salesInvoiceNo]);
+                Assert.True(invoiceRollback.Succeeded, invoiceRollback.ErrorMessage);
+            }
+            if (delivery is not null)
+            {
+                var token = (await delivery.GetAsync(deliveryNo!)).Document!.RowVersion;
+                var deliveryRollback = await delivery.RollbackAsync([new SaDoKeyedRequest
+                    { DoNo = deliveryNo!, RowVersion = token }]);
+                Assert.True(deliveryRollback.Succeeded, deliveryRollback.ErrorMessage);
+            }
+        }
+
+        if (laterIssue || returnDraft || billingMode == 2)
         {
             var before = await CaptureAsync();
             Assert.False((await ChangeInvoiceAsync(posting: true)).Succeeded);
@@ -3175,8 +3343,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             await AssertStateAsync(58.333332m, 16.666668m, 0m);
             var restored = await ChangeInvoiceAsync(posting: true);
             Assert.True(restored.Succeeded, restored.ErrorMessage);
-            var removedSale = await sale.RollbackAsync([saleDoc.InvNo!]);
-            Assert.True(removedSale.Succeeded, removedSale.ErrorMessage);
+            await RollbackSaleAsync();
             var removedInvoice = await ChangeInvoiceAsync(posting: false);
             Assert.True(removedInvoice.Succeeded, removedInvoice.ErrorMessage);
             await using var check = await _factory.CreateDbContextAsync();
@@ -3189,11 +3356,39 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         if (damageSale)
         {
             await using (var db = await _factory.CreateDbContextAsync())
-                await db.SaInvoiceDetails.Where(d => d.InvNo == saleDoc.InvNo)
-                    .ExecuteUpdateAsync(u => u.SetProperty(d => d.StdQty, d => d.StdQty + 1m));
+                if (deliveryNo is null)
+                    await db.SaInvoiceDetails.Where(d => d.InvNo == salesInvoiceNo)
+                        .ExecuteUpdateAsync(u => u.SetProperty(d => d.StdQty, d => d.StdQty + 1m));
+                else
+                    await db.SaDoDetails.Where(d => d.DoNo == deliveryNo)
+                        .ExecuteUpdateAsync(u => u.SetProperty(d => d.StdQty, d => d.StdQty + 1m));
             var before = await CaptureAsync();
             Assert.False((await ChangeInvoiceAsync(posting: true)).Succeeded);
             Assert.Equal(before, await CaptureAsync());
+            return;
+        }
+        if (damageApplication)
+        {
+            await using (var db = await _factory.CreateDbContextAsync())
+                await db.SaDocApplications.Where(a => a.SourceDocId == deliveryNo)
+                    .ExecuteUpdateAsync(u => u.SetProperty(a => a.AppliedQty, a => a.AppliedQty + 1m));
+            var before = await CaptureAsync();
+            Assert.False((await ChangeInvoiceAsync(posting: true)).Succeeded);
+            Assert.Equal(before, await CaptureAsync());
+            return;
+        }
+        if (changeBillingAfterPlan)
+        {
+            var before = await CaptureAsync();
+            decimal? beforeAmount;
+            await using (var beforeDb = await _factory.CreateDbContextAsync())
+                beforeAmount = (await beforeDb.SaDocApplications.SingleAsync()).AppliedAmount;
+            Assert.False((await ChangeInvoiceAsync(posting: true)).Succeeded);
+            Assert.Equal(before, await CaptureAsync());
+            await using var afterDb = await _factory.CreateDbContextAsync();
+            var application = await afterDb.SaDocApplications.SingleAsync();
+            Assert.Equal(4m, application.AppliedQty);
+            Assert.Equal(beforeAmount, application.AppliedAmount);
             return;
         }
         if (!enabled)
@@ -3207,12 +3402,40 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             if (db.Database.IsSqlServer())
             {
                 await AssertSaleBusyAsync(posting: true);
+                if (deliveryNo is not null && salesInvoiceNo is not null)
+                    await AssertSaleBusyAsync(posting: true, holdInvoice: true);
                 await InjectFailureAsync(posting: true);
             }
         var post = await ChangeInvoiceAsync(posting: true);
         Assert.True(post.Succeeded, post.ErrorMessage);
         await AssertStateAsync(invoicePrice == 11m ? 60.666668m : 56m,
             invoicePrice == 11m ? 17.333332m : 16m, 3m);
+        if (damageReplayAudit)
+        {
+            var before = await CaptureAsync();
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                var effectId = await db.StockReplayEffects.Where(e => e.EffectKind == "PO_INVOICE_ISSUE_REPRICE")
+                    .OrderBy(e => e.Id).Select(e => e.Id).FirstAsync();
+                await db.StockReplayEffects.Where(e => e.Id == effectId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(e => e.OriginalEntityId, (long?)null));
+                var first = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+                Assert.NotNull(await StockValuationSnapshotBuilder.AppendAsync(db, "DEMO", "HQ", first,
+                    first.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
+            }
+            Assert.False((await ChangeInvoiceAsync(posting: false)).Succeeded);
+            await using var check = await _factory.CreateDbContextAsync();
+            var state = await check.StockCostStates.SingleAsync();
+            Assert.Equal((before.Qty, before.Value, before.Balance, before.Invoiced, before.Status,
+                    before.Facts, before.Postings, before.Runs, before.Effects, before.Settlements, before.Adjustments),
+                (state.OnHandBaseQty, state.InventoryValue, (await check.IvBalLocs.SingleAsync(b => b.Id == balanceId)).StdQty,
+                    (await check.PoOrderDetails.SingleAsync()).InvoicedQty,
+                    (await check.PoInvoices.SingleAsync(p => p.DocNo == draft.DocNo)).Status,
+                    await check.StockValuationFacts.CountAsync(), await check.StockPostings.CountAsync(),
+                    await check.StockReplayRuns.CountAsync(), await check.StockReplayEffects.CountAsync(),
+                    await check.PurchaseReceiptCostSettlements.CountAsync(), await check.PurchaseCostAdjustments.CountAsync()));
+            return;
+        }
         if (returnAfterPurchase)
         {
             var note = new SaCdnService(_factory, tenant, Access().Object,
@@ -3225,7 +3448,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             var saved = await note.SaveNewAsync(new SaCdnSaveRequest
             {
                 Type = "CN", DocDate = FixedToday, CustCode = "CUST01", Currency = "MYR",
-                InvNo = saleDoc.InvNo, SalesmanCode = "SM1", ReturnStock = true,
+                InvNo = salesInvoiceNo, SalesmanCode = "SM1", ReturnStock = true,
                 Lines = [new SaCdnLineRequest
                 {
                     ICode = "A100", Qty = 1m, UnitPrice = 10m, SourceInvLine = 1,
@@ -3257,6 +3480,8 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             if (db.Database.IsSqlServer())
             {
                 await AssertSaleBusyAsync(posting: false);
+                if (deliveryNo is not null && salesInvoiceNo is not null)
+                    await AssertSaleBusyAsync(posting: false, holdInvoice: true);
                 await InjectFailureAsync(posting: false);
             }
         var rollback = await ChangeInvoiceAsync(posting: false);
@@ -3264,8 +3489,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         await AssertStateAsync(58.333332m, 16.666668m, 0m);
         var repost = await ChangeInvoiceAsync(posting: true);
         Assert.True(repost.Succeeded, repost.ErrorMessage);
-        var saleRollback = await sale.RollbackAsync([saleDoc.InvNo!]);
-        Assert.True(saleRollback.Succeeded, saleRollback.ErrorMessage);
+        await RollbackSaleAsync();
         var invoiceRollback = await ChangeInvoiceAsync(posting: false);
         Assert.True(invoiceRollback.Succeeded, invoiceRollback.ErrorMessage);
         await using var final = await _factory.CreateDbContextAsync();

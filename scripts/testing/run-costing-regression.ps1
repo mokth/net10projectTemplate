@@ -23,6 +23,16 @@ $patterns = @(
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
     'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
+    'Backdated_purchase_invoice_reprices_delivery_and_rolls_back',
+    'Purchase_invoice_before_delivery_reprices_cost_on_rollback',
+    'Backdated_purchase_invoice_rejects_partially_billed_delivery',
+    'Backdated_purchase_invoice_rejects_damaged_delivery_billing',
+    'Backdated_purchase_invoice_rejects_delivery_billing_changed_after_planning',
+    'Backdated_purchase_invoice_rejects_damaged_delivery_line',
+    'Backdated_purchase_invoice_delivery_replay_blocks_damaged_audit',
+    'Backdated_purchase_invoice_before_delivery_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_return_draft_on_billed_delivery',
+    'Sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost',
     'ProductionIssueEffectiveCostReaderTests', 'ProductionEffectiveCostResolverTests',
     'ProductionDependencyOwnerReaderTests', 'ProductionReplayDependencyPlannerTests',
     'ProductionPooledCostTraceMathTests', 'ProductionMaterialAllocationTests',
@@ -136,6 +146,16 @@ $required = @(
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
     'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
+    'Backdated_purchase_invoice_reprices_delivery_and_rolls_back',
+    'Purchase_invoice_before_delivery_reprices_cost_on_rollback',
+    'Backdated_purchase_invoice_rejects_partially_billed_delivery',
+    'Backdated_purchase_invoice_rejects_damaged_delivery_billing',
+    'Backdated_purchase_invoice_rejects_delivery_billing_changed_after_planning',
+    'Backdated_purchase_invoice_rejects_damaged_delivery_line',
+    'Backdated_purchase_invoice_delivery_replay_blocks_damaged_audit',
+    'Backdated_purchase_invoice_before_delivery_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_return_draft_on_billed_delivery',
+    'Sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost',
     'Fully_consumed_wac_invoice_reverses_its_zero_value_anchor',
     'Backdated_wac_receipt_rejects_purchase_variance_without_original_stock_value',
     'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
@@ -249,6 +269,9 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDirectSale
         & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeDirectSale
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleReturn
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceUnbilledDelivery
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceBilledDelivery
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryReturn
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDepleted
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost

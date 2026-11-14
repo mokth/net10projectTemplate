@@ -19,12 +19,14 @@ public sealed partial class PoInvoiceService
         StockReplayWacEvent Issue, StockReplayWacStep IssueStep, long IssueOwnerId, long PriorFactId);
 
     private sealed record InvoiceIssueTailProof(IReadOnlyList<InvoiceIssueChange> Changes, string EvidenceHash,
-        IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts, IReadOnlyList<InvoiceDirectSaleProof> Sales);
+        IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts, IReadOnlyList<InvoiceDirectSaleProof> Sales,
+        IReadOnlyList<InvoiceDeliverySaleProof> Deliveries);
 
     private sealed record InvoiceIssueReplay(
         IReadOnlyList<InvoiceIssueChange> Changes, string TailEvidenceHash,
         IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts,
         IReadOnlyList<InvoiceDirectSaleProof> Sales,
+        IReadOnlyList<InvoiceDeliverySaleProof> Deliveries,
         decimal InventoryVariance, decimal ConsumedVariance, int BalanceId, decimal BalanceQty,
         decimal CurrentQuantity, decimal CurrentValue, decimal FinalQuantity, decimal FinalValue);
 
@@ -205,7 +207,7 @@ public sealed partial class PoInvoiceService
         if (projection.HistoricalQuantityBeforeCandidate != 0m || projection.HistoricalValueBeforeCandidate != 0m)
         {
             // This route accepts ordinary Inventory issues and fixed-cost
-            // receipts, or one separately proven direct sale, on one pile.
+            // receipts, or one separately proven sale, on one pile.
             if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || balances.Length != 1)
                 return null;
             var split = StockPurchaseVarianceAllocator.Allocate(adjustment.TotalAdjustmentAmount,
@@ -221,7 +223,7 @@ public sealed partial class PoInvoiceService
                 tail.LaterEvents, repriced.LaterSteps, ct);
             if (proof is null)
                 return null;
-            issueReplay = new(proof.Changes, proof.EvidenceHash, proof.GoodsReceipts, proof.Sales,
+            issueReplay = new(proof.Changes, proof.EvidenceHash, proof.GoodsReceipts, proof.Sales, proof.Deliveries,
                 split.Inventory, split.Consumed, balances[0].Id, balances[0].StdQty,
                 tail.CurrentQuantity, tail.CurrentValue, repriced.FinalQuantity, repriced.FinalValue);
         }
@@ -314,6 +316,9 @@ public sealed partial class PoInvoiceService
         var sales = await ProveInvoiceDirectSalesAsync(db, company, branch, issues, ct);
         if (sales is null)
             return null;
+        var deliveries = await ProveInvoiceDeliverySalesAsync(db, company, branch, issues, ct);
+        if (deliveries is null || sales.Count + deliveries.Count != issues.Count(h => h.TrxType == IvTrxTypes.SalesOut))
+            return null;
         var evidenceHash = StockPostingFingerprint.Create(new { Kind = "PI_WAC_ISSUE_TAIL" }, new
         {
             Owners = owners.OrderBy(p => p.Id).Select(p => new
@@ -326,8 +331,8 @@ public sealed partial class PoInvoiceService
                 h.FrStdQty, h.ToStdQty, FactId = active[h.Id][0].Id, FactOwnerId = active[h.Id][0].StockPostingId
             }).ToArray(),
             Receipts = receipts.OrderBy(r => r.HistoryId).ToArray(),
-            PurchaseReceipts = purchaseReceipts, Sales = sales
+            PurchaseReceipts = purchaseReceipts, Sales = sales, Deliveries = deliveries
         }).SourceSnapshotHash;
-        return new(changes, evidenceHash, purchaseReceipts, sales);
+        return new(changes, evidenceHash, purchaseReceipts, sales, deliveries);
     }
 }

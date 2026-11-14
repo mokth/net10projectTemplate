@@ -1046,6 +1046,12 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                         await tx.RollbackAsync(cancellationToken);
                         return PoInvoicePostingItemResult.Failed(docNo, "The later sale changed. Retry the invoice.");
                     }
+                    if (!await LockInvoiceDeliverySalesAsync(db, write.CompanyCode, write.BranchCode!,
+                            consumedPlan.IssueReplay?.Deliveries, cancellationToken))
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return PoInvoicePostingItemResult.Failed(docNo, "The later delivery changed. Retry the invoice.");
+                    }
                 }
             }
             var invoice = await _invoices.LockForUpdateAsync(db, write.CompanyCode, write.BranchCode, docNo, cancellationToken);
@@ -1404,6 +1410,12 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                     {
                         await tx.RollbackAsync(cancellationToken);
                         return PoInvoicePostingItemResult.Failed(docNo, "The later sale changed. Retry the invoice rollback.");
+                    }
+                    if (!await LockInvoiceDeliverySalesAsync(db, write.CompanyCode, write.BranchCode!,
+                            issueRemoval.IssueReplay.Deliveries, cancellationToken))
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return PoInvoicePostingItemResult.Failed(docNo, "The later delivery changed. Retry the invoice rollback.");
                     }
                 }
             }

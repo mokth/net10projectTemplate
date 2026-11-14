@@ -20,10 +20,12 @@ public sealed partial class PoInvoiceService
         var sales = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut).ToArray();
         if (sales.Length == 0)
             return Array.Empty<InvoiceDirectSaleProof>();
-        // Until their dependent corrections are proven, linked deliveries,
-        // customer returns and multiple sales remain on the existing guard.
-        if (sales.Length != 1 || histories.Count != 1 || string.IsNullOrWhiteSpace(sales[0].InvNo)
-            || !string.IsNullOrWhiteSpace(sales[0].DoNo)
+        if (sales.Length != 1 || histories.Count != 1)
+            return null;
+        if (!string.IsNullOrWhiteSpace(sales[0].DoNo))
+            return Array.Empty<InvoiceDirectSaleProof>();
+        // Customer returns and multiple sales remain on the existing guard.
+        if (string.IsNullOrWhiteSpace(sales[0].InvNo)
             || await IvInventoryPostingService.CheckDirectSalesInvoiceForPurchaseReplayAsync(db, sales[0], ct) is not null)
             return null;
         var invoice = await db.SaInvoices.AsNoTracking().Include(i => i.Details).SingleOrDefaultAsync(i =>

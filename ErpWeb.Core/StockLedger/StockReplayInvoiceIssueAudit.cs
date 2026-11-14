@@ -183,14 +183,18 @@ internal static class StockReplayInvoiceIssueAudit
                         || e.BranchCode != branch || e.ReplayRunId != run.Id || e.BusinessOwnerPostingId != owner.Id
                         || e.AffectedEntityType != StockReplayEffectTypes.StockValuationFact || e.OriginalEntityId != prior.Id))
                     return false;
-                if (history.TrxType == IvTrxTypes.SalesOut
-                    && (!string.IsNullOrWhiteSpace(history.DoNo) || string.IsNullOrWhiteSpace(history.InvNo)
-                        || history.SoLineNo is not > 0 || prior.MovementCode != "SALE_OUT"
-                        || prior.SourceDocumentType != "SA_INVOICE" || prior.SourceDocumentId != history.InvNo
-                        || prior.SourceDocumentNo != history.InvNo
+                if (history.TrxType == IvTrxTypes.SalesOut)
+                {
+                    var delivery = !string.IsNullOrWhiteSpace(history.DoNo);
+                    var salesNo = delivery ? history.DoNo : history.InvNo;
+                    if (string.IsNullOrWhiteSpace(salesNo) || history.SoLineNo is not > 0
+                        || delivery && history.InvNo != history.DoNo || prior.MovementCode != "SALE_OUT"
+                        || prior.SourceDocumentType != (delivery ? "SA_DO" : "SA_INVOICE")
+                        || prior.SourceDocumentId != salesNo || prior.SourceDocumentNo != salesNo
                         || prior.SourceDocumentLine != history.SoLineNo.Value.ToString(
-                            System.Globalization.CultureInfo.InvariantCulture)))
-                    return false;
+                            System.Globalization.CultureInfo.InvariantCulture))
+                        return false;
+                }
                 if (history.TrxDtTime > latestIssue)
                     latestIssue = history.TrxDtTime;
             }
