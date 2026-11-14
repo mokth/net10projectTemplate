@@ -127,6 +127,10 @@ internal static class StockReplayInvoiceIssueAudit
                 || issueGroups.Length != run.AffectedHistoryCount || effects.Length != issueFacts.Length
                 || !effects.Select(e => e.AffectedEntityId).Order().SequenceEqual(issueFacts.Select(f => f.Id).Order()))
                 return false;
+            var saleCount = issueGroups.Count(g => histories.TryGetValue(g.Key, out var history)
+                && history.TrxType == IvTrxTypes.SalesOut);
+            if (saleCount > 0 && (saleCount != 1 || issueGroups.Length != 1))
+                return false;
             var value = valueFacts[0];
             var latestIssue = DateTime.MinValue;
             foreach (var group in issueGroups)
@@ -147,11 +151,11 @@ internal static class StockReplayInvoiceIssueAudit
                 if (prior is null || history is null || owner is null || owner.SealedAtUtc is null
                     || owner.LedgerEpochId != root.LedgerEpochId || history.ICode != value.ItemCode
                     || history.LedgerVersion != 2 || history.LedgerEpochId != root.LedgerEpochId
-                    || history.EntryRole != "ORIGINAL" || history.TrxType != IvTrxTypes.MiscellaneousIssue
+                    || history.EntryRole != "ORIGINAL" || history.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.SalesOut)
                     || history.TrxDtTime < root.EffectiveAt || history.TrxDtTime.Year != root.EffectiveAt.Year
                     || history.TrxDtTime.Month != root.EffectiveAt.Month
-                    || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
-                    || owner.CommandType != "IV_POST_MI" || owner.PostingRole != "PRIMARY"
+                    || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != history.TrxType
+                    || owner.CommandType != $"IV_POST_{history.TrxType}" || owner.PostingRole != "PRIMARY"
                     || owner.ReversesPostingId is not null || owner.Id != history.StockPostingId
                     || owner.EffectiveAt != history.TrxDtTime
                     || prior.InventoryHistoryId != history.Id
@@ -178,6 +182,14 @@ internal static class StockReplayInvoiceIssueAudit
                     || groupEffects.Length != 2 || groupEffects.Any(e => e.CompanyCode != company
                         || e.BranchCode != branch || e.ReplayRunId != run.Id || e.BusinessOwnerPostingId != owner.Id
                         || e.AffectedEntityType != StockReplayEffectTypes.StockValuationFact || e.OriginalEntityId != prior.Id))
+                    return false;
+                if (history.TrxType == IvTrxTypes.SalesOut
+                    && (!string.IsNullOrWhiteSpace(history.DoNo) || string.IsNullOrWhiteSpace(history.InvNo)
+                        || history.SoLineNo is not > 0 || prior.MovementCode != "SALE_OUT"
+                        || prior.SourceDocumentType != "SA_INVOICE" || prior.SourceDocumentId != history.InvNo
+                        || prior.SourceDocumentNo != history.InvNo
+                        || prior.SourceDocumentLine != history.SoLineNo.Value.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture)))
                     return false;
                 if (history.TrxDtTime > latestIssue)
                     latestIssue = history.TrxDtTime;

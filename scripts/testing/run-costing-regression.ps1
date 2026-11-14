@@ -16,6 +16,13 @@ $patterns = @(
     'CostingDiagnosticCenterTests', 'QaPhysicalHoldTests', 'QaIncomingGrantTests',
     'SubconPostBlockedTests', 'SubconModeTests',
     'PoInvoiceServiceTests', 'PoCdnServiceTests',
+    'Backdated_purchase_invoice_reprices_direct_sale_and_rolls_back',
+    'Backdated_purchase_invoice_before_sale_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_changed_direct_sale',
+    'Backdated_purchase_invoice_rejects_sale_with_later_issue',
+    'Backdated_purchase_invoice_rejects_sale_with_return_draft',
+    'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
+    'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
     'ProductionIssueEffectiveCostReaderTests', 'ProductionEffectiveCostResolverTests',
     'ProductionDependencyOwnerReaderTests', 'ProductionReplayDependencyPlannerTests',
     'ProductionPooledCostTraceMathTests', 'ProductionMaterialAllocationTests',
@@ -122,6 +129,13 @@ $required = @(
     'Purchase_invoice_rejects_another_invoice_on_later_same_order_goods',
     'Backdated_purchase_invoice_before_later_goods_respects_disabled_replay',
     'Same_order_goods_rollback_rejects_damaged_earlier_invoice',
+    'Backdated_purchase_invoice_reprices_direct_sale_and_rolls_back',
+    'Backdated_purchase_invoice_before_sale_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_changed_direct_sale',
+    'Backdated_purchase_invoice_rejects_sale_with_later_issue',
+    'Backdated_purchase_invoice_rejects_sale_with_return_draft',
+    'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
+    'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
     'Fully_consumed_wac_invoice_reverses_its_zero_value_anchor',
     'Backdated_wac_receipt_rejects_purchase_variance_without_original_stock_value',
     'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
@@ -232,6 +246,9 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedGoodsFirst
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSameOrder
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSameOrderGoodsFirst
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDirectSale
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeDirectSale
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleReturn
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDepleted
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost

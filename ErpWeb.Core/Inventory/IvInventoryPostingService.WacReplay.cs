@@ -1622,6 +1622,10 @@ public sealed partial class IvInventoryPostingService
         return null;
     }
 
+    internal static Task<string?> CheckDirectSalesInvoiceForPurchaseReplayAsync(
+        ErpWeb.Model.Data.AppDbContext db, IvTrxHistory history, CancellationToken cancellationToken) =>
+        CheckDirectSalesInvoiceAsync(db, history, StockCostMethods.MovingAverage, cancellationToken);
+
     private static async Task<string?> CheckDirectSalesInvoiceAsync(
         ErpWeb.Model.Data.AppDbContext db, IvTrxHistory history,
         string costMethod,

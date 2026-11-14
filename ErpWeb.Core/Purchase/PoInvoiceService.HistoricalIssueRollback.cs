@@ -136,7 +136,7 @@ public sealed partial class PoInvoiceService
             tail.LaterEvents, projection.LaterSteps, ct);
         if (proof is null)
             return null;
-        var replay = new InvoiceIssueReplay(proof.Changes, proof.EvidenceHash, proof.GoodsReceipts,
+        var replay = new InvoiceIssueReplay(proof.Changes, proof.EvidenceHash, proof.GoodsReceipts, proof.Sales,
             -generation.Active.InventoryAdjustmentAmount, -generation.Active.ConsumedVarianceAmount,
             balances[0].Id, balances[0].StdQty, tail.CurrentQuantity, tail.CurrentValue,
             projection.FinalQuantity, projection.FinalValue);

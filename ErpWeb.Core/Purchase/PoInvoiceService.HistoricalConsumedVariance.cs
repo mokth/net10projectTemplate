@@ -19,11 +19,12 @@ public sealed partial class PoInvoiceService
         StockReplayWacEvent Issue, StockReplayWacStep IssueStep, long IssueOwnerId, long PriorFactId);
 
     private sealed record InvoiceIssueTailProof(IReadOnlyList<InvoiceIssueChange> Changes, string EvidenceHash,
-        IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts);
+        IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts, IReadOnlyList<InvoiceDirectSaleProof> Sales);
 
     private sealed record InvoiceIssueReplay(
         IReadOnlyList<InvoiceIssueChange> Changes, string TailEvidenceHash,
         IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts,
+        IReadOnlyList<InvoiceDirectSaleProof> Sales,
         decimal InventoryVariance, decimal ConsumedVariance, int BalanceId, decimal BalanceQty,
         decimal CurrentQuantity, decimal CurrentValue, decimal FinalQuantity, decimal FinalValue);
 
@@ -187,7 +188,8 @@ public sealed partial class PoInvoiceService
         if (histories.Length != ids.Length || histories.Any(h =>
                 h.CompanyCode != invoice.CompanyCode || h.BranchCode != invoice.BranchCode
                 || h.ICode != item || h.LedgerEpochId != epoch[0].Id
-                || h.TrxType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive or IvTrxTypes.MiscellaneousIssue)))
+                || h.TrxType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive
+                    or IvTrxTypes.MiscellaneousIssue or IvTrxTypes.SalesOut)))
             return null;
         var candidate = new StockReplayWacEvent(long.MaxValue, key, 0m, 0m, 0m, 0m);
         var projection = StockReplayWacSimulator.SimulateInsertion(
@@ -202,8 +204,8 @@ public sealed partial class PoInvoiceService
         InvoiceIssueReplay? issueReplay = null;
         if (projection.HistoricalQuantityBeforeCandidate != 0m || projection.HistoricalValueBeforeCandidate != 0m)
         {
-            // This route accepts ordinary Inventory issues and unchanged-cost
-            // fixed-cost receipts on one pile. Other descendants stay blocked.
+            // This route accepts ordinary Inventory issues and fixed-cost
+            // receipts, or one separately proven direct sale, on one pile.
             if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || balances.Length != 1)
                 return null;
             var split = StockPurchaseVarianceAllocator.Allocate(adjustment.TotalAdjustmentAmount,
@@ -219,7 +221,7 @@ public sealed partial class PoInvoiceService
                 tail.LaterEvents, repriced.LaterSteps, ct);
             if (proof is null)
                 return null;
-            issueReplay = new(proof.Changes, proof.EvidenceHash, proof.GoodsReceipts,
+            issueReplay = new(proof.Changes, proof.EvidenceHash, proof.GoodsReceipts, proof.Sales,
                 split.Inventory, split.Consumed, balances[0].Id, balances[0].StdQty,
                 tail.CurrentQuantity, tail.CurrentValue, repriced.FinalQuantity, repriced.FinalValue);
         }
@@ -253,7 +255,8 @@ public sealed partial class PoInvoiceService
         var issues = await db.IvTrxHistories.AsNoTracking().Where(h => ids.Contains(h.Id)
             && h.CompanyCode == company && h.BranchCode == branch).ToArrayAsync(ct);
         if (issues.Length != ids.Length || issues.Any(h => h.ICode != item || h.LedgerEpochId != epochId
-                || h.LedgerVersion != 2 || h.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+                || h.LedgerVersion != 2 || h.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.MiscellaneousReceipt
+                    or IvTrxTypes.GoodsReceive or IvTrxTypes.SalesOut)
                 || h.EntryRole != "ORIGINAL" || h.BatchStatus != IvBatchStatuses.Posted
                 || h.ValuationStatus != StockValuationStatuses.Valued || h.StockPostingId is null))
             return null;
@@ -295,7 +298,7 @@ public sealed partial class PoInvoiceService
                     return null;
                 receipts.Add(receipt);
             }
-            else if (issue.TrxType != IvTrxTypes.MiscellaneousIssue
+            else if (issue.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.SalesOut)
                 || issue.FromBalLocId != balanceId || issue.ToBalLocId is not null)
                 return null;
             else if (step.SignedValue != movement.OldSignedValue)
@@ -307,6 +310,9 @@ public sealed partial class PoInvoiceService
             invoiceDocNo, invoicePoNo, invoicePoRelNo, invoicePoLineNo, invoiceQty, invoicePosted,
             issues, ownersById, active, ct);
         if (purchaseReceipts is null)
+            return null;
+        var sales = await ProveInvoiceDirectSalesAsync(db, company, branch, issues, ct);
+        if (sales is null)
             return null;
         var evidenceHash = StockPostingFingerprint.Create(new { Kind = "PI_WAC_ISSUE_TAIL" }, new
         {
@@ -320,8 +326,8 @@ public sealed partial class PoInvoiceService
                 h.FrStdQty, h.ToStdQty, FactId = active[h.Id][0].Id, FactOwnerId = active[h.Id][0].StockPostingId
             }).ToArray(),
             Receipts = receipts.OrderBy(r => r.HistoryId).ToArray(),
-            PurchaseReceipts = purchaseReceipts
+            PurchaseReceipts = purchaseReceipts, Sales = sales
         }).SourceSnapshotHash;
-        return new(changes, evidenceHash, purchaseReceipts);
+        return new(changes, evidenceHash, purchaseReceipts, sales);
     }
 }
