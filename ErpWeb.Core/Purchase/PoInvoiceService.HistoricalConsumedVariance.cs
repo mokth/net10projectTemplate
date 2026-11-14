@@ -164,7 +164,7 @@ public sealed partial class PoInvoiceService
             checked(watermark + 1), "PURCHASE_INVOICE", 0);
         var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db,
             invoice.CompanyCode, invoice.BranchCode, item, key, ct);
-        if (tail.LaterEvents.Count is 0 or > 100 || tail.LaterEvents.Any(e =>
+        if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || tail.LaterEvents.Any(e =>
                 e.EventId is not (> 0 and <= int.MaxValue)
                 || e.Key.EffectiveAt.Year != invoice.DocDate.Year
                 || e.Key.EffectiveAt.Month != invoice.DocDate.Month))
@@ -202,7 +202,7 @@ public sealed partial class PoInvoiceService
             // This route is bounded to ordinary Inventory issues on one pile.
             // Other descendants retain
             // the existing fail-closed purchase replay guard.
-            if (tail.LaterEvents.Count is 0 or > 2 || balances.Length != 1)
+            if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || balances.Length != 1)
                 return null;
             var split = StockPurchaseVarianceAllocator.Allocate(adjustment.TotalAdjustmentAmount,
                 adjustment.BaseQty, Math.Min(projection.HistoricalQuantityBeforeCandidate, adjustment.BaseQty),
@@ -238,9 +238,10 @@ public sealed partial class PoInvoiceService
         AppDbContext db, string company, string branch, string item, long epochId, int balanceId,
         IReadOnlyList<StockReplayWacEvent> events, IReadOnlyList<StockReplayWacStep> steps, CancellationToken ct)
     {
-        if (events.Count is 0 or > 2 || steps.Count != events.Count
+        if (events.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || steps.Count != events.Count
             || events.Any(e => e.EventId is not (> 0 and <= int.MaxValue) || e.OldSignedQuantity >= 0m)
-            || events.Select(e => e.EventId).Distinct().Count() != events.Count)
+            || events.Select(e => e.EventId).Distinct().Count() != events.Count
+            || steps.Select(s => s.EventId).Distinct().Count() != steps.Count)
             return null;
         var ids = events.Select(e => (int)e.EventId).ToArray();
         var issues = await db.IvTrxHistories.AsNoTracking().Where(h => ids.Contains(h.Id)
@@ -256,13 +257,16 @@ public sealed partial class PoInvoiceService
             && p.CompanyCode == company && p.BranchCode == branch).ToArrayAsync(ct);
         if (owners.Length != ownerIds.Length)
             return null;
+        var issuesById = issues.ToDictionary(h => h.Id);
+        var ownersById = owners.ToDictionary(p => p.Id);
+        var stepsById = steps.ToDictionary(s => s.EventId);
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, company, branch, issues, ct);
         var changes = new List<InvoiceIssueChange>(events.Count);
         foreach (var movement in events)
         {
-            var issue = issues.Single(h => h.Id == movement.EventId);
-            var owner = owners.Single(p => p.Id == issue.StockPostingId);
-            var step = steps.SingleOrDefault(s => s.EventId == movement.EventId);
+            var issue = issuesById[(int)movement.EventId];
+            var owner = ownersById[issue.StockPostingId!.Value];
+            var step = stepsById.GetValueOrDefault(movement.EventId);
             var facts = active[issue.Id];
             if (step is null || step.SignedQuantity != movement.OldSignedQuantity
                 || owner.SealedAtUtc is null || owner.LedgerEpochId != epochId

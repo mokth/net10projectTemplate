@@ -16,12 +16,14 @@ using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using ErpWeb.Tests.Infrastructure.Helpers;
 using ErpWeb.Tests.Procurement.Transaction;
+using System.Data.Common;
 
 namespace ErpWeb.Tests.Inventory.Transaction;
 [Trait(TestCategories.Name, TestCategories.Inventory)]
@@ -2321,6 +2323,24 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         ExerciseHistoricalConsumedInvoiceAsync(true, false, 11m, postInvoiceBeforeIssue: true, twoLaterIssues: true);
 
     [Theory]
+    [InlineData(11)]
+    [InlineData(9)]
+    public Task Backdated_purchase_invoice_reprices_ten_later_issues_and_rollback(decimal invoicePrice) =>
+        ExerciseHistoricalConsumedInvoiceAsync(true, false, invoicePrice, tenLaterIssues: true);
+
+    [Fact]
+    public Task Purchase_invoice_posted_before_ten_issues_reprices_all_on_rollback() =>
+        ExerciseHistoricalConsumedInvoiceAsync(true, false, 11m, postInvoiceBeforeIssue: true, tenLaterIssues: true);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_ten_issue_replay_rejects_damaged_later_audit() =>
+        ExerciseHistoricalConsumedInvoiceAsync(true, false, 11m, tenLaterIssues: true, damageIssueAudit: true);
+
+    [Fact]
+    public Task Backdated_purchase_invoice_replays_one_hundred_issues_and_rejects_more() =>
+        ExerciseHistoricalConsumedInvoiceAsync(true, false, 11m, hundredIssueBoundary: true);
+
+    [Theory]
     [InlineData("post", 11)]
     [InlineData("rollback", 11)]
     [InlineData("post", 9)]
@@ -2518,6 +2538,32 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
 
     [MultiWacReceiptSqlFact]
     [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_backdated_invoice_reprices_ten_issues_atomically()
+    {
+        var counter = new ReplayReadCounter();
+        await PreparePurchaseReplaySqlFixtureAsync(counter);
+        await ExerciseHistoricalConsumedInvoiceAsync(true, false, 11m, tenLaterIssues: true, readCounter: counter);
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_concurrent_backdated_invoice_with_ten_issues_posts_once()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseHistoricalConsumedInvoiceAsync(true, false, 11m, tenLaterIssues: true, concurrentIssuePost: true);
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_backdated_invoice_replays_one_hundred_issues_and_rejects_more()
+    {
+        var counter = new ReplayReadCounter();
+        await PreparePurchaseReplaySqlFixtureAsync(counter);
+        await ExerciseHistoricalConsumedInvoiceAsync(true, false, 11m, hundredIssueBoundary: true, readCounter: counter);
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
     public async Task SqlServer_backdated_invoice_reprices_depleted_later_issue()
     {
         await PreparePurchaseReplaySqlFixtureAsync();
@@ -2555,7 +2601,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         decimal invoicePrice, bool changeAfterPlanning = false, bool changeCostPolicy = false,
         bool changeReceiptTime = false, bool changeReceiptCost = false, bool expectIssueReplay = false,
         bool damageIssueAudit = false, bool rollbackIssueFirst = false, bool fullDepletion = false,
-        bool postInvoiceBeforeIssue = false, bool twoLaterIssues = false)
+        bool postInvoiceBeforeIssue = false, bool twoLaterIssues = false, bool tenLaterIssues = false,
+        bool hundredIssueBoundary = false, ReplayReadCounter? readCounter = null, bool concurrentIssuePost = false)
     {
         await EnsureActiveStockLedgerAsync();
         var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday.AddDays(1),
@@ -2649,6 +2696,278 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             Assert.True(laterReceiptPost.Succeeded, laterReceiptPost.ErrorMessage);
         }
         var laterIssue = await PostIssueAsync(FixedToday.AddDays(1), fullDepletion ? 18m : 1m);
+        if (hundredIssueBoundary)
+        {
+            var batch = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+            {
+                TrxDate = FixedToday.AddDays(1),
+                Lines = Enumerable.Range(0, 99).Select(_ => new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = 0.1m, Uom = "EA", IClassCode = "RAW",
+                    IStatus = "ACTIVE", UnitPrice = 3m
+                }).ToArray()
+            });
+            Assert.True(batch.Succeeded, batch.ErrorMessage);
+            var batchPost = await issue.PostAsync([batch.BatchNo]);
+            Assert.True(batchPost.Succeeded, batchPost.ErrorMessage);
+            async Task<(decimal Quantity, decimal Value, decimal Balance, decimal Invoiced, string Status,
+                string Costs, int Facts, int Postings, int Runs, int Effects, int Settlements, int Adjustments)> CaptureBoundaryAsync()
+            {
+                await using var check = await _factory.CreateDbContextAsync();
+                var state = await check.StockCostStates.SingleAsync();
+                var histories = await check.IvTrxHistories.Where(h =>
+                    (h.BatchNo == laterIssue || h.BatchNo == batch.BatchNo) && h.EntryRole == "ORIGINAL")
+                    .OrderBy(h => h.Id).ToArrayAsync();
+                Assert.Equal(100, histories.Length);
+                var active = await StockReplayValuationGenerationResolver.ResolveAsync(check, "DEMO", "HQ", histories);
+                var costs = histories.Select(h => Assert.Single(active[h.Id]).CostAmount);
+                return (state.OnHandBaseQty, state.InventoryValue, (await check.IvBalLocs.SingleAsync()).StdQty,
+                    (await check.PoOrderDetails.SingleAsync()).InvoicedQty,
+                    (await check.PoInvoices.SingleAsync(i => i.DocNo == savedInvoice.DocNo)).Status,
+                    string.Join("|", costs.Select(c => c.ToString("0.000000", System.Globalization.CultureInfo.InvariantCulture))),
+                    await check.StockValuationFacts.CountAsync(), await check.StockPostings.CountAsync(),
+                    await check.StockReplayRuns.CountAsync(), await check.StockReplayEffects.CountAsync(),
+                    await check.PurchaseReceiptCostSettlements.CountAsync(), await check.PurchaseCostAdjustments.CountAsync());
+            }
+            var original = await CaptureBoundaryAsync();
+            Assert.Equal((7.1m, 29.583318m, 7.1m, 0m),
+                (original.Quantity, original.Value, original.Balance, original.Invoiced));
+            readCounter?.Start();
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            var posted = await invoiceService.PostAsync([new PoInvoiceKeyedRequest
+                { DocNo = savedInvoice.DocNo!, RowVersion = savedInvoice.Document!.RowVersion }]);
+            timer.Stop();
+            var postReads = readCounter?.Stop();
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            if (readCounter is not null)
+                Assert.InRange(postReads.GetValueOrDefault(), 1, 230);
+            Console.WriteLine($"100-issue invoice post, including planning: {timer.ElapsedMilliseconds} ms, EF read commands: {postReads}");
+            var corrected = await CaptureBoundaryAsync();
+            Assert.Equal((7.1m, 30.766675m, 7.1m, 3m),
+                (corrected.Quantity, corrected.Value, corrected.Balance, corrected.Invoiced));
+            await using (var check = await _factory.CreateDbContextAsync())
+            {
+                var run = await check.StockReplayRuns.SingleAsync(r => r.RootDocumentId == savedInvoice.DocNo);
+                Assert.Equal(100, run.AffectedHistoryCount);
+                Assert.Equal(200, await check.StockReplayEffects.CountAsync(e => e.ReplayRunId == run.Id));
+                var first = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+                Assert.Null(await StockValuationSnapshotBuilder.AppendAsync(check, "DEMO", "HQ", first,
+                    first.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
+            }
+            var current = (await invoiceService.GetAsync(savedInvoice.DocNo!)).Document!;
+            readCounter?.Start();
+            timer.Restart();
+            var rolledBack = await invoiceService.RollbackAsync([new PoInvoiceKeyedRequest
+                { DocNo = savedInvoice.DocNo!, RowVersion = current.RowVersion }]);
+            timer.Stop();
+            var rollbackReads = readCounter?.Stop();
+            Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);
+            if (readCounter is not null)
+                Assert.InRange(rollbackReads.GetValueOrDefault(), 1, 380);
+            Console.WriteLine($"100-issue invoice rollback, including planning: {timer.ElapsedMilliseconds} ms, EF read commands: {rollbackReads}");
+            var restored = await CaptureBoundaryAsync();
+            Assert.Equal((original.Quantity, original.Value, original.Balance, original.Invoiced, original.Costs),
+                (restored.Quantity, restored.Value, restored.Balance, restored.Invoiced, restored.Costs));
+            await PostIssueAsync(FixedToday.AddDays(1), 0.1m);
+            var beforeBlocked = await CaptureBoundaryAsync();
+            current = (await invoiceService.GetAsync(savedInvoice.DocNo!)).Document!;
+            var blocked = await invoiceService.PostAsync([new PoInvoiceKeyedRequest
+                { DocNo = savedInvoice.DocNo!, RowVersion = current.RowVersion }]);
+            Assert.False(blocked.Succeeded, "A tail larger than the supported limit must stay blocked.");
+            Assert.Equal(beforeBlocked, await CaptureBoundaryAsync());
+            return;
+        }
+        if (tenLaterIssues)
+        {
+            var batches = new List<int> { laterIssue };
+            for (var i = 1; i < 9; i++)
+                batches.Add(await PostIssueAsync(FixedToday.AddDays(1), 1m));
+            batches.Add(await PostIssueAsync(FixedToday.AddDays(1), 2m));
+            async Task<(decimal Quantity, decimal Value, decimal Balance, decimal Invoiced, string Status,
+                string IssueCosts, int Facts, int Postings, int Runs, int Effects, int Settlements, int Adjustments)> CaptureManyIssueStateAsync()
+            {
+                await using var check = await _factory.CreateDbContextAsync();
+                var state = await check.StockCostStates.SingleAsync();
+                var histories = await check.IvTrxHistories.Where(h => batches.Contains(h.BatchNo)
+                    && h.EntryRole == "ORIGINAL").ToArrayAsync();
+                Assert.Equal(10, histories.Length);
+                var active = await StockReplayValuationGenerationResolver.ResolveAsync(check, "DEMO", "HQ", histories);
+                var costs = batches.Select(batch => Assert.Single(active[histories.Single(h => h.BatchNo == batch).Id]).CostAmount);
+                return (state.OnHandBaseQty, state.InventoryValue, (await check.IvBalLocs.SingleAsync()).StdQty,
+                    (await check.PoOrderDetails.SingleAsync()).InvoicedQty,
+                    (await check.PoInvoices.SingleAsync(i => i.DocNo == savedInvoice.DocNo)).Status,
+                    string.Join("|", costs.Select(c => c.ToString("0.000000", System.Globalization.CultureInfo.InvariantCulture))),
+                    await check.StockValuationFacts.CountAsync(), await check.StockPostings.CountAsync(),
+                    await check.StockReplayRuns.CountAsync(), await check.StockReplayEffects.CountAsync(),
+                    await check.PurchaseReceiptCostSettlements.CountAsync(), await check.PurchaseCostAdjustments.CountAsync());
+            }
+            async Task AssertStateAsync(decimal expectedValue, string expectedCosts, decimal expectedInvoiced)
+            {
+                var state = await CaptureManyIssueStateAsync();
+                Assert.Equal((7m, expectedValue, 7m, expectedInvoiced, expectedCosts),
+                    (state.Quantity, state.Value, state.Balance, state.Invoiced, state.IssueCosts));
+                await using var check = await _factory.CreateDbContextAsync();
+                var first = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+                Assert.Null(await StockValuationSnapshotBuilder.AppendAsync(check, "DEMO", "HQ", first,
+                    first.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
+            }
+            async Task InjectLastIssueFailureAsync(bool posting)
+            {
+                var beforeFailure = await CaptureManyIssueStateAsync();
+                const string constraint = "TestRejectTenthInvoiceIssueReplay";
+                var rejected = (posting ? 8.666666m : 8.333332m).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                await using (var db = await _factory.CreateDbContextAsync())
+                    await db.Database.ExecuteSqlRawAsync($"ALTER TABLE [StockValuationFact] WITH NOCHECK ADD CONSTRAINT [{constraint}] CHECK ([MovementCode] <> N'ISSUE_OUT' OR [CostAmount] <> {rejected})");
+                try
+                {
+                    var document = (await invoiceService.GetAsync(savedInvoice.DocNo!)).Document!;
+                    var key = new PoInvoiceKeyedRequest { DocNo = savedInvoice.DocNo!, RowVersion = document.RowVersion };
+                    var result = posting ? await invoiceService.PostAsync([key]) : await invoiceService.RollbackAsync([key]);
+                    Assert.False(result.Succeeded, "A failure on the last issue must abort the entire invoice replay.");
+                }
+                finally
+                {
+                    await using var db = await _factory.CreateDbContextAsync();
+                    await db.Database.ExecuteSqlRawAsync($"ALTER TABLE [StockValuationFact] DROP CONSTRAINT [{constraint}]");
+                }
+                Assert.Equal(beforeFailure, await CaptureManyIssueStateAsync());
+                await using var check = await _factory.CreateDbContextAsync();
+                await check.Database.OpenConnectionAsync();
+                await using var command = check.Database.GetDbConnection().CreateCommand();
+                command.CommandText = "SELECT SESSION_CONTEXT(N'STOCK_LEDGER_V2_POSTING_ID')";
+                Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
+            }
+            const string originalCosts = "4.166667|4.166667|4.166667|4.166667|4.166667|4.166667|4.166667|4.166666|4.166667|8.333332";
+            var postedCosts = invoicePrice == 11m
+                ? "4.333333|4.333333|4.333333|4.333333|4.333333|4.333333|4.333334|4.333333|4.333334|8.666666"
+                : "4.000000|4.000000|4.000000|4.000000|4.000000|4.000000|4.000000|4.000000|4.000000|8.000000";
+            if (!postInvoiceBeforeIssue)
+            {
+                await using (var db = await _factory.CreateDbContextAsync())
+                    if (db.Database.IsSqlServer()) await InjectLastIssueFailureAsync(posting: true);
+                readCounter?.Start();
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                PoInvoiceOperationResult posted;
+                if (concurrentIssuePost)
+                {
+                    var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    async Task<PoInvoiceOperationResult> AttemptAsync()
+                    {
+                        await start.Task;
+                        return await invoiceService.PostAsync([new PoInvoiceKeyedRequest
+                            { DocNo = savedInvoice.DocNo!, RowVersion = savedInvoice.Document!.RowVersion }]);
+                    }
+                    var attempts = new[] { AttemptAsync(), AttemptAsync() };
+                    start.SetResult();
+                    var completed = await Task.WhenAll(attempts).WaitAsync(TimeSpan.FromSeconds(30));
+                    posted = Assert.Single(completed.Where(r => r.Succeeded));
+                    await using var check = await _factory.CreateDbContextAsync();
+                    Assert.Equal(1, await check.StockPostings.CountAsync(p => p.SourceModule == "PROCUREMENT"
+                        && p.SourceDocumentType == "PO_INVOICE" && p.SourceDocumentId == savedInvoice.DocNo
+                        && p.PostingRole == "PRIMARY" && p.SealedAtUtc != null));
+                    var replay = await check.StockReplayRuns.SingleAsync(r => r.RootDocumentId == savedInvoice.DocNo);
+                    Assert.Equal(10, replay.AffectedHistoryCount);
+                    Assert.Equal(20, await check.StockReplayEffects.CountAsync(e => e.ReplayRunId == replay.Id));
+                }
+                else
+                    posted = await invoiceService.PostAsync([new PoInvoiceKeyedRequest
+                        { DocNo = savedInvoice.DocNo!, RowVersion = savedInvoice.Document!.RowVersion }]);
+                timer.Stop();
+                var postReads = readCounter?.Stop();
+                Assert.True(posted.Succeeded, posted.ErrorMessage);
+                if (readCounter is not null)
+                    Console.WriteLine($"10-issue invoice post, including planning: {timer.ElapsedMilliseconds} ms, EF read commands: {postReads}");
+            }
+            await AssertStateAsync(invoicePrice == 11m ? 30.333335m : 28m, postedCosts, 3m);
+            if (damageIssueAudit)
+            {
+                var beforeDamage = await CaptureManyIssueStateAsync();
+                long effectId;
+                long? priorId;
+                await using (var check = await _factory.CreateDbContextAsync())
+                {
+                    var effect = await check.StockReplayEffects.Where(e => e.EffectKind == "PO_INVOICE_ISSUE_REPRICE")
+                        .OrderByDescending(e => e.Id).FirstAsync();
+                    effectId = effect.Id;
+                    priorId = effect.OriginalEntityId;
+                    await check.StockReplayEffects.Where(e => e.Id == effectId)
+                        .ExecuteUpdateAsync(u => u.SetProperty(e => e.OriginalEntityId, (long?)null));
+                }
+                try
+                {
+                    await using (var check = await _factory.CreateDbContextAsync())
+                    {
+                        var first = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+                        var error = await StockValuationSnapshotBuilder.AppendAsync(check, "DEMO", "HQ", first,
+                            first.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None);
+                        Assert.Contains("invoice issue correction", error ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                        Assert.Empty(check.ChangeTracker.Entries<StockValuationPeriodSnapshotHdr>());
+                    }
+                    var current = (await invoiceService.GetAsync(savedInvoice.DocNo!)).Document!;
+                    var rejected = await invoiceService.RollbackAsync([new PoInvoiceKeyedRequest
+                        { DocNo = savedInvoice.DocNo!, RowVersion = current.RowVersion }]);
+                    Assert.False(rejected.Succeeded, "Damaged later issue evidence must block invoice rollback.");
+                    await using var statusCheck = await _factory.CreateDbContextAsync();
+                    Assert.Equal(PoInvoiceStatuses.Posted, (await statusCheck.PoInvoices.SingleAsync(i => i.DocNo == savedInvoice.DocNo)).Status);
+                    Assert.Equal(3m, (await statusCheck.PoOrderDetails.SingleAsync()).InvoicedQty);
+                }
+                finally
+                {
+                    await using var check = await _factory.CreateDbContextAsync();
+                    await check.StockReplayEffects.Where(e => e.Id == effectId)
+                        .ExecuteUpdateAsync(u => u.SetProperty(e => e.OriginalEntityId, priorId));
+                }
+                Assert.Equal(beforeDamage, await CaptureManyIssueStateAsync());
+            }
+            await using (var db = await _factory.CreateDbContextAsync())
+                if (db.Database.IsSqlServer()) await InjectLastIssueFailureAsync(posting: false);
+            var documentNow = (await invoiceService.GetAsync(savedInvoice.DocNo!)).Document!;
+            readCounter?.Start();
+            var rollbackTimer = System.Diagnostics.Stopwatch.StartNew();
+            PoInvoiceOperationResult manyRollback;
+            if (concurrentIssuePost)
+            {
+                var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                async Task<PoInvoiceOperationResult> AttemptRollbackAsync()
+                {
+                    await start.Task;
+                    return await invoiceService.RollbackAsync([new PoInvoiceKeyedRequest
+                        { DocNo = savedInvoice.DocNo!, RowVersion = documentNow.RowVersion }]);
+                }
+                var attempts = new[] { AttemptRollbackAsync(), AttemptRollbackAsync() };
+                start.SetResult();
+                var completed = await Task.WhenAll(attempts).WaitAsync(TimeSpan.FromSeconds(30));
+                manyRollback = Assert.Single(completed.Where(r => r.Succeeded));
+                await using var check = await _factory.CreateDbContextAsync();
+                var reversalRoot = await check.StockPostings.SingleAsync(p => p.SourceModule == "PROCUREMENT"
+                    && p.SourceDocumentType == "PO_INVOICE" && p.SourceDocumentId == savedInvoice.DocNo
+                    && p.PostingRole == "REVERSAL" && p.SealedAtUtc != null);
+                var replay = await check.StockReplayRuns.SingleAsync(r => r.RootStockPostingId == reversalRoot.Id);
+                Assert.Equal(10, replay.AffectedHistoryCount);
+                Assert.Equal(20, await check.StockReplayEffects.CountAsync(e => e.ReplayRunId == replay.Id));
+            }
+            else
+                manyRollback = await invoiceService.RollbackAsync([new PoInvoiceKeyedRequest
+                    { DocNo = savedInvoice.DocNo!, RowVersion = documentNow.RowVersion }]);
+            rollbackTimer.Stop();
+            var rollbackReads = readCounter?.Stop();
+            Assert.True(manyRollback.Succeeded, manyRollback.ErrorMessage);
+            if (readCounter is not null)
+                Console.WriteLine($"10-issue invoice rollback, including planning: {rollbackTimer.ElapsedMilliseconds} ms, EF read commands: {rollbackReads}");
+            await AssertStateAsync(29.166666m, originalCosts, 0m);
+            documentNow = (await invoiceService.GetAsync(savedInvoice.DocNo!)).Document!;
+            var manyRepost = await invoiceService.PostAsync([new PoInvoiceKeyedRequest
+                { DocNo = savedInvoice.DocNo!, RowVersion = documentNow.RowVersion }]);
+            Assert.True(manyRepost.Succeeded, manyRepost.ErrorMessage);
+            await AssertStateAsync(invoicePrice == 11m ? 30.333335m : 28m, postedCosts, 3m);
+            documentNow = (await invoiceService.GetAsync(savedInvoice.DocNo!)).Document!;
+            var manyRerollback = await invoiceService.RollbackAsync([new PoInvoiceKeyedRequest
+                { DocNo = savedInvoice.DocNo!, RowVersion = documentNow.RowVersion }]);
+            Assert.True(manyRerollback.Succeeded, manyRerollback.ErrorMessage);
+            await AssertStateAsync(29.166666m, originalCosts, 0m);
+            return;
+        }
         if (twoLaterIssues)
         {
             var secondIssue = await PostIssueAsync(FixedToday.AddDays(1), 2m);
@@ -2983,7 +3302,35 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         }
     }
 
-    private async Task<IvMultiWacReceiptSqlServerTests.ReceiptBatchLockBarrier> PreparePurchaseReplaySqlFixtureAsync()
+    private sealed class ReplayReadCounter : DbCommandInterceptor
+    {
+        private int _enabled;
+        private int _reads;
+
+        internal void Start()
+        {
+            Interlocked.Exchange(ref _reads, 0);
+            Volatile.Write(ref _enabled, 1);
+        }
+
+        internal int Stop()
+        {
+            Volatile.Write(ref _enabled, 0);
+            return Volatile.Read(ref _reads);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _enabled) == 1)
+                Interlocked.Increment(ref _reads);
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private async Task<IvMultiWacReceiptSqlServerTests.ReceiptBatchLockBarrier> PreparePurchaseReplaySqlFixtureAsync(
+        ReplayReadCounter? readCounter = null)
     {
         var connectionString = Environment.GetEnvironmentVariable(IvMultiWacReceiptSqlServerTests.ConnectionEnvironment)
             ?? throw new InvalidOperationException("An isolated SQL Server connection is required.");
@@ -3002,8 +3349,10 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         }
         var barrier = new IvMultiWacReceiptSqlServerTests.ReceiptBatchLockBarrier();
         var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connectionString)
-            .AddInterceptors(barrier).Options;
-        _factory = new TestDbContextFactory(options);
+            .AddInterceptors(barrier);
+        if (readCounter is not null)
+            options.AddInterceptors(readCounter);
+        _factory = new TestDbContextFactory(options.Options);
         await using (var db = await _factory.CreateDbContextAsync())
             await db.Database.EnsureCreatedAsync();
         await InitializeAsync();

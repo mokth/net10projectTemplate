@@ -11,6 +11,9 @@ public sealed record StockReplayValuationReversalLine(
     int SplitOrdinal,
     int? ReversalHistoryId = null);
 
+internal sealed record StockReplayValuationReversalRequest(
+    int OriginalHistoryId, IReadOnlyCollection<StockReplayValuationReversalLine> Lines);
+
 /// <summary>
 /// Appends exact inverse facts for one complete active Inventory valuation
 /// generation inside an unsealed replay root. The replay caller separately
@@ -19,45 +22,56 @@ public sealed record StockReplayValuationReversalLine(
 /// </summary>
 public static class StockReplayValuationReversalWriter
 {
-    public static async Task<IReadOnlyList<StockValuationFact>> AppendAsync(
+    public static Task<IReadOnlyList<StockValuationFact>> AppendAsync(
         StockPostingContext context,
         int originalHistoryId,
         IReadOnlyCollection<StockReplayValuationReversalLine> lines,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(lines);
+        return AppendManyAsync(context, [new(originalHistoryId, lines)], cancellationToken);
+    }
+
+    internal static async Task<IReadOnlyList<StockValuationFact>> AppendManyAsync(
+        StockPostingContext context,
+        IReadOnlyCollection<StockReplayValuationReversalRequest> requests,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(requests);
         context.EnsureUnsealed();
-        if (originalHistoryId <= 0 || lines.Count == 0
-            || lines.Any(l => l.OriginalFactId <= 0
+        if (requests.Count == 0 || requests.Any(r => r.OriginalHistoryId <= 0 || r.Lines is null || r.Lines.Count == 0)
+            || requests.Select(r => r.OriginalHistoryId).Distinct().Count() != requests.Count)
+            throw Invalid("Replay valuation reversal requires unique positive history identities.");
+        var lines = requests.SelectMany(r => r.Lines).ToArray();
+        if (lines.Any(l => l.OriginalFactId <= 0
                 || l.PostingLineNo <= 0 || l.SplitOrdinal < 0)
-            || lines.Select(l => l.OriginalFactId).Distinct().Count() != lines.Count
+            || lines.Select(l => l.OriginalFactId).Distinct().Count() != lines.Length
             || lines.Select(l => (l.PostingLineNo, l.SplitOrdinal))
-                .Distinct().Count() != lines.Count)
+                .Distinct().Count() != lines.Length)
             throw Invalid("Replay valuation reversal requires unique positive fact and root line identities.");
 
         var db = context.Db;
-        var history = await db.IvTrxHistories.AsNoTracking()
-            .SingleOrDefaultAsync(h => h.Id == originalHistoryId
-                && h.CompanyCode == context.CompanyCode
-                && h.BranchCode == context.BranchCode,
-                cancellationToken);
-        if (history is null || history.LedgerVersion != 2
-            || history.LedgerEpochId != context.Epoch.Id
-            || history.EntryRole != "ORIGINAL" || history.BatchStatus != "POSTED"
-            || history.ValuationStatus != StockValuationStatuses.Valued)
-            throw Invalid($"History {originalHistoryId} is not a V2 original in the replay epoch.");
+        var historyIds = requests.Select(r => r.OriginalHistoryId).ToArray();
+        var histories = await db.IvTrxHistories.AsNoTracking().Where(h => historyIds.Contains(h.Id)
+            && h.CompanyCode == context.CompanyCode && h.BranchCode == context.BranchCode)
+            .ToArrayAsync(cancellationToken);
+        if (histories.Length != historyIds.Length || histories.Any(h => h.LedgerVersion != 2
+                || h.LedgerEpochId != context.Epoch.Id || h.EntryRole != "ORIGINAL"
+                || h.BatchStatus != "POSTED" || h.ValuationStatus != StockValuationStatuses.Valued))
+            throw Invalid("A reversal history is not a V2 original in the replay epoch.");
+        var historiesById = histories.ToDictionary(h => h.Id);
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(
-            db, context.CompanyCode, context.BranchCode,
-            [history], cancellationToken);
-        var originals = active[originalHistoryId];
-        var requestedIds = lines.Select(l => l.OriginalFactId).Order().ToArray();
-        if (!requestedIds.SequenceEqual(originals.Select(f => f.Id).Order()))
-            throw Invalid($"History {originalHistoryId} reversal omits or adds an active valuation fact.");
+            db, context.CompanyCode, context.BranchCode, histories, cancellationToken);
+        foreach (var request in requests)
+            if (!request.Lines.Select(l => l.OriginalFactId).Order()
+                .SequenceEqual(active[request.OriginalHistoryId].Select(f => f.Id).Order()))
+                throw Invalid($"History {request.OriginalHistoryId} reversal omits or adds an active valuation fact.");
+        var originals = active.Values.SelectMany(f => f).ToArray();
         var byId = originals.ToDictionary(f => f.Id);
 
         var ownerIds = originals.Select(f => f.StockPostingId)
-            .Append(history.StockPostingId ?? 0L).Distinct().ToArray();
+            .Concat(histories.Select(h => h.StockPostingId ?? 0L)).Distinct().ToArray();
         var owners = await db.StockPostings.AsNoTracking()
             .Where(p => ownerIds.Contains(p.Id))
             .ToDictionaryAsync(p => p.Id, cancellationToken);
@@ -66,7 +80,7 @@ public static class StockReplayValuationReversalWriter
                 || owner.BranchCode != context.BranchCode
                 || owner.LedgerEpochId != context.Epoch.Id
                 || owner.SealedAtUtc is null))
-            throw Invalid($"History {originalHistoryId} has an unsealed valuation owner.");
+            throw Invalid("A reversal history has an unsealed valuation owner.");
         var earliest = originals.Min(f => f.EffectiveAt);
         var periodRefusal = await IvPeriodCloseGuard.EnsureOpenAsync(db,
             context.CompanyCode, context.BranchCode, earliest, cancellationToken);
@@ -79,14 +93,12 @@ public static class StockReplayValuationReversalWriter
         var targets = await db.IvTrxHistories.AsNoTracking()
             .Where(h => targetIds.Contains(h.Id))
             .ToDictionaryAsync(h => h.Id, cancellationToken);
-        if (targets.Count != targetIds.Length
-            || targets.Values.Any(h => h.CompanyCode != context.CompanyCode
-                || h.BranchCode != context.BranchCode
-                || h.LedgerEpochId != context.Epoch.Id
-                || h.StockPostingId != context.Posting.Id
-                || h.LedgerVersion != 2 || h.EntryRole != "REVERSAL"
-                || h.ReversesHistoryId != originalHistoryId
-                || h.BatchStatus != "POSTED"))
+        if (targets.Count != targetIds.Length || requests.Any(r => r.Lines.Any(l =>
+                l.ReversalHistoryId is int id && (!targets.TryGetValue(id, out var h)
+                    || h.CompanyCode != context.CompanyCode || h.BranchCode != context.BranchCode
+                    || h.LedgerEpochId != context.Epoch.Id || h.StockPostingId != context.Posting.Id
+                    || h.LedgerVersion != 2 || h.EntryRole != "REVERSAL"
+                    || h.ReversesHistoryId != r.OriginalHistoryId || h.BatchStatus != "POSTED"))))
             throw Invalid("A valuation reversal has no exact root Inventory reversal history.");
 
         var rootFacts = await db.StockValuationFacts.AsNoTracking()
@@ -103,13 +115,13 @@ public static class StockReplayValuationReversalWriter
             throw Invalid("A replay valuation root line identity is already used.");
 
         var now = DateTime.UtcNow;
-        var reversals = new List<StockValuationFact>(lines.Count);
-        foreach (var line in lines.OrderBy(l => l.PostingLineNo)
-            .ThenBy(l => l.SplitOrdinal))
+        var reversals = new List<StockValuationFact>(lines.Length);
+        foreach (var request in requests)
+        foreach (var line in request.Lines.OrderBy(l => l.PostingLineNo).ThenBy(l => l.SplitOrdinal))
         {
             var original = byId[line.OriginalFactId];
             var target = line.ReversalHistoryId is int targetId
-                ? targets[targetId] : history;
+                ? targets[targetId] : historiesById[request.OriginalHistoryId];
             reversals.Add(new StockValuationFact
             {
                 CompanyCode = context.CompanyCode,

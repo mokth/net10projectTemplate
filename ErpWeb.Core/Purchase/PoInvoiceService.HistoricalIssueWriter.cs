@@ -21,7 +21,7 @@ public sealed partial class PoInvoiceService
             || context.Posting.PostingRole is not ("PRIMARY" or "REVERSAL")
             || (context.Posting.PostingRole == "PRIMARY") != (context.Posting.ReversesPostingId is null)
             || context.Posting.PostingSequence != checked(watermark + 1)
-            || replay.Changes.Count is 0 or > 2
+            || replay.Changes.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount
             || replay.Changes.Any(c => context.Posting.EffectiveAt > c.Issue.Key.EffectiveAt
                 || context.Posting.EffectiveAt.Year != c.Issue.Key.EffectiveAt.Year
                 || context.Posting.EffectiveAt.Month != c.Issue.Key.EffectiveAt.Month)
@@ -93,21 +93,16 @@ public sealed partial class PoInvoiceService
             InventoryAdjustmentFact = fact, ReversesAdjustmentId = request.ReversesAdjustmentId,
             CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
         });
-        var changedFacts = new List<(InvoiceIssueChange Change, long ReversalId, long ReplacementId)>(changes.Length);
-        for (var i = 0; i < changes.Length; i++)
-        {
-            var change = changes[i];
-            var issueId = (int)change.Issue.EventId;
-            var replacements = await StockReplayWacIssueRepricingWriter.AppendAsync(context, issueId,
-                change.Issue, change.IssueStep, 2 + i * 2, 3 + i * 2, ct);
-            if (replacements.Count != 1)
-                throw InvoiceReplayInvalid("A later issue has no unique replacement valuation.");
-            await db.SaveChangesAsync(ct);
-            var reversal = await db.StockValuationFacts.AsNoTracking().SingleAsync(f =>
-                f.StockPostingId == context.Posting.Id && f.InventoryHistoryId == issueId
-                && f.ReversesValuationFactId == change.PriorFactId, ct);
-            changedFacts.Add((change, reversal.Id, replacements[0].Id));
-        }
+        var requests = changes.Select((change, i) => new StockReplayWacIssueRepricingRequest(
+            (int)change.Issue.EventId, change.Issue, change.IssueStep, 2 + i * 2, 3 + i * 2)).ToArray();
+        var results = await StockReplayWacIssueRepricingWriter.AppendManyAsync(context, requests, ct);
+        var resultByHistory = results.ToDictionary(r => r.HistoryId);
+        if (results.Count != changes.Length || changes.Any(change =>
+                !resultByHistory.TryGetValue((int)change.Issue.EventId, out var result)
+                || result.Reversals.Count != 1 || result.Replacements.Count != 1
+                || result.Reversals[0].ReversesValuationFactId != change.PriorFactId))
+            throw InvoiceReplayInvalid("A later issue has no unique replacement valuation.");
+        await db.SaveChangesAsync(ct);
         var run = new StockReplayRun
         {
             CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
@@ -120,14 +115,16 @@ public sealed partial class PoInvoiceService
         };
         db.StockReplayRuns.Add(run);
         await db.SaveChangesAsync(ct);
-        foreach (var changed in changedFacts)
-            foreach (var changedFact in new[] { changed.ReversalId, changed.ReplacementId })
+        foreach (var change in changes)
+            foreach (var changedFact in new[]
+                { resultByHistory[(int)change.Issue.EventId].Reversals[0].Id,
+                  resultByHistory[(int)change.Issue.EventId].Replacements[0].Id })
                 db.StockReplayEffects.Add(new StockReplayEffect
                 {
                     CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, ReplayRunId = run.Id,
-                    RootStockPostingId = context.Posting.Id, BusinessOwnerPostingId = changed.Change.IssueOwnerId,
+                    RootStockPostingId = context.Posting.Id, BusinessOwnerPostingId = change.IssueOwnerId,
                     EffectKind = StockReplayInvoiceIssueAudit.EffectKind, AffectedEntityType = StockReplayEffectTypes.StockValuationFact,
-                    AffectedEntityId = changedFact, OriginalEntityId = changed.Change.PriorFactId, CreatedAtUtc = DateTime.UtcNow
+                    AffectedEntityId = changedFact, OriginalEntityId = change.PriorFactId, CreatedAtUtc = DateTime.UtcNow
                 });
         var permit = new StockReplayWacWritePermit(context, request.ItemCode, planHash,
             replay.CurrentQuantity, replay.CurrentValue, replay.FinalQuantity, replay.FinalValue,

@@ -106,7 +106,7 @@ public sealed partial class PoInvoiceService
             root.PostingSequence, $"V{factId:D20}", 0);
         var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db,
             invoice.CompanyCode, invoice.BranchCode, item, key, ct);
-        if (tail.LaterEvents.Count is 0 or > 2 || tail.LaterEvents.Any(e =>
+        if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || tail.LaterEvents.Any(e =>
                 e.Key.EffectiveAt.Year != root.EffectiveAt.Year || e.Key.EffectiveAt.Month != root.EffectiveAt.Month))
             return null;
         var policies = await db.StockCostPolicyRevisions.AsNoTracking().Where(p => p.CompanyCode == invoice.CompanyCode

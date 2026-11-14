@@ -9,6 +9,7 @@ namespace ErpWeb.Core.StockLedger;
 internal static class StockReplayInvoiceIssueAudit
 {
     internal const string EffectKind = "PO_INVOICE_ISSUE_REPRICE";
+    internal const int MaxIssueCount = 100;
 
     internal static async Task<bool> ValidateForSnapshotAsync(AppDbContext db, string company,
         string branch, DateTime exclusiveEnd, long watermark, CancellationToken ct)
@@ -46,16 +47,55 @@ internal static class StockReplayInvoiceIssueAudit
     private static async Task<bool> ValidateRootsAsync(AppDbContext db, string company, string branch,
         IReadOnlyCollection<long> rootIds, long? unsealedRootId, CancellationToken ct)
     {
-        foreach (var id in rootIds)
+        if (rootIds.Count == 0)
+            return true;
+        // Load each evidence set once for the affected roots. A replay can
+        // correct many issues and be replayed repeatedly; validating one row at
+        // a time would hold the branch lock for an unbounded number of queries.
+        var ids = rootIds.Distinct().ToArray();
+        var roots = await db.StockPostings.AsNoTracking().Where(p => ids.Contains(p.Id)
+            && p.CompanyCode == company && p.BranchCode == branch).ToDictionaryAsync(p => p.Id, ct);
+        var allRuns = await db.StockReplayRuns.AsNoTracking().Where(r => ids.Contains(r.RootStockPostingId)).ToArrayAsync(ct);
+        var allEffects = await db.StockReplayEffects.AsNoTracking().Where(e =>
+            ids.Contains(e.RootStockPostingId) && e.EffectKind == EffectKind).ToArrayAsync(ct);
+        var allFacts = await db.StockValuationFacts.AsNoTracking().Where(f => ids.Contains(f.StockPostingId)).ToArrayAsync(ct);
+        var allAdjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a => ids.Contains(a.StockPostingId)).ToArrayAsync(ct);
+        var allSettlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s => ids.Contains(s.StockPostingId)).ToArrayAsync(ct);
+        var priorFactIds = allFacts.Where(f => f.ReversesValuationFactId.HasValue)
+            .Select(f => f.ReversesValuationFactId!.Value).Distinct().ToArray();
+        var historyIds = allFacts.Where(f => f.InventoryHistoryId.HasValue)
+            .Select(f => f.InventoryHistoryId!.Value).Distinct().ToArray();
+        var priorAdjustmentIds = allAdjustments.Where(a => a.ReversesAdjustmentId.HasValue)
+            .Select(a => a.ReversesAdjustmentId!.Value).Distinct().ToArray();
+        var priorSettlementIds = allSettlements.Where(s => s.ReversesSettlementId.HasValue)
+            .Select(s => s.ReversesSettlementId!.Value).Distinct().ToArray();
+        var priorFacts = await db.StockValuationFacts.AsNoTracking().Where(f => priorFactIds.Contains(f.Id)
+            && f.CompanyCode == company && f.BranchCode == branch).ToDictionaryAsync(f => f.Id, ct);
+        var histories = await db.IvTrxHistories.AsNoTracking().Where(h => historyIds.Contains(h.Id)
+            && h.CompanyCode == company && h.BranchCode == branch).ToDictionaryAsync(h => h.Id, ct);
+        var ownerIds = histories.Values.Where(h => h.StockPostingId.HasValue)
+            .Select(h => h.StockPostingId!.Value).Distinct().ToArray();
+        var owners = await db.StockPostings.AsNoTracking().Where(p => ownerIds.Contains(p.Id)
+            && p.CompanyCode == company && p.BranchCode == branch).ToDictionaryAsync(p => p.Id, ct);
+        var priorAdjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+            priorAdjustmentIds.Contains(a.Id) && a.CompanyCode == company && a.BranchCode == branch)
+            .ToDictionaryAsync(a => a.Id, ct);
+        var priorSettlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s =>
+            priorSettlementIds.Contains(s.Id) && s.CompanyCode == company && s.BranchCode == branch)
+            .ToDictionaryAsync(s => s.Id, ct);
+        var runsByRoot = allRuns.ToLookup(r => r.RootStockPostingId);
+        var effectsByRoot = allEffects.ToLookup(e => e.RootStockPostingId);
+        var factsByRoot = allFacts.ToLookup(f => f.StockPostingId);
+        var adjustmentsByRoot = allAdjustments.ToLookup(a => a.StockPostingId);
+        var settlementsByRoot = allSettlements.ToLookup(s => s.StockPostingId);
+        foreach (var id in ids)
         {
-            var root = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == id
-                && p.CompanyCode == company && p.BranchCode == branch, ct);
-            var runs = await db.StockReplayRuns.AsNoTracking().Where(r => r.RootStockPostingId == id).ToArrayAsync(ct);
-            var effects = await db.StockReplayEffects.AsNoTracking().Where(e =>
-                e.RootStockPostingId == id && e.EffectKind == EffectKind).ToArrayAsync(ct);
-            var facts = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == id).ToArrayAsync(ct);
-            var adjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a => a.StockPostingId == id).ToArrayAsync(ct);
-            var settlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s => s.StockPostingId == id).ToArrayAsync(ct);
+            var root = roots.GetValueOrDefault(id);
+            var runs = runsByRoot[id].ToArray();
+            var effects = effectsByRoot[id].ToArray();
+            var facts = factsByRoot[id].ToArray();
+            var adjustments = adjustmentsByRoot[id].ToArray();
+            var settlements = settlementsByRoot[id].ToArray();
             if (root is null || root.SourceModule != "PROCUREMENT" || root.SourceDocumentType != "PO_INVOICE"
                 || root.PostingRole is not ("PRIMARY" or "REVERSAL")
                 || root.CommandType != $"PROCUREMENT_PO_INVOICE_{root.PostingRole}"
@@ -78,7 +118,7 @@ internal static class StockReplayInvoiceIssueAudit
                 || run.EarliestEffectiveAt != root.EffectiveAt || run.LatestEffectiveAt < root.EffectiveAt
                 || run.LatestEffectiveAt.Year != root.EffectiveAt.Year || run.LatestEffectiveAt.Month != root.EffectiveAt.Month
                 || run.PlanWatermark != root.PostingSequence - 1 || run.PlanHash is null || run.PlanHash.Length != 64
-                || run.AffectedHistoryCount is < 1 or > 2 || run.AffectedItemCount != 1 || run.AffectedProductionMovementCount != 0)
+                || run.AffectedHistoryCount is < 1 or > MaxIssueCount || run.AffectedItemCount != 1 || run.AffectedProductionMovementCount != 0)
                 return false;
             var issueFacts = facts.Where(f => f.InventoryHistoryId.HasValue).ToArray();
             var valueFacts = facts.Where(f => f.InventoryHistoryId is null).ToArray();
@@ -98,13 +138,10 @@ internal static class StockReplayInvoiceIssueAudit
                     return false;
                 var reverse = reversals[0];
                 var replacement = replacements[0];
-                var prior = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f => f.Id == priorId
-                    && f.CompanyCode == company && f.BranchCode == branch, ct);
-                var history = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
-                    h.Id == group.Key && h.CompanyCode == company && h.BranchCode == branch, ct);
+                var prior = priorFacts.GetValueOrDefault(priorId);
+                var history = histories.GetValueOrDefault(group.Key);
                 var owner = history?.StockPostingId is long ownerId
-                    ? await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == ownerId
-                        && p.CompanyCode == company && p.BranchCode == branch, ct) : null;
+                    ? owners.GetValueOrDefault(ownerId) : null;
                 var groupEffects = effects.Where(e => e.AffectedEntityId == reverse.Id
                     || e.AffectedEntityId == replacement.Id).ToArray();
                 if (prior is null || history is null || owner is null || owner.SealedAtUtc is null
@@ -180,12 +217,9 @@ internal static class StockReplayInvoiceIssueAudit
                     || value.ReversesValuationFactId is not long priorValueId
                     || value.OriginalValuationFactId != priorValueId)
                     return false;
-                var priorAdjustment = await db.PurchaseCostAdjustments.AsNoTracking().SingleOrDefaultAsync(a =>
-                    a.Id == priorAdjustmentId && a.CompanyCode == company && a.BranchCode == branch, ct);
-                var priorSettlement = await db.PurchaseReceiptCostSettlements.AsNoTracking().SingleOrDefaultAsync(s =>
-                    s.Id == priorSettlementId && s.CompanyCode == company && s.BranchCode == branch, ct);
-                var priorValue = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f =>
-                    f.Id == priorValueId && f.CompanyCode == company && f.BranchCode == branch, ct);
+                var priorAdjustment = priorAdjustments.GetValueOrDefault(priorAdjustmentId);
+                var priorSettlement = priorSettlements.GetValueOrDefault(priorSettlementId);
+                var priorValue = priorFacts.GetValueOrDefault(priorValueId);
                 if (priorAdjustment is null || priorSettlement is null || priorValue is null
                     || priorAdjustment.StockPostingId != root.ReversesPostingId
                     || priorSettlement.StockPostingId != root.ReversesPostingId
