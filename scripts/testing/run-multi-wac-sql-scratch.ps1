@@ -54,6 +54,10 @@ param(
     [switch]$BackdatedInvoiceUnbilledDelivery,
     [switch]$BackdatedInvoiceBilledDelivery,
     [switch]$BackdatedInvoiceDeliveryReturn,
+    [switch]$BackdatedInvoiceDirectSaleIssue,
+    [switch]$BackdatedInvoiceDeliveryIssue,
+    [switch]$BackdatedInvoiceDirectSaleTwoIssues,
+    [switch]$BackdatedInvoiceSaleIssueBoundary,
     [switch]$InvoiceBeforeTwoIssues,
     [switch]$BackdatedInvoiceDepleted,
     [switch]$BackdatedPurchaseInvoice,
@@ -62,7 +66,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $BackdatedInvoiceTenIssues -or $BackdatedInvoiceTenConcurrent -or $BackdatedInvoiceIssueBoundary -or $BackdatedInvoiceMixedReceipt -or $BackdatedInvoiceMixedReceiptFirst -or $BackdatedInvoiceMixedGoods -or $BackdatedInvoiceMixedGoodsFirst -or $BackdatedInvoiceSameOrder -or $BackdatedInvoiceSameOrderGoodsFirst -or $BackdatedInvoiceDirectSale -or $InvoiceBeforeDirectSale -or $BackdatedInvoiceSaleReturn -or $BackdatedInvoiceUnbilledDelivery -or $BackdatedInvoiceBilledDelivery -or $BackdatedInvoiceDeliveryReturn -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $BackdatedInvoiceTenIssues -or $BackdatedInvoiceTenConcurrent -or $BackdatedInvoiceIssueBoundary -or $BackdatedInvoiceMixedReceipt -or $BackdatedInvoiceMixedReceiptFirst -or $BackdatedInvoiceMixedGoods -or $BackdatedInvoiceMixedGoodsFirst -or $BackdatedInvoiceSameOrder -or $BackdatedInvoiceSameOrderGoodsFirst -or $BackdatedInvoiceDirectSale -or $InvoiceBeforeDirectSale -or $BackdatedInvoiceSaleReturn -or $BackdatedInvoiceUnbilledDelivery -or $BackdatedInvoiceBilledDelivery -or $BackdatedInvoiceDeliveryReturn -or $BackdatedInvoiceDirectSaleIssue -or $BackdatedInvoiceDeliveryIssue -or $BackdatedInvoiceDirectSaleTwoIssues -or $BackdatedInvoiceSaleIssueBoundary -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
 }
@@ -106,6 +110,10 @@ try {
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($BackdatedInvoiceSaleIssueBoundary) { 'SqlServer_backdated_purchase_invoice_replays_sale_and_ninety_nine_issues_at_boundary' }
+        elseif ($BackdatedInvoiceDirectSaleTwoIssues) { 'SqlServer_backdated_purchase_invoice_reprices_sale_and_two_issues_atomically' }
+        elseif ($BackdatedInvoiceDeliveryIssue) { 'SqlServer_backdated_purchase_invoice_reprices_billed_delivery_and_issue_atomically' }
+        elseif ($BackdatedInvoiceDirectSaleIssue) { 'SqlServer_backdated_purchase_invoice_reprices_direct_sale_and_issue_atomically' }
         elseif ($BackdatedInvoiceDeliveryReturn) { 'SqlServer_sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost' }
         elseif ($BackdatedInvoiceBilledDelivery) { 'SqlServer_backdated_purchase_invoice_reprices_billed_delivery_atomically' }
         elseif ($BackdatedInvoiceUnbilledDelivery) { 'SqlServer_backdated_purchase_invoice_reprices_unbilled_delivery_atomically' }

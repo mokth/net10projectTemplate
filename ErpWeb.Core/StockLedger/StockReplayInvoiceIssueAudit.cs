@@ -129,7 +129,7 @@ internal static class StockReplayInvoiceIssueAudit
                 return false;
             var saleCount = issueGroups.Count(g => histories.TryGetValue(g.Key, out var history)
                 && history.TrxType == IvTrxTypes.SalesOut);
-            if (saleCount > 0 && (saleCount != 1 || issueGroups.Length != 1))
+            if (saleCount > 1)
                 return false;
             var value = valueFacts[0];
             var latestIssue = DateTime.MinValue;

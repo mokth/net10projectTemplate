@@ -27,7 +27,8 @@ public sealed partial class PoInvoiceService
         var sales = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut).ToArray();
         if (sales.Length == 0)
             return Array.Empty<InvoiceDeliverySaleProof>();
-        if (sales.Length != 1 || histories.Count != 1)
+        if (sales.Length != 1 || histories.Any(h =>
+                h.TrxType is not (IvTrxTypes.SalesOut or IvTrxTypes.MiscellaneousIssue)))
             return null;
         var history = sales[0];
         if (string.IsNullOrWhiteSpace(history.DoNo))

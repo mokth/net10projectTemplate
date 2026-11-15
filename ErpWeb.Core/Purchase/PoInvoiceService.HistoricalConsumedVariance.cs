@@ -207,7 +207,7 @@ public sealed partial class PoInvoiceService
         if (projection.HistoricalQuantityBeforeCandidate != 0m || projection.HistoricalValueBeforeCandidate != 0m)
         {
             // This route accepts ordinary Inventory issues and fixed-cost
-            // receipts, or one separately proven sale, on one pile.
+            // receipts, or one proven sale with Inventory issues, on one pile.
             if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || balances.Length != 1)
                 return null;
             var split = StockPurchaseVarianceAllocator.Allocate(adjustment.TotalAdjustmentAmount,
