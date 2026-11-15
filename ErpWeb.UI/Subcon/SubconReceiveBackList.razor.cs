@@ -15,6 +15,7 @@ public partial class SubconReceiveBackList : PageBase
     protected bool IsBootstrapping = true;
     protected bool CanAdd;
     protected int TotalCount;
+    protected IReadOnlyList<SubconListRow> CompactRows { get; private set; } = [];
     protected SubconWorkbenchGridDataSource DataSource { get; private set; } = default!;
     protected string TotalCountLabel => TotalCount == 1 ? "1 draft" : $"{TotalCount:N0} drafts";
 
@@ -40,8 +41,9 @@ public partial class SubconReceiveBackList : PageBase
             new() { Text = "VIEW", IConClass = "fa-regular fa-eye", Style = "primary" },
             new() { Text = "EDIT", IConClass = "far fa-edit", Style = "primary", Enabled = await AccessRights.CanAsync(MenuCodes.SubconReceiveBack, PermissionCodes.Edit) }
         ];
-        var page = await Subcon.SearchAsync(new SubconListQuery { Kind = SubconListKinds.Receipt, Take = 1 });
+        var page = await Subcon.SearchAsync(new SubconListQuery { Kind = SubconListKinds.Receipt, Take = 20 });
         TotalCount = page.ListPage?.TotalCount ?? 0;
+        CompactRows = page.ListPage?.Rows ?? [];
         IsBootstrapping = false;
     }
 
@@ -69,11 +71,19 @@ public partial class SubconReceiveBackList : PageBase
         return Task.CompletedTask;
     }
 
+    protected void NavigateView(string docNo) =>
+        Navigation.NavigateTo($"/subcon/receive-back/view/{docNo}");
+
     private async Task<(IReadOnlyList<SubconListRow> Rows, int TotalCount)> SearchAsync(
         SubconListQuery query, CancellationToken cancellationToken)
     {
         var result = await Subcon.SearchAsync(query with { Kind = SubconListKinds.Receipt }, cancellationToken);
         TotalCount = result.ListPage?.TotalCount ?? 0;
+        if (query.Skip == 0 && result.ListPage is not null)
+        {
+            CompactRows = result.ListPage.Rows;
+        }
+
         return result.ListPage is null ? ([], 0) : (result.ListPage.Rows, result.ListPage.TotalCount);
     }
 }

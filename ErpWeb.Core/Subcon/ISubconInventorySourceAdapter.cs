@@ -7,6 +7,12 @@ public interface ISubconInventorySourceAdapter
     Task<SubconResult> PostAsync(SubconDispatchDto dispatch, CancellationToken cancellationToken = default);
 
     Task<SubconResult> RollbackAsync(SubconDispatchDto dispatch, CancellationToken cancellationToken = default);
+
+    Task<SubconResult> ValidateReceiptBeforePostAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default);
+
+    Task<SubconResult> PostReceiptAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default);
+
+    Task<SubconResult> RollbackReceiptAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default);
 }
 
 public interface ISubconProductionSourceAdapter
@@ -27,6 +33,15 @@ public sealed class SubconBlockedInventorySourceAdapter : ISubconInventorySource
         Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
 
     public Task<SubconResult> RollbackAsync(SubconDispatchDto dispatch, CancellationToken cancellationToken = default) =>
+        Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+
+    public Task<SubconResult> ValidateReceiptBeforePostAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default) =>
+        Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+
+    public Task<SubconResult> PostReceiptAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default) =>
+        Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+
+    public Task<SubconResult> RollbackReceiptAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default) =>
         Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
 }
 

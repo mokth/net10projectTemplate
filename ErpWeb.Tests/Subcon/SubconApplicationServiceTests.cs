@@ -177,6 +177,400 @@ public class SubconApplicationServiceTests : IAsyncLifetime
         Assert.Equal(SubconBlockedReasons.PostingNotEnabled, page.Workbench.PostingBanner);
     }
 
+    [Fact]
+    public async Task Editing_receipt_draft_does_not_double_count_own_existing_qty()
+    {
+        var svc = _h.CreateService();
+        var dispatch = await svc.SaveDispatchDraftAsync(SubconTestHarness.GoodDispatch(qty: 5m));
+        Assert.True(dispatch.Succeeded, dispatch.ErrorMessage);
+
+        var created = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconReceiptLineSaveCommand
+                {
+                    LineNo = 1,
+                    DispatchDocNo = dispatch.Dispatch!.DocNo,
+                    DispatchLineNo = 1,
+                    Qty = 3m
+                }
+            ]
+        });
+        Assert.True(created.Succeeded, created.ErrorMessage);
+
+        var edited = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            DocNo = created.Receipt!.DocNo,
+            TrxDate = DateTime.Today,
+            SupplierCode = "SUP01",
+            RowVersion = created.Receipt.RowVersion,
+            Lines =
+            [
+                new SubconReceiptLineSaveCommand
+                {
+                    LineNo = 1,
+                    DispatchDocNo = dispatch.Dispatch.DocNo,
+                    DispatchLineNo = 1,
+                    Qty = 5m
+                }
+            ]
+        });
+        Assert.True(edited.Succeeded, edited.ErrorMessage);
+        Assert.Equal(5m, edited.Receipt!.Lines[0].Qty);
+
+        var over = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            DocNo = edited.Receipt.DocNo,
+            TrxDate = DateTime.Today,
+            SupplierCode = "SUP01",
+            RowVersion = edited.Receipt.RowVersion,
+            Lines =
+            [
+                new SubconReceiptLineSaveCommand
+                {
+                    LineNo = 1,
+                    DispatchDocNo = dispatch.Dispatch.DocNo,
+                    DispatchLineNo = 1,
+                    Qty = 6m
+                }
+            ]
+        });
+        Assert.False(over.Succeeded);
+        Assert.Contains("receive only 5", over.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Receipt_with_duplicate_lines_to_same_dispatch_line_sums_combined_qty()
+    {
+        var svc = _h.CreateService();
+        var dispatch = await svc.SaveDispatchDraftAsync(SubconTestHarness.GoodDispatch(qty: 5m));
+        Assert.True(dispatch.Succeeded, dispatch.ErrorMessage);
+
+        var over = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatch.Dispatch!.DocNo, DispatchLineNo = 1, Qty = 3m },
+                new SubconReceiptLineSaveCommand { LineNo = 2, DispatchDocNo = dispatch.Dispatch.DocNo, DispatchLineNo = 1, Qty = 3m }
+            ]
+        });
+        Assert.False(over.Succeeded);
+        Assert.Contains("receive only 5", over.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        var valid = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatch.Dispatch.DocNo, DispatchLineNo = 1, Qty = 3m },
+                new SubconReceiptLineSaveCommand { LineNo = 2, DispatchDocNo = dispatch.Dispatch.DocNo, DispatchLineNo = 1, Qty = 2m }
+            ]
+        });
+        Assert.True(valid.Succeeded, valid.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Dispatch_edit_rejects_modifying_or_removing_line_referenced_by_receipt()
+    {
+        var svc = _h.CreateService();
+        var dispatch = await svc.SaveDispatchDraftAsync(SubconTestHarness.GoodDispatch(qty: 5m));
+        Assert.True(dispatch.Succeeded, dispatch.ErrorMessage);
+
+        var receipt = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatch.Dispatch!.DocNo, DispatchLineNo = 1, Qty = 3m }
+            ]
+        });
+        Assert.True(receipt.Succeeded, receipt.ErrorMessage);
+
+        var lowerQty = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            DocNo = dispatch.Dispatch.DocNo,
+            TrxDate = DateTime.Today,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "SUP01",
+            RowVersion = dispatch.Dispatch.RowVersion,
+            Lines =
+            [
+                new SubconDispatchLineSaveCommand
+                {
+                    LineNo = 1,
+                    ItemCode = "RM1",
+                    Qty = 2m,
+                    WarehouseCode = "MAIN",
+                    LocationCode = "BIN1",
+                    Uom = "PCS"
+                }
+            ]
+        });
+        Assert.False(lowerQty.Succeeded);
+        Assert.Equal(SubconMessages.DispatchLineReferenced, lowerQty.ErrorMessage);
+
+        var addSecondLine = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            DocNo = dispatch.Dispatch.DocNo,
+            TrxDate = DateTime.Today,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "SUP01",
+            RowVersion = dispatch.Dispatch.RowVersion,
+            Lines =
+            [
+                new SubconDispatchLineSaveCommand
+                {
+                    LineNo = 1,
+                    ItemCode = "RM1",
+                    Qty = 5m,
+                    WarehouseCode = "MAIN",
+                    LocationCode = "BIN1",
+                    Uom = "PCS"
+                },
+                new SubconDispatchLineSaveCommand
+                {
+                    LineNo = 2,
+                    ItemCode = "RM1",
+                    Qty = 4m,
+                    WarehouseCode = "MAIN",
+                    LocationCode = "SITE",
+                    Uom = "PCS"
+                }
+            ]
+        });
+        Assert.True(addSecondLine.Succeeded, addSecondLine.ErrorMessage);
+
+        var reloadedReceipt = await svc.GetReceiptAsync(receipt.Receipt!.DocNo);
+        Assert.True(reloadedReceipt.Succeeded, reloadedReceipt.ErrorMessage);
+        Assert.Equal(dispatch.Dispatch.DocNo, reloadedReceipt.Receipt!.Lines[0].DispatchDocNo);
+        Assert.Equal(3m, reloadedReceipt.Receipt.Lines[0].Qty);
+    }
+
+    [Fact]
+    public async Task Dispatch_validates_warehouse_location_uom_and_po()
+    {
+        var svc = _h.CreateService();
+
+        var cmdBadWh = new SubconDispatchSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "RM1", Qty = 5m, WarehouseCode = "BADWH", LocationCode = "BIN1", Uom = "PCS" }
+            ]
+        };
+        var resWh = await svc.SaveDispatchDraftAsync(cmdBadWh);
+        Assert.False(resWh.Succeeded);
+        Assert.Equal(SubconMessages.WarehouseInvalid, resWh.ErrorMessage);
+
+        var cmdBadLoc = new SubconDispatchSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "RM1", Qty = 5m, WarehouseCode = "MAIN", LocationCode = "BADLOC", Uom = "PCS" }
+            ]
+        };
+        var resLoc = await svc.SaveDispatchDraftAsync(cmdBadLoc);
+        Assert.False(resLoc.Succeeded);
+        Assert.Equal(SubconMessages.LocationInvalid, resLoc.ErrorMessage);
+
+        var cmdBadUom = new SubconDispatchSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "RM1", Qty = 5m, WarehouseCode = "MAIN", LocationCode = "BIN1", Uom = "BADUOM" }
+            ]
+        };
+        var resUom = await svc.SaveDispatchDraftAsync(cmdBadUom);
+        Assert.False(resUom.Succeeded);
+        Assert.Equal(SubconMessages.UomInvalid, resUom.ErrorMessage);
+
+        var badPo = SubconTestHarness.GoodDispatch();
+        var cmdBadPo = new SubconDispatchSaveCommand
+        {
+            TrxDate = badPo.TrxDate,
+            Mode = badPo.Mode,
+            SupplierCode = badPo.SupplierCode,
+            PoNo = "PO-MISSING",
+            Lines = badPo.Lines
+        };
+        var resPo = await svc.SaveDispatchDraftAsync(cmdBadPo);
+        Assert.False(resPo.Succeeded);
+        Assert.Equal(SubconMessages.PoInvalid, resPo.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Workbench_kpis_aggregate_across_all_drafts_beyond_first_page()
+    {
+        var svc = _h.CreateService();
+        Assert.True((await svc.SaveDispatchDraftAsync(SubconTestHarness.GoodDispatch(qty: 5m))).Succeeded);
+        Assert.True((await svc.SaveDispatchDraftAsync(SubconTestHarness.GoodDispatch(qty: 5m))).Succeeded);
+        Assert.True((await svc.SaveDispatchDraftAsync(SubconTestHarness.GoodDispatch(qty: 5m))).Succeeded);
+
+        var page = await svc.GetWorkbenchAsync(new SubconListQuery { Take = 1 });
+        Assert.True(page.Succeeded, page.ErrorMessage);
+        Assert.Single(page.Workbench!.Rows);
+        Assert.Equal(3, page.Workbench.TotalCount);
+        Assert.Equal(3, page.Workbench.DraftCount);
+        Assert.Equal(3, page.Workbench.OpenLineCount);
+        Assert.Contains("15 PCS", page.Workbench.OutstandingByUom);
+    }
+
+    [Fact]
+    public async Task SearchDispatchLinesAsync_returns_remaining_qty_and_excludes_self_on_edit()
+    {
+        var svc = _h.CreateService();
+        var dispatch = await svc.SaveDispatchDraftAsync(SubconTestHarness.GoodDispatch(qty: 5m));
+        Assert.True(dispatch.Succeeded, dispatch.ErrorMessage);
+
+        var receipt = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconReceiptLineSaveCommand
+                {
+                    LineNo = 1,
+                    DispatchDocNo = dispatch.Dispatch!.DocNo,
+                    DispatchLineNo = 1,
+                    Qty = 3m
+                }
+            ]
+        });
+        Assert.True(receipt.Succeeded, receipt.ErrorMessage);
+
+        var newLookup = await svc.SearchDispatchLinesAsync(new SubconDispatchLineLookupQuery
+        {
+            SupplierCode = "SUP01"
+        });
+        Assert.True(newLookup.Succeeded, newLookup.ErrorMessage);
+        var newRow = Assert.Single(newLookup.DispatchLineLookup!.Rows);
+        Assert.Equal(dispatch.Dispatch.DocNo, newRow.DispatchDocNo);
+        Assert.Equal(2m, newRow.RemainingQty);
+
+        var editLookup = await svc.SearchDispatchLinesAsync(new SubconDispatchLineLookupQuery
+        {
+            SupplierCode = "SUP01",
+            ExcludeReceiptDocNo = receipt.Receipt!.DocNo
+        });
+        Assert.True(editLookup.Succeeded, editLookup.ErrorMessage);
+        var editRow = Assert.Single(editLookup.DispatchLineLookup!.Rows);
+        Assert.Equal(5m, editRow.RemainingQty);
+    }
+
+    [Fact]
+    public async Task SaveJobDraftAsync_creates_assembly_job_from_bom_and_linked_dispatch_without_moving_stock()
+    {
+        var before = await _h.SnapshotAsync();
+        var bom = await _h.CreateBomReadService().ExplodeForSubconAsync(new SubconBomExplosionRequest
+        {
+            ProdCode = "FG1",
+            Quantity = 4m
+        });
+        Assert.True(bom.Succeeded, bom.ErrorMessage);
+
+        var svc = _h.CreateService();
+        var saved = await svc.SaveJobDraftAsync(new SubconJobSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            JobKind = SubconJobKinds.Assembly,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "SUP01",
+            TargetItemCode = "FG1",
+            TargetUom = bom.Snapshot!.Uom,
+            TargetQty = 4m,
+            DefinitionCode = bom.Snapshot.DefinitionCode,
+            BomVersion = bom.Snapshot.BomVersion,
+            IsManualKit = false,
+            Materials = bom.Snapshot.Materials.Select(c => new SubconJobMaterialSaveCommand
+            {
+                LineNo = c.LineNo,
+                ItemCode = c.ItemCode,
+                Uom = c.Uom,
+                RequiredQty = c.RequiredQty,
+                SendNowQty = c.RequiredQty,
+                WarehouseCode = c.WarehouseCode,
+                LocationCode = c.LocationCode
+            }).ToArray()
+        });
+
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.NotNull(saved.Job);
+        Assert.StartsWith("SJ", saved.Job!.JobNo, StringComparison.Ordinal);
+        Assert.Equal(SubconJobKinds.Assembly, saved.Job.JobKind);
+        Assert.Equal("FG1", saved.Job.TargetItemCode);
+        Assert.Equal(4m, saved.Job.TargetQty);
+        Assert.Single(saved.Job.Materials);
+        Assert.Equal(8m, saved.Job.Materials[0].RequiredQty);
+        Assert.Single(saved.Job.Outputs);
+        Assert.Equal("FG1", saved.Job.Outputs[0].ItemCode);
+        Assert.False(string.IsNullOrWhiteSpace(saved.Job.PrimaryDispatchDocNo));
+
+        var dispatch = await svc.GetDispatchAsync(saved.Job.PrimaryDispatchDocNo!);
+        Assert.True(dispatch.Succeeded, dispatch.ErrorMessage);
+        Assert.Equal(8m, dispatch.Dispatch!.Lines[0].Qty);
+
+        var after = await _h.SnapshotAsync();
+        AssertUnchangedStock(before, after);
+    }
+
+    [Fact]
+    public async Task SaveJobDraftAsync_supports_manual_kit_snapshot_without_bom_master()
+    {
+        var before = await _h.SnapshotAsync();
+        var svc = _h.CreateService();
+        var saved = await svc.SaveJobDraftAsync(new SubconJobSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            JobKind = SubconJobKinds.Assembly,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "SUP01",
+            TargetItemCode = "FG1",
+            TargetUom = "PCS",
+            TargetQty = 2m,
+            IsManualKit = true,
+            Materials =
+            [
+                new SubconJobMaterialSaveCommand
+                {
+                    LineNo = 1,
+                    ItemCode = "RM1",
+                    Uom = "PCS",
+                    RequiredQty = 6m,
+                    SendNowQty = 6m,
+                    WarehouseCode = "MAIN",
+                    LocationCode = "BIN1"
+                }
+            ]
+        });
+
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.True(saved.Job!.IsManualKit);
+        var loaded = await svc.GetJobAsync(saved.Job.JobNo);
+        Assert.True(loaded.Succeeded, loaded.ErrorMessage);
+        Assert.True(loaded.Job!.IsManualKit);
+        Assert.Equal(6m, loaded.Job.Materials[0].SendNowQty);
+
+        var after = await _h.SnapshotAsync();
+        AssertUnchangedStock(before, after);
+    }
+
     private static void AssertUnchangedStock(StockSnapshot before, StockSnapshot after)
     {
         Assert.Equal(before.BalLocCount, after.BalLocCount);

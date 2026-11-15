@@ -13,9 +13,23 @@ public partial class SubconInquiry : PageBase, IDisposable
 
     private Timer? _searchDebounce;
 
+    protected CommonDataGridEx<SubconListRow>? Grid;
     protected bool IsBootstrapping = true;
     protected int TotalCount;
     protected string SearchText = string.Empty;
+    protected bool FilterPopupVisible;
+    protected string? StatusFilter;
+    protected DateTime? DateFromFilter;
+    protected DateTime? DateToFilter;
+    protected string? DraftStatusFilter;
+    protected DateTime? DraftDateFrom;
+    protected DateTime? DraftDateTo;
+    protected string[] StatusFilterOptions { get; } = [SubconStatuses.New, SubconStatuses.Cancelled];
+    protected bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(StatusFilter)
+        || DateFromFilter.HasValue
+        || DateToFilter.HasValue;
+    protected IReadOnlyList<SubconListRow> CompactRows { get; private set; } = [];
     protected SubconWorkbenchGridDataSource DataSource { get; private set; } = default!;
     protected string TotalCountLabel => TotalCount == 1 ? "1 document" : $"{TotalCount:N0} documents";
 
@@ -40,13 +54,14 @@ public partial class SubconInquiry : PageBase, IDisposable
     protected override async Task OnPageInitializedAsync()
     {
         DataSource = new SubconWorkbenchGridDataSource(SearchAsync);
-        var page = await Subcon.SearchAsync(new SubconListQuery { Take = 1 });
+        var page = await Subcon.SearchAsync(new SubconListQuery { Take = 20 });
         if (!page.Succeeded)
         {
             ErrorMessage = page.ErrorMessage;
         }
 
         TotalCount = page.ListPage?.TotalCount ?? 0;
+        CompactRows = page.ListPage?.Rows ?? [];
         IsBootstrapping = false;
     }
 
@@ -55,30 +70,95 @@ public partial class SubconInquiry : PageBase, IDisposable
         SearchText = value;
         _searchDebounce?.Dispose();
         _searchDebounce = new Timer(300) { AutoReset = false };
-        _searchDebounce.Elapsed += async (_, _) => await InvokeAsync(async () =>
-        {
-            var page = await Subcon.SearchAsync(new SubconListQuery { SearchText = SearchText, Take = 1 });
-            TotalCount = page.ListPage?.TotalCount ?? 0;
-            StateHasChanged();
-        });
+        _searchDebounce.Elapsed += async (_, _) => await InvokeAsync(ApplySearchAsync);
         _searchDebounce.Start();
+    }
+
+    protected async Task ApplySearchAsync()
+    {
+        _searchDebounce?.Stop();
+        var page = await Subcon.SearchAsync(new SubconListQuery
+        {
+            SearchText = SearchText,
+            Status = StatusFilter,
+            DateFrom = DateFromFilter,
+            DateTo = DateToFilter,
+            Take = 20
+        });
+        if (!page.Succeeded)
+        {
+            ErrorMessage = page.ErrorMessage;
+        }
+
+        TotalCount = page.ListPage?.TotalCount ?? 0;
+        CompactRows = page.ListPage?.Rows ?? [];
+        if (Grid is not null)
+        {
+            await Grid.OnRefreshClick();
+        }
+
+        StateHasChanged();
+    }
+
+    protected void OpenFilterPopup()
+    {
+        DraftStatusFilter = StatusFilter;
+        DraftDateFrom = DateFromFilter;
+        DraftDateTo = DateToFilter;
+        FilterPopupVisible = true;
+    }
+
+    protected async Task ClearFiltersAsync()
+    {
+        DraftStatusFilter = null;
+        DraftDateFrom = null;
+        DraftDateTo = null;
+        StatusFilter = null;
+        DateFromFilter = null;
+        DateToFilter = null;
+        FilterPopupVisible = false;
+        await ApplySearchAsync();
+    }
+
+    protected async Task ApplyFiltersAsync()
+    {
+        StatusFilter = DraftStatusFilter;
+        DateFromFilter = DraftDateFrom?.Date;
+        DateToFilter = DraftDateTo?.Date;
+        FilterPopupVisible = false;
+        await ApplySearchAsync();
     }
 
     protected Task OnActionClick(SelectedButtonInfo<SubconListRow> info)
     {
         if (info.SelectedRow is not null)
         {
-            Navigation.NavigateTo($"/subcon/send-out/view/{info.SelectedRow.DocNo}");
+            NavigateView(info.SelectedRow.DocNo);
         }
 
         return Task.CompletedTask;
     }
 
+    protected void NavigateView(string docNo) =>
+        Navigation.NavigateTo($"/subcon/send-out/view/{docNo}");
+
     private async Task<(IReadOnlyList<SubconListRow> Rows, int TotalCount)> SearchAsync(
         SubconListQuery query, CancellationToken cancellationToken)
     {
-        var result = await Subcon.SearchAsync(query with { SearchText = SearchText, Kind = SubconListKinds.Dispatch }, cancellationToken);
+        var result = await Subcon.SearchAsync(query with
+        {
+            SearchText = SearchText,
+            Status = StatusFilter,
+            DateFrom = DateFromFilter,
+            DateTo = DateToFilter,
+            Kind = SubconListKinds.Dispatch
+        }, cancellationToken);
         TotalCount = result.ListPage?.TotalCount ?? 0;
+        if (query.Skip == 0 && result.ListPage is not null)
+        {
+            CompactRows = result.ListPage.Rows;
+        }
+
         return result.ListPage is null ? ([], 0) : (result.ListPage.Rows, result.ListPage.TotalCount);
     }
 

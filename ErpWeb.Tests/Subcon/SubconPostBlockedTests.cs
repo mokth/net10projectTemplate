@@ -97,4 +97,76 @@ public class SubconPostBlockedTests : IAsyncLifetime
         Assert.Equal(before.WipCount, after.WipCount);
         Assert.Equal(10m, after.WipQty);
     }
+
+    [Fact]
+    public async Task Post_receipt_calls_inventory_PostReceiptAsync_and_remains_blocked()
+    {
+        var spy = new SpyBlockedInventoryAdapter();
+        var svc = new SubconApplicationService(
+            _h.Factory,
+            _h.Tenant.Object,
+            _h.Access.Object,
+            new ErpWeb.Core.Numbering.RunningNumberService(),
+            spy,
+            new SubconBlockedProductionSourceAdapter());
+
+        var dispatch = await svc.SaveDispatchDraftAsync(SubconTestHarness.GoodDispatch(qty: 4m));
+        Assert.True(dispatch.Succeeded, dispatch.ErrorMessage);
+
+        var receipt = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = DateTime.Today,
+            SupplierCode = "SUP01",
+            Lines =
+            [
+                new SubconReceiptLineSaveCommand
+                {
+                    LineNo = 1,
+                    DispatchDocNo = dispatch.Dispatch!.DocNo,
+                    DispatchLineNo = 1,
+                    Qty = 4m
+                }
+            ]
+        });
+        Assert.True(receipt.Succeeded, receipt.ErrorMessage);
+
+        var posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = receipt.Receipt!.DocNo });
+        Assert.False(posted.Succeeded);
+        Assert.Equal(SubconBlockedReasons.NoAtomicInventorySeam, posted.ErrorMessage);
+        Assert.True(spy.PostReceiptCalled);
+        Assert.Equal(receipt.Receipt.DocNo, spy.LastReceiptDocNo);
+        Assert.False(spy.PostDispatchCalled);
+    }
+
+    private sealed class SpyBlockedInventoryAdapter : ISubconInventorySourceAdapter
+    {
+        public bool PostDispatchCalled { get; private set; }
+        public bool PostReceiptCalled { get; private set; }
+        public string? LastReceiptDocNo { get; private set; }
+
+        public Task<SubconResult> ValidateBeforePostAsync(SubconDispatchDto dispatch, CancellationToken cancellationToken = default) =>
+            Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+
+        public Task<SubconResult> PostAsync(SubconDispatchDto dispatch, CancellationToken cancellationToken = default)
+        {
+            PostDispatchCalled = true;
+            return Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+        }
+
+        public Task<SubconResult> RollbackAsync(SubconDispatchDto dispatch, CancellationToken cancellationToken = default) =>
+            Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+
+        public Task<SubconResult> ValidateReceiptBeforePostAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default) =>
+            Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+
+        public Task<SubconResult> PostReceiptAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default)
+        {
+            PostReceiptCalled = true;
+            LastReceiptDocNo = receipt.DocNo;
+            return Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+        }
+
+        public Task<SubconResult> RollbackReceiptAsync(SubconReceiptDto receipt, CancellationToken cancellationToken = default) =>
+            Task.FromResult(SubconResult.Fail(SubconBlockedReasons.NoAtomicInventorySeam));
+    }
 }

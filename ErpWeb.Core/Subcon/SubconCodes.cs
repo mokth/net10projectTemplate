@@ -22,6 +22,35 @@ public static class SubconStatuses
         string.Equals(status, New, StringComparison.OrdinalIgnoreCase);
 }
 
+public static class SubconJobKinds
+{
+    public const string Processing = "PROCESSING";
+    public const string Assembly = "ASSEMBLY";
+    public const string ReturnMaterial = "RETURN_MATERIAL";
+
+    public static bool IsKnown(string? kind) =>
+        string.Equals(kind, Processing, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(kind, Assembly, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(kind, ReturnMaterial, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsAssembly(string? kind) =>
+        string.Equals(kind, Assembly, StringComparison.OrdinalIgnoreCase);
+}
+
+public static class SubconSourceKinds
+{
+    public const string Bom = "BOM";
+    public const string ManualKit = "MANUAL_KIT";
+    public const string InventoryItem = "INVENTORY_ITEM";
+}
+
+public static class SubconOutputKinds
+{
+    public const string FinishedGood = "FG";
+    public const string Scrap = "SCRAP";
+    public const string Byproduct = "BYPRODUCT";
+}
+
 public static class SubconBlockedReasons
 {
     public const string NoAtomicInventorySeam =
@@ -72,4 +101,12 @@ public static class SubconMessages
     public const string ReceiptNotFound = "Receive-back was not found.";
     public const string OverReturn = "You can receive only the remaining quantity on this dispatch line.";
     public const string UnknownMode = "Select Inventory stock or Work Order WIP.";
+    public const string WarehouseInvalid = "Select an active warehouse in the current branch.";
+    public const string LocationInvalid = "Select an active location in the chosen warehouse.";
+    public const string UomInvalid = "Select an active UOM valid for this item.";
+    public const string PoInvalid = "Referenced purchase order line was not found for this supplier.";
+    public const string DispatchLineReferenced = "This send-out line is referenced by a receive-back draft and cannot be removed or altered.";
+    public const string DuplicateLineNo = "Line numbers within the same document must be unique.";
+    public const string TargetItemRequired = "Target output item and quantity are required for assembly jobs.";
+    public const string JobNotFound = "Subcontract job was not found.";
 }

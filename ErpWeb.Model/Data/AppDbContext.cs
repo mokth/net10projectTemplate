@@ -386,6 +386,11 @@ public class AppDbContext : DbContext
     public DbSet<SubconDispatchLine> SubconDispatchLines => Set<SubconDispatchLine>();
     public DbSet<SubconReceipt> SubconReceipts => Set<SubconReceipt>();
     public DbSet<SubconReceiptLine> SubconReceiptLines => Set<SubconReceiptLine>();
+    public DbSet<SubconJob> SubconJobs => Set<SubconJob>();
+    public DbSet<SubconJobSourceSnapshot> SubconJobSourceSnapshots => Set<SubconJobSourceSnapshot>();
+    public DbSet<SubconJobMaterial> SubconJobMaterials => Set<SubconJobMaterial>();
+    public DbSet<SubconJobOutput> SubconJobOutputs => Set<SubconJobOutput>();
+    public DbSet<SubconSupplierAssignment> SubconSupplierAssignments => Set<SubconSupplierAssignment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -43,7 +43,11 @@
             <DxFormLayout SizeMode="SizeMode.Small">
                 <DxFormLayoutItem Caption="Date" ColSpanMd="4">
                     <Template>
-                        <DxDateEdit @bind-Date="@Header.TrxDate" DisplayFormat="dd/MM/yyyy" Enabled="@CanEditDocument" />
+                        <DxDateEdit Date="@Header.TrxDate"
+                                    DateChanged="@((DateTime d) => OnTrxDateChanged(d))"
+                                    DateExpression="@(() => Header.TrxDate)"
+                                    DisplayFormat="dd/MM/yyyy"
+                                    Enabled="@CanEditDocument" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Document" ColSpanMd="4">
@@ -53,7 +57,11 @@
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Promised return" ColSpanMd="4">
                     <Template>
-                        <DxDateEdit @bind-Date="@Header.PromisedReturnDate" DisplayFormat="dd/MM/yyyy" Enabled="@CanEditDocument" />
+                        <DxDateEdit Date="@Header.PromisedReturnDate"
+                                    DateChanged="@((DateTime? d) => OnPromisedReturnDateChanged(d))"
+                                    DateExpression="@(() => Header.PromisedReturnDate)"
+                                    DisplayFormat="dd/MM/yyyy"
+                                    Enabled="@CanEditDocument" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Supplier" ColSpanMd="6">
@@ -69,19 +77,78 @@
                         <DxTextBox Text="@Header.SupplierName" ReadOnly="true" ValidationEnabled="false" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Source" ColSpanMd="6">
+                <DxFormLayoutItem Caption="Job type" ColSpanMd="4">
+                    <Template>
+                        <DxComboBox Data="@JobKindOptions"
+                                    TextFieldName="@nameof(JobKindOption.Caption)"
+                                    ValueFieldName="@nameof(JobKindOption.Code)"
+                                    Value="@Header.JobKind"
+                                    ValueChanged="@((string v) => OnJobKindChanged(v))"
+                                    ValueExpression="@(() => Header.JobKind)"
+                                    Enabled="@(CanEditDocument && IsNew)" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Source" ColSpanMd="4">
                     <Template>
                         <DxTextBox Text="Inventory stock" ReadOnly="true" ValidationEnabled="false" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Linked PO" ColSpanMd="6">
+                <DxFormLayoutItem Caption="Linked PO" ColSpanMd="4">
                     <Template>
-                        <DxTextBox @bind-Text="@Header.PoNo" NullText="Optional PO number" ReadOnly="@(!CanEditDocument)" />
+                        <DxTextBox Text="@Header.PoNo"
+                                   TextChanged="OnPoNoChanged"
+                                   TextExpression="@(() => Header.PoNo)"
+                                   NullText="Optional PO number"
+                                   ReadOnly="@(!CanEditDocument)" />
                     </Template>
                 </DxFormLayoutItem>
+                @if (IsAssemblyJob)
+                {
+                    <DxFormLayoutItem Caption="Target output item" ColSpanMd="5">
+                        <Template>
+                            <IvStockMasterPicker @bind-ICode="@Header.TargetItemCode"
+                                                 Selected="@OnTargetItemSelected"
+                                                 Enabled="@CanEditDocument"
+                                                 NullText="Select assembled product" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Target qty" ColSpanMd="3">
+                        <Template>
+                            <DxSpinEdit Value="@Header.TargetQty"
+                                        ValueChanged="@((decimal v) => OnTargetQtyChanged(v))"
+                                        ValueExpression="@(() => Header.TargetQty)"
+                                        Increment="1m"
+                                        MinValue="0m"
+                                        Enabled="@CanEditDocument" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Assembly source" ColSpanMd="4">
+                        <Template>
+                            <div class="d-flex align-items-center gap-2">
+                                <DxCheckBox Checked="@Header.IsManualKit"
+                                            CheckedChanged="@((bool v) => OnManualKitChanged(v))"
+                                            CheckedExpression="@(() => Header.IsManualKit)"
+                                            Enabled="@CanEditDocument">
+                                    Manual kit (one-off)
+                                </DxCheckBox>
+                                @if (!Header.IsManualKit && CanEditDocument)
+                                {
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              Text="Load from BOM"
+                                              IconCssClass="fa-solid fa-sitemap"
+                                              Click="@LoadBomAsync" />
+                                }
+                            </div>
+                        </Template>
+                    </DxFormLayoutItem>
+                }
                 <DxFormLayoutItem Caption="Remark" ColSpanMd="12">
                     <Template>
-                        <DxMemo @bind-Text="@Header.Remarks" Rows="2" ReadOnly="@(!CanEditDocument)" />
+                        <DxMemo Text="@Header.Remarks"
+                                TextChanged="OnRemarksChanged"
+                                TextExpression="@(() => Header.Remarks)"
+                                Rows="2"
+                                ReadOnly="@(!CanEditDocument)" />
                     </Template>
                 </DxFormLayoutItem>
             </DxFormLayout>
@@ -98,11 +165,14 @@
             <DxGrid Data="@Lines"
                     KeyFieldName="@nameof(LineVm.LineNo)"
                     SizeMode="SizeMode.Small"
-                    ShowFilterRow="false">
+                    ShowFilterRow="false"
+                    ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                    TextWrapEnabled="false">
                 <Columns>
                     <DxGridCommandColumn VisibleIndex="0"
                                          FixedPosition="GridColumnFixedPosition.Left"
                                          Width="88px"
+                                         MinWidth="88"
                                          NewButtonVisible="false"
                                          EditButtonVisible="false"
                                          DeleteButtonVisible="false">
@@ -118,11 +188,12 @@
                             }
                         </CellDisplayTemplate>
                     </DxGridCommandColumn>
-                    <DxGridDataColumn FieldName="@nameof(LineVm.ItemCode)" Caption="Item" Width="140px" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.ItemCode)" Caption="Item" Width="140px" MinWidth="120" />
                     <DxGridDataColumn FieldName="@nameof(LineVm.ItemName)" Caption="Description" MinWidth="180" />
-                    <DxGridDataColumn FieldName="@nameof(LineVm.WarehouseCode)" Caption="Warehouse" Width="110px" />
-                    <DxGridDataColumn FieldName="@nameof(LineVm.Qty)" Caption="Qty" Width="110px" DisplayFormat="n4" />
-                    <DxGridDataColumn FieldName="@nameof(LineVm.Uom)" Caption="UOM" Width="80px" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.WarehouseCode)" Caption="Warehouse" Width="110px" MinWidth="100" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.LocationCode)" Caption="Location" Width="100px" MinWidth="90" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.Qty)" Caption="Qty" Width="110px" MinWidth="100" DisplayFormat="n4" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.Uom)" Caption="UOM" Width="80px" MinWidth="75" />
                 </Columns>
             </DxGrid>
 
@@ -131,12 +202,16 @@
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="Add line"
                           IconCssClass="fa-solid fa-plus"
-                          Click="@(() => LinePopupVisible = true)" />
+                          Click="@OpenAddLinePopupAsync" />
             }
 
             <footer class="iv-footer">
                 <p class="iv-footer__hint">@LineCountLabel. Post is not available.</p>
                 <div class="iv-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Print Draft"
+                              IconCssClass="fa-solid fa-print"
+                              Click="@(() => DraftPreviewVisible = true)" />
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                               Text="@(IsView ? "Close" : "Cancel")"
                               IconCssClass="fa-solid fa-xmark"
@@ -164,29 +239,54 @@
     <DxPopup HeaderText="Add line"
              Width="720px"
              ShowFooter="true"
+             CloseOnOutsideClick="false"
              @bind-Visible="@LinePopupVisible">
         <BodyContentTemplate>
             <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="On-hand balance" ColSpanMd="12">
+                    <Template Context="field">
+                        <IvBalLocPicker @bind-BalLocId="@DraftLine.BalLocId"
+                                        ICodeFilter="@DraftLine.ItemCode"
+                                        AsOfDate="@Header.TrxDate"
+                                        Selected="@OnBalLocSelectedAsync" />
+                    </Template>
+                </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Item" ColSpanMd="12">
                     <Template Context="field">
                         <IvStockMasterPicker @bind-ICode="@DraftLine.ItemCode"
-                                             Selected="@OnItemSelected"
+                                             Selected="@OnItemSelectedAsync"
                                              NullText="Search item" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
                     <Template Context="field">
-                        <DxTextBox @bind-Text="@DraftLine.WarehouseCode" />
+                        <IvCodeComboBox Data="@Warehouses"
+                                        Value="@DraftLine.WarehouseCode"
+                                        ValueChanged="OnDraftWarehouseChangedAsync"
+                                        ValueExpression="@(() => DraftLine.WarehouseCode)"
+                                        IsLoading="@IsLoadingWarehouses"
+                                        NullText="Select warehouse" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Location" ColSpanMd="4">
                     <Template Context="field">
-                        <DxTextBox @bind-Text="@DraftLine.LocationCode" />
+                        <IvCodeComboBox Data="@Locations"
+                                        Value="@DraftLine.LocationCode"
+                                        ValueChanged="@(v => DraftLine.LocationCode = v)"
+                                        ValueExpression="@(() => DraftLine.LocationCode)"
+                                        IsLoading="@IsLoadingLocations"
+                                        Enabled="@(!string.IsNullOrWhiteSpace(DraftLine.WarehouseCode))"
+                                        NullText="Optional location" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
                     <Template Context="field">
-                        <DxTextBox @bind-Text="@DraftLine.Uom" />
+                        <IvCodeComboBox Data="@Uoms"
+                                        Value="@DraftLine.Uom"
+                                        ValueChanged="@(v => DraftLine.Uom = v ?? string.Empty)"
+                                        ValueExpression="@(() => DraftLine.Uom)"
+                                        IsLoading="@IsLoadingUoms"
+                                        NullText="Select UOM" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Quantity" ColSpanMd="4">
@@ -199,6 +299,56 @@
         <FooterContentTemplate>
             <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => LinePopupVisible = false)" />
             <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Add" Click="@CommitLine" />
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup HeaderText="Draft Preview — Not Dispatched"
+             Width="min(680px, 95vw)"
+             ShowFooter="true"
+             CloseOnOutsideClick="false"
+             @bind-Visible="@DraftPreviewVisible">
+        <BodyContentTemplate>
+            <div class="alert alert-warning mb-3" role="status">
+                <strong>DRAFT — NOT DISPATCHED (STOCK NOT MOVED)</strong>
+                <div>This document is a non-posting subcontract draft. Physical inventory has not been issued.</div>
+            </div>
+            <p class="mb-2">
+                <strong>Document:</strong> @DocNoDisplay ·
+                <strong>Date:</strong> @Header.TrxDate.ToString("dd/MM/yyyy") ·
+                <strong>Supplier:</strong> @Header.SupplierCode @Header.SupplierName
+            </p>
+            <DxGrid Data="@Lines"
+                    KeyFieldName="@nameof(LineVm.LineNo)"
+                    SizeMode="SizeMode.Small"
+                    ShowFilterRow="false"
+                    ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                    TextWrapEnabled="false">
+                <Columns>
+                    <DxGridDataColumn FieldName="@nameof(LineVm.LineNo)" Caption="#" Width="60px" MinWidth="50" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.ItemCode)" Caption="Item" Width="130px" MinWidth="110" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.ItemName)" Caption="Description" MinWidth="160" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.WarehouseCode)" Caption="WH" Width="90px" MinWidth="80" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.Qty)" Caption="Qty" Width="100px" MinWidth="90" DisplayFormat="n4" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.Uom)" Caption="UOM" Width="75px" MinWidth="65" />
+                </Columns>
+            </DxGrid>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => DraftPreviewVisible = false)" />
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup HeaderText="Discard changes?"
+             Width="420px"
+             ShowFooter="true"
+             CloseOnOutsideClick="false"
+             @bind-Visible="@DiscardConfirmVisible">
+        <BodyContentTemplate>
+            <p class="mb-0">You have unsaved changes on this send-out draft. Discard them?</p>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => DiscardConfirmVisible = false)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscard" />
         </FooterContentTemplate>
     </DxPopup>
 </MenuAuthorize>

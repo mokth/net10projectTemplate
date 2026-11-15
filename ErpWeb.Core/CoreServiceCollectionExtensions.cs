@@ -306,6 +306,7 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<ISubconInventorySourceAdapter, SubconBlockedInventorySourceAdapter>();
         services.AddScoped<ISubconProductionSourceAdapter, SubconBlockedProductionSourceAdapter>();
+        services.AddScoped<ISubconBomReadService, SubconBomReadService>();
         services.AddScoped<ISubconApplicationService, SubconApplicationService>();
 
         services.AddScoped<IQaPolicyService, QaPolicyService>();

@@ -1,9 +1,11 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Planning;
 using ErpWeb.Core.Subcon;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Tests.Infrastructure.Helpers;
@@ -51,6 +53,12 @@ internal sealed class SubconTestHarness : IAsyncDisposable
             new SubconBlockedInventorySourceAdapter(),
             new SubconBlockedProductionSourceAdapter());
 
+    public ISubconBomReadService CreateBomReadService() =>
+        new SubconBomReadService(
+            Factory,
+            Tenant.Object,
+            Access.Object);
+
     public void BindTenant()
     {
         Tenant.Setup(x => x.TryCompanyScope()).Returns(Scope);
@@ -88,8 +96,68 @@ internal sealed class SubconTestHarness : IAsyncDisposable
             SuppName = "Paint Co"
         });
         db.IvStockMasters.Add(Stock("RM1", "Metal plate", lot: false, stock: true));
+        db.IvStockMasters.Add(Stock("FG1", "Assembled bracket", lot: false, stock: true));
         db.IvStockMasters.Add(Stock("LOT1", "Lot plate", lot: true, stock: true));
         db.IvStockMasters.Add(Stock("NS1", "Non-stock", lot: false, stock: false));
+        var bomHdr = new PrBomHdr
+        {
+            CompanyCode = "DEMO",
+            ProdCode = "FG1",
+            DefinitionCode = "STANDARD",
+            IsDefaultDefinition = true,
+            Version = 1,
+            Status = PrBomStatuses.Active,
+            BaseQty = 1m,
+            BaseUom = "PCS",
+            ValidationStatus = PrBomValidationStatuses.Valid
+        };
+        db.PrBomHdrs.Add(bomHdr);
+        await db.SaveChangesAsync();
+        db.PrDefBOMs.Add(new PrDefBOM
+        {
+            BomHdrId = bomHdr.Uid,
+            CompanyCode = "DEMO",
+            ProdCode = "FG1",
+            ICode = "RM1",
+            IName = "Metal plate",
+            StdQty = 2m,
+            StdUom = "PCS",
+            SeqNo = 1,
+            Warehouse = "MAIN",
+            BomDefault = true,
+            IssueMethod = PrMaterialIssueMethods.Manual,
+            SupplySource = PrMaterialSupplySources.Purchased
+        });
+        db.IvWarehouses.Add(new IvWarehouse
+        {
+            CompanyCode = "DEMO",
+            BranchCode = "HQ",
+            WarehouseCode = "MAIN",
+            WarehouseDesc = "Main Store",
+            IsActive = true
+        });
+        db.IvLocations.AddRange(
+            new IvLocation
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                WarehouseCode = "MAIN",
+                LocCode = "BIN1",
+                LocDesc = "Bin 1",
+                IsActive = true
+            },
+            new IvLocation
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                WarehouseCode = "MAIN",
+                LocCode = "SITE",
+                LocDesc = "Site",
+                IsActive = true
+            });
+        db.MsUoms.AddRange(
+            new MsUom { CompanyCode = "DEMO", UomCode = "PCS", UomDesc = "Pieces", IsActive = true },
+            new MsUom { CompanyCode = "DEMO", UomCode = "EA", UomDesc = "Each", IsActive = true });
         await db.SaveChangesAsync();
     }
 

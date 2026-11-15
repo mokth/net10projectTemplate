@@ -18,10 +18,23 @@ public partial class SubconWorkbench : PageBase, IDisposable
 
     private Timer? _searchDebounce;
 
+    protected CommonDataGridEx<SubconListRow>? Grid;
     protected bool IsBootstrapping = true;
     protected bool CanAdd;
     protected string? StatusMessage;
     protected string SearchText = string.Empty;
+    protected bool FilterPopupVisible;
+    protected string? StatusFilter;
+    protected DateTime? DateFromFilter;
+    protected DateTime? DateToFilter;
+    protected string? DraftStatusFilter;
+    protected DateTime? DraftDateFrom;
+    protected DateTime? DraftDateTo;
+    protected string[] StatusFilterOptions { get; } = [SubconStatuses.New, SubconStatuses.Cancelled];
+    protected bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(StatusFilter)
+        || DateFromFilter.HasValue
+        || DateToFilter.HasValue;
     protected SubconWorkbenchPage Page { get; set; } = new();
     protected SubconWorkbenchGridDataSource DataSource { get; private set; } = default!;
 
@@ -59,8 +72,20 @@ public partial class SubconWorkbench : PageBase, IDisposable
         SearchText = value;
         _searchDebounce?.Dispose();
         _searchDebounce = new Timer(300) { AutoReset = false };
-        _searchDebounce.Elapsed += async (_, _) => await InvokeAsync(RefreshAsync);
+        _searchDebounce.Elapsed += async (_, _) => await InvokeAsync(ApplySearchAsync);
         _searchDebounce.Start();
+    }
+
+    protected async Task ApplySearchAsync()
+    {
+        _searchDebounce?.Stop();
+        await RefreshAsync();
+        if (Grid is not null)
+        {
+            await Grid.OnRefreshClick();
+        }
+
+        StateHasChanged();
     }
 
     protected Task OnActionClick(SelectedButtonInfo<SubconListRow> info)
@@ -88,9 +113,45 @@ public partial class SubconWorkbench : PageBase, IDisposable
 
     protected void DismissStatus() => StatusMessage = null;
 
+    protected void OpenFilterPopup()
+    {
+        DraftStatusFilter = StatusFilter;
+        DraftDateFrom = DateFromFilter;
+        DraftDateTo = DateToFilter;
+        FilterPopupVisible = true;
+    }
+
+    protected async Task ClearFiltersAsync()
+    {
+        DraftStatusFilter = null;
+        DraftDateFrom = null;
+        DraftDateTo = null;
+        StatusFilter = null;
+        DateFromFilter = null;
+        DateToFilter = null;
+        FilterPopupVisible = false;
+        await ApplySearchAsync();
+    }
+
+    protected async Task ApplyFiltersAsync()
+    {
+        StatusFilter = DraftStatusFilter;
+        DateFromFilter = DraftDateFrom?.Date;
+        DateToFilter = DraftDateTo?.Date;
+        FilterPopupVisible = false;
+        await ApplySearchAsync();
+    }
+
     private async Task RefreshAsync()
     {
-        var result = await Subcon.GetWorkbenchAsync(new SubconListQuery { SearchText = SearchText, Take = 50 });
+        var result = await Subcon.GetWorkbenchAsync(new SubconListQuery
+        {
+            SearchText = SearchText,
+            Status = StatusFilter,
+            DateFrom = DateFromFilter,
+            DateTo = DateToFilter,
+            Take = 50
+        });
         Page = result.Workbench ?? new SubconWorkbenchPage();
         if (!result.Succeeded)
         {
@@ -101,7 +162,13 @@ public partial class SubconWorkbench : PageBase, IDisposable
     private async Task<(IReadOnlyList<SubconListRow> Rows, int TotalCount)> SearchPageAsync(
         SubconListQuery query, CancellationToken cancellationToken)
     {
-        query.SearchText = SearchText;
+        query = query with
+        {
+            SearchText = SearchText,
+            Status = StatusFilter,
+            DateFrom = DateFromFilter,
+            DateTo = DateToFilter
+        };
         var result = await Subcon.SearchAsync(query, cancellationToken);
         return result.ListPage is null
             ? ([], 0)

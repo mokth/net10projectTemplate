@@ -29,4 +29,7 @@ public static class RunningNumberKeys
 
     /// <summary>Subcon receive-back number. Formatted <c>SR00000001</c>. Draft-only in Phase 1.</summary>
     public const string SubconReceipt = "SUBCON_RECEIPT";
+
+    /// <summary>Subcon job number. Formatted <c>SJ00000001</c>. Draft-only in Phase G2.</summary>
+    public const string SubconJob = "SUBCON_JOB";
 }

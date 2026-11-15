@@ -83,6 +83,27 @@ public class SubconPermissionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Inventory_only_user_can_explode_bom_for_subcon_without_planning_product_def_right()
+    {
+        _h.Deny(
+            (MenuCodes.PlanningProductDef, PermissionCodes.Access),
+            (MenuCodes.PlanningWorkOrder, PermissionCodes.Access));
+        var bomReader = _h.CreateBomReadService();
+        var result = await bomReader.ExplodeForSubconAsync(new SubconBomExplosionRequest
+        {
+            ProdCode = "FG1",
+            Quantity = 5m
+        });
+
+        Assert.True(result.Succeeded, result.ErrorMessage);
+        Assert.NotNull(result.Snapshot);
+        Assert.Equal("FG1", result.Snapshot!.ProdCode);
+        var comp = Assert.Single(result.Snapshot.Materials);
+        Assert.Equal("RM1", comp.ItemCode);
+        Assert.Equal(10m, comp.RequiredQty);
+    }
+
+    [Fact]
     public async Task Dtos_have_no_money_or_cost_fields()
     {
         var money = new[] { "cost", "price", "amount", "value", "money" };
@@ -92,6 +113,11 @@ public class SubconPermissionTests : IAsyncLifetime
                      typeof(SubconDispatchLineDto),
                      typeof(SubconReceiptDto),
                      typeof(SubconReceiptLineDto),
+                     typeof(SubconJobDto),
+                     typeof(SubconJobMaterialDto),
+                     typeof(SubconJobOutputDto),
+                     typeof(SubconBomSnapshotDto),
+                     typeof(SubconBomComponentDto),
                      typeof(SubconListRow),
                      typeof(SubconWorkbenchPage)
                  })

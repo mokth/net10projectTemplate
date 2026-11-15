@@ -40,7 +40,11 @@
             <DxFormLayout SizeMode="SizeMode.Small">
                 <DxFormLayoutItem Caption="Date" ColSpanMd="4">
                     <Template>
-                        <DxDateEdit @bind-Date="@Header.TrxDate" DisplayFormat="dd/MM/yyyy" Enabled="@CanEditDocument" />
+                        <DxDateEdit Date="@Header.TrxDate"
+                                    DateChanged="@((DateTime d) => OnTrxDateChanged(d))"
+                                    DateExpression="@(() => Header.TrxDate)"
+                                    DisplayFormat="dd/MM/yyyy"
+                                    Enabled="@CanEditDocument" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Document" ColSpanMd="4">
@@ -63,7 +67,11 @@
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Remark" ColSpanMd="6">
                     <Template>
-                        <DxMemo @bind-Text="@Header.Remarks" Rows="2" ReadOnly="@(!CanEditDocument)" />
+                        <DxMemo Text="@Header.Remarks"
+                                TextChanged="OnRemarksChanged"
+                                TextExpression="@(() => Header.Remarks)"
+                                Rows="2"
+                                ReadOnly="@(!CanEditDocument)" />
                     </Template>
                 </DxFormLayoutItem>
             </DxFormLayout>
@@ -71,11 +79,14 @@
             <DxGrid Data="@Lines"
                     KeyFieldName="@nameof(LineVm.LineNo)"
                     SizeMode="SizeMode.Small"
-                    ShowFilterRow="false">
+                    ShowFilterRow="false"
+                    ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                    TextWrapEnabled="false">
                 <Columns>
                     <DxGridCommandColumn VisibleIndex="0"
                                          FixedPosition="GridColumnFixedPosition.Left"
                                          Width="88px"
+                                         MinWidth="88"
                                          NewButtonVisible="false"
                                          EditButtonVisible="false"
                                          DeleteButtonVisible="false">
@@ -91,10 +102,10 @@
                             }
                         </CellDisplayTemplate>
                     </DxGridCommandColumn>
-                    <DxGridDataColumn FieldName="@nameof(LineVm.DispatchDocNo)" Caption="Send-out" Width="150px" />
-                    <DxGridDataColumn FieldName="@nameof(LineVm.DispatchLineNo)" Caption="Line" Width="80px" />
-                    <DxGridDataColumn FieldName="@nameof(LineVm.Qty)" Caption="Qty" Width="110px" DisplayFormat="n4" />
-                    <DxGridDataColumn FieldName="@nameof(LineVm.Uom)" Caption="UOM" Width="80px" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.DispatchDocNo)" Caption="Send-out" Width="150px" MinWidth="130" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.DispatchLineNo)" Caption="Line" Width="80px" MinWidth="70" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.Qty)" Caption="Qty" Width="110px" MinWidth="100" DisplayFormat="n4" />
+                    <DxGridDataColumn FieldName="@nameof(LineVm.Uom)" Caption="UOM" Width="80px" MinWidth="75" />
                 </Columns>
             </DxGrid>
 
@@ -103,7 +114,7 @@
                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                           Text="Add line"
                           IconCssClass="fa-solid fa-plus"
-                          Click="@(() => LinePopupVisible = true)" />
+                          Click="@OpenAddLinePopupAsync" />
             }
 
             <footer class="iv-footer">
@@ -133,23 +144,98 @@
         </section>
     </div>
 
-    <DxPopup HeaderText="Add line"
-             Width="640px"
+    <DxPopup HeaderText="Select send-out line"
+             Width="780px"
              ShowFooter="true"
+             CloseOnOutsideClick="false"
              @bind-Visible="@LinePopupVisible">
         <BodyContentTemplate>
-            <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem Caption="Send-out document" ColSpanMd="8">
+            <div class="erp-inline-search erp-inline-search--popup mb-2">
+                <label class="erp-inline-search__caption" for="subcon-rb-dispatch-search">Send-out</label>
+                <div class="erp-inline-search__editor">
+                    <DxTextBox InputId="subcon-rb-dispatch-search"
+                               Text="@DispatchLookupSearch"
+                               TextChanged="OnDispatchLookupSearchChanged"
+                               TextExpression="@(() => DispatchLookupSearch)"
+                               NullText="Search send-out no. or item…"
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               CssClass="w-100"
+                               BindValueMode="BindValueMode.OnInput" />
+                </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          IconCssClass="fa-solid fa-magnifying-glass"
+                          CssClass="erp-inline-search__button"
+                          Click="@(() => LoadDispatchLookupAsync(0))"
+                          aria-label="Search send-out lines"
+                          title="Search send-out lines" />
+            </div>
+
+            <DxGrid Data="@DispatchLookupRows"
+                    SizeMode="SizeMode.Small"
+                    ShowFilterRow="false"
+                    ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                    TextWrapEnabled="false">
+                <Columns>
+                    <DxGridCommandColumn VisibleIndex="0"
+                                         FixedPosition="GridColumnFixedPosition.Left"
+                                         Width="96px"
+                                         MinWidth="90"
+                                         NewButtonVisible="false"
+                                         EditButtonVisible="false"
+                                         DeleteButtonVisible="false">
+                        <CellDisplayTemplate Context="rowCtx">
+                            @{
+                                var option = (SubconDispatchLineLookupRow)rowCtx.DataItem;
+                            }
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      RenderStyleMode="ButtonRenderStyleMode.Outline"
+                                      Text="Select"
+                                      Click="@(() => SelectDispatchLine(option))" />
+                        </CellDisplayTemplate>
+                    </DxGridCommandColumn>
+                    <DxGridDataColumn FieldName="@nameof(SubconDispatchLineLookupRow.DispatchDocNo)" Caption="Send-out" Width="135px" MinWidth="120" />
+                    <DxGridDataColumn FieldName="@nameof(SubconDispatchLineLookupRow.DispatchLineNo)" Caption="Line" Width="65px" MinWidth="60" />
+                    <DxGridDataColumn FieldName="@nameof(SubconDispatchLineLookupRow.ItemCode)" Caption="Item" Width="125px" MinWidth="110" />
+                    <DxGridDataColumn FieldName="@nameof(SubconDispatchLineLookupRow.ItemName)" Caption="Description" MinWidth="150" />
+                    <DxGridDataColumn FieldName="@nameof(SubconDispatchLineLookupRow.RemainingQty)" Caption="Remaining" Width="105px" MinWidth="95" DisplayFormat="n4" />
+                    <DxGridDataColumn FieldName="@nameof(SubconDispatchLineLookupRow.Uom)" Caption="UOM" Width="75px" MinWidth="70" />
+                </Columns>
+            </DxGrid>
+
+            @if (DispatchLookupTotal > DispatchLookupPageSize)
+            {
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                    <span class="text-muted small">Showing @(DispatchLookupSkip + 1)–@(Math.Min(DispatchLookupSkip + DispatchLookupRows.Count, DispatchLookupTotal)) of @DispatchLookupTotal</span>
+                    <div class="d-flex gap-2">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Prev"
+                                  Enabled="@(DispatchLookupSkip > 0)"
+                                  Click="@(() => LoadDispatchLookupAsync(Math.Max(0, DispatchLookupSkip - DispatchLookupPageSize)))" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Next"
+                                  Enabled="@(DispatchLookupSkip + DispatchLookupPageSize < DispatchLookupTotal)"
+                                  Click="@(() => LoadDispatchLookupAsync(DispatchLookupSkip + DispatchLookupPageSize))" />
+                    </div>
+                </div>
+            }
+
+            <DxFormLayout SizeMode="SizeMode.Small" CssClass="mt-3">
+                <DxFormLayoutItem Caption="Send-out document" ColSpanMd="4">
                     <Template Context="field">
-                        <DxTextBox @bind-Text="@DraftLine.DispatchDocNo" NullText="Send-out number" />
+                        <DxTextBox Text="@DraftLine.DispatchDocNo" ReadOnly="true" ValidationEnabled="false" NullText="Select from list above" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Line" ColSpanMd="4">
+                <DxFormLayoutItem Caption="Line" ColSpanMd="2">
                     <Template Context="field">
-                        <DxSpinEdit @bind-Value="@DraftLine.DispatchLineNo" Increment="1" MinValue="1" />
+                        <DxSpinEdit @bind-Value="@DraftLine.DispatchLineNo" ReadOnly="true" MinValue="1" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Quantity" ColSpanMd="6">
+                <DxFormLayoutItem Caption="Remaining" ColSpanMd="3">
+                    <Template Context="field">
+                        <DxTextBox Text="@(DraftLine.RemainingQty > 0m ? $"{DraftLine.RemainingQty:0.####} {DraftLine.Uom}" : "-")" ReadOnly="true" ValidationEnabled="false" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Receive quantity" ColSpanMd="3">
                     <Template Context="field">
                         <DxSpinEdit @bind-Value="@DraftLine.Qty" Increment="1m" MinValue="0m" />
                     </Template>
@@ -159,6 +245,20 @@
         <FooterContentTemplate>
             <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => LinePopupVisible = false)" />
             <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Add" Click="@CommitLine" />
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup HeaderText="Discard changes?"
+             Width="420px"
+             ShowFooter="true"
+             CloseOnOutsideClick="false"
+             @bind-Visible="@DiscardConfirmVisible">
+        <BodyContentTemplate>
+            <p class="mb-0">You have unsaved changes on this receive-back draft. Discard them?</p>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => DiscardConfirmVisible = false)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscard" />
         </FooterContentTemplate>
     </DxPopup>
 </MenuAuthorize>
