@@ -85,6 +85,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private string? DraftPriority;
     private bool DraftLateOnly;
     private string SearchText = string.Empty;
+    private int NavigationStepDays = MachineSchedulePlannerPeriodNavigation.DefaultStepDays;
     private DateTime PeriodStart = StartOfWeek(DateTime.Today);
     private PlannerView CurrentView = PlannerView.Week;
     private CancellationTokenSource? _reloadCts;
@@ -288,7 +289,9 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private string PeriodLabel => CurrentView switch
     {
         PlannerView.Day => PeriodStart.ToString("dddd, dd MMM yyyy"),
-        PlannerView.Month => PeriodStart.ToString("MMMM yyyy"),
+        PlannerView.Month => PeriodStart.Day == 1
+            ? PeriodStart.ToString("MMMM yyyy")
+            : $"{PeriodStart:dd MMM} – {PeriodStart.Add(ViewDuration).AddDays(-1):dd MMM yyyy}",
         _ => $"{PeriodStart:dd MMM} – {PeriodStart.AddDays(6):dd MMM yyyy}"
     };
 
@@ -417,14 +420,19 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         }
     }
 
+    private void OnNavigationStepDaysChanged(ChangeEventArgs args)
+    {
+        NavigationStepDays = MachineSchedulePlannerPeriodNavigation.ParseStepDays(
+            args.Value?.ToString(),
+            NavigationStepDays);
+    }
+
     private async Task PreviousPeriodAsync()
     {
-        PeriodStart = CurrentView switch
-        {
-            PlannerView.Day => PeriodStart.AddDays(-1),
-            PlannerView.Month => new DateTime(PeriodStart.Year, PeriodStart.Month, 1).AddMonths(-1),
-            _ => PeriodStart.AddDays(-7)
-        };
+        PeriodStart = MachineSchedulePlannerPeriodNavigation.StepPeriod(
+            PeriodStart,
+            NavigationStepDays,
+            forward: false);
         await ReloadAsync();
     }
 
@@ -441,12 +449,10 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private async Task NextPeriodAsync()
     {
-        PeriodStart = CurrentView switch
-        {
-            PlannerView.Day => PeriodStart.AddDays(1),
-            PlannerView.Month => new DateTime(PeriodStart.Year, PeriodStart.Month, 1).AddMonths(1),
-            _ => PeriodStart.AddDays(7)
-        };
+        PeriodStart = MachineSchedulePlannerPeriodNavigation.StepPeriod(
+            PeriodStart,
+            NavigationStepDays,
+            forward: true);
         await ReloadAsync();
     }
 
@@ -1930,6 +1936,33 @@ internal enum PlannerView { Day, Week, Month }
 /// </summary>
 internal static class MachineSchedulePlannerPeriodNavigation
 {
+    internal const int DefaultStepDays = 5;
+    internal const int MinStepDays = 1;
+    internal const int MaxStepDays = 90;
+
+    internal static int NormalizeStepDays(int? stepDays) =>
+        stepDays is not { } value
+            ? DefaultStepDays
+            : Math.Clamp(value, MinStepDays, MaxStepDays);
+
+    internal static int ParseStepDays(string? text, int fallback = DefaultStepDays)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return NormalizeStepDays(fallback);
+
+        return int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            || int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.CurrentCulture, out parsed)
+                ? NormalizeStepDays(parsed)
+                : NormalizeStepDays(fallback);
+    }
+
+    internal static DateTime StepPeriod(DateTime periodStart, int stepDays, bool forward)
+    {
+        var days = NormalizeStepDays(stepDays);
+        var signedDays = forward ? days : -days;
+        return DateTime.SpecifyKind(periodStart.Date.AddDays(signedDays), DateTimeKind.Unspecified);
+    }
+
     internal static bool IsInPeriod(DateTime periodStart, TimeSpan duration, DateTime value) =>
         value >= periodStart && value < periodStart.Add(duration);
 

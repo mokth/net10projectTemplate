@@ -289,4 +289,39 @@ public sealed class MachineSchedulePlannerInputTests
         Assert.Equal("500 PCS", dayBar.QtyText);
         Assert.Equal("LATE", dayBar.StatusBadgeText);
     }
+
+    [Fact]
+    public void Period_navigation_steps_forward_and_backward_by_user_configured_days_defaulting_to_five()
+    {
+        Assert.Equal(5, MachineSchedulePlannerPeriodNavigation.DefaultStepDays);
+        Assert.Equal(5, MachineSchedulePlannerPeriodNavigation.NormalizeStepDays(null));
+        Assert.Equal(1, MachineSchedulePlannerPeriodNavigation.NormalizeStepDays(0));
+        Assert.Equal(1, MachineSchedulePlannerPeriodNavigation.NormalizeStepDays(-4));
+        Assert.Equal(90, MachineSchedulePlannerPeriodNavigation.NormalizeStepDays(180));
+
+        Assert.Equal(5, MachineSchedulePlannerPeriodNavigation.ParseStepDays(""));
+        Assert.Equal(7, MachineSchedulePlannerPeriodNavigation.ParseStepDays("invalid", fallback: 7));
+        Assert.Equal(10, MachineSchedulePlannerPeriodNavigation.ParseStepDays("10"));
+        Assert.Equal(1, MachineSchedulePlannerPeriodNavigation.ParseStepDays("0"));
+
+        var start = new DateTime(2026, 11, 2);
+        var forwardDefault = MachineSchedulePlannerPeriodNavigation.StepPeriod(
+            start,
+            MachineSchedulePlannerPeriodNavigation.DefaultStepDays,
+            forward: true);
+        var backwardDefault = MachineSchedulePlannerPeriodNavigation.StepPeriod(
+            start,
+            MachineSchedulePlannerPeriodNavigation.DefaultStepDays,
+            forward: false);
+        var forwardCustom = MachineSchedulePlannerPeriodNavigation.StepPeriod(
+            start,
+            stepDays: 3,
+            forward: true);
+
+        Assert.Equal(new DateTime(2026, 11, 7), forwardDefault);
+        Assert.Equal(DateTimeKind.Unspecified, forwardDefault.Kind);
+        Assert.Equal(new DateTime(2026, 10, 28), backwardDefault);
+        Assert.Equal(DateTimeKind.Unspecified, backwardDefault.Kind);
+        Assert.Equal(new DateTime(2026, 11, 5), forwardCustom);
+    }
 }

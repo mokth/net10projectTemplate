@@ -99,6 +99,14 @@ public sealed class MachineSchedulePlannerSelectionContractTests
         Assert.Contains("Work Order Color Legend", razor, StringComparison.Ordinal);
         Assert.Contains("pr-machine-schedule-bar__primary", razor, StringComparison.Ordinal);
         Assert.Contains("Each color = distinct Work Order", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-nav-stepper", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-step-days-input", razor, StringComparison.Ordinal);
+        Assert.Contains("OnNavigationStepDaysChanged", razor, StringComparison.Ordinal);
+        Assert.Contains(".pr-machine-schedule-step-days", css, StringComparison.Ordinal);
+        Assert.Contains("MachineSchedulePlannerPeriodNavigation.StepPeriod(",
+            ReadMethodBody("PreviousPeriodAsync"), StringComparison.Ordinal);
+        Assert.Contains("MachineSchedulePlannerPeriodNavigation.StepPeriod(",
+            ReadMethodBody("NextPeriodAsync"), StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string source, string value)

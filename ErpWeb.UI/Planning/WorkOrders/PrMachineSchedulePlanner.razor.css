@@ -159,6 +159,69 @@
     gap: .5rem;
 }
 
+.pr-machine-schedule-nav-stepper {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: .35rem;
+    padding: .2rem .25rem;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface-2);
+}
+
+.pr-machine-schedule-step-days {
+    display: inline-flex;
+    align-items: center;
+    gap: .32rem;
+    padding: .18rem .5rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: .78rem;
+    line-height: 1.2;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color .14s ease, box-shadow .14s ease;
+}
+
+.pr-machine-schedule-step-days:hover {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.pr-machine-schedule-step-days:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.pr-machine-schedule-step-days__label,
+.pr-machine-schedule-step-days__unit {
+    color: var(--muted);
+    font-size: .74rem;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.pr-machine-schedule-step-days__input {
+    width: 3.1rem;
+    padding: .14rem .25rem;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: .84rem;
+    font-weight: 750;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    outline: none;
+}
+
+.pr-machine-schedule-step-days__input:focus {
+    border-color: var(--accent);
+    background: var(--surface);
+}
+
 .pr-machine-schedule-toolbar__top {
     justify-content: space-between;
     row-gap: .65rem;

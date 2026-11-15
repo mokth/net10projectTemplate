@@ -64,9 +64,32 @@
         <section class="iv-card pr-machine-schedule-toolbar" aria-label="Schedule planner controls">
             <div class="pr-machine-schedule-toolbar__top">
                 <div class="pr-machine-schedule-toolbar__nav">
-                    <DxButton Text="Previous" RenderStyle="ButtonRenderStyle.Secondary" Click="PreviousPeriodAsync" />
+                    <div class="pr-machine-schedule-nav-stepper" role="group" aria-label="Step schedule period by days">
+                        <DxButton Text="Previous"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Title="@($"Move backward {NavigationStepDays} {(NavigationStepDays == 1 ? "day" : "days")}")"
+                                  Click="PreviousPeriodAsync" />
+                        <label class="pr-machine-schedule-step-days"
+                               for="pr-machine-schedule-step-days-input"
+                               title="Number of days Previous and Next move backward or forward (1–90 days, default 5)">
+                            <span class="pr-machine-schedule-step-days__label">Step</span>
+                            <input id="pr-machine-schedule-step-days-input"
+                                   class="pr-machine-schedule-step-days__input"
+                                   type="number"
+                                   min="1"
+                                   max="90"
+                                   step="1"
+                                   value="@NavigationStepDays"
+                                   aria-label="Number of days for Previous and Next navigation"
+                                   @onchange="OnNavigationStepDaysChanged" />
+                            <span class="pr-machine-schedule-step-days__unit">@(NavigationStepDays == 1 ? "day" : "days")</span>
+                        </label>
+                        <DxButton Text="Next"
+                                  RenderStyle="ButtonRenderStyle.Secondary"
+                                  Title="@($"Move forward {NavigationStepDays} {(NavigationStepDays == 1 ? "day" : "days")}")"
+                                  Click="NextPeriodAsync" />
+                    </div>
                     <DxButton Text="Today" RenderStyle="ButtonRenderStyle.Secondary" Click="TodayAsync" />
-                    <DxButton Text="Next" RenderStyle="ButtonRenderStyle.Secondary" Click="NextPeriodAsync" />
                     <span class="pr-machine-schedule-period">@PeriodLabel</span>
                 </div>
                 <div class="pr-machine-schedule-toolbar__views" role="group" aria-label="Timeline range">
