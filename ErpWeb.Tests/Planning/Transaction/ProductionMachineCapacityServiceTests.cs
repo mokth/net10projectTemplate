@@ -229,6 +229,26 @@ public sealed class ProductionMachineCapacityServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Current_replan_required_set_with_positive_allocations_retains_occupancy()
+    {
+        var row = await SeedAsync(
+            ProductionWorkOrderStatuses.Released,
+            setup: 0m, conversion: 0m, queue: 0m, run: 60m,
+            plannedStart: ShiftStart, plannedEnd: ShiftStart.AddHours(1),
+            operationStart: ShiftStart, operationEnd: ShiftStart.AddHours(1),
+            allocationStart: ShiftStart, allocationEnd: ShiftStart.AddHours(1));
+        await SeedCurrentSetAsync(row, ProductionMachineSchedulePlanningStates.ReplanRequired, withSegment: true, withLink: true);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var evidence = await _service.LoadAsync(db, "DEMO", ["MC01"]);
+
+        Assert.False(evidence.HasBlockers, string.Join(" ", evidence.Blockers));
+        var occupied = Assert.Single(evidence.GetOccupied("MC01"));
+        Assert.Equal(ShiftStart, occupied.Start);
+        Assert.Equal(ShiftStart.AddHours(1), occupied.End);
+    }
+
+    [Fact]
     public async Task Overlapping_verified_allocations_block()
     {
         await SeedAsync(

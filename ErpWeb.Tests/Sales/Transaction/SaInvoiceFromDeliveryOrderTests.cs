@@ -158,6 +158,54 @@ public sealed class SaInvoiceFromDeliveryOrderTests
         Assert.Equal("STD", vm.OrderType);
         Assert.Equal("STD", vm.ToRequest().OrderType);
         Assert.Equal("STD", vm.Clone().OrderType);
+        Assert.Equal("STD", vm.ToCalcState().OrderType);
+    }
+
+    [Fact]
+    public void F2_FromSalesOrder_round_trips_order_type_and_source_display_on_do_and_invoice()
+    {
+        var soLine = new SaSoLineDto
+        {
+            Line = 2,
+            CustRel = 1,
+            ICode = "PACK1",
+            IDesc = "Packed",
+            BalanceQty = 15m,
+            UnitPrice = 10m,
+            PricingSource = "CUSTOMER_ITEM",
+            PricingRef = "MOQ=10",
+            OriginalUnitPrice = 12m,
+            OverrideReason = "SO-OVR",
+            ItemDiscount = 10m,
+            ItemDiscount2 = 5m,
+            IsInclusive = true,
+            TaxGroup = "SR",
+            OrderType = SaInvoiceCalc.ExcludedDiscountOrderType,
+            StdUom = "EA",
+            SellingUom = "BOX",
+            Warehouse = "MAIN",
+            StockControl = true
+        };
+
+        var doVm = SaDoLineVm.FromSalesOrder(soLine, "SO-100");
+        Assert.True(doVm.HasSource);
+        Assert.Equal("SO SO-100 #2", doVm.SourceDisplay);
+        Assert.Equal(SaInvoiceCalc.ExcludedDiscountOrderType, doVm.OrderType);
+        Assert.Equal(SaInvoiceCalc.ExcludedDiscountOrderType, doVm.Clone().OrderType);
+        Assert.Equal(SaInvoiceCalc.ExcludedDiscountOrderType, doVm.ToRequest().OrderType);
+        Assert.Equal(SaInvoiceCalc.ExcludedDiscountOrderType, doVm.ToCalcState().OrderType);
+        Assert.Null(doVm.OriginalUnitPrice);
+        Assert.Null(doVm.OverrideReason);
+
+        var invVm = SaInvoiceLineVm.FromSalesOrder(soLine, "SO-100");
+        Assert.True(invVm.HasSource);
+        Assert.Equal("SO SO-100 #2", invVm.SourceDisplay);
+        Assert.Equal(SaInvoiceCalc.ExcludedDiscountOrderType, invVm.OrderType);
+        Assert.Equal(SaInvoiceCalc.ExcludedDiscountOrderType, invVm.Clone().OrderType);
+        Assert.Equal(SaInvoiceCalc.ExcludedDiscountOrderType, invVm.ToRequest().OrderType);
+        Assert.Equal(SaInvoiceCalc.ExcludedDiscountOrderType, invVm.ToCalcState().OrderType);
+        Assert.Null(invVm.OriginalUnitPrice);
+        Assert.Null(invVm.OverrideReason);
     }
 
     private static SaDoBillableLineDto CommercialDoLine(

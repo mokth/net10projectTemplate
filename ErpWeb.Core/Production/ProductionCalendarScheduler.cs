@@ -23,6 +23,7 @@ public sealed class CalendarDayRow
 public sealed class ShiftSourceDefinition
 {
     public string ShiftCd { get; init; } = string.Empty;
+    public string? ShiftDescription { get; init; }
     public TimeOnly Start { get; init; }
     public TimeOnly End { get; init; }
     public IReadOnlyList<ErpWeb.Core.Planning.ShiftTimeCalculator.BreakPair> Breaks { get; init; } = [];

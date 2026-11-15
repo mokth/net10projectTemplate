@@ -80,6 +80,15 @@
                     <DxButton Text="+" Title="Zoom in" RenderStyle="ButtonRenderStyle.Secondary" Click="ZoomIn" Enabled="@(ZoomLevel < 3)" />
                     <DxButton Text="Reset" RenderStyle="ButtonRenderStyle.Secondary" Click="ResetZoom" Enabled="@(ZoomLevel != 0)" />
                 </div>
+                @if (CanUseDraftMode)
+                {
+                    <div class="pr-machine-schedule-toolbar__draft" role="group" aria-label="Draft reschedule mode">
+                        <DxButton Text="@(DraftWorkspace.IsActive ? "Exit Draft Mode" : "Draft Mode")"
+                                  RenderStyle="@(DraftWorkspace.IsActive ? ButtonRenderStyle.Warning : ButtonRenderStyle.Secondary)"
+                                  Click="ToggleDraftMode"
+                                  Enabled="@(!IsLoading && !IsDraftCommitBusy)" />
+                    </div>
+                }
             </div>
 
             <div class="pr-machine-schedule-toolbar__filters" aria-label="Schedule filters">
@@ -190,6 +199,46 @@
                 }
             </div>
 
+            @if (DraftWorkspace.IsActive)
+            {
+                <section class="iv-card pr-machine-schedule-draft-bar @(DraftWorkspace.ConflictCount > 0 ? "pr-machine-schedule-draft-bar--conflict" : string.Empty)"
+                         aria-label="Rescheduling draft workspace" role="region">
+                    <div class="pr-machine-schedule-draft-bar__row">
+                        <div class="pr-machine-schedule-draft-bar__meta">
+                            <span class="pr-machine-schedule-draft-badge">RESCHEDULING DRAFT</span>
+                            <span>Pending changes: <strong>@DraftWorkspace.PendingCount</strong></span>
+                            <span class="@(DraftWorkspace.ConflictCount > 0 ? "pr-machine-schedule-draft-conflict-count" : string.Empty)">
+                                Conflicts: <strong>@DraftWorkspace.ConflictCount</strong>
+                            </span>
+                        </div>
+                        <div class="pr-machine-schedule-draft-bar__actions">
+                            <DxButton Text="Undo" RenderStyle="ButtonRenderStyle.Secondary" Click="UndoDraft"
+                                      Enabled="@(DraftWorkspace.CanUndo && !IsDraftCommitBusy)" />
+                            <DxButton Text="Redo" RenderStyle="ButtonRenderStyle.Secondary" Click="RedoDraft"
+                                      Enabled="@(DraftWorkspace.CanRedo && !IsDraftCommitBusy)" />
+                            <DxButton Text="Reset All" RenderStyle="ButtonRenderStyle.Secondary" Click="ResetDraft"
+                                      Enabled="@(DraftWorkspace.PendingCount > 0 && !IsDraftCommitBusy)" />
+                            <DxButton Text="Preview Changes" RenderStyle="ButtonRenderStyle.Primary" Click="OpenDraftPreviewDialogAsync"
+                                      Enabled="@(DraftWorkspace.PendingCount > 0 && !IsDraftCommitBusy)" />
+                            <DxButton Text="Exit Draft" RenderStyle="ButtonRenderStyle.Secondary" Click="ToggleDraftMode"
+                                      Enabled="@(!IsDraftCommitBusy)" />
+                        </div>
+                    </div>
+                    @if (DraftWorkspace.Conflicts.Count > 0)
+                    {
+                        <div class="pr-machine-schedule-draft-bar__conflicts" role="alert">
+                            <strong>Resolve overlaps before committing:</strong>
+                            <ul>
+                                @foreach (var conflict in DraftWorkspace.Conflicts)
+                                {
+                                    <li>@conflict.Message</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                </section>
+            }
+
             @if (!string.IsNullOrWhiteSpace(SelectedWorkOrder) && !IsSelectedWorkOrderVisibleInPeriod)
             {
                 <section class="pr-machine-schedule-period-note" role="status">
@@ -218,6 +267,51 @@
                 }
 
                 <section class="iv-card pr-machine-schedule-board" aria-label="Machine timeline">
+                    <div class="pr-machine-schedule-tip" role="note">
+                        <i class="fa-regular fa-lightbulb" aria-hidden="true"></i>
+                        <span>@TimelineQuickTip</span>
+                    </div>
+                    @if (WorkOrderLegend.Count > 0)
+                    {
+                        <div class="pr-machine-schedule-wo-legend" role="region" aria-label="Work Order color legend">
+                            <div class="pr-machine-schedule-wo-legend__header">
+                                <span class="pr-machine-schedule-wo-legend__title">
+                                    <i class="fa-solid fa-swatchbook" aria-hidden="true"></i>
+                                    Work Order Color Legend (@WorkOrderLegend.Count) — click any Work Order to highlight its bars on the timeline:
+                                </span>
+                                @if (SelectedJob is not null)
+                                {
+                                    <button type="button" class="pr-machine-schedule-wo-legend__clear" @onclick="ClearSelectedAppointment">
+                                        Show all / clear highlight
+                                    </button>
+                                }
+                            </div>
+                            <div class="pr-machine-schedule-wo-legend__list">
+                                @foreach (var item in WorkOrderLegend)
+                                {
+                                    var isSelected = string.Equals(SelectedJob?.WorkOrderNo, item.WorkOrderNo, StringComparison.OrdinalIgnoreCase);
+                                    <button type="button"
+                                            class="pr-machine-schedule-wo-card @(isSelected ? "pr-machine-schedule-wo-card--selected" : string.Empty)"
+                                            title="@($"{item.TagText} · {item.WorkOrderNo} · {item.ProductCode} {item.ProductDescription} ({item.EarliestStart:dd MMM HH:mm} – {item.LatestCompletion:dd MMM HH:mm})")"
+                                            @onclick="@(() => SelectWorkOrderFromLegend(item))">
+                                        <span class="pr-machine-schedule-wo-card__tag pr-machine-schedule-bar--wo-@item.PaletteIndex">@item.TagText</span>
+                                        <span class="pr-machine-schedule-wo-card__body">
+                                            <strong>@item.WorkOrderNo</strong>
+                                            <small>@item.ProductCode @DescriptionSuffix(item.ProductDescription) · @($"{item.PlannedQuantity:0.##} {item.OutputUom}".Trim()) · @item.MachineSummary</small>
+                                        </span>
+                                        @if (item.IsLocked)
+                                        {
+                                            <i class="fa-solid fa-lock pr-machine-schedule-wo-card__lock" title="Execution locked" aria-label="Execution locked"></i>
+                                        }
+                                        @if (item.IsLate)
+                                        {
+                                            <span class="pr-machine-schedule-wo-card__late">LATE</span>
+                                        }
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
                     <DxScheduler DataStorage="@DataStorage"
                                  StartDate="@board.WindowStart"
                                  ActiveViewType="SchedulerViewType.Timeline"
@@ -254,27 +348,34 @@
                                 }
                             </Scales>
                             <DateHeaderCellTemplate>
-                                <div class="pr-machine-schedule-date-header"
-                                     title="@($"{context.Interval.Start:dddd, dd MMMM yyyy HH:mm} – {context.Interval.End:dddd, dd MMMM yyyy HH:mm}")">
+                                @{
+                                    var headerState = GetDateHeaderState(context.Interval.Start, context.Interval.End, context.Scale.Unit);
+                                    var headerBadge = CurrentView == PlannerView.Month
+                                        ? headerState.CompactBadgeText
+                                        : headerState.BadgeText;
+                                }
+                                <div class="@headerState.CssClass @(context.Scale.Unit == SchedulerTimeScaleUnit.Day ? "pr-machine-schedule-date-header--two-row" : string.Empty)"
+                                     title="@headerState.Tooltip">
                                     @if (context.Scale.Unit == SchedulerTimeScaleUnit.Hour)
                                     {
-                                        <span>@context.Interval.Start.ToString("HH:mm")</span>
+                                        <span class="pr-machine-schedule-date-header__hour">@context.Interval.Start.ToString("HH:mm")</span>
                                     }
                                     else if (context.Scale.Unit == SchedulerTimeScaleUnit.Week)
                                     {
-                                        <span>Week of @context.Interval.Start.ToString("dd MMM")</span>
+                                        <span>@context.Interval.Start.ToString("dd MMM yyyy")</span>
                                     }
                                     else if (context.Scale.Unit == SchedulerTimeScaleUnit.Month)
                                     {
                                         <span>@context.Interval.Start.ToString("MMMM yyyy")</span>
                                     }
-                                    else if (CurrentView == PlannerView.Month)
-                                    {
-                                        <span>@context.Interval.Start.ToString("dd ddd")</span>
-                                    }
                                     else
                                     {
-                                        <span>@context.Interval.Start.ToString("ddd, dd MMM")</span>
+                                        <span class="pr-machine-schedule-date-header__dow">@context.Interval.Start.ToString("ddd")</span>
+                                        <span class="pr-machine-schedule-date-header__day">@context.Interval.Start.ToString("dd")</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(headerBadge))
+                                    {
+                                        <small class="pr-machine-schedule-date-header__tag">@headerBadge</small>
                                     }
                                 </div>
                             </DateHeaderCellTemplate>
@@ -301,6 +402,36 @@
                                     </div>
                                 }
                             </ResourceHeaderCellTemplate>
+                            <HorizontalAppointmentTemplate>
+                                @{
+                                    var appt = ResolveAppointmentViewModel(context);
+                                    var bar = BuildAppointmentBarDisplay(context, appt);
+                                }
+                                <div class="@AppointmentBarCssClass(context, appt)"
+                                     title="@AppointmentTooltipText(context, appt)">
+                                    @if (bar.IsLocked)
+                                    {
+                                        <i class="fa-solid fa-lock pr-machine-schedule-bar__icon" aria-label="Execution locked"></i>
+                                    }
+                                    <span class="pr-machine-schedule-bar__primary">@bar.PrimaryText</span>
+                                    @if (!string.IsNullOrWhiteSpace(bar.SecondaryText))
+                                    {
+                                        <span class="pr-machine-schedule-bar__secondary">@bar.SecondaryText</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(bar.TimeRangeText))
+                                    {
+                                        <span class="pr-machine-schedule-bar__time">@bar.TimeRangeText</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(bar.QtyText))
+                                    {
+                                        <span class="pr-machine-schedule-bar__qty">@bar.QtyText</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(bar.StatusBadgeText))
+                                    {
+                                        <span class="pr-machine-schedule-bar__badge">@bar.StatusBadgeText</span>
+                                    }
+                                </div>
+                            </HorizontalAppointmentTemplate>
                         </DxSchedulerTimelineView>
                     </DxScheduler>
                 </section>
@@ -383,7 +514,7 @@
                                             <tbody>
                                                 @foreach (var segment in jobSegments)
                                                 {
-                                                    <tr>
+                                                    <tr class="@(SelectedSegmentId == segment.SegmentId ? "pr-machine-schedule-segment--selected" : null)">
                                                         <td>@segment.SegmentSequence</td>
                                                         <td>@($"{segment.Label} ({segment.SegmentKind})".Trim())</td>
                                                         <td>@segment.PlannedOutputQty.ToString("n4") @segment.OutputUom</td>
@@ -472,17 +603,16 @@
             }
 
             <section class="pr-machine-schedule-legend" aria-label="Timeline legend">
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--scheduled"></i>Scheduled</span>
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--locked"></i>Execution locked</span>
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--maintenance"></i>Preventive maintenance</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--wo-multi"></i>Each color = distinct Work Order</span>
+                <span><i class="fa-solid fa-lock pr-machine-schedule-legend__icon" aria-hidden="true"></i>Execution locked</span>
                 <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--late"></i>Late vs DR date</span>
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--split"></i>Part 1 / split</span>
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--urgent"></i>URGENT insert</span>
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--resume"></i>Resume</span>
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--hold-resume"></i>Hold resume</span>
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--remaining"></i>Remaining replan</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--urgent"></i>Urgent insert</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--maintenance"></i>Preventive maintenance</span>
                 <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--external"></i>Reserved · other branch</span>
-                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--off"></i>Nonworking</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--working"></i>Working shift</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--break"></i>Break</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--off"></i>Off day</span>
+                <span><i class="pr-machine-schedule-legend__swatch pr-machine-schedule-legend__swatch--holiday"></i>Public holiday</span>
             </section>
 
             <details class="iv-card pr-machine-schedule-diagnostics">
@@ -536,6 +666,14 @@
                             </div>
                             <button type="button" class="pr-machine-schedule-dialog__close" aria-label="Close" @onclick="CloseRescheduleDialog" disabled="@IsRescheduleBusy">×</button>
                         </header>
+
+                        @if (!string.IsNullOrWhiteSpace(RescheduleDragNote))
+                        {
+                            <div class="pr-machine-schedule-dialog__note" role="status">
+                                <i class="fa-solid fa-arrows-left-right" aria-hidden="true"></i>
+                                <span>@RescheduleDragNote</span>
+                            </div>
+                        }
 
                         <div class="pr-machine-schedule-dialog__inputs">
                             <label>
@@ -606,9 +744,18 @@
 
                         <footer class="pr-machine-schedule-dialog__actions">
                             <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="CloseRescheduleDialog" Enabled="@(!IsRescheduleBusy)" />
-                            <DxButton Text="Preview" RenderStyle="ButtonRenderStyle.Primary" Click="PreviewRescheduleAsync" Enabled="@(!IsRescheduleBusy && CanEditRescheduleDialog)" />
-                            <DxButton Text="Commit schedule" RenderStyle="ButtonRenderStyle.Primary" Click="CommitRescheduleAsync"
-                                      Enabled="@(!IsRescheduleBusy && CanEditRescheduleDialog && ReschedulePreview?.CanCommit == true)" />
+                            @if (!DraftWorkspace.IsActive)
+                            {
+                                <DxButton Text="Preview" RenderStyle="ButtonRenderStyle.Primary" Click="PreviewRescheduleAsync" Enabled="@(!IsRescheduleBusy && CanEditRescheduleDialog)" />
+                                <DxButton Text="Commit schedule" RenderStyle="ButtonRenderStyle.Primary" Click="CommitRescheduleAsync"
+                                          Enabled="@(!IsRescheduleBusy && CanEditRescheduleDialog && ReschedulePreview?.CanCommit == true)" />
+                            }
+                            else
+                            {
+                                <DxButton Text="Preview" RenderStyle="ButtonRenderStyle.Secondary" Click="PreviewRescheduleAsync" Enabled="@(!IsRescheduleBusy && CanEditRescheduleDialog)" />
+                                <DxButton Text="Stage in draft" RenderStyle="ButtonRenderStyle.Primary" Click="StageRescheduleDraft"
+                                          Enabled="@(!IsRescheduleBusy && CanEditRescheduleDialog)" />
+                            }
                         </footer>
                     </section>
                 </div>
@@ -810,9 +957,103 @@
 
                     <footer class="pr-machine-schedule-dialog__actions">
                         <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="CloseAdvancedDialog" Enabled="@(!IsAdvancedBusy)" />
-                        <DxButton Text="Preview" RenderStyle="ButtonRenderStyle.Primary" Click="PreviewAdvancedActionAsync" Enabled="@(!IsAdvancedBusy)" />
-                        <DxButton Text="Commit change" RenderStyle="ButtonRenderStyle.Primary" Click="CommitAdvancedActionAsync"
-                                  Enabled="@(!IsAdvancedBusy && AdvancedPreview?.CanCommit == true)" />
+                        <DxButton Text="Preview" RenderStyle="@(DraftWorkspace.IsActive ? ButtonRenderStyle.Secondary : ButtonRenderStyle.Primary)"
+                                  Click="PreviewAdvancedActionAsync" Enabled="@(!IsAdvancedBusy)" />
+                        @if (DraftWorkspace.IsActive)
+                        {
+                            <DxButton Text="Stage in draft" RenderStyle="ButtonRenderStyle.Primary" Click="StageAdvancedDraft"
+                                      Enabled="@(!IsAdvancedBusy && AdvancedPreview is not null)" />
+                        }
+                        else
+                        {
+                            <DxButton Text="Commit change" RenderStyle="ButtonRenderStyle.Primary" Click="CommitAdvancedActionAsync"
+                                      Enabled="@(!IsAdvancedBusy && AdvancedPreview?.CanCommit == true)" />
+                        }
+                    </footer>
+                </section>
+            </div>
+        }
+
+        @if (IsDraftPreviewDialogOpen)
+        {
+            <div class="pr-machine-schedule-dialog-backdrop">
+                <section class="pr-machine-schedule-dialog iv-card" role="dialog" aria-modal="true"
+                         aria-labelledby="pr-machine-schedule-draft-preview-title">
+                    <header class="pr-machine-schedule-dialog__header">
+                        <div>
+                            <span class="iv-hero__eyebrow">Draft workspace · whole-set validation</span>
+                            <h2 id="pr-machine-schedule-draft-preview-title">Preview &amp; Commit Draft Changes</h2>
+                            <p>@DraftWorkspace.PendingCount staged change(s) ready for server-side verification and atomic commit.</p>
+                        </div>
+                        <button type="button" class="pr-machine-schedule-dialog__close" aria-label="Close"
+                                @onclick="CloseDraftPreviewDialog" disabled="@IsDraftCommitBusy">×</button>
+                    </header>
+
+                    @if (IsDraftCommitBusy && DraftWorkspace.LastServerPreview is null)
+                    {
+                        <div class="pr-machine-schedule-loading" role="status">Validating staged draft schedule changes on the server…</div>
+                    }
+                    else if (DraftWorkspace.LastServerPreview is { } draftPreview)
+                    {
+                        <div class="pr-machine-schedule-preview" aria-live="polite">
+                            <div class="pr-machine-schedule-preview__summary">
+                                <strong>Resulting segments</strong>
+                                <span>@draftPreview.ResultingSegments.Count segment(s) across @draftPreview.AffectedWorkOrders.Count Work Order(s)</span>
+                            </div>
+
+                            @if (draftPreview.AffectedWorkOrders.Count > 0)
+                            {
+                                <div class="pr-machine-schedule-preview__changes">
+                                    <strong>Affected Work Orders (@draftPreview.AffectedWorkOrders.Count)</strong>
+                                    <ul>
+                                        @foreach (var affected in draftPreview.AffectedWorkOrders)
+                                        {
+                                            <li>
+                                                <span>@affected.WorkOrderNo · @affected.Priority</span>
+                                                <small>@affected.StartBefore.ToString("dd MMM HH:mm") – @affected.CompletionBefore.ToString("dd MMM HH:mm")
+                                                    → @(affected.StartAfter?.ToString("dd MMM HH:mm") ?? "—") – @(affected.CompletionAfter?.ToString("dd MMM HH:mm") ?? "completion unknown")</small>
+                                            </li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+
+                            @if (draftPreview.Conflicts.Count > 0)
+                            {
+                                <div class="pr-machine-schedule-preview__messages pr-machine-schedule-preview__messages--blocked">
+                                    <strong>Overlapping intervals (@draftPreview.Conflicts.Count) — commit blocked</strong>
+                                    <ul>
+                                        @foreach (var conflict in draftPreview.Conflicts)
+                                        {
+                                            <li>@conflict.Message</li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+
+                            @if (draftPreview.Warnings.Count > 0)
+                            {
+                                <div class="pr-machine-schedule-preview__messages">
+                                    <strong>Warnings</strong>
+                                    <ul>@foreach (var warning in draftPreview.Warnings) { <li>@warning</li> }</ul>
+                                </div>
+                            }
+
+                            @if (draftPreview.Blockers.Count > 0)
+                            {
+                                <div class="pr-machine-schedule-preview__messages pr-machine-schedule-preview__messages--blocked">
+                                    <strong>Cannot commit</strong>
+                                    <ul>@foreach (var blocker in draftPreview.Blockers) { <li>@blocker</li> }</ul>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    <footer class="pr-machine-schedule-dialog__actions">
+                        <DxButton Text="Close" RenderStyle="ButtonRenderStyle.Secondary" Click="CloseDraftPreviewDialog" Enabled="@(!IsDraftCommitBusy)" />
+                        <DxButton Text="Re-preview" RenderStyle="ButtonRenderStyle.Secondary" Click="OpenDraftPreviewDialogAsync" Enabled="@(!IsDraftCommitBusy && DraftWorkspace.PendingCount > 0)" />
+                        <DxButton Text="Commit All Changes" RenderStyle="ButtonRenderStyle.Primary" Click="CommitDraftAsync"
+                                  Enabled="@(!IsDraftCommitBusy && DraftWorkspace.LastServerPreview?.CanCommit == true)" />
                     </footer>
                 </section>
             </div>

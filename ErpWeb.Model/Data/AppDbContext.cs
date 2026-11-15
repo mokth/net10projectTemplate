@@ -51,7 +51,8 @@ public class AppDbContext : DbContext
                     or StockCountCostBasis or StockCountReplayGeneration
                     or StockReplayRun or StockReplayEffect or ProductionCostRestatementFact
                     or ProcurementApprovalEvent or ProcurementApprovalDecision
-                    or ProcurementApprovalCutoverExemption))
+                    or ProcurementApprovalCutoverExemption
+                    or PoSourcingEvent))
                 throw new InvalidOperationException("Valuation facts, financial snapshots, costing evidence, and approval audit rows are immutable; append a linked reversal or a new revision.");
             if (entry.State != EntityState.Added && entry.Entity is ProductionFinishedGoodFact or ProductionFinishedGoodLotOrigin
                 or ProductionFinishedGoodPriceSnapshot or ProductionValuationEvidence or ProductionPoolDependency)
@@ -284,6 +285,17 @@ public class AppDbContext : DbContext
     public DbSet<ProcurementApprovalDecision> ProcurementApprovalDecisions => Set<ProcurementApprovalDecision>();
     public DbSet<ProcurementApprovalEvent> ProcurementApprovalEvents => Set<ProcurementApprovalEvent>();
     public DbSet<ProcurementApprovalCutoverExemption> ProcurementApprovalCutoverExemptions => Set<ProcurementApprovalCutoverExemption>();
+    public DbSet<PoSourcingHdr> PoSourcingHdrs => Set<PoSourcingHdr>();
+    public DbSet<PoSourcingLine> PoSourcingLines => Set<PoSourcingLine>();
+    public DbSet<PoSourcingSupplier> PoSourcingSuppliers => Set<PoSourcingSupplier>();
+    public DbSet<PoSourcingQuote> PoSourcingQuotes => Set<PoSourcingQuote>();
+    public DbSet<PoSourcingQuoteLine> PoSourcingQuoteLines => Set<PoSourcingQuoteLine>();
+    public DbSet<PoSourcingAward> PoSourcingAwards => Set<PoSourcingAward>();
+    public DbSet<PoSourcingAwardLine> PoSourcingAwardLines => Set<PoSourcingAwardLine>();
+    public DbSet<PoSourcingConversion> PoSourcingConversions => Set<PoSourcingConversion>();
+    public DbSet<PoSourcingConversionLine> PoSourcingConversionLines => Set<PoSourcingConversionLine>();
+    public DbSet<PoSourcingAttachment> PoSourcingAttachments => Set<PoSourcingAttachment>();
+    public DbSet<PoSourcingEvent> PoSourcingEvents => Set<PoSourcingEvent>();
     public DbSet<PoDesc> PoDescs => Set<PoDesc>();
 
     public DbSet<PrBomHdr> PrBomHdrs => Set<PrBomHdr>();

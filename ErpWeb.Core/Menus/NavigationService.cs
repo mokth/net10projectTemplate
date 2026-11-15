@@ -1,9 +1,12 @@
+using ErpWeb.Core.Purchase;
+
 namespace ErpWeb.Core.Menus;
 
 public sealed class NavigationService : INavigationService
 {
     private readonly IMenuService _menuService;
     private readonly IAccessRightService _accessRights;
+    private readonly IPurchaseSourcingFeatureGuard? _purchaseSourcingGuard;
 
     /// <summary>
     /// Menu codes rendered outside the tree (e.g. in a pinned utility area)
@@ -12,10 +15,14 @@ public sealed class NavigationService : INavigationService
     private static readonly HashSet<string> PinnedCodes =
         new(StringComparer.OrdinalIgnoreCase) { MenuCodes.ChangePassword };
 
-    public NavigationService(IMenuService menuService, IAccessRightService accessRights)
+    public NavigationService(
+        IMenuService menuService,
+        IAccessRightService accessRights,
+        IPurchaseSourcingFeatureGuard? purchaseSourcingGuard = null)
     {
         _menuService = menuService;
         _accessRights = accessRights;
+        _purchaseSourcingGuard = purchaseSourcingGuard;
     }
 
     public async Task<IReadOnlyList<MenuNavItem>> GetSidebarAsync(CancellationToken cancellationToken = default)
@@ -45,6 +52,14 @@ public sealed class NavigationService : INavigationService
         var isLeaf = node.Children.Count == 0;
         if (isLeaf)
         {
+            if (string.Equals(node.Code, MenuCodes.PurchaseSourcing, StringComparison.OrdinalIgnoreCase))
+            {
+                if (_purchaseSourcingGuard is null || !await _purchaseSourcingGuard.IsEnabledAsync(cancellationToken))
+                {
+                    return null;
+                }
+            }
+
             if (node.AlwaysVisible || await _accessRights.CanAccessAsync(node.Code, cancellationToken))
             {
                 return node with { Children = Array.Empty<MenuNavItem>() };

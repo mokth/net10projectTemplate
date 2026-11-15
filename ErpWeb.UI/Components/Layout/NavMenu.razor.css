@@ -7,14 +7,172 @@
     background: var(--nav-bg, #fff);
 }
 
-/* ── Loading state ──────────────────────────────────────────── */
+/* ── Screen-reader-only helper ──────────────────────────────── */
+.nav-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ── Search & expand/collapse toolbar ───────────────────────── */
+.nav-toolbar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--nav-divider, #e5e7eb);
+    background: var(--nav-bg, #fff);
+}
+
+.nav-search {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+}
+
+.nav-search__icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.78rem;
+    color: var(--nav-muted, #9ca3af);
+    pointer-events: none;
+    z-index: 2;
+    transition: color 140ms ease;
+}
+
+.nav-search:focus-within .nav-search__icon {
+    color: var(--accent, #2f6fed);
+}
+
+::deep .nav-search__input.dxbl-text-edit {
+    width: 100%;
+    min-height: 32px;
+    border-radius: 7px;
+    background: var(--topbar-control-bg, var(--nav-bg, #fff));
+    border-color: var(--control-border, #cfd6df);
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+::deep .nav-search__input .dxbl-text-edit-input,
+::deep .nav-search__input input {
+    padding-left: 28px;
+    font-size: 0.8125rem;
+    line-height: 1.3;
+    color: var(--nav-text, #374151);
+}
+
+::deep .nav-search__input .dxbl-text-edit-input::placeholder,
+::deep .nav-search__input input::placeholder {
+    color: var(--nav-muted, #9ca3af);
+    opacity: 1;
+}
+
+::deep .nav-expand-btn {
+    flex: 0 0 auto;
+    inline-size: 32px;
+    min-inline-size: 32px;
+    block-size: 32px;
+    min-block-size: 32px;
+    padding: 0;
+    border-radius: 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--nav-text, #374151);
+    background: var(--topbar-control-bg, var(--nav-bg, #fff));
+    border-color: var(--control-border, #cfd6df);
+    transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+::deep .nav-expand-btn .dxbl-image {
+    margin: 0;
+    font-size: 0.84rem;
+}
+
+::deep .nav-expand-btn:not(:disabled):hover,
+::deep .nav-expand-btn:not(:disabled):focus-visible {
+    background: var(--nav-hover-bg, #f0f4ff);
+    color: var(--nav-hover-text, #1d4ed8);
+    border-color: color-mix(in srgb, var(--accent, #2f6fed) 45%, var(--control-border, #cfd6df));
+}
+
+::deep .nav-expand-btn.is-expanded:not(:disabled) {
+    background: color-mix(in srgb, var(--accent, #2f6fed) 10%, var(--nav-bg, #fff));
+    color: var(--nav-hover-text, #1d4ed8);
+    border-color: color-mix(in srgb, var(--accent, #2f6fed) 40%, var(--control-border, #cfd6df));
+}
+
+/* ── Loading & empty search states ──────────────────────────── */
 .nav-tree-loading {
     display: block;
-    padding: 10px 14px;
+    padding: 12px 14px;
     color: var(--nav-muted, #9ca3af);
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+}
+
+.nav-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 28px 18px;
+    gap: 6px;
+}
+
+.nav-empty__icon {
+    font-size: 1.25rem;
+    color: var(--nav-muted, #9ca3af);
+    margin-bottom: 4px;
+    opacity: 0.8;
+}
+
+.nav-empty__title {
+    margin: 0;
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--nav-text, #374151);
+}
+
+.nav-empty__hint {
+    margin: 0;
+    font-size: 0.76rem;
+    color: var(--nav-muted, #9ca3af);
+    overflow-wrap: anywhere;
+}
+
+.nav-empty__clear {
+    margin-top: 8px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--control-border, #cfd6df);
+    background: var(--topbar-control-bg, var(--nav-bg, #fff));
+    color: var(--nav-hover-text, #1d4ed8);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease;
+}
+
+.nav-empty__clear:hover,
+.nav-empty__clear:focus-visible {
+    background: var(--nav-hover-bg, #f0f4ff);
+    border-color: color-mix(in srgb, var(--accent, #2f6fed) 45%, var(--control-border, #cfd6df));
 }
 
 /* ── Scrollable tree area ───────────────────────────────────── */
@@ -113,7 +271,8 @@
 }
 
 /* ── Focus ring (keyboard) ──────────────────────────────────── */
-::deep .nav-tree .dxbl-treeview-item:focus-visible {
+::deep .nav-tree .dxbl-treeview-item:focus-visible,
+.nav-empty__clear:focus-visible {
     outline: 2px solid var(--accent, #2f6fed);
     outline-offset: -2px;
 }
@@ -157,4 +316,14 @@
 .nav-utilities__link:focus-visible {
     outline: 2px solid var(--accent, #2f6fed);
     outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-search__icon,
+    ::deep .nav-search__input.dxbl-text-edit,
+    ::deep .nav-expand-btn,
+    .nav-empty__clear,
+    .nav-utilities__link {
+        transition: none;
+    }
 }

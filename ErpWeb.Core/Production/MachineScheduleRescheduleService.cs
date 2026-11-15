@@ -420,9 +420,16 @@ public sealed class MachineScheduleRescheduleService : IMachineScheduleReschedul
                 .Where(x => affectedMachineIds.Contains(x.WorkOrderMachineId)
                     && x.SegmentStatus != ProductionMachineScheduleSegmentStatuses.Superseded)
                 .ToListAsync(cancellationToken);
-            var hasAdvancedSegment = currentSegments
-                .GroupBy(x => x.WorkOrderMachineId)
-                .Any(group => group.Count() > 1)
+            var currentSets = await db.ProductionMachineScheduleSegmentSets.AsNoTracking()
+                .Where(x => affectedMachineIds.Contains(x.WorkOrderMachineId) && x.IsCurrent)
+                .ToListAsync(cancellationToken);
+            var hasNonStandardSet = currentSets.Any(x =>
+                !string.Equals(x.Mode, ProductionMachineScheduleSegmentSetModes.FullPlan, StringComparison.Ordinal)
+                || !string.Equals(x.PlanningState, ProductionMachineSchedulePlanningStates.Scheduled, StringComparison.Ordinal));
+            var hasAdvancedSegment = hasNonStandardSet
+                || currentSegments
+                    .GroupBy(x => x.WorkOrderMachineId)
+                    .Any(group => group.Count() > 1)
                 || currentSegments.Any(x =>
                     !string.Equals(x.SegmentKind, ProductionMachineScheduleSegmentKinds.Original, StringComparison.Ordinal));
             if (hasAdvancedSegment)

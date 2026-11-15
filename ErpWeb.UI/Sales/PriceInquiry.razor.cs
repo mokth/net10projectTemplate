@@ -70,9 +70,10 @@ public partial class PriceInquiry : ComponentBase
     protected void OnItemSelected(IvStockMasterLookupRow item)
     {
         ICode = item.ICode;
-        if (string.IsNullOrWhiteSpace(Uom))
+        var commercialUom = SaLinePricingTrigger.CommercialUom(item.SellingUom, item.StdUom);
+        if (!string.IsNullOrWhiteSpace(commercialUom))
         {
-            Uom = SaLinePricingTrigger.CommercialUom(item.SellingUom, item.StdUom);
+            Uom = commercialUom;
         }
     }
 

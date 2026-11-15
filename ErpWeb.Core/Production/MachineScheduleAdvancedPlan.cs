@@ -66,6 +66,8 @@ internal sealed class MachineScheduleAdvancedPlan
     public List<ProductionWorkOrderScheduleHold> HoldsToAdd { get; } = [];
     public ProductionWorkOrderScheduleHold? HoldToResolve { get; set; }
     public bool HasUnscheduledRemaining { get; set; }
+    public HashSet<long> UnscheduledMachineIds { get; } = [];
+    public HashSet<long> UnscheduledWorkOrderIds { get; } = [];
     public bool TargetHasNoFutureSegment { get; set; }
     public DateTime? ForecastCompletion { get; set; }
     public string EventType { get; set; } = ProductionAuditEventTypes.ScheduleChanged;

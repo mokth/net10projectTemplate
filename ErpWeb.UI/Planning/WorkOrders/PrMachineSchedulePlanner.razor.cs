@@ -37,6 +37,9 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private bool IsBackfillDialogOpen;
     private bool IsBackfillBusy;
     private bool IsMoreFiltersOpen;
+    private readonly MachineScheduleDraftWorkspace DraftWorkspace = new();
+    private bool IsDraftPreviewDialogOpen;
+    private bool IsDraftCommitBusy;
     private MachineScheduleAllocationBackfillReport? BackfillReport;
     private MachineSchedulePlannerJob? RescheduleDialogJob;
     private bool IsAdvancedDialogOpen;
@@ -63,6 +66,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private string RequestedDateText = string.Empty;
     private string RequestedTimeText = string.Empty;
     private string RescheduleReason = string.Empty;
+    private string? RescheduleDragNote;
     private MachineScheduleReschedulePreview? ReschedulePreview;
     private int ZoomLevel;
     private string? StatusMessage;
@@ -111,11 +115,11 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private int TimelineCellWidth => CurrentView switch
     {
         PlannerView.Day => CellWidths[Math.Clamp(ZoomLevel + 4, 0, CellWidths.Length - 1)],
-        PlannerView.Month => CellWidths[Math.Clamp(ZoomLevel + 3, 2, CellWidths.Length - 1)],
-        _ => CellWidths[Math.Clamp(ZoomLevel + 3, 0, CellWidths.Length - 1)]
+        PlannerView.Month => CellWidths[Math.Clamp(ZoomLevel + 2, 1, CellWidths.Length - 1)],
+        _ => CellWidths[Math.Clamp(ZoomLevel + 2, 0, CellWidths.Length - 1)]
     };
 
-    private int MinimumZoomLevel => CurrentView == PlannerView.Month ? -1 : -3;
+    private int MinimumZoomLevel => CurrentView == PlannerView.Month ? -1 : -2;
 
     private bool IsReschedulingEnabled => Board?.Readiness.IsWriteReady == true;
 
@@ -123,7 +127,8 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private bool CanEditRescheduleDialog => CanReschedule(RescheduleDialogJob);
 
-    private bool CanDragAppointments => IsReschedulingEnabled && CanEditSchedule;
+    private bool CanDragAppointments => IsReschedulingEnabled && CanEditSchedule && !IsDraftCommitBusy;
+    private bool CanUseDraftMode => CanEditSchedule && IsReschedulingEnabled;
 
     private bool AdvancedActionsEnabled => IsReschedulingEnabled
         && Board?.Readiness.SegmentWriteSettingEnabled == true;
@@ -171,10 +176,14 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     private bool AdvancedNeedsReason => AdvancedAction is not MachineScheduleAdvancedAction.ReleaseHold;
 
     private string HeaderInstructions => CanDragAppointments
-        ? "Find a Work Order or machine, then select a job. Drag it to move, or use Change Schedule."
+        ? "Pick a Work Order or machine, then drag any bar left or right to shift that operation — nothing saves until you confirm."
         : CanEditSchedule && !IsReschedulingEnabled
             ? "Find a Work Order or machine, then select a job. Schedule changes require the company setting and planner readiness."
             : "Find a Work Order or machine, then select a job to inspect its schedule.";
+
+    private string TimelineQuickTip => CanDragAppointments
+        ? "Tip: Match each bar's #number and color to the Work Order legend below. Click a legend card to highlight its bars, or drag any bar to shift that Work Order."
+        : "View only: Match each bar's #number and color to the Work Order legend below. Click any legend card or bar to inspect full details.";
 
     private string ViewOnlyReason => !CanEditSchedule
         ? "Your account does not have permission to change this schedule."
@@ -274,7 +283,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
             ? "On/before current DR required date"
             : "—";
 
-    private static readonly int[] CellWidths = [48, 64, 80, 100, 125, 150, 180];
+    private static readonly int[] CellWidths = [36, 44, 54, 68, 86, 110, 140];
 
     private string PeriodLabel => CurrentView switch
     {
@@ -283,16 +292,15 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         _ => $"{PeriodStart:dd MMM} – {PeriodStart.AddDays(6):dd MMM yyyy}"
     };
 
-    private MachineSchedulePlannerJob? SelectedJob
-    {
-        get
-        {
-            var location = SelectedAppointment?.Location;
-            return MachineSchedulePlannerAppointmentRules.TryGetOperationId(location, out var operationId)
-                ? Board?.Jobs.FirstOrDefault(x => x.OperationId == operationId)
-                : null;
-        }
-    }
+    private long? SelectedSegmentId =>
+        MachineSchedulePlannerAppointmentRules.TryGetSegmentId(SelectedAppointment?.Location, out var segmentId)
+            ? segmentId
+            : null;
+
+    private MachineSchedulePlannerJob? SelectedJob =>
+        SelectedOperationId is { } operationId
+            ? Board?.Jobs.FirstOrDefault(x => x.OperationId == operationId)
+            : null;
 
     protected override async Task OnPageInitializedAsync()
     {
@@ -371,11 +379,16 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
             }
 
             Board = result.Data;
-            DataStorage = CreateStorage(Board);
+            DraftWorkspace.Initialize(Board);
+            RefreshSchedulerStorage();
             if (selectedOperationId.HasValue)
             {
-                var selectedAppointmentId = Board.Appointments.FirstOrDefault(x =>
-                    string.Equals(x.Location, $"operation:{selectedOperationId.Value}", StringComparison.Ordinal))?.Id;
+                var activeAppointments = DraftWorkspace.IsActive
+                    ? DraftWorkspace.DraftAppointments
+                    : Board.Appointments;
+                var selectedAppointmentId = activeAppointments.FirstOrDefault(x =>
+                    x.OperationId == selectedOperationId.Value
+                    || string.Equals(x.Location, $"operation:{selectedOperationId.Value}", StringComparison.Ordinal))?.Id;
                 SelectedAppointment = selectedAppointmentId is null
                     ? null
                     : DataStorage.GetAppointmentItemById(selectedAppointmentId);
@@ -971,6 +984,52 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         }
     }
 
+    private void StageAdvancedDraft()
+    {
+        if (!DraftWorkspace.IsActive || !IsReschedulingEnabled || !CanEditSchedule
+            || AdvancedPreview is null || !TryBuildAdvancedRequest(out var request))
+            return;
+
+        var kind = request.Action switch
+        {
+            MachineScheduleAdvancedAction.InsertSplit => MachineScheduleDraftCommandKind.InsertSplit,
+            MachineScheduleAdvancedAction.Hold => MachineScheduleDraftCommandKind.Hold,
+            MachineScheduleAdvancedAction.ReleaseHold => MachineScheduleDraftCommandKind.ReleaseHold,
+            MachineScheduleAdvancedAction.ReplanRemaining => MachineScheduleDraftCommandKind.ReplanRemaining,
+            MachineScheduleAdvancedAction.MaintenanceReplan => MachineScheduleDraftCommandKind.MaintenanceReplan,
+            _ => throw new InvalidOperationException($"Unsupported draft advanced action: {request.Action}")
+        };
+
+        var command = new MachineScheduleDraftCommand
+        {
+            Kind = kind,
+            WorkOrderId = request.WorkOrderId,
+            OperationId = request.OperationId,
+            WorkOrderMachineId = request.WorkOrderMachineId,
+            MachineCode = request.MachineCode,
+            WorkOrderNo = AdvancedDialogJob?.WorkOrderNo ?? string.Empty,
+            RequestedStart = request.RequestedStart,
+            PartialQuantity = request.PartialQuantity,
+            IncludeRestartSetup = request.IncludeRestartSetup,
+            Reason = string.IsNullOrWhiteSpace(request.Reason) ? $"Draft {kind}" : request.Reason,
+            HoldType = request.HoldType,
+            ResumeNotBefore = request.ResumeNotBefore,
+            DowntimeStart = request.DowntimeStart,
+            DowntimeEnd = request.DowntimeEnd,
+            MaintenanceType = request.MaintenanceType
+        };
+
+        DraftWorkspace.StageAdvancedResult(command, AdvancedPreview);
+        var operationId = request.OperationId;
+        var woNo = command.WorkOrderNo;
+        CloseAdvancedDialog();
+        RefreshSchedulerStorage();
+        SelectOperationAppointment(operationId);
+        StatusMessage = DraftWorkspace.ConflictCount > 0
+            ? $"Staged {kind} for {woNo} in Draft Mode ({DraftWorkspace.ConflictCount} conflict(s) detected — resolve before committing)."
+            : $"Staged {kind} for {woNo} in Draft Mode ({DraftWorkspace.PendingCount} pending change(s)).";
+    }
+
     private void OpenRescheduleDialog()
     {
         if (SelectedJob is not { } job || !CanReschedule(job))
@@ -979,7 +1038,10 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         OpenRescheduleDialog(job, job.PlannedStart);
     }
 
-    private void OpenRescheduleDialog(MachineSchedulePlannerJob job, DateTime requestedStart)
+    private void OpenRescheduleDialog(
+        MachineSchedulePlannerJob job,
+        DateTime requestedStart,
+        string? dragNote = null)
     {
         if (!CanReschedule(job))
             return;
@@ -988,6 +1050,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         RequestedDateText = requestedStart.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         RequestedTimeText = requestedStart.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
         RescheduleReason = string.Empty;
+        RescheduleDragNote = dragNote;
         ReschedulePreview = null;
         ErrorMessage = null;
         IsRescheduleDialogOpen = true;
@@ -1053,8 +1116,51 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
             return Task.CompletedTask;
         }
 
-        OpenRescheduleDialog(job, args.Appointment.Start);
+        var apptId = args.Appointment.Id?.ToString();
+        DateTime? originalBarStart = !string.IsNullOrWhiteSpace(apptId) && ActiveAppointmentById.TryGetValue(apptId, out var activeAppt)
+            ? activeAppt.Start
+            : null;
+        var currentOperationStart = ResolveCurrentOperationStart(job);
+        var dragResult = MachineSchedulePlannerDragRules.ComputeShiftedStart(
+            currentOperationStart,
+            originalBarStart,
+            args.Appointment.Start);
+
+        if (dragResult.Delta == TimeSpan.Zero)
+        {
+            StatusMessage = $"No schedule change detected for {job.WorkOrderNo} — drag a bar left or right to another slot.";
+            return Task.CompletedTask;
+        }
+
+        if (DraftWorkspace.IsActive)
+        {
+            DraftWorkspace.StageMove(job, dragResult.ShiftedStart, $"Draft drag ({dragResult.OffsetSummary})");
+            RefreshSchedulerStorage();
+            SelectOperationAppointment(job.OperationId);
+            StatusMessage = DraftWorkspace.ConflictCount > 0
+                ? $"Moved {job.WorkOrderNo} {dragResult.OffsetSummary} in Draft Mode ({DraftWorkspace.ConflictCount} conflict(s) detected — resolve before committing)."
+                : $"Moved {job.WorkOrderNo} {dragResult.OffsetSummary} in Draft Mode (proposing start {dragResult.ShiftedStart:dd MMM HH:mm} — click Preview Changes to confirm).";
+            return Task.CompletedTask;
+        }
+
+        OpenRescheduleDialog(job, dragResult.ShiftedStart, dragResult.DialogNote);
         return Task.CompletedTask;
+    }
+
+    private DateTime ResolveCurrentOperationStart(MachineSchedulePlannerJob job)
+    {
+        if (!DraftWorkspace.IsActive)
+            return job.PlannedStart;
+
+        var matchingStart = DraftWorkspace.DraftAppointments
+            .Where(x => !x.IsMaintenance
+                && !x.IsExternalCapacity
+                && (x.OperationId == job.OperationId
+                    || string.Equals(x.Location, $"{MachineSchedulePlannerAppointmentRules.OperationPrefix}{job.OperationId}", StringComparison.Ordinal)))
+            .Select(x => (DateTime?)x.Start)
+            .OrderBy(x => x)
+            .FirstOrDefault();
+        return matchingStart ?? job.PlannedStart;
     }
 
     private static bool IsExternalCapacityAppointment(DxSchedulerAppointmentItem appointment) =>
@@ -1062,12 +1168,10 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
 
     private void OnAppointmentFormShowing(SchedulerAppointmentFormEventArgs args) => args.Cancel = true;
 
-    private MachineSchedulePlannerJob? FindJob(DxSchedulerAppointmentItem appointment)
-    {
-        return MachineSchedulePlannerAppointmentRules.TryGetOperationId(appointment.Location, out var operationId)
+    private MachineSchedulePlannerJob? FindJob(DxSchedulerAppointmentItem appointment) =>
+        ResolveOperationId(appointment.Location, appointment.Id?.ToString()) is { } operationId
             ? Board?.Jobs.FirstOrDefault(x => x.OperationId == operationId)
             : null;
-    }
 
     private bool CanReschedule(MachineSchedulePlannerJob? job) => IsReschedulingEnabled
         && CanEditSchedule
@@ -1082,6 +1186,7 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
     {
         IsRescheduleDialogOpen = false;
         RescheduleDialogJob = null;
+        RescheduleDragNote = null;
         ReschedulePreview = null;
         IsRescheduleBusy = false;
     }
@@ -1308,6 +1413,16 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         Navigation.NavigateTo($"/planning/work-orders/view/{Uri.EscapeDataString(job.WorkOrderNo)}");
     }
 
+    private MachineSchedulePlannerDateHeaderState GetDateHeaderState(
+        DateTime intervalStart,
+        DateTime intervalEnd,
+        SchedulerTimeScaleUnit unit) =>
+        MachineSchedulePlannerCalendarHelper.ResolveDateHeaderState(
+            Board?.Machines,
+            intervalStart,
+            intervalEnd,
+            unit);
+
     private void DecorateCalendarCell(SchedulerHtmlCellDecorationEventArgs args)
     {
         if (Board is null || args.CellType != SchedulerCellType.TimeCell)
@@ -1320,21 +1435,46 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
             string.Equals(x.MachineCode, resource.Id.ToString(), StringComparison.OrdinalIgnoreCase));
         if (machine is null)
             return;
-        if (machine.MaintenanceIntervals.Any(x => x.Start < interval.End && x.End > interval.Start))
-            args.CssClass = "pr-machine-schedule-cell--maintenance";
-        else if (!machine.UsableIntervals.Any(x => x.Start < interval.End && x.End > interval.Start))
-            args.CssClass = "pr-machine-schedule-cell--off";
+
+        args.CssClass = MachineSchedulePlannerCalendarHelper.ClassifyCell(machine, interval.Start, interval.End) switch
+        {
+            MachineSchedulePlannerCalendarCellKind.Breakdown => "pr-machine-schedule-cell--maintenance pr-machine-schedule-cell--breakdown",
+            MachineSchedulePlannerCalendarCellKind.Maintenance => "pr-machine-schedule-cell--maintenance",
+            MachineSchedulePlannerCalendarCellKind.PublicHoliday => "pr-machine-schedule-cell--holiday",
+            MachineSchedulePlannerCalendarCellKind.WorkingWithBreak => "pr-machine-schedule-cell--working pr-machine-schedule-cell--has-break",
+            MachineSchedulePlannerCalendarCellKind.Working => "pr-machine-schedule-cell--working",
+            MachineSchedulePlannerCalendarCellKind.Break => "pr-machine-schedule-cell--break",
+            _ => "pr-machine-schedule-cell--off"
+        };
     }
 
-    private long? SelectedOperationId
+    private long? SelectedOperationId =>
+        ResolveOperationId(SelectedAppointment?.Location, SelectedAppointment?.Id?.ToString());
+
+    private long? ResolveOperationId(string? location, string? appointmentId = null)
     {
-        get
+        if (MachineSchedulePlannerAppointmentRules.TryGetOperationId(location, out var operationId))
+            return operationId;
+
+        if (MachineSchedulePlannerAppointmentRules.TryGetSegmentId(location, out var segmentId))
         {
-            var location = SelectedAppointment?.Location;
-            return MachineSchedulePlannerAppointmentRules.TryGetOperationId(location, out var operationId)
-                ? operationId
-                : null;
+            var fromSegment = Board?.Segments.FirstOrDefault(x => x.SegmentId == segmentId)?.OperationId;
+            if (fromSegment.HasValue)
+                return fromSegment.Value;
+
+            var fromActive = (DraftWorkspace.IsActive ? DraftWorkspace.DraftAppointments : Board?.Appointments)
+                ?.FirstOrDefault(x => x.SegmentId == segmentId)?.OperationId;
+            if (fromActive.HasValue)
+                return fromActive.Value;
         }
+
+        if (!string.IsNullOrWhiteSpace(appointmentId)
+            && ActiveAppointmentById.TryGetValue(appointmentId, out var appt))
+        {
+            return appt.OperationId;
+        }
+
+        return null;
     }
 
     private Task<LoadResult> LoadWorkCentreOptionsAsync(DataSourceLoadOptionsBase options, CancellationToken ct) =>
@@ -1414,9 +1554,309 @@ public partial class PrMachineSchedulePlanner : PageBase, IDisposable
         || value.Equals("endswith", StringComparison.OrdinalIgnoreCase)
         || value.Equals("=", StringComparison.OrdinalIgnoreCase);
 
-    private static DxSchedulerDataStorage CreateStorage(MachineSchedulePlannerBoard board) => new()
+    private void StageRescheduleDraft()
     {
-        AppointmentsSource = board.Appointments,
+        if (!DraftWorkspace.IsActive || !CanEditRescheduleDialog || RescheduleDialogJob is not { } job)
+            return;
+
+        if (!TryGetRequestedStart(out var requestedStart))
+        {
+            ErrorMessage = "Enter a valid requested date and time.";
+            return;
+        }
+
+        var reason = string.IsNullOrWhiteSpace(RescheduleReason)
+            ? "Draft schedule move"
+            : RescheduleReason.Trim();
+        DraftWorkspace.StageMove(job, requestedStart, reason);
+        var operationId = job.OperationId;
+        var woNo = job.WorkOrderNo;
+        CloseRescheduleDialog();
+        RefreshSchedulerStorage();
+        SelectOperationAppointment(operationId);
+        StatusMessage = DraftWorkspace.ConflictCount > 0
+            ? $"Staged move for {woNo} in Draft Mode ({DraftWorkspace.ConflictCount} conflict(s) detected — resolve before committing)."
+            : $"Staged move for {woNo} in Draft Mode ({DraftWorkspace.PendingCount} pending change(s)).";
+    }
+
+    private void ToggleDraftMode()
+    {
+        if (IsLoading || IsDraftCommitBusy)
+            return;
+
+        ErrorMessage = null;
+        if (DraftWorkspace.IsActive)
+        {
+            DraftWorkspace.ExitDraftMode();
+            IsDraftPreviewDialogOpen = false;
+            RefreshSchedulerStorage();
+            StatusMessage = "Exited Draft Reschedule Mode. Discarded unsaved draft changes.";
+            return;
+        }
+
+        if (!CanUseDraftMode || Board is null)
+            return;
+
+        DraftWorkspace.Initialize(Board, enterDraftMode: true);
+        RefreshSchedulerStorage();
+        StatusMessage = "Draft Reschedule Mode is active. Stage moves or advanced actions without saving to the database, resolve any overlaps, then preview and commit all changes.";
+    }
+
+    private void UndoDraft()
+    {
+        if (!DraftWorkspace.IsActive || IsDraftCommitBusy || !DraftWorkspace.Undo())
+            return;
+
+        RefreshSchedulerStorage();
+        StatusMessage = $"Undid last draft edit ({DraftWorkspace.PendingCount} pending change(s), {DraftWorkspace.ConflictCount} conflict(s)).";
+    }
+
+    private void RedoDraft()
+    {
+        if (!DraftWorkspace.IsActive || IsDraftCommitBusy || !DraftWorkspace.Redo())
+            return;
+
+        RefreshSchedulerStorage();
+        StatusMessage = $"Redid draft edit ({DraftWorkspace.PendingCount} pending change(s), {DraftWorkspace.ConflictCount} conflict(s)).";
+    }
+
+    private void ResetDraft()
+    {
+        if (!DraftWorkspace.IsActive || IsDraftCommitBusy)
+            return;
+
+        DraftWorkspace.ResetAll();
+        IsDraftPreviewDialogOpen = false;
+        RefreshSchedulerStorage();
+        StatusMessage = "Reset all staged draft changes back to live saved schedules.";
+    }
+
+    private async Task OpenDraftPreviewDialogAsync()
+    {
+        if (!DraftWorkspace.IsActive || !CanUseDraftMode || DraftWorkspace.PendingCount == 0 || IsDraftCommitBusy)
+            return;
+
+        IsDraftPreviewDialogOpen = true;
+        IsDraftCommitBusy = true;
+        ErrorMessage = null;
+        DraftWorkspace.SetServerPreview(null);
+        try
+        {
+            var result = await AdvancedPlanner.PreviewDraftAsync(BuildDraftRequest(null));
+            if (!result.Succeeded || result.Data is null)
+            {
+                ErrorMessage = result.Message ?? "The draft preview could not be generated.";
+                return;
+            }
+
+            DraftWorkspace.SetServerPreview(result.Data);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"The draft preview could not be generated. {ex.Message}";
+        }
+        finally
+        {
+            IsDraftCommitBusy = false;
+        }
+    }
+
+    private void CloseDraftPreviewDialog()
+    {
+        if (IsDraftCommitBusy)
+            return;
+        IsDraftPreviewDialogOpen = false;
+    }
+
+    private async Task CommitDraftAsync()
+    {
+        if (!DraftWorkspace.IsActive || !CanUseDraftMode || IsDraftCommitBusy
+            || DraftWorkspace.LastServerPreview is not { CanCommit: true, PreviewToken: { Length: > 0 } token })
+            return;
+
+        IsDraftCommitBusy = true;
+        ErrorMessage = null;
+        try
+        {
+            var result = await AdvancedPlanner.CommitDraftAsync(BuildDraftRequest(token));
+            if (!result.Succeeded || result.Data is null)
+            {
+                DraftWorkspace.SetServerPreview(null);
+                ErrorMessage = result.Message ?? "The staged draft changes could not be committed.";
+                return;
+            }
+
+            var message = result.Data.Message;
+            DraftWorkspace.ExitDraftMode();
+            IsDraftPreviewDialogOpen = false;
+            await ReloadAsync();
+            StatusMessage = result.Data.HasUnscheduledRemaining
+                ? $"{message} Completion is unknown until remaining quantities are scheduled."
+                : message;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"The staged draft changes could not be committed. {ex.Message}";
+        }
+        finally
+        {
+            IsDraftCommitBusy = false;
+        }
+    }
+
+    private MachineScheduleDraftRequest BuildDraftRequest(string? previewToken)
+    {
+        var expectedByKey = new Dictionary<(long WoId, long WomId), MachineScheduleDraftExpectedVersion>();
+        if (Board is not null)
+        {
+            foreach (var job in Board.Jobs)
+            {
+                expectedByKey.TryAdd(
+                    (job.WorkOrderId, job.WorkOrderMachineId),
+                    new MachineScheduleDraftExpectedVersion
+                    {
+                        WorkOrderId = job.WorkOrderId,
+                        WorkOrderMachineId = job.WorkOrderMachineId,
+                        ExpectedWorkOrderScheduleRevision = job.ScheduleRevision,
+                        ExpectedWorkOrderRowVersion = job.WorkOrderRowVersion,
+                        ExpectedMachineScheduleRevision = job.MachineScheduleRevision,
+                        ExpectedMachineRowVersion = job.MachineRowVersion
+                    });
+            }
+        }
+
+        return new MachineScheduleDraftRequest
+        {
+            BoardBaseFingerprint = Board?.BoardFingerprint ?? DraftWorkspace.BaseBoardFingerprint,
+            Commands = DraftWorkspace.PendingCommands.ToList(),
+            ExpectedVersions = expectedByKey.Values.ToList(),
+            PreviewToken = previewToken
+        };
+    }
+
+    private void SelectOperationAppointment(long operationId)
+    {
+        if (Board is null)
+            return;
+
+        var active = DraftWorkspace.IsActive ? DraftWorkspace.DraftAppointments : Board.Appointments;
+        var id = active.FirstOrDefault(x =>
+            !x.IsMaintenance
+            && !x.IsExternalCapacity
+            && (x.OperationId == operationId || string.Equals(x.Location, $"operation:{operationId}", StringComparison.Ordinal)))?.Id;
+        if (id is not null)
+            SelectedAppointment = DataStorage.GetAppointmentItemById(id);
+    }
+
+    private IReadOnlyDictionary<string, MachineSchedulePlannerAppointment> ActiveAppointmentById { get; set; }
+        = new Dictionary<string, MachineSchedulePlannerAppointment>(StringComparer.Ordinal);
+
+    private IReadOnlyList<MachineScheduleWorkOrderLegendEntry> WorkOrderLegend { get; set; } = [];
+
+    private IReadOnlyDictionary<string, MachineScheduleWorkOrderLegendEntry> WorkOrderLegendByNo { get; set; }
+        = new Dictionary<string, MachineScheduleWorkOrderLegendEntry>(StringComparer.OrdinalIgnoreCase);
+
+    private void SelectWorkOrderFromLegend(MachineScheduleWorkOrderLegendEntry entry)
+    {
+        if (string.Equals(SelectedJob?.WorkOrderNo, entry.WorkOrderNo, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectedAppointment = null;
+            return;
+        }
+
+        SelectOperationAppointment(entry.PrimaryOperationId);
+        IsDetailsOpen = true;
+    }
+
+    private void ClearSelectedAppointment() => SelectedAppointment = null;
+
+    private void RefreshSchedulerStorage()
+    {
+        if (Board is null)
+            return;
+
+        WorkOrderLegend = MachineSchedulePlannerColorRules.BuildWorkOrderLegend(Board.Jobs);
+        WorkOrderLegendByNo = WorkOrderLegend
+            .ToDictionary(x => x.WorkOrderNo, x => x, StringComparer.OrdinalIgnoreCase);
+
+        var appointments = DraftWorkspace.IsActive
+            ? DraftWorkspace.DraftAppointments
+            : Board.Appointments;
+        ActiveAppointmentById = appointments
+            .Where(x => !string.IsNullOrWhiteSpace(x.Id))
+            .GroupBy(x => x.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        DataStorage = CreateStorage(Board, appointments);
+    }
+
+    private MachineSchedulePlannerAppointment? ResolveAppointmentViewModel(DxSchedulerAppointmentView view)
+    {
+        var id = view.Appointment?.Id?.ToString();
+        if (!string.IsNullOrWhiteSpace(id) && ActiveAppointmentById.TryGetValue(id, out var exact))
+            return exact;
+
+        var location = view.Appointment?.Location;
+        var start = view.Appointment?.Start;
+        var source = DraftWorkspace.IsActive ? DraftWorkspace.DraftAppointments : Board?.Appointments;
+        if (source is null || string.IsNullOrWhiteSpace(location))
+            return null;
+
+        return source.FirstOrDefault(x =>
+            string.Equals(x.Location, location, StringComparison.Ordinal)
+            && (!start.HasValue || x.Start == start.Value));
+    }
+
+    private string AppointmentBarCssClass(DxSchedulerAppointmentView view, MachineSchedulePlannerAppointment? appt)
+    {
+        var labelId = appt?.LabelId ?? (view.Appointment?.LabelId as int? ?? MachineSchedulePlannerLabelIds.Scheduled);
+        var legendEntry = ResolveLegendEntry(appt);
+        return MachineSchedulePlannerColorRules.GetBarCssClass(
+            appt,
+            labelId,
+            SelectedJob?.WorkOrderNo,
+            SelectedOperationId,
+            legendEntry?.PaletteIndex);
+    }
+
+    private MachineSchedulePlannerBarDisplay BuildAppointmentBarDisplay(
+        DxSchedulerAppointmentView view,
+        MachineSchedulePlannerAppointment? appt)
+    {
+        var legendEntry = ResolveLegendEntry(appt);
+        return MachineSchedulePlannerColorRules.FormatBarDisplay(
+            appt,
+            view.Appointment?.Subject,
+            view.Appointment?.Start,
+            view.Appointment?.End,
+            CurrentView,
+            legendEntry?.TagText);
+    }
+
+    private MachineScheduleWorkOrderLegendEntry? ResolveLegendEntry(MachineSchedulePlannerAppointment? appt) =>
+        !string.IsNullOrWhiteSpace(appt?.WorkOrderNo)
+        && WorkOrderLegendByNo.TryGetValue(appt.WorkOrderNo.Trim(), out var entry)
+            ? entry
+            : null;
+
+    private string AppointmentTooltipText(DxSchedulerAppointmentView view, MachineSchedulePlannerAppointment? appt)
+    {
+        var legendEntry = ResolveLegendEntry(appt);
+        var tagPrefix = legendEntry is not null ? $"{legendEntry.TagText} · " : string.Empty;
+        var subject = appt?.Subject ?? view.Appointment?.Subject ?? string.Empty;
+        var start = appt?.Start ?? view.Appointment?.Start ?? default;
+        var end = appt?.End ?? view.Appointment?.End ?? default;
+        var desc = appt?.Description ?? view.Appointment?.Description;
+        var status = appt?.IsConflict == true ? " · OVERLAP CONFLICT" : string.Empty;
+        return string.IsNullOrWhiteSpace(desc)
+            ? $"{tagPrefix}{subject} ({start:dd MMM HH:mm}–{end:HH:mm}){status}"
+            : $"{tagPrefix}{subject} ({start:dd MMM HH:mm}–{end:HH:mm}){status}\n{desc}";
+    }
+
+    private static DxSchedulerDataStorage CreateStorage(
+        MachineSchedulePlannerBoard board,
+        IReadOnlyList<MachineSchedulePlannerAppointment> appointments) => new()
+    {
+        AppointmentsSource = appointments,
         AppointmentMappings = new DxSchedulerAppointmentMappings
         {
             Id = nameof(MachineSchedulePlannerAppointment.Id),
@@ -1589,6 +2029,7 @@ internal static class MachineSchedulePlannerSelectionPlanner
 /// </summary>
 internal static class MachineSchedulePlannerAppointmentRules
 {
+    internal const string SegmentPrefix = "segment:";
     internal const string OperationPrefix = "operation:";
     internal const string MaintenancePrefix = "maintenance:";
     internal const string ExternalCapacityPrefix = "external-capacity:";
@@ -1602,6 +2043,13 @@ internal static class MachineSchedulePlannerAppointmentRules
     internal static bool IsMaintenance(string? location) =>
         location?.StartsWith(MaintenancePrefix, StringComparison.Ordinal) == true;
 
+    internal static bool TryGetSegmentId(string? location, out long segmentId)
+    {
+        segmentId = 0;
+        return location?.StartsWith(SegmentPrefix, StringComparison.Ordinal) == true
+            && long.TryParse(location.AsSpan(SegmentPrefix.Length), out segmentId);
+    }
+
     internal static bool TryGetOperationId(string? location, out long operationId)
     {
         operationId = 0;
@@ -1609,12 +2057,12 @@ internal static class MachineSchedulePlannerAppointmentRules
             && long.TryParse(location.AsSpan(OperationPrefix.Length), out operationId);
     }
 
-    /// <summary>Only current-branch operation bars may open Work Order details.</summary>
+    /// <summary>Only current-branch operation or segment bars may open Work Order details.</summary>
     internal static bool CanOpenWorkOrder(string? location) =>
-        TryGetOperationId(location, out _);
+        TryGetOperationId(location, out _) || TryGetSegmentId(location, out _);
 
     internal static bool CanChangeSchedule(string? location) =>
-        TryGetOperationId(location, out _);
+        TryGetOperationId(location, out _) || TryGetSegmentId(location, out _);
 }
 
 internal static class MachineSchedulePlannerInputParser
@@ -1654,6 +2102,607 @@ internal static class MachineSchedulePlannerInputParser
 
         return TimeOnly.TryParse(value, culture, DateTimeStyles.AllowWhiteSpaces, out time)
             || TimeOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out time);
+    }
+}
+
+internal sealed record MachineSchedulePlannerDragResult(
+    DateTime ShiftedStart,
+    TimeSpan Delta,
+    string OffsetSummary,
+    string DialogNote);
+
+/// <summary>
+/// Converts any dragged operation bar position into an operation-level delta shift
+/// (Option A) so dragging the middle or tail bar of a multi-day job shifts its start
+/// by the same offset instead of replacing PlannedStart with that bar's timestamp.
+/// </summary>
+internal static class MachineSchedulePlannerDragRules
+{
+    internal static MachineSchedulePlannerDragResult ComputeShiftedStart(
+        DateTime currentOperationStart,
+        DateTime? originalBarStart,
+        DateTime droppedBarStart)
+    {
+        var normalizedCurrent = DateTime.SpecifyKind(currentOperationStart, DateTimeKind.Unspecified);
+        var normalizedDropped = DateTime.SpecifyKind(droppedBarStart, DateTimeKind.Unspecified);
+        var normalizedOriginal = originalBarStart.HasValue
+            ? DateTime.SpecifyKind(originalBarStart.Value, DateTimeKind.Unspecified)
+            : normalizedCurrent;
+
+        var delta = normalizedDropped - normalizedOriginal;
+        var shiftedStart = DateTime.SpecifyKind(normalizedCurrent.Add(delta), DateTimeKind.Unspecified);
+        var offsetSummary = FormatDeltaSummary(delta);
+        var dialogNote = delta == TimeSpan.Zero
+            ? $"Keep operation start at {shiftedStart:ddd dd MMM yyyy HH:mm}."
+            : $"Moved bar {offsetSummary} ({normalizedOriginal:dd MMM HH:mm} → {normalizedDropped:dd MMM HH:mm}). "
+              + $"Proposing new start for the whole Work Order: {shiftedStart:ddd dd MMM yyyy HH:mm} "
+              + "(exact shift dates are calculated when you click Preview impact).";
+        return new MachineSchedulePlannerDragResult(shiftedStart, delta, offsetSummary, dialogNote);
+    }
+
+    internal static string FormatDeltaSummary(TimeSpan delta)
+    {
+        if (delta == TimeSpan.Zero)
+            return "no change";
+
+        var direction = delta < TimeSpan.Zero ? "earlier by" : "later by";
+        var abs = delta.Duration();
+        var parts = new List<string>(3);
+        if (abs.Days > 0)
+            parts.Add(abs.Days == 1 ? "1 day" : $"{abs.Days} days");
+        if (abs.Hours > 0)
+            parts.Add(abs.Hours == 1 ? "1 hr" : $"{abs.Hours} hrs");
+        if (abs.Minutes > 0 && abs.Days == 0)
+            parts.Add(abs.Minutes == 1 ? "1 min" : $"{abs.Minutes} mins");
+        if (parts.Count == 0)
+            parts.Add("under 1 min");
+        return $"{direction} {string.Join(" ", parts)}";
+    }
+}
+
+internal enum MachineSchedulePlannerCalendarCellKind
+{
+    Working,
+    WorkingWithBreak,
+    Break,
+    OffDay,
+    PublicHoliday,
+    Maintenance,
+    Breakdown
+}
+
+internal sealed record MachineSchedulePlannerDateHeaderState(
+    string CssClass,
+    string? BadgeText,
+    string? CompactBadgeText,
+    string Tooltip);
+
+/// <summary>
+/// Classifies machine timeline cells and date column headers using the loaded machine shift,
+/// off-day, public holiday, break, and maintenance bands so non-working periods stand out clearly.
+/// </summary>
+internal static class MachineSchedulePlannerCalendarHelper
+{
+    internal static MachineSchedulePlannerCalendarCellKind ClassifyCell(
+        MachineSchedulePlannerResource machine,
+        DateTime intervalStart,
+        DateTime intervalEnd)
+    {
+        ArgumentNullException.ThrowIfNull(machine);
+        if (machine.CalendarBands.Count == 0)
+        {
+            if (machine.MaintenanceIntervals.Any(x => x.Start < intervalEnd && x.End > intervalStart))
+                return MachineSchedulePlannerCalendarCellKind.Maintenance;
+            return machine.UsableIntervals.Any(x => x.Start < intervalEnd && x.End > intervalStart)
+                ? MachineSchedulePlannerCalendarCellKind.Working
+                : MachineSchedulePlannerCalendarCellKind.OffDay;
+        }
+
+        var overlapping = machine.CalendarBands
+            .Where(x => x.Start < intervalEnd && x.End > intervalStart)
+            .ToList();
+
+        if (overlapping.Any(x => x.BandKind == MachineSchedulePlannerCalendarBandKind.Breakdown))
+            return MachineSchedulePlannerCalendarCellKind.Breakdown;
+        if (overlapping.Any(x => x.BandKind is MachineSchedulePlannerCalendarBandKind.Preventive
+            or MachineSchedulePlannerCalendarBandKind.Repair
+            or MachineSchedulePlannerCalendarBandKind.Service))
+            return MachineSchedulePlannerCalendarCellKind.Maintenance;
+        if (overlapping.Any(x => x.BandKind == MachineSchedulePlannerCalendarBandKind.PublicHoliday))
+            return MachineSchedulePlannerCalendarCellKind.PublicHoliday;
+
+        var hasWorking = overlapping.Any(x => x.BandKind == MachineSchedulePlannerCalendarBandKind.WorkingShift);
+        var hasBreak = overlapping.Any(x => x.BandKind == MachineSchedulePlannerCalendarBandKind.ShiftBreak);
+        if (hasWorking)
+            return hasBreak
+                ? MachineSchedulePlannerCalendarCellKind.WorkingWithBreak
+                : MachineSchedulePlannerCalendarCellKind.Working;
+        if (hasBreak)
+            return MachineSchedulePlannerCalendarCellKind.Break;
+        return MachineSchedulePlannerCalendarCellKind.OffDay;
+    }
+
+    internal static MachineSchedulePlannerDateHeaderState ResolveDateHeaderState(
+        IReadOnlyList<MachineSchedulePlannerResource>? machines,
+        DateTime intervalStart,
+        DateTime intervalEnd,
+        SchedulerTimeScaleUnit unit)
+    {
+        var baseRange = $"{intervalStart:dddd, dd MMMM yyyy HH:mm} – {intervalEnd:dddd, dd MMMM yyyy HH:mm}";
+        if (machines is null || machines.Count == 0 || unit is SchedulerTimeScaleUnit.Week or SchedulerTimeScaleUnit.Month)
+            return new("pr-machine-schedule-date-header", null, null, baseRange);
+
+        var workingCount = 0;
+        var holidayCount = 0;
+        var offCount = 0;
+        var breakCount = 0;
+        var maintenanceCount = 0;
+        var offMachines = new List<string>();
+        var holidayNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var machine in machines)
+        {
+            var kind = ClassifyHeaderMachine(machine, intervalStart, intervalEnd, unit, holidayNames);
+            switch (kind)
+            {
+                case MachineSchedulePlannerCalendarCellKind.Working:
+                case MachineSchedulePlannerCalendarCellKind.WorkingWithBreak:
+                    workingCount++;
+                    break;
+                case MachineSchedulePlannerCalendarCellKind.PublicHoliday:
+                    holidayCount++;
+                    offMachines.Add(machine.MachineCode);
+                    break;
+                case MachineSchedulePlannerCalendarCellKind.Break:
+                    breakCount++;
+                    break;
+                case MachineSchedulePlannerCalendarCellKind.Maintenance:
+                case MachineSchedulePlannerCalendarCellKind.Breakdown:
+                    maintenanceCount++;
+                    offMachines.Add(machine.MachineCode);
+                    break;
+                default:
+                    offCount++;
+                    offMachines.Add(machine.MachineCode);
+                    break;
+            }
+        }
+
+        var total = machines.Count;
+        var holidaySuffix = holidayNames.Count > 0 ? $" ({string.Join(", ", holidayNames)})" : string.Empty;
+
+        if (workingCount == 0)
+        {
+            if (holidayCount > 0 && offCount == 0 && maintenanceCount == 0 && breakCount == 0)
+            {
+                return new(
+                    "pr-machine-schedule-date-header pr-machine-schedule-date-header--holiday",
+                    "HOLIDAY",
+                    "HOL",
+                    $"{baseRange} · Public holiday{holidaySuffix} (non-working)");
+            }
+
+            if (breakCount > 0 && holidayCount == 0 && offCount == 0 && maintenanceCount == 0)
+            {
+                return new(
+                    "pr-machine-schedule-date-header pr-machine-schedule-date-header--break",
+                    "BREAK",
+                    "BRK",
+                    $"{baseRange} · Scheduled shift break");
+            }
+
+            if (maintenanceCount == total)
+            {
+                return new(
+                    "pr-machine-schedule-date-header pr-machine-schedule-date-header--maintenance",
+                    "MAINT",
+                    "MNT",
+                    $"{baseRange} · Planned maintenance / breakdown across visible machines");
+            }
+
+            return new(
+                "pr-machine-schedule-date-header pr-machine-schedule-date-header--off",
+                "OFF",
+                "OFF",
+                holidayCount > 0
+                    ? $"{baseRange} · Non-working across visible machines (off day / holiday{holidaySuffix})"
+                    : $"{baseRange} · Machine off day (no scheduled shift on visible machines)");
+        }
+
+        if (offMachines.Count > 0)
+        {
+            var sample = offMachines.Count <= 3
+                ? string.Join(", ", offMachines)
+                : $"{string.Join(", ", offMachines.Take(3))} +{offMachines.Count - 3} more";
+            return new(
+                "pr-machine-schedule-date-header pr-machine-schedule-date-header--partial-off",
+                "SOME OFF",
+                "PART",
+                $"{baseRange} · Mixed shift calendar: {workingCount}/{total} working; off/closed on {sample}");
+        }
+
+        return new(
+            "pr-machine-schedule-date-header pr-machine-schedule-date-header--working",
+            null,
+            null,
+            $"{baseRange} · Working shift");
+    }
+
+    private static MachineSchedulePlannerCalendarCellKind ClassifyHeaderMachine(
+        MachineSchedulePlannerResource machine,
+        DateTime intervalStart,
+        DateTime intervalEnd,
+        SchedulerTimeScaleUnit unit,
+        HashSet<string> holidayNames)
+    {
+        if (machine.CalendarBands.Count == 0 || unit != SchedulerTimeScaleUnit.Day)
+        {
+            if (machine.CalendarBands.Count > 0)
+            {
+                foreach (var band in machine.CalendarBands)
+                {
+                    if (band.BandKind == MachineSchedulePlannerCalendarBandKind.PublicHoliday
+                        && band.Start < intervalEnd && band.End > intervalStart
+                        && !string.IsNullOrWhiteSpace(band.HolidayName))
+                    {
+                        holidayNames.Add(band.HolidayName!);
+                    }
+                }
+            }
+            return ClassifyCell(machine, intervalStart, intervalEnd);
+        }
+
+        var overlapping = machine.CalendarBands
+            .Where(x => x.Start < intervalEnd && x.End > intervalStart)
+            .ToList();
+
+        foreach (var band in overlapping)
+        {
+            if (band.BandKind == MachineSchedulePlannerCalendarBandKind.PublicHoliday
+                && !string.IsNullOrWhiteSpace(band.HolidayName))
+            {
+                holidayNames.Add(band.HolidayName!);
+            }
+        }
+
+        // On a full-day column header, treat the day as Working if the machine has any active working shift.
+        if (overlapping.Any(x => x.BandKind == MachineSchedulePlannerCalendarBandKind.WorkingShift))
+            return MachineSchedulePlannerCalendarCellKind.Working;
+        if (overlapping.Any(x => x.BandKind == MachineSchedulePlannerCalendarBandKind.PublicHoliday))
+            return MachineSchedulePlannerCalendarCellKind.PublicHoliday;
+        if (overlapping.Any(x => x.BandKind == MachineSchedulePlannerCalendarBandKind.Breakdown))
+            return MachineSchedulePlannerCalendarCellKind.Breakdown;
+        if (overlapping.Any(x => x.BandKind is MachineSchedulePlannerCalendarBandKind.Preventive
+            or MachineSchedulePlannerCalendarBandKind.Repair
+            or MachineSchedulePlannerCalendarBandKind.Service))
+            return MachineSchedulePlannerCalendarCellKind.Maintenance;
+        if (overlapping.Any(x => x.BandKind == MachineSchedulePlannerCalendarBandKind.ShiftBreak))
+            return MachineSchedulePlannerCalendarCellKind.Break;
+        return MachineSchedulePlannerCalendarCellKind.OffDay;
+    }
+}
+
+internal sealed record MachineScheduleWorkOrderLegendEntry(
+    int SequenceNo,
+    string TagText,
+    int PaletteIndex,
+    long WorkOrderId,
+    long PrimaryOperationId,
+    string WorkOrderNo,
+    string ProductCode,
+    string? ProductDescription,
+    decimal PlannedQuantity,
+    string OutputUom,
+    string MachineSummary,
+    DateTime EarliestStart,
+    DateTime LatestCompletion,
+    bool IsLate,
+    bool IsLocked);
+
+internal sealed record MachineSchedulePlannerBarDisplay(
+    string PrimaryText,
+    string? SecondaryText,
+    string? TimeRangeText,
+    string? QtyText,
+    string? StatusBadgeText,
+    bool IsLocked);
+
+/// <summary>
+/// Builds the per-period Work Order legend (#1, #2, ...) and formats compact color-coded
+/// timeline bars so Week/Month views display short tags (#1) with narrow columns while the
+/// legend strip above the grid carries full Work Order and Product captions.
+/// </summary>
+internal static class MachineSchedulePlannerColorRules
+{
+    internal const int WorkOrderPaletteSize = 12;
+
+    internal static IReadOnlyList<MachineScheduleWorkOrderLegendEntry> BuildWorkOrderLegend(
+        IReadOnlyList<MachineSchedulePlannerJob>? jobs)
+    {
+        if (jobs is null || jobs.Count == 0)
+            return [];
+
+        var groups = jobs
+            .Where(x => !string.IsNullOrWhiteSpace(x.WorkOrderNo))
+            .GroupBy(x => x.WorkOrderNo.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var ordered = g.OrderBy(x => x.PlannedStart).ThenBy(x => x.OperationId).ToList();
+                var first = ordered[0];
+                var machines = ordered
+                    .Select(x => x.MachineCode)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var machineSummary = machines.Count <= 2
+                    ? string.Join(", ", machines)
+                    : $"{machines[0]}, {machines[1]} +{machines.Count - 2}";
+                return new
+                {
+                    WorkOrderNo = first.WorkOrderNo.Trim(),
+                    First = first,
+                    EarliestStart = ordered.Min(x => x.PlannedStart),
+                    LatestCompletion = ordered.Max(x => x.PlannedCompletion),
+                    MachineSummary = machineSummary,
+                    IsLate = ordered.Any(x => x.IsLateToRequiredDate),
+                    IsLocked = ordered.All(x => x.IsLocked)
+                };
+            })
+            .OrderBy(x => x.EarliestStart)
+            .ThenBy(x => x.WorkOrderNo, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var result = new List<MachineScheduleWorkOrderLegendEntry>(groups.Count);
+        for (var i = 0; i < groups.Count; i++)
+        {
+            var g = groups[i];
+            var seq = i + 1;
+            result.Add(new MachineScheduleWorkOrderLegendEntry(
+                SequenceNo: seq,
+                TagText: $"#{seq}",
+                PaletteIndex: i % WorkOrderPaletteSize,
+                WorkOrderId: g.First.WorkOrderId,
+                PrimaryOperationId: g.First.OperationId,
+                WorkOrderNo: g.WorkOrderNo,
+                ProductCode: g.First.ProductCode,
+                ProductDescription: g.First.ProductDescription,
+                PlannedQuantity: g.First.PlannedQuantity,
+                OutputUom: g.First.OutputUom ?? string.Empty,
+                MachineSummary: g.MachineSummary,
+                EarliestStart: g.EarliestStart,
+                LatestCompletion: g.LatestCompletion,
+                IsLate: g.IsLate,
+                IsLocked: g.IsLocked));
+        }
+
+        return result;
+    }
+
+    internal static int GetWorkOrderPaletteIndex(string? workOrderNo, long? workOrderId)
+    {
+        if (!string.IsNullOrWhiteSpace(workOrderNo))
+        {
+            var normalized = workOrderNo.Trim().ToUpperInvariant();
+            unchecked
+            {
+                uint hash = 2166136261u;
+                foreach (var ch in normalized)
+                {
+                    hash ^= ch;
+                    hash *= 16777619u;
+                }
+
+                hash ^= hash >> 16;
+                hash *= 0x85ebca6bu;
+                hash ^= hash >> 13;
+                hash *= 0xc2b2ae35u;
+                hash ^= hash >> 16;
+                return (int)(hash % WorkOrderPaletteSize);
+            }
+        }
+
+        if (workOrderId.HasValue)
+            return (int)(Math.Abs(workOrderId.Value) % WorkOrderPaletteSize);
+
+        return 0;
+    }
+
+    internal static string GetBarCssClass(
+        MachineSchedulePlannerAppointment? appt,
+        int labelId,
+        string? selectedWorkOrderNo,
+        long? selectedOperationId,
+        int? legendPaletteIndex = null)
+    {
+        var baseTone = GetBaseToneClass(appt, labelId, legendPaletteIndex);
+        var modifiers = new List<string>(7) { "pr-machine-schedule-bar", baseTone };
+
+        var isSpecialBlock = appt?.IsMaintenance == true
+            || appt?.IsExternalCapacity == true
+            || labelId is MachineSchedulePlannerLabelIds.PreventiveMaintenance
+                or MachineSchedulePlannerLabelIds.ReservedOtherBranch;
+
+        if (!isSpecialBlock && appt is not null)
+        {
+            if (appt.IsLocked || labelId == MachineSchedulePlannerLabelIds.ExecutionLocked)
+                modifiers.Add("pr-machine-schedule-bar--is-locked");
+            if (appt.IsLate || labelId == MachineSchedulePlannerLabelIds.LateToRequiredDate)
+                modifiers.Add("pr-machine-schedule-bar--is-late");
+            if (string.Equals(appt.SegmentKind, ProductionMachineScheduleSegmentKinds.UrgentInsert, StringComparison.Ordinal)
+                || labelId == MachineSchedulePlannerLabelIds.UrgentInsert)
+                modifiers.Add("pr-machine-schedule-bar--is-urgent");
+        }
+
+        if (appt?.IsConflict == true)
+            modifiers.Add("pr-machine-schedule-bar--conflict");
+        if (appt?.IsDraft == true)
+            modifiers.Add("pr-machine-schedule-bar--draft");
+
+        var hasActiveSelection = !string.IsNullOrWhiteSpace(selectedWorkOrderNo) || selectedOperationId.HasValue;
+        var isSelected = appt is not null && !isSpecialBlock && (
+            (!string.IsNullOrWhiteSpace(selectedWorkOrderNo)
+             && !string.IsNullOrWhiteSpace(appt.WorkOrderNo)
+             && string.Equals(appt.WorkOrderNo, selectedWorkOrderNo, StringComparison.OrdinalIgnoreCase))
+            || (selectedOperationId.HasValue && appt.OperationId == selectedOperationId.Value));
+
+        if (isSelected)
+            modifiers.Add("pr-machine-schedule-bar--selected");
+        else if (hasActiveSelection && !isSpecialBlock)
+            modifiers.Add("pr-machine-schedule-bar--dimmed");
+
+        return string.Join(" ", modifiers);
+    }
+
+    internal static MachineSchedulePlannerBarDisplay FormatBarDisplay(
+        MachineSchedulePlannerAppointment? appt,
+        string? fallbackSubject,
+        DateTime? fallbackStart,
+        DateTime? fallbackEnd,
+        PlannerView currentView,
+        string? legendTag = null)
+    {
+        var start = appt?.Start ?? fallbackStart ?? default;
+        var end = appt?.End ?? fallbackEnd ?? default;
+        var rawSubject = appt?.Subject ?? fallbackSubject ?? string.Empty;
+
+        string primary;
+        string? secondary = null;
+
+        if (appt?.IsExternalCapacity == true)
+        {
+            primary = currentView == PlannerView.Day ? "Reserved · other branch" : "EXT";
+        }
+        else if (appt?.IsMaintenance == true)
+        {
+            primary = currentView == PlannerView.Day
+                ? (string.IsNullOrWhiteSpace(rawSubject) ? "Maintenance" : rawSubject)
+                : "PM";
+        }
+        else if (!string.IsNullOrWhiteSpace(appt?.WorkOrderNo))
+        {
+            var woNo = appt.WorkOrderNo.Trim();
+            var shortTag = !string.IsNullOrWhiteSpace(legendTag)
+                ? legendTag!
+                : ShortWorkOrderTag(woNo);
+
+            if (currentView == PlannerView.Day)
+            {
+                primary = !string.IsNullOrWhiteSpace(legendTag) ? $"{legendTag} · {woNo}" : woNo;
+                secondary = ExtractSecondarySubject(rawSubject, woNo);
+            }
+            else
+            {
+                // Week and Month views keep bars compact (legend tag + color only) so narrow
+                // date columns fit the full schedule without truncated text clutter.
+                primary = shortTag;
+                secondary = null;
+            }
+        }
+        else
+        {
+            var split = rawSubject.Split(" · ", 2, StringSplitOptions.TrimEntries);
+            primary = split.Length > 0 ? split[0] : rawSubject;
+            secondary = currentView == PlannerView.Day && split.Length > 1 ? split[1] : null;
+        }
+
+        string? badge = null;
+        if (appt is not null)
+        {
+            if (appt.IsConflict)
+                badge = currentView == PlannerView.Day ? "CONFLICT" : "!";
+            else if (string.Equals(appt.SegmentKind, ProductionMachineScheduleSegmentKinds.UrgentInsert, StringComparison.Ordinal))
+                badge = currentView == PlannerView.Day ? "URGENT" : "URG";
+            else if (appt.IsLate)
+                badge = currentView == PlannerView.Day ? "LATE" : "!";
+            else if (appt.IsDraft)
+                badge = currentView == PlannerView.Day ? "DRAFT" : "*";
+        }
+
+        string? qtyText = null;
+        if (currentView == PlannerView.Day
+            && appt?.PlannedOutputQty is { } qty
+            && qty > 0m)
+        {
+            var unit = string.IsNullOrWhiteSpace(appt.OutputUom) ? string.Empty : $" {appt.OutputUom}";
+            qtyText = $"{qty:0.##}{unit}";
+        }
+
+        var timeRange = currentView == PlannerView.Day
+            ? $"{start:HH:mm}–{end:HH:mm}"
+            : null;
+
+        return new MachineSchedulePlannerBarDisplay(
+            primary,
+            secondary,
+            timeRange,
+            qtyText,
+            badge,
+            appt?.IsLocked == true);
+    }
+
+    private static string ShortWorkOrderTag(string workOrderNo)
+    {
+        var dashIdx = workOrderNo.LastIndexOf('-');
+        if (dashIdx >= 0 && dashIdx + 1 < workOrderNo.Length)
+        {
+            var suffix = workOrderNo[(dashIdx + 1)..].TrimStart('0');
+            return string.IsNullOrEmpty(suffix) ? "#0" : $"#{suffix}";
+        }
+
+        return workOrderNo.Length <= 6 ? workOrderNo : workOrderNo[^4..];
+    }
+
+    private static string GetBaseToneClass(
+        MachineSchedulePlannerAppointment? appt,
+        int labelId,
+        int? legendPaletteIndex)
+    {
+        if (appt?.IsMaintenance == true || labelId == MachineSchedulePlannerLabelIds.PreventiveMaintenance)
+            return "pr-machine-schedule-bar--maintenance";
+
+        if (appt?.IsExternalCapacity == true || labelId == MachineSchedulePlannerLabelIds.ReservedOtherBranch)
+            return "pr-machine-schedule-bar--external";
+
+        if (legendPaletteIndex.HasValue)
+            return $"pr-machine-schedule-bar--wo-{Math.Abs(legendPaletteIndex.Value) % WorkOrderPaletteSize}";
+
+        if (!string.IsNullOrWhiteSpace(appt?.WorkOrderNo) || appt?.WorkOrderId is not null)
+        {
+            var index = GetWorkOrderPaletteIndex(appt.WorkOrderNo, appt.WorkOrderId);
+            return $"pr-machine-schedule-bar--wo-{index}";
+        }
+
+        return labelId switch
+        {
+            MachineSchedulePlannerLabelIds.ExecutionLocked => "pr-machine-schedule-bar--locked",
+            MachineSchedulePlannerLabelIds.LateToRequiredDate => "pr-machine-schedule-bar--late",
+            MachineSchedulePlannerLabelIds.ManualSplit => "pr-machine-schedule-bar--split",
+            MachineSchedulePlannerLabelIds.UrgentInsert => "pr-machine-schedule-bar--urgent",
+            MachineSchedulePlannerLabelIds.Resume => "pr-machine-schedule-bar--resume",
+            MachineSchedulePlannerLabelIds.HoldResume => "pr-machine-schedule-bar--hold-resume",
+            MachineSchedulePlannerLabelIds.MaintenanceResume => "pr-machine-schedule-bar--maintenance-resume",
+            MachineSchedulePlannerLabelIds.RemainingReplan => "pr-machine-schedule-bar--remaining",
+            _ => "pr-machine-schedule-bar--scheduled"
+        };
+    }
+
+    private static string? ExtractSecondarySubject(string rawSubject, string workOrderNo)
+    {
+        if (string.IsNullOrWhiteSpace(rawSubject))
+            return null;
+
+        var trimmed = rawSubject.Trim();
+        if (trimmed.Equals(workOrderNo, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var prefixWithSeparator = $"{workOrderNo} · ";
+        if (trimmed.StartsWith(prefixWithSeparator, StringComparison.OrdinalIgnoreCase))
+        {
+            var rest = trimmed[prefixWithSeparator.Length..].Trim();
+            return string.IsNullOrWhiteSpace(rest) ? null : rest;
+        }
+
+        return trimmed;
     }
 }
 

@@ -4,7 +4,9 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Planning;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Sales;
+using ErpWeb.Core.Settings;
 using ErpWeb.Model.Data;
+using ErpWeb.Tests.Production.Transaction;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
@@ -1394,6 +1396,213 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
         await AssertNoOverlappingActiveAllocationsAsync(host.Factory);
     }
 
+    [Fact]
+    public async Task Concurrent_draft_commits_on_same_machine_serialize_and_reject_stale_loser()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+            return;
+
+        await using var host = await Host.CreateAsync(cs);
+        await host.EnableMachineRouteAsync("MC-DRAFT-RACE");
+
+        var first = await host.CreateService().CreateAndReleaseAsync(host.DraftRequest());
+        Assert.True(first.Succeeded, first.Message);
+
+        var planner = host.CreatePlannerService();
+        var boardResult = await planner.GetBoardAsync(new MachineSchedulePlannerQuery
+        {
+            WindowStart = new DateTime(2026, 10, 1),
+            WindowEnd = new DateTime(2026, 10, 31)
+        });
+        Assert.True(boardResult.Succeeded, boardResult.Message);
+        var job = Assert.Single(boardResult.Data!.Jobs, x => x.WorkOrderNo == first.Data!.WorkOrderNo);
+
+        static MachineScheduleDraftRequest BuildDraftRequest(
+            MachineSchedulePlannerBoard board,
+            MachineSchedulePlannerJob target,
+            DateTime requestedStart,
+            string reason) => new()
+        {
+            BoardBaseFingerprint = board.BoardFingerprint,
+            Commands =
+            [
+                new MachineScheduleDraftCommand
+                {
+                    Kind = MachineScheduleDraftCommandKind.Move,
+                    WorkOrderId = target.WorkOrderId,
+                    OperationId = target.OperationId,
+                    WorkOrderMachineId = target.WorkOrderMachineId,
+                    MachineCode = target.MachineCode,
+                    WorkOrderNo = target.WorkOrderNo,
+                    RequestedStart = requestedStart,
+                    Reason = reason
+                }
+            ],
+            ExpectedVersions =
+            [
+                new MachineScheduleDraftExpectedVersion
+                {
+                    WorkOrderId = target.WorkOrderId,
+                    WorkOrderMachineId = target.WorkOrderMachineId,
+                    ExpectedWorkOrderScheduleRevision = target.ScheduleRevision,
+                    ExpectedWorkOrderRowVersion = target.WorkOrderRowVersion,
+                    ExpectedMachineScheduleRevision = target.MachineScheduleRevision,
+                    ExpectedMachineRowVersion = target.MachineRowVersion
+                }
+            ]
+        };
+
+        var reqA = BuildDraftRequest(boardResult.Data!, job, new DateTime(2026, 10, 5, 8, 0, 0), "Draft race A");
+        var reqB = BuildDraftRequest(boardResult.Data!, job, new DateTime(2026, 10, 6, 8, 0, 0), "Draft race B");
+
+        var advA = host.CreateAdvancedPlanningService();
+        var advB = host.CreateAdvancedPlanningService();
+        var prevA = await advA.PreviewDraftAsync(reqA);
+        var prevB = await advB.PreviewDraftAsync(reqB);
+        Assert.True(prevA.Succeeded && prevA.Data!.CanCommit, prevA.Message);
+        Assert.True(prevB.Succeeded && prevB.Data!.CanCommit, prevB.Message);
+
+        var gate = new ManualResetEventSlim(false);
+        var taskA = Task.Run(async () =>
+        {
+            gate.Wait();
+            return await host.CreateAdvancedPlanningService().CommitDraftAsync(
+                reqA with { PreviewToken = prevA.Data.PreviewToken });
+        });
+        var taskB = Task.Run(async () =>
+        {
+            gate.Wait();
+            return await host.CreateAdvancedPlanningService().CommitDraftAsync(
+                reqB with { PreviewToken = prevB.Data.PreviewToken });
+        });
+        gate.Set();
+
+        var results = await Task.WhenAll(taskA, taskB);
+        var succeededCount = results.Count(x => x.Succeeded);
+        Assert.Equal(1, succeededCount);
+        var failed = Assert.Single(results, x => !x.Succeeded);
+        Assert.Contains(failed.ErrorCode, new[] { IvMasterErrorCode.Concurrency, IvMasterErrorCode.Validation });
+
+        await using (var db = await host.Factory.CreateDbContextAsync())
+        {
+            var currentSets = await db.ProductionMachineScheduleSegmentSets
+                .Where(x => x.WorkOrderMachineId == job.WorkOrderMachineId && x.IsCurrent)
+                .CountAsync();
+            Assert.True(currentSets <= 1, $"Expected at most one current segment set; found {currentSets}.");
+        }
+        await AssertNoOverlappingActiveAllocationsAsync(host.Factory);
+    }
+
+    [Fact]
+    public async Task Draft_commit_racing_daily_production_post_serializes_cleanly()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null)
+            return;
+
+        await using var host = await Host.CreateAsync(cs);
+        await host.EnableMachineRouteAsync("MC-DRAFT-DP-RACE");
+
+        await using (var setupDb = await host.Factory.CreateDbContextAsync())
+        {
+            if (!await setupDb.IvWarehouses.AnyAsync(x => x.CompanyCode == Company && x.BranchCode == Branch && x.WarehouseCode == "WH01"))
+            {
+                setupDb.IvWarehouses.Add(new IvWarehouse
+                {
+                    CompanyCode = Company,
+                    BranchCode = Branch,
+                    WarehouseCode = "WH01",
+                    WarehouseDesc = "Main",
+                    IsActive = true
+                });
+                await setupDb.SaveChangesAsync();
+            }
+            await ProductionLedgerTestFixture.SeedActiveEpochAsync(setupDb, company: Company, branch: Branch);
+        }
+
+        var first = await host.CreateService().CreateAndReleaseAsync(host.DraftRequest());
+        Assert.True(first.Succeeded, first.Message);
+
+        var planner = host.CreatePlannerService();
+        var boardResult = await planner.GetBoardAsync(new MachineSchedulePlannerQuery
+        {
+            WindowStart = new DateTime(2026, 10, 1),
+            WindowEnd = new DateTime(2026, 10, 31)
+        });
+        Assert.True(boardResult.Succeeded, boardResult.Message);
+        var job = Assert.Single(boardResult.Data!.Jobs, x => x.WorkOrderNo == first.Data!.WorkOrderNo);
+
+        var draftReq = new MachineScheduleDraftRequest
+        {
+            BoardBaseFingerprint = boardResult.Data!.BoardFingerprint,
+            Commands =
+            [
+                new MachineScheduleDraftCommand
+                {
+                    Kind = MachineScheduleDraftCommandKind.Move,
+                    WorkOrderId = job.WorkOrderId,
+                    OperationId = job.OperationId,
+                    WorkOrderMachineId = job.WorkOrderMachineId,
+                    MachineCode = job.MachineCode,
+                    WorkOrderNo = job.WorkOrderNo,
+                    RequestedStart = new DateTime(2026, 10, 7, 8, 0, 0),
+                    Reason = "Race DP Post"
+                }
+            ],
+            ExpectedVersions =
+            [
+                new MachineScheduleDraftExpectedVersion
+                {
+                    WorkOrderId = job.WorkOrderId,
+                    WorkOrderMachineId = job.WorkOrderMachineId,
+                    ExpectedWorkOrderScheduleRevision = job.ScheduleRevision,
+                    ExpectedWorkOrderRowVersion = job.WorkOrderRowVersion,
+                    ExpectedMachineScheduleRevision = job.MachineScheduleRevision,
+                    ExpectedMachineRowVersion = job.MachineRowVersion
+                }
+            ]
+        };
+
+        var adv = host.CreateAdvancedPlanningService();
+        var preview = await adv.PreviewDraftAsync(draftReq);
+        Assert.True(preview.Succeeded && preview.Data!.CanCommit, preview.Message);
+
+        var dailyProduction = ProductionLedgerTestFixture.CreateProductionOutputService(
+            host.Factory, startingSequence: Random.Shared.Next(10_000, 900_000));
+        var createDp = await dailyProduction.CreateAsync(new ProductionOutputCreateRequest
+        {
+            WorkOrderOperationId = job.OperationId,
+            CreateRequestId = Guid.NewGuid().ToString("N"),
+            ProductionDate = new DateTime(2026, 10, 1),
+            GoodQty = 1m,
+            OutputLotNo = "DP-DRAFT-RACE"
+        });
+        Assert.True(createDp.Succeeded, createDp.Message);
+
+        var gate = new ManualResetEventSlim(false);
+        var commitTask = Task.Run(async () =>
+        {
+            gate.Wait();
+            return await host.CreateAdvancedPlanningService().CommitDraftAsync(
+                draftReq with { PreviewToken = preview.Data.PreviewToken });
+        });
+        var postTask = Task.Run(async () =>
+        {
+            gate.Wait();
+            return await dailyProduction.PostAsync(createDp.Data!.Uid);
+        });
+        gate.Set();
+
+        await Task.WhenAll(commitTask, postTask);
+        var postResult = await postTask;
+        var commitResult = await commitTask;
+
+        Assert.True(postResult.Succeeded, postResult.Message);
+        Assert.False(commitResult.Succeeded);
+        await AssertNoOverlappingActiveAllocationsAsync(host.Factory);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -1800,6 +2009,65 @@ public sealed class ProductionWorkOrderSqlServerConcurrencyTests
                 readiness.Object,
                 new FakeProductionCalendarScheduleDataLoader(),
                 new AlwaysOpenWorkOrderCalendarProvider());
+        }
+
+        public MachineSchedulePlannerService CreatePlannerService()
+        {
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(
+                    MenuCodes.PlanningMachineSchedulePlanner,
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var readiness = new Mock<IMachineSchedulePlannerReadinessService>();
+            readiness.Setup(x => x.GetReadinessAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new MachineSchedulePlannerReadiness
+                {
+                    IsWriteReady = true,
+                    WriteSettingEnabled = true,
+                    AllocationSchemaReady = true,
+                    ActiveAllocationBackfillComplete = true
+                });
+            return new MachineSchedulePlannerService(
+                Factory,
+                InventoryTenantTestHelper.CreateTenantContext(branch: Branch, location: "SITE"),
+                access.Object,
+                readiness.Object);
+        }
+
+        public MachineScheduleAdvancedPlanningService CreateAdvancedPlanningService()
+        {
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(
+                    MenuCodes.PlanningMachineSchedulePlanner,
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var settings = new Mock<IAppSettingService>();
+            settings.Setup(x => x.GetFlagAsync(
+                    AppSettingModules.Planning,
+                    AppSettingCatalogue.PlanningKeys.MachineScheduleSegmentWriteEnabled,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var readiness = new Mock<IMachineSchedulePlannerReadinessService>();
+            readiness.Setup(x => x.GetReadinessAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new MachineSchedulePlannerReadiness
+                {
+                    IsWriteReady = true,
+                    WriteSettingEnabled = true,
+                    AllocationSchemaReady = true,
+                    ActiveAllocationBackfillComplete = true
+                });
+            return new MachineScheduleAdvancedPlanningService(
+                Factory,
+                InventoryTenantTestHelper.CreateTenantContext(branch: Branch, location: "SITE"),
+                access.Object,
+                settings.Object,
+                readiness.Object,
+                new FakeProductionCalendarScheduleDataLoader(),
+                new AlwaysOpenWorkOrderCalendarProvider(),
+                new ProductionMachineCapacityService(Factory),
+                new IvUomConversionService(Factory));
         }
 
         public async Task<HierarchyIds> SeedHierarchyAsync(bool includeMachine, bool includeOperationLabour)

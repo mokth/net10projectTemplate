@@ -10,6 +10,7 @@ public sealed class MachineSchedulePlannerSelectionContractTests
 {
     private const string CodeBehindPath = "ErpWeb.UI/Planning/WorkOrders/PrMachineSchedulePlanner.razor.cs";
     private const string RazorPath = "ErpWeb.UI/Planning/WorkOrders/PrMachineSchedulePlanner.razor";
+    private const string CssPath = "ErpWeb.UI/Planning/WorkOrders/PrMachineSchedulePlanner.razor.css";
 
     [Fact]
     public void Work_order_selection_reloads_the_board_exactly_once()
@@ -66,6 +67,38 @@ public sealed class MachineSchedulePlannerSelectionContractTests
         Assert.Contains("Selected Work Order is not scheduled in this period.", razor, StringComparison.Ordinal);
         Assert.Contains("Text=\"Go to WO schedule\"", razor, StringComparison.Ordinal);
         Assert.Contains("Click=\"GoToWorkOrderScheduleAsync\"", razor, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Date_headers_and_drag_offset_ux_follow_erp_ui_core_and_accessibility_rules()
+    {
+        var razor = ReadSource(RazorPath);
+        var css = ReadSource(CssPath);
+
+        Assert.DoesNotContain("<style", razor, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("GetDateHeaderState(context.Interval.Start, context.Interval.End, context.Scale.Unit)",
+            razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-date-header--two-row", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-date-header__dow", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-date-header__day", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-date-header__tag", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-tip", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-dialog__note", razor, StringComparison.Ordinal);
+        Assert.Contains("Off day", razor, StringComparison.Ordinal);
+        Assert.Contains("Public holiday", razor, StringComparison.Ordinal);
+
+        Assert.Contains("MachineSchedulePlannerDragRules.ComputeShiftedStart(",
+            ReadMethodBody("OnAppointmentUpdating"), StringComparison.Ordinal);
+        Assert.Contains(".pr-machine-schedule-date-header--off", css, StringComparison.Ordinal);
+        Assert.Contains(".pr-machine-schedule-date-header--holiday", css, StringComparison.Ordinal);
+        Assert.Contains(".pr-machine-schedule-date-header--partial-off", css, StringComparison.Ordinal);
+        Assert.Contains(".pr-machine-schedule-bar--wo-0", css, StringComparison.Ordinal);
+        Assert.Contains(".pr-machine-schedule-bar--wo-11", css, StringComparison.Ordinal);
+        Assert.Contains(".pr-machine-schedule-wo-legend", css, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-wo-legend", razor, StringComparison.Ordinal);
+        Assert.Contains("Work Order Color Legend", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-bar__primary", razor, StringComparison.Ordinal);
+        Assert.Contains("Each color = distinct Work Order", razor, StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string source, string value)

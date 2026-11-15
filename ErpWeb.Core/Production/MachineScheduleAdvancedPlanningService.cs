@@ -169,6 +169,15 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
             }
 
             var targetMachineCode = MachineScheduleAdvancedPlacementEngine.Normalize(seedTarget.Machine.MachineCode);
+            var requestedMachineCode = string.IsNullOrWhiteSpace(request.MachineCode)
+                ? targetMachineCode
+                : MachineScheduleAdvancedPlacementEngine.Normalize(request.MachineCode);
+            var currentSetsByMachine = await db.ProductionMachineScheduleSegmentSets.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.IsCurrent)
+                .Select(x => new { x.Uid, x.WorkOrderMachineId })
+                .ToDictionaryAsync(x => x.WorkOrderMachineId, x => x.Uid, cancellationToken);
             var branchSegments = await db.ProductionMachineScheduleSegments.AsNoTracking()
                 .Where(x => x.CompanyCode == scope.CompanyCode
                     && x.BranchCode == scope.BranchCode
@@ -178,14 +187,22 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
                     x.Uid,
                     x.WorkOrderId,
                     x.WorkOrderMachineId,
+                    x.SegmentSetId,
                     x.MachineCode
                 })
                 .ToListAsync(cancellationToken);
-            var victimIds = branchSegments
-                .Where(x => string.Equals(
-                        MachineScheduleAdvancedPlacementEngine.Normalize(x.MachineCode),
-                        targetMachineCode, StringComparison.Ordinal)
-                    && x.WorkOrderMachineId != seedTarget.Machine.Uid)
+            var currentBranchSegments = branchSegments
+                .Where(x => !currentSetsByMachine.TryGetValue(x.WorkOrderMachineId, out var setId)
+                    || x.SegmentSetId == setId)
+                .ToList();
+            var victimIds = currentBranchSegments
+                .Where(x =>
+                {
+                    var normalized = MachineScheduleAdvancedPlacementEngine.Normalize(x.MachineCode);
+                    return (string.Equals(normalized, targetMachineCode, StringComparison.Ordinal)
+                            || string.Equals(normalized, requestedMachineCode, StringComparison.Ordinal))
+                        && x.WorkOrderMachineId != seedTarget.Machine.Uid;
+                })
                 .Select(x => x.WorkOrderId)
                 .Distinct()
                 .ToList();
@@ -193,6 +210,8 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
                 .SelectMany(x => x.Machines.Where(m => m.IsSelected).Select(m => m.MachineCode))
                 .Append(seedTarget.Machine.MachineCode)
                 .ToList();
+            if (!string.IsNullOrWhiteSpace(request.MachineCode))
+                machineCodes.Add(request.MachineCode);
             if (victimIds.Count > 0)
             {
                 var victimMachineCodes = await db.ProductionWorkOrderMachines.AsNoTracking()
@@ -204,13 +223,22 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
                 machineCodes.AddRange(victimMachineCodes);
             }
 
+            var lockedMachineCodes = machineCodes
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(MachineScheduleAdvancedPlacementEngine.Normalize)
+                .ToHashSet(StringComparer.Ordinal);
+            var lockedWorkOrderIds = victimIds
+                .Append(request.WorkOrderId)
+                .Distinct()
+                .ToHashSet();
+
             await ProductionMachineScheduleLock.AcquireManyAsync(
                 db, scope.CompanyCode, machineCodes, cancellationToken);
             await WorkOrderSchedulingLock.AcquireAsync(
                 db, scope.CompanyCode, exclusive: false, cancellationToken);
             await ProductionWorkOrderExecutionLock.AcquireManyAsync(
                 db, scope.CompanyCode, scope.BranchCode!,
-                victimIds.Append(request.WorkOrderId), cancellationToken);
+                lockedWorkOrderIds, cancellationToken);
 
             var tracked = await LoadOrderAsync(db, scope, request.WorkOrderId, tracking: true, cancellationToken);
             if (tracked is null)
@@ -245,6 +273,14 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
                 return IvMasterOperationResult<MachineScheduleAdvancedCommitResult>.Fail(
                     IvMasterErrorCode.Validation,
                     string.Join(" ", plan.Preview.Blockers));
+            }
+
+            if (HasLockScopeExpanded(plan, lockedWorkOrderIds, lockedMachineCodes))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvMasterOperationResult<MachineScheduleAdvancedCommitResult>.Fail(
+                    IvMasterErrorCode.Concurrency,
+                    "Schedule scope expanded after acquiring locks. Refresh the preview before committing.");
             }
 
             var token = await ComputeTokenAsync(db, plan, cancellationToken);
@@ -467,6 +503,36 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
                     x.ScheduleSourceHash
                 })
                 .ToListAsync(cancellationToken);
+        var allocationIds = allocations.Select(x => x.Uid).ToList();
+        var allocationSegments = allocationIds.Count == 0
+            ? []
+            : await db.ProductionMachineScheduleAllocationSegments.AsNoTracking()
+                .Where(x => allocationIds.Contains(x.AllocationId))
+                .OrderBy(x => x.Uid)
+                .Select(x => new
+                {
+                    x.Uid,
+                    x.AllocationId,
+                    x.SegmentId
+                })
+                .ToListAsync(cancellationToken);
+        var currentSets = machineIds.Count == 0
+            ? []
+            : await db.ProductionMachineScheduleSegmentSets.AsNoTracking()
+                .Where(x => machineIds.Contains(x.WorkOrderMachineId) && x.IsCurrent)
+                .OrderBy(x => x.Uid)
+                .Select(x => new
+                {
+                    x.Uid,
+                    x.WorkOrderMachineId,
+                    x.Mode,
+                    x.PlanningState,
+                    x.PlannedQtyBasis,
+                    x.ScheduleSourceHash,
+                    x.MachineScheduleRevision,
+                    RowVersion = Convert.ToBase64String(x.RowVersion)
+                })
+                .ToListAsync(cancellationToken);
         var holds = machineIds.Count == 0
             ? []
             : await db.ProductionWorkOrderScheduleHolds.AsNoTracking()
@@ -525,10 +591,34 @@ public sealed partial class MachineScheduleAdvancedPlanningService : IMachineSch
                 Fragments = x.Fragments.Select(f => new { f.Start, f.End }).ToList()
             }).ToList(),
             Segments = segments,
+            SegmentSets = currentSets,
             Allocations = allocations,
+            AllocationSegments = allocationSegments,
             Holds = holds,
             Unscheduled = plan.HasUnscheduledRemaining
         };
         return Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(payload)));
+    }
+
+    internal static bool HasLockScopeExpanded(
+        MachineScheduleAdvancedPlan plan,
+        IReadOnlySet<long> lockedWorkOrderIds,
+        IReadOnlySet<string> lockedMachineCodes)
+    {
+        var plannedOrderIds = plan.Orders.Select(x => x.Order.Uid)
+            .Concat(plan.AffectedWorkOrderIds)
+            .Concat(plan.AllSegments.Select(x => x.WorkOrderId))
+            .Concat(plan.SegmentsToSupersede.Select(x => x.WorkOrderId));
+        if (plannedOrderIds.Any(id => !lockedWorkOrderIds.Contains(id)))
+            return true;
+
+        var plannedMachines = plan.Orders.SelectMany(x => x.Order.RouteSteps)
+            .SelectMany(x => x.Operations)
+            .SelectMany(x => x.Machines.Where(m => m.IsSelected).Select(m => m.MachineCode))
+            .Concat(plan.AllSegments.Select(x => x.MachineCode))
+            .Concat(plan.SegmentsToSupersede.Select(x => x.MachineCode))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(MachineScheduleAdvancedPlacementEngine.Normalize);
+        return plannedMachines.Any(code => !lockedMachineCodes.Contains(code));
     }
 }

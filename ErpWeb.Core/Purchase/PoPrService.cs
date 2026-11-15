@@ -37,6 +37,7 @@ public sealed class PoPrService : IPoPrService
     private readonly ILogger<PoPrService> _logger;
     private readonly IProductionMaterialStockAvailabilityReader? _materialAvailability;
     private readonly IProcurementApprovalGuard _approval;
+    private readonly IPurchaseSourcingFeatureGuard? _sourcingGuard;
 
     public PoPrService(
         IDbContextFactory<AppDbContext> dbFactory,
@@ -50,7 +51,8 @@ public sealed class PoPrService : IPoPrService
         ILogger<PoPrService> logger,
         IProcurementApprovalGuard approval,
         IPoOrderRepository? poOrders = null,
-        IProductionMaterialStockAvailabilityReader? materialAvailability = null)
+        IProductionMaterialStockAvailabilityReader? materialAvailability = null,
+        IPurchaseSourcingFeatureGuard? sourcingGuard = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -64,6 +66,7 @@ public sealed class PoPrService : IPoPrService
         _logger = logger;
         _materialAvailability = materialAvailability;
         _approval = approval ?? throw new ArgumentNullException(nameof(approval));
+        _sourcingGuard = sourcingGuard;
     }
 
     public async Task<PoPrOperationResult> CreateTempDocIdAsync(CancellationToken cancellationToken = default)
@@ -353,9 +356,21 @@ public sealed class PoPrService : IPoPrService
         return PoPrOperationResult.OkDocument(MapDocument(header, canEdit, canDelete, canCancel));
     }
 
-    public async Task<PoPrOperationResult> SaveNewAsync(
+    public Task<PoPrOperationResult> SaveNewAsync(
         PoPrSaveRequest? request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        SaveNewCoreAsync(request, sourcingHook: null, cancellationToken);
+
+    internal Task<PoPrOperationResult> SaveNewFromSourcingAsync(
+        PoPrSaveRequest? request,
+        PoSourcingPrSaveHook sourcingHook,
+        CancellationToken cancellationToken = default) =>
+        SaveNewCoreAsync(request, sourcingHook ?? throw new ArgumentNullException(nameof(sourcingHook)), cancellationToken);
+
+    private async Task<PoPrOperationResult> SaveNewCoreAsync(
+        PoPrSaveRequest? request,
+        PoSourcingPrSaveHook? sourcingHook,
+        CancellationToken cancellationToken)
     {
         if (request is null)
         {
@@ -379,6 +394,17 @@ public sealed class PoPrService : IPoPrService
 
         try
         {
+            if (sourcingHook is not null)
+            {
+                var preLockError = await sourcingHook.BeforeDocumentLocksAsync(db, cancellationToken);
+                if (preLockError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    await DiscardDraftSafeAsync(tempDocId, cancellationToken);
+                    return PoPrOperationResult.Fail(preLockError, PoPrErrorKind.BusinessRule);
+                }
+            }
+
             // Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
             var refErrors = await ValidateDeptProjectAsync(
                 db, context.CompanyCode!, context.BranchCode!, priorDeptCode: null, priorProjId: null,
@@ -397,7 +423,8 @@ public sealed class PoPrService : IPoPrService
                 request.PrType,
                 lines,
                 existingByLine: null,
-                cancellationToken);
+                cancellationToken,
+                preserveExplicitUnitPrice: sourcingHook?.PreserveExplicitLineUnitPrice == true);
             if (prepared.Error is not null)
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -476,7 +503,9 @@ public sealed class PoPrService : IPoPrService
             short lineNo = 1;
             foreach (var line in prepared.Lines!)
             {
-                header.Details.Add(ToDetailEntity(header, line, lineNo++));
+                var assigned = lineNo++;
+                line.AssignedLineNo = assigned;
+                header.Details.Add(ToDetailEntity(header, line, assigned));
             }
 
             if (tempDocId is not null)
@@ -493,6 +522,22 @@ public sealed class PoPrService : IPoPrService
 
             TouchRowVersion(db, header);
             db.PoPrs.Add(header);
+
+            if (sourcingHook is not null)
+            {
+                var postHookError = await sourcingHook.BeforeCommitAsync(
+                    db,
+                    header,
+                    header.Details.OrderBy(x => x.Line).ToList(),
+                    cancellationToken);
+                if (postHookError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    await DiscardDraftSafeAsync(tempDocId, cancellationToken);
+                    return PoPrOperationResult.Fail(postHookError, PoPrErrorKind.BusinessRule);
+                }
+            }
+
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
 
@@ -1029,6 +1074,39 @@ public sealed class PoPrService : IPoPrService
                 return syncError;
             }
 
+            var sourcingRemaps = prepared.Lines!
+                .OrderBy(x => x.RequestOrder)
+                .Select(x => new PoSourcingLineRemap(
+                    x.ExistingLineNo,
+                    x.AssignedLineNo,
+                    x.ICode,
+                    x.PurchaseUom,
+                    x.PurchaseQty,
+                    x.StdQty,
+                    x.UnitPrice,
+                    x.VendorCd))
+                .ToList();
+            var sourcingSyncError = await PoSourcingTargetLifecycleSync.OnTargetUpdatedOrRevisedAsync(
+                db,
+                _sourcingGuard,
+                context.CompanyCode!,
+                context.BranchCode!,
+                PoSourcingConversionTargetTypes.Pr,
+                header.PrNo,
+                oldRelNo: 0,
+                newRelNo: 0,
+                newHeaderSupplierCode: null,
+                isRevise: false,
+                remappedLines: sourcingRemaps,
+                actorUserId: context.UserId ?? string.Empty,
+                nowUtc: DateTime.UtcNow,
+                cancellationToken: cancellationToken);
+            if (sourcingSyncError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return PoPrOperationResult.Fail(sourcingSyncError, PoPrErrorKind.BusinessRule);
+            }
+
             header.CreateDt = request.CreateDt == default ? header.CreateDt : request.CreateDt.Date;
             header.Requester = TruncateOptional(request.Requester, 50) ?? header.Requester;
             header.DeptCode = TruncateOptional(request.DeptCode, 20);
@@ -1379,6 +1457,18 @@ public sealed class PoPrService : IPoPrService
                     cancellationToken);
             }
 
+            await PoSourcingTargetLifecycleSync.OnTargetCancelledOrDeletedAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                PoSourcingConversionTargetTypes.Pr,
+                header.PrNo,
+                targetDocRelNo: 0,
+                actionVerb: "cancelled",
+                actorUserId: context.UserId ?? string.Empty,
+                nowUtc: DateTime.UtcNow,
+                cancellationToken: cancellationToken);
+
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return await GetAsync(no, cancellationToken);
@@ -1535,6 +1625,18 @@ public sealed class PoPrService : IPoPrService
                     context.UserId ?? string.Empty,
                     cancellationToken);
             }
+
+            await PoSourcingTargetLifecycleSync.OnTargetCancelledOrDeletedAsync(
+                db,
+                context.CompanyCode!,
+                context.BranchCode!,
+                PoSourcingConversionTargetTypes.Pr,
+                header.PrNo,
+                targetDocRelNo: 0,
+                actionVerb: "deleted",
+                actorUserId: context.UserId ?? string.Empty,
+                nowUtc: DateTime.UtcNow,
+                cancellationToken: cancellationToken);
 
             db.PoPrs.Remove(header);
             await db.SaveChangesAsync(cancellationToken);
@@ -1756,7 +1858,8 @@ WHERE d.CompanyCode={companyCode}
         string? prType,
         IReadOnlyList<PoPrLineDto> lines,
         IReadOnlyDictionary<short, PoPrDetail>? existingByLine,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool preserveExplicitUnitPrice = false)
     {
         if (lines.Count == 0)
         {
@@ -1947,6 +2050,10 @@ WHERE d.CompanyCode={companyCode}
             {
                 unitPrice = existing!.UnitPrice;
             }
+            else if (preserveExplicitUnitPrice && src.UnitPrice > 0m)
+            {
+                unitPrice = decimal.Round(src.UnitPrice, 4, MidpointRounding.AwayFromZero);
+            }
             else
             {
                 unitPrice = await ResolveUnitPriceAsync(
@@ -2086,6 +2193,7 @@ WHERE d.CompanyCode={companyCode}
         {
             RequestOrder = requestOrder,
             ExistingLineNo = existing.Line,
+            AssignedLineNo = existing.Line,
             IsConsumed = true,
             EtaDt = existing.EtaDt,
             OneTimeItemYn = existing.OneTimeItemYn,
@@ -2161,7 +2269,9 @@ WHERE d.CompanyCode={companyCode}
             short lineNo = 1;
             foreach (var line in prepared.OrderBy(x => x.RequestOrder))
             {
-                header.Details.Add(ToDetailEntity(header, line, lineNo++));
+                var assigned = lineNo++;
+                line.AssignedLineNo = assigned;
+                header.Details.Add(ToDetailEntity(header, line, assigned));
             }
 
             return null;
@@ -2179,6 +2289,7 @@ WHERE d.CompanyCode={companyCode}
                 && header.Details.Contains(existingDetail))
             {
                 detail = existingDetail;
+                line.AssignedLineNo = detail.Line;
                 if (line.IsConsumed)
                 {
                     continue;
@@ -2186,12 +2297,14 @@ WHERE d.CompanyCode={companyCode}
             }
             else
             {
+                var assigned = nextLine++;
+                line.AssignedLineNo = assigned;
                 detail = new PoPrDetail
                 {
                     CompanyCode = header.CompanyCode,
                     BranchCode = header.BranchCode,
                     PrNo = header.PrNo,
-                    Line = nextLine++
+                    Line = assigned
                 };
                 header.Details.Add(detail);
             }
@@ -2796,6 +2909,7 @@ WHERE d.CompanyCode={companyCode}
     {
         public int RequestOrder { get; init; }
         public short? ExistingLineNo { get; init; }
+        public short AssignedLineNo { get; set; }
         public bool IsConsumed { get; init; }
         public DateTime? EtaDt { get; init; }
         public bool? OneTimeItemYn { get; init; }

@@ -2396,6 +2396,8 @@ public sealed class SaDoService : ISaDoService
 
         var prepared = new List<PreparedLine>();
         var calcStates = new List<SaInvoiceLineCalcState>();
+        var overrideDeclarations = new List<SaPriceOverrideDeclaration>();
+        var matchedExistingDoLines = new HashSet<short>();
         var lineNo = 1;
         foreach (var line in request.Lines!)
         {
@@ -2514,6 +2516,10 @@ public sealed class SaDoService : ISaDoService
                         if (salesOrderDetail is null)
                         {
                             errors[$"Lines[{lineNo - 1}].SoLine"] = $"Sales Order {soNo} line {soLine.Value} was not found.";
+                        }
+                        else if (!string.Equals((salesOrderDetail.ICode ?? string.Empty).Trim(), iCode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            errors[$"Lines[{lineNo - 1}].ICode"] = "This item differs from the selected SO/DO line. Remove and reselect the source line.";
                         }
                         else
                         {
@@ -2679,10 +2685,127 @@ public sealed class SaDoService : ISaDoService
                 }
             }
 
+            decimal? effectiveOriginalUnitPrice;
+            string? effectiveOverrideReason;
+            var requiresOverrideValidation = true;
+            if (salesOrderDetail is not null)
+            {
+                SaDoDetail? existingLinkedDetail = null;
+                if (existingDetails is { Count: > 0 })
+                {
+                    if (line.Line > 0)
+                    {
+                        existingLinkedDetail = existingDetails.FirstOrDefault(x =>
+                            !matchedExistingDoLines.Contains(x.Line)
+                            && x.Line == line.Line
+                            && string.Equals((x.SoNo ?? string.Empty).Trim(), soNo, StringComparison.OrdinalIgnoreCase)
+                            && x.SoLine == soLine
+                            && (x.CustRel ?? custRel) == custRel
+                            && string.Equals((x.ICode ?? string.Empty).Trim(), iCode, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    existingLinkedDetail ??= existingDetails
+                        .OrderBy(x => x.Line)
+                        .FirstOrDefault(x =>
+                            !matchedExistingDoLines.Contains(x.Line)
+                            && string.Equals((x.SoNo ?? string.Empty).Trim(), soNo, StringComparison.OrdinalIgnoreCase)
+                            && x.SoLine == soLine
+                            && (x.CustRel ?? custRel) == custRel
+                            && string.Equals((x.ICode ?? string.Empty).Trim(), iCode, StringComparison.OrdinalIgnoreCase));
+
+                    if (existingLinkedDetail is not null)
+                    {
+                        matchedExistingDoLines.Add(existingLinkedDetail.Line);
+                    }
+                }
+
+                var expDisc1 = existingLinkedDetail?.ItemDiscount ?? salesOrderDetail.ItemDiscount;
+                var expDisc2 = existingLinkedDetail?.ItemDiscount2 ?? salesOrderDetail.ItemDiscount2;
+                var expDisc3 = existingLinkedDetail?.ItemDiscount3 ?? salesOrderDetail.ItemDiscount3;
+                var expDisc4 = existingLinkedDetail?.ItemDiscount4 ?? salesOrderDetail.ItemDiscount4;
+                var expDisc5 = existingLinkedDetail?.ItemDiscount5 ?? salesOrderDetail.ItemDiscount5;
+                var expDisc6 = existingLinkedDetail?.ItemDiscount6 ?? salesOrderDetail.ItemDiscount6;
+                var expDiscAmt1 = existingLinkedDetail?.ItemDiscAmount ?? salesOrderDetail.ItemDiscAmount;
+                var expDiscAmt2 = existingLinkedDetail?.ItemDiscAmount1 ?? salesOrderDetail.ItemDiscAmount1;
+                var expInclusive = existingLinkedDetail?.IsInclusive ?? salesOrderDetail.IsInclusive;
+                var expTaxGroup = ((existingLinkedDetail is not null ? existingLinkedDetail.TaxGroup : salesOrderDetail.TaxGroup) ?? string.Empty).Trim();
+                var expOrderType = ((existingLinkedDetail is not null ? existingLinkedDetail.OrderType : salesOrderDetail.OrderType) ?? string.Empty).Trim();
+                var reqOrderType = (line.OrderType ?? string.Empty).Trim();
+
+                if (line.ItemDiscount != expDisc1
+                    || line.ItemDiscount2 != expDisc2
+                    || line.ItemDiscount3 != expDisc3
+                    || line.ItemDiscount4 != expDisc4
+                    || line.ItemDiscount5 != expDisc5
+                    || line.ItemDiscount6 != expDisc6
+                    || line.ItemDiscAmount != expDiscAmt1
+                    || line.ItemDiscAmount1 != expDiscAmt2)
+                {
+                    errors[$"Lines[{lineNo - 1}].ItemDiscount"] =
+                        "Discount terms on a source-linked line must match the selected SO/DO line.";
+                }
+
+                if (line.IsInclusive != expInclusive)
+                {
+                    errors[$"Lines[{lineNo - 1}].IsInclusive"] =
+                        "Tax-inclusive basis on a source-linked line must match the selected SO/DO line.";
+                }
+
+                if (!string.Equals(taxGr, expTaxGroup, StringComparison.OrdinalIgnoreCase))
+                {
+                    errors[$"Lines[{lineNo - 1}].TaxGrCode"] =
+                        "Tax group on a source-linked line must match the selected SO/DO line.";
+                }
+
+                if (!string.Equals(reqOrderType, expOrderType, StringComparison.OrdinalIgnoreCase))
+                {
+                    errors[$"Lines[{lineNo - 1}].OrderType"] =
+                        "Order type on a source-linked line must match the selected SO/DO line.";
+                }
+
+                if (existingLinkedDetail is not null && line.UnitPrice == existingLinkedDetail.UnitPrice)
+                {
+                    if (existingLinkedDetail.UnitPrice == salesOrderDetail.UnitPrice)
+                    {
+                        effectiveOriginalUnitPrice = null;
+                        effectiveOverrideReason = null;
+                    }
+                    else
+                    {
+                        effectiveOriginalUnitPrice = existingLinkedDetail.OriginalUnitPrice;
+                        effectiveOverrideReason = existingLinkedDetail.OverrideReason;
+                    }
+
+                    requiresOverrideValidation = false;
+                }
+                else if (line.UnitPrice == salesOrderDetail.UnitPrice)
+                {
+                    effectiveOriginalUnitPrice = null;
+                    effectiveOverrideReason = null;
+                    requiresOverrideValidation = false;
+                }
+                else
+                {
+                    effectiveOriginalUnitPrice = SaPriceOverridePolicy.NormalizeOriginal(line.UnitPrice, salesOrderDetail.UnitPrice);
+                    effectiveOverrideReason = SaPriceOverridePolicy.NormalizeReason(line.UnitPrice, salesOrderDetail.UnitPrice, line.OverrideReason);
+                    requiresOverrideValidation = true;
+                }
+            }
+            else
+            {
+                effectiveOriginalUnitPrice = SaPriceOverridePolicy.NormalizeOriginal(line.UnitPrice, line.OriginalUnitPrice);
+                effectiveOverrideReason = SaPriceOverridePolicy.NormalizeReason(line.UnitPrice, line.OriginalUnitPrice, line.OverrideReason);
+            }
+
             if (errors.Count > 0)
             {
                 lineNo++;
                 continue;
+            }
+
+            if (requiresOverrideValidation)
+            {
+                overrideDeclarations.Add(new SaPriceOverrideDeclaration(line.UnitPrice, effectiveOriginalUnitPrice, effectiveOverrideReason));
             }
 
             var state = new SaInvoiceLineCalcState
@@ -2726,8 +2849,8 @@ public sealed class SaDoService : ISaDoService
                 PricingSource = TruncateOptional(line.PricingSource, 40),
                 PricingRef = TruncateOptional(line.PricingRef, 60),
                 // Phase 4: normalised HERE so "NULL = never overridden" stays true.
-                OriginalUnitPrice = SaPriceOverridePolicy.NormalizeOriginal(line.UnitPrice, line.OriginalUnitPrice),
-                OverrideReason = SaPriceOverridePolicy.NormalizeReason(line.UnitPrice, line.OriginalUnitPrice, line.OverrideReason),
+                OriginalUnitPrice = effectiveOriginalUnitPrice,
+                OverrideReason = effectiveOverrideReason,
                 ItemDiscount = line.ItemDiscount,
                 ItemDiscount2 = line.ItemDiscount2,
                 ItemDiscount3 = line.ItemDiscount3,
@@ -2773,9 +2896,7 @@ public sealed class SaDoService : ISaDoService
         // Phase 4: price-override governance, enforced SERVER-SIDE (the page is not the execution point).
         // A line that echoes the resolved price back is not an override.
         var overrideError = SaPriceOverridePolicy.Validate(
-            prepared
-                .Select(x => new SaPriceOverrideDeclaration(x.UnitPrice, x.OriginalUnitPrice, x.OverrideReason))
-                .ToList(),
+            overrideDeclarations,
             await CanAsync(PermissionCodes.PriceOverride, cancellationToken));
         if (overrideError is not null)
         {

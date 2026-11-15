@@ -834,6 +834,199 @@ public sealed class MachineSchedulePlannerServiceTests
         Assert.Equal(IvMasterErrorCode.AccessDenied, result.ErrorCode);
     }
 
+    // ── Phase H: Rich Calendar Bands & Segment Identity ─────────────────────────────────────
+
+    [Fact]
+    public async Task Calendar_bands_include_working_shift_break_off_day_holiday_preventive_and_breakdown()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.SeedWorkOrderAsync(machineCode: "MC1");
+
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.PrShifts.Add(new PrShift
+            {
+                CompCode = "DEMO",
+                ShiftCd = "DAY",
+                ShiftDes = "Day Shift",
+                StartTm = new DateTime(2026, 10, 1, 8, 0, 0),
+                EndTm = new DateTime(2026, 10, 1, 17, 0, 0),
+                BreakTm1From = new DateTime(2026, 10, 1, 12, 0, 0),
+                BreakTm1To = new DateTime(2026, 10, 1, 13, 0, 0)
+            });
+            db.PrShiftGroups.Add(new PrShiftGroup
+            {
+                CompCode = "DEMO",
+                ShfGrpCd = "SG-DAY",
+                ShfGrpDes = "Day Group",
+                ShiftCd = "DAY"
+            });
+            db.PrShiftCalendars.AddRange(
+                new PrShiftCalendar { CompCode = "DEMO", MachineCode = "MC1", Dt = new DateTime(2026, 10, 1), DateCd = "W", ShfGrpCd = "SG-DAY" },
+                new PrShiftCalendar { CompCode = "DEMO", MachineCode = "MC1", Dt = new DateTime(2026, 10, 2), DateCd = "W", ShfGrpCd = "SG-DAY" },
+                new PrShiftCalendar { CompCode = "DEMO", MachineCode = "MC1", Dt = new DateTime(2026, 10, 3), DateCd = "O", ShfGrpCd = null });
+            db.PrHolidays.Add(new PrHoliday
+            {
+                DateOff = new DateTime(2026, 10, 2),
+                Description = "Founders Day",
+                Year = 2026
+            });
+            db.PrMacMaintenances.Add(new PrMacMaintenance
+            {
+                CompCode = "DEMO",
+                MacCode = "MC1",
+                MType = PrMaintenanceTypes.Breakdown,
+                Status = PrMaintenanceStatuses.Open,
+                StartDateTime = new DateTime(2026, 10, 1, 15, 30, 0),
+                EndDateTime = new DateTime(2026, 10, 1, 16, 30, 0),
+                Description = "Spindle sensor fault"
+            });
+            await db.SaveChangesAsync();
+        }
+        await fixture.SeedPreventiveAsync("MC1", new DateTime(2026, 10, 1), "14:00", "15:00");
+
+        var board = await fixture.GetBoardAsync(new MachineSchedulePlannerQuery
+        {
+            WindowStart = new DateTime(2026, 10, 1),
+            WindowEnd = new DateTime(2026, 10, 5)
+        });
+
+        var mc1 = Assert.Single(board.Machines, x => x.MachineCode == "MC1");
+        Assert.Contains(mc1.CalendarBands, x => x.BandKind == MachineSchedulePlannerCalendarBandKind.WorkingShift
+            && x.IsProductive && x.ShiftCode == "DAY" && x.ShiftDescription == "Day Shift");
+        Assert.Contains(mc1.CalendarBands, x => x.BandKind == MachineSchedulePlannerCalendarBandKind.ShiftBreak
+            && !x.IsProductive && x.Start == new DateTime(2026, 10, 1, 12, 0, 0) && x.End == new DateTime(2026, 10, 1, 13, 0, 0));
+        Assert.Contains(mc1.CalendarBands, x => x.BandKind == MachineSchedulePlannerCalendarBandKind.PublicHoliday
+            && x.IsHardUnavailable && x.HolidayName == "Founders Day" && x.Start.Date == new DateTime(2026, 10, 2));
+        Assert.Contains(mc1.CalendarBands, x => x.BandKind == MachineSchedulePlannerCalendarBandKind.OffDay
+            && !x.IsProductive && x.Start.Date == new DateTime(2026, 10, 3));
+        Assert.Contains(mc1.CalendarBands, x => x.BandKind == MachineSchedulePlannerCalendarBandKind.Preventive
+            && x.IsHardUnavailable && x.Start == new DateTime(2026, 10, 1, 14, 0, 0) && x.End == new DateTime(2026, 10, 1, 15, 0, 0));
+        Assert.Contains(mc1.CalendarBands, x => x.BandKind == MachineSchedulePlannerCalendarBandKind.Breakdown
+            && x.IsHardUnavailable && x.Start == new DateTime(2026, 10, 1, 15, 30, 0) && x.End == new DateTime(2026, 10, 1, 16, 30, 0));
+    }
+
+    [Fact]
+    public async Task Segment_appointments_use_segment_uid_location_and_rules_resolve_it()
+    {
+        await using var fixture = await Fixture.CreateAsync(allocationSchemaReady: true);
+        var seeded = await fixture.SeedWorkOrderAsync(machineCode: "MC1");
+
+        long segUid;
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            var wom = await db.ProductionWorkOrderMachines.SingleAsync(x => x.MachineCode == "MC1");
+            var op = await db.ProductionWorkOrderOperations.SingleAsync(x => x.Uid == wom.OperationId);
+            var set = new ProductionMachineScheduleSegmentSet
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                WorkOrderId = seeded.WorkOrderId,
+                WorkOrderOperationId = op.Uid,
+                WorkOrderMachineId = wom.Uid,
+                MachineCode = "MC1",
+                Mode = ProductionMachineScheduleSegmentSetModes.FullPlan,
+                PlanningState = ProductionMachineSchedulePlanningStates.Scheduled,
+                IsCurrent = true,
+                PlannedQtyBasis = 5m,
+                OutputUom = "EA",
+                MachineScheduleRevision = 1,
+                Reason = "Test seed",
+                CreatedBy = "test",
+                CreatedDate = DateTime.UtcNow,
+                RowVersion = [1]
+            };
+            db.ProductionMachineScheduleSegmentSets.Add(set);
+            await db.SaveChangesAsync();
+
+            var seg = new ProductionMachineScheduleSegment
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                WorkOrderId = seeded.WorkOrderId,
+                WorkOrderOperationId = op.Uid,
+                WorkOrderMachineId = wom.Uid,
+                SegmentSetId = set.Uid,
+                SegmentSequence = 1,
+                SegmentKind = ProductionMachineScheduleSegmentKinds.UrgentInsert,
+                SegmentStatus = ProductionMachineScheduleSegmentStatuses.Planned,
+                MachineCode = "MC1",
+                PlannedOutputQty = 5m,
+                OutputUom = "EA",
+                PlannedCycleCount = 5m,
+                ScheduledRunMinutes = 60m,
+                ScheduledSetupSeconds = 0m,
+                ScheduledConversionSeconds = 0m,
+                PlannedStartDateTime = new DateTime(2026, 10, 1, 8, 0, 0),
+                PlannedCompletionDateTime = new DateTime(2026, 10, 1, 9, 0, 0),
+                RowVersion = [1]
+            };
+            db.ProductionMachineScheduleSegments.Add(seg);
+            await db.SaveChangesAsync();
+            segUid = seg.Uid;
+
+            var alloc = new ProductionMachineScheduleAllocation
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                WorkOrderId = seeded.WorkOrderId,
+                WorkOrderOperationId = op.Uid,
+                WorkOrderMachineId = wom.Uid,
+                MachineScheduleSegmentId = seg.Uid,
+                MachineCode = "MC1",
+                StartDateTime = new DateTime(2026, 10, 1, 8, 0, 0),
+                EndDateTime = new DateTime(2026, 10, 1, 9, 0, 0),
+                FragmentNo = 1,
+                ScheduleRevision = 0,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "test",
+                RowVersion = [1]
+            };
+            db.ProductionMachineScheduleAllocations.Add(alloc);
+            await db.SaveChangesAsync();
+
+            db.ProductionMachineScheduleAllocationSegments.Add(new ProductionMachineScheduleAllocationSegment
+            {
+                AllocationId = alloc.Uid,
+                SegmentId = seg.Uid,
+                CreatedDate = DateTime.UtcNow,
+                CreatedBy = "test",
+                RowVersion = [1]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var board = await fixture.GetBoardAsync();
+        var segAppt = Assert.Single(board.Appointments, x => !x.IsMaintenance && !x.IsExternalCapacity);
+        Assert.Equal($"segment:{segUid}", segAppt.Location);
+        Assert.Equal(segUid, segAppt.SegmentId);
+        Assert.True(MachineSchedulePlannerAppointmentRules.TryGetSegmentId(segAppt.Location, out var parsedSegId));
+        Assert.Equal(segUid, parsedSegId);
+        Assert.True(MachineSchedulePlannerAppointmentRules.CanOpenWorkOrder(segAppt.Location));
+        Assert.True(MachineSchedulePlannerAppointmentRules.CanChangeSchedule(segAppt.Location));
+    }
+
+    [Fact]
+    public void Planner_ui_exposes_horizontal_appointment_template_and_calendar_band_classes()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var razor = File.ReadAllText(Path.Combine(repoRoot, "ErpWeb.UI", "Planning", "WorkOrders", "PrMachineSchedulePlanner.razor"));
+        var codeBehind = File.ReadAllText(Path.Combine(repoRoot, "ErpWeb.UI", "Planning", "WorkOrders", "PrMachineSchedulePlanner.razor.cs"));
+        var css = File.ReadAllText(Path.Combine(repoRoot, "ErpWeb.UI", "Planning", "WorkOrders", "PrMachineSchedulePlanner.razor.css"));
+
+        Assert.Contains("<HorizontalAppointmentTemplate>", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-bar__badge", razor, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-segment--selected", razor, StringComparison.Ordinal);
+        Assert.Contains("TryGetSegmentId", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-cell--working", css, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-cell--break", css, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-cell--holiday", css, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-cell--off", css, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-cell--maintenance", css, StringComparison.Ordinal);
+        Assert.Contains("pr-machine-schedule-bar--conflict", css, StringComparison.Ordinal);
+        Assert.DoesNotContain("<style", razor, StringComparison.OrdinalIgnoreCase);
+    }
+
     // ── Fixture ────────────────────────────────────────────────────────────────────────────
 
     private sealed class Fixture : IAsyncDisposable

@@ -109,9 +109,13 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             ? plan.TargetMachine.SetupSeconds + plan.TargetMachine.ConversionSeconds
             : 0m;
 
-        var victims = victimSegments
+        var overlappingVictims = victimSegments
             .Where(x => x.PlannedStartDateTime < targetPlacement.Completion
                 && x.PlannedCompletionDateTime > targetPlacement.Start)
+            .Select(x => x.WorkOrderMachineId)
+            .ToHashSet();
+        var victims = victimSegments
+            .Where(x => overlappingVictims.Contains(x.WorkOrderMachineId))
             .OrderBy(x => x.PlannedStartDateTime)
             .ThenBy(x => x.Uid)
             .ToList();
@@ -152,55 +156,17 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
 
             context.AddOrderPlan(order, step, operation);
             var totalQty = segments.Sum(x => x.PlannedOutputQty);
-            var (prefixQty, prefixBoundary) = await QuantityBeforeSplitAsync(context, first.WorkOrderMachineId,
-                segments, targetPlacement.Start, operation, machine, cancellationToken);
             var planned = new List<PlannedSegment>();
-            if (prefixQty > 0m)
-            {
-                var prefixFragments = context.FragmentsBefore(first.WorkOrderMachineId, prefixBoundary);
-                if (prefixFragments.Count > 0)
-                {
-                    var prefixPlan = await SegmentCalculatorAsync(operation, machine, prefixQty, cancellationToken);
-                    planned.Add(new PlannedSegment
-                    {
-                        Existing = first,
-                        WorkOrderId = order.Uid,
-                        WorkOrderNo = order.WorkOrderNo,
-                        OperationId = operation.Uid,
-                        OperationCode = operation.OperationCode,
-                        WorkOrderMachineId = machine.Uid,
-                        MachineCode = machine.MachineCode,
-                        Kind = first.SegmentKind,
-                        Status = ProductionMachineScheduleSegmentStatuses.Planned,
-                        SourceSegmentId = first.SourceSegmentId,
-                        Qty = prefixQty,
-                        Uom = first.OutputUom,
-                        CycleCount = prefixPlan.CycleCount,
-                        CycleSlots = prefixPlan.CycleSlots,
-                        RunMinutes = prefixPlan.RunMinutes,
-                        SetupSeconds = first.ScheduledSetupSeconds,
-                        ConversionSeconds = first.ScheduledConversionSeconds,
-                        QueueSeconds = first.ScheduledQueueSeconds,
-                        Start = first.PlannedStartDateTime,
-                        Completion = prefixFragments.Max(x => x.End),
-                        SourceHash = first.SegmentScheduleSourceHash ?? string.Empty,
-                        HorizonStart = first.CalendarHorizonStart,
-                        HorizonEnd = first.CalendarHorizonEnd,
-                        Fragments = prefixFragments,
-                        Reason = "Prefix kept before the inserted job."
-                    });
-                    context.Supersede(segments.Where(x => x.Uid != first.Uid));
-                }
-                else
-                {
-                    prefixQty = 0m;
-                    context.Supersede(segments);
-                }
-            }
-            else
-            {
-                context.Supersede(segments);
-            }
+            var prefixQty = await AppendKeptPrefixSegmentsAsync(
+                context,
+                segments,
+                targetPlacement.Start,
+                order,
+                operation,
+                machine,
+                "Prefix kept before the inserted job.",
+                planned,
+                cancellationToken);
 
             var resumeQty = totalQty - prefixQty;
             if (resumeQty > 0m)
@@ -229,6 +195,116 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             plan.SegmentsByMachine[machine.Uid] = planned;
             plan.AffectedMachineIds.Add(machine.Uid);
         }
+    }
+
+    private async Task<decimal> AppendKeptPrefixSegmentsAsync(
+        PlanContext context,
+        IReadOnlyList<ProductionMachineScheduleSegment> segments,
+        DateTime splitPoint,
+        ProductionWorkOrder order,
+        ProductionWorkOrderOperation operation,
+        ProductionWorkOrderMachine machine,
+        string splitPrefixReason,
+        List<PlannedSegment> planned,
+        CancellationToken cancellationToken)
+    {
+        var priorKept = segments
+            .Where(x => x.PlannedCompletionDateTime <= splitPoint)
+            .OrderBy(x => x.SegmentSequence)
+            .ToList();
+        var keptQty = 0m;
+        foreach (var seg in priorKept)
+        {
+            var frags = context.FragmentsBefore(machine.Uid, seg.PlannedCompletionDateTime)
+                .Where(f => f.Start >= seg.PlannedStartDateTime)
+                .ToList();
+            if (frags.Count == 0)
+                frags = [new TimeInterval(seg.PlannedStartDateTime, seg.PlannedCompletionDateTime)];
+            planned.Add(new PlannedSegment
+            {
+                Existing = seg,
+                WorkOrderId = order.Uid,
+                WorkOrderNo = order.WorkOrderNo,
+                OperationId = operation.Uid,
+                OperationCode = operation.OperationCode,
+                WorkOrderMachineId = machine.Uid,
+                MachineCode = machine.MachineCode,
+                Kind = seg.SegmentKind,
+                Status = ProductionMachineScheduleSegmentStatuses.Planned,
+                SourceSegmentId = seg.SourceSegmentId,
+                Qty = seg.PlannedOutputQty,
+                Uom = seg.OutputUom,
+                CycleCount = seg.PlannedCycleCount,
+                CycleSlots = seg.PlannedCycleSlots,
+                RunMinutes = seg.ScheduledRunMinutes,
+                SetupSeconds = seg.ScheduledSetupSeconds,
+                ConversionSeconds = seg.ScheduledConversionSeconds,
+                QueueSeconds = seg.ScheduledQueueSeconds,
+                Start = seg.PlannedStartDateTime,
+                Completion = seg.PlannedCompletionDateTime,
+                SourceHash = seg.SegmentScheduleSourceHash ?? string.Empty,
+                HorizonStart = seg.CalendarHorizonStart,
+                HorizonEnd = seg.CalendarHorizonEnd,
+                Fragments = frags,
+                Reason = seg.Reason ?? "Existing segment kept intact before split."
+            });
+            keptQty += seg.PlannedOutputQty;
+        }
+
+        var remainingSegments = segments
+            .Where(x => x.PlannedCompletionDateTime > splitPoint)
+            .OrderBy(x => x.SegmentSequence)
+            .ToList();
+        if (remainingSegments.Count == 0)
+            return keptQty;
+
+        var (splitPrefixQty, prefixBoundary) = await QuantityBeforeSplitAsync(
+            context, machine.Uid, remainingSegments, splitPoint, operation, machine, cancellationToken);
+        if (splitPrefixQty > 0m)
+        {
+            var splitSeg = remainingSegments[0];
+            var prefixFragments = context.FragmentsBefore(machine.Uid, prefixBoundary)
+                .Where(f => f.Start >= splitSeg.PlannedStartDateTime)
+                .ToList();
+            if (prefixFragments.Count > 0)
+            {
+                var prefixPlan = await SegmentCalculatorAsync(operation, machine, splitPrefixQty, cancellationToken);
+                planned.Add(new PlannedSegment
+                {
+                    Existing = splitSeg,
+                    WorkOrderId = order.Uid,
+                    WorkOrderNo = order.WorkOrderNo,
+                    OperationId = operation.Uid,
+                    OperationCode = operation.OperationCode,
+                    WorkOrderMachineId = machine.Uid,
+                    MachineCode = machine.MachineCode,
+                    Kind = splitSeg.SegmentKind,
+                    Status = ProductionMachineScheduleSegmentStatuses.Planned,
+                    SourceSegmentId = splitSeg.SourceSegmentId,
+                    Qty = splitPrefixQty,
+                    Uom = splitSeg.OutputUom,
+                    CycleCount = prefixPlan.CycleCount,
+                    CycleSlots = prefixPlan.CycleSlots,
+                    RunMinutes = prefixPlan.RunMinutes,
+                    SetupSeconds = splitSeg.ScheduledSetupSeconds,
+                    ConversionSeconds = splitSeg.ScheduledConversionSeconds,
+                    QueueSeconds = splitSeg.ScheduledQueueSeconds,
+                    Start = splitSeg.PlannedStartDateTime,
+                    Completion = prefixFragments.Max(x => x.End),
+                    SourceHash = splitSeg.SegmentScheduleSourceHash ?? string.Empty,
+                    HorizonStart = splitSeg.CalendarHorizonStart,
+                    HorizonEnd = splitSeg.CalendarHorizonEnd,
+                    Fragments = prefixFragments,
+                    Reason = splitPrefixReason
+                });
+                keptQty += splitPrefixQty;
+                context.Supersede(remainingSegments.Where(x => x.Uid != splitSeg.Uid));
+                return keptQty;
+            }
+        }
+
+        context.Supersede(remainingSegments);
+        return keptQty;
     }
 
     private async Task BuildHoldAsync(PlanContext context, CancellationToken cancellationToken)
@@ -331,6 +407,8 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
         if (resumeAt is null)
         {
             plan.HasUnscheduledRemaining = true;
+            plan.UnscheduledMachineIds.Add(plan.TargetMachine.Uid);
+            plan.UnscheduledWorkOrderIds.Add(plan.TargetOrder.Uid);
             plan.ForecastCompletion = null;
             plan.ScheduledQty = prefixQty;
             plan.Warnings.Add("Completion unknown — remaining quantity is held and not scheduled.");
@@ -364,15 +442,17 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
     private async Task BuildReleaseHoldAsync(PlanContext context, CancellationToken cancellationToken)
     {
         var plan = context.Plan;
-        var hold = await _db.ProductionWorkOrderScheduleHolds
-            .Where(x => x.CompanyCode == plan.TargetOrder.CompanyCode
-                && x.BranchCode == plan.TargetOrder.BranchCode
-                && x.WorkOrderId == plan.TargetOrder.Uid
-                && x.WorkOrderMachineId == plan.TargetMachine.Uid
-                && x.Status == ProductionScheduleHoldStatuses.Active
-                && (plan.Request.HoldId == null || x.Uid == plan.Request.HoldId))
-            .OrderByDescending(x => x.Uid)
-            .FirstOrDefaultAsync(cancellationToken);
+        var hold = _draft is not null
+            ? _draft.GetActiveHold(plan.TargetOrder.Uid, plan.TargetMachine.Uid, plan.Request.HoldId)
+            : await _db.ProductionWorkOrderScheduleHolds
+                .Where(x => x.CompanyCode == plan.TargetOrder.CompanyCode
+                    && x.BranchCode == plan.TargetOrder.BranchCode
+                    && x.WorkOrderId == plan.TargetOrder.Uid
+                    && x.WorkOrderMachineId == plan.TargetMachine.Uid
+                    && x.Status == ProductionScheduleHoldStatuses.Active
+                    && (plan.Request.HoldId == null || x.Uid == plan.Request.HoldId))
+                .OrderByDescending(x => x.Uid)
+                .FirstOrDefaultAsync(cancellationToken);
         if (hold is null)
         {
             plan.Blockers.Add("No active schedule hold was found for this operation.");
