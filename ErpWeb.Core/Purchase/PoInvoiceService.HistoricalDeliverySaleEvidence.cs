@@ -29,7 +29,7 @@ public sealed partial class PoInvoiceService
             return Array.Empty<InvoiceDeliverySaleProof>();
         if (sales.Length != 1 || histories.Any(h =>
                 h.TrxType is not (IvTrxTypes.SalesOut or IvTrxTypes.MiscellaneousIssue
-                    or IvTrxTypes.MiscellaneousReceipt)))
+                    or IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)))
             return null;
         var history = sales[0];
         if (string.IsNullOrWhiteSpace(history.DoNo))

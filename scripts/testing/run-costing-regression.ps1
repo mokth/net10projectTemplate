@@ -31,6 +31,11 @@ $patterns = @(
     'Backdated_purchase_invoice_reprices_sale_issue_and_receipt',
     'Backdated_purchase_invoice_rejects_damaged_sale_receipt',
     'Backdated_purchase_invoice_before_sale_receipt_respects_disabled_replay',
+    'Backdated_purchase_invoice_reprices_sale_and_later_goods_receipt',
+    'Backdated_purchase_invoice_reprices_sale_issue_and_later_goods_receipt',
+    'Purchase_invoice_before_sale_and_goods_receipt_reprices_on_rollback',
+    'Backdated_purchase_invoice_rejects_goods_receipt_before_sale',
+    'Backdated_purchase_invoice_rejects_damaged_goods_receipt_after_sale',
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
     'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
@@ -49,6 +54,7 @@ $patterns = @(
     'ProductionPooledCostTraceMathTests', 'ProductionMaterialAllocationTests',
     'ProductionOutputConsumeVarianceTests', 'ProductionDailyOutputCoreTests',
     'Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction',
+    'Receipt_and_reversed_sale_at_same_time_remain_blocked_atomically',
     'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
     'Receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues',
     'Receipt_first_rollback_reprices_canceled_sale_and_three_later_issues',
@@ -165,6 +171,11 @@ $required = @(
     'Backdated_purchase_invoice_reprices_sale_issue_and_receipt',
     'Backdated_purchase_invoice_rejects_damaged_sale_receipt',
     'Backdated_purchase_invoice_before_sale_receipt_respects_disabled_replay',
+    'Backdated_purchase_invoice_reprices_sale_and_later_goods_receipt',
+    'Backdated_purchase_invoice_reprices_sale_issue_and_later_goods_receipt',
+    'Purchase_invoice_before_sale_and_goods_receipt_reprices_on_rollback',
+    'Backdated_purchase_invoice_rejects_goods_receipt_before_sale',
+    'Backdated_purchase_invoice_rejects_damaged_goods_receipt_after_sale',
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
     'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
@@ -189,6 +200,7 @@ $required = @(
     'Backdated_wac_misc_receipt_before_purchase_invoice_respects_qa_hold',
     'Neutral_purchase_invoice_can_roll_back_before_backdated_receipt',
     'ProductionEffectiveCostResolverTests',
+    'Receipt_and_reversed_sale_at_same_time_remain_blocked_atomically',
     'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
     'Receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues',
     'Receipt_first_rollback_reprices_canceled_sale_and_three_later_issues',
@@ -300,6 +312,9 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleIssueBoundary
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleIssueReceipt
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryReceipt
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleGoods
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryGoods
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeSaleGoods
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDepleted
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost
@@ -314,6 +329,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceiptsAndIssues
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleReceiptFirstInterleaved
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleCycle
+        & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleSameTime
         Write-Output 'The selected SQL Server replay checks passed in disposable databases.'
     }
     else {

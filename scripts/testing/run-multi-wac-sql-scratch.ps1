@@ -19,6 +19,7 @@ param(
     [switch]$ReversedSaleGoods,
     [switch]$ReversedSaleCorrection,
     [switch]$ReversedSaleCycle,
+    [switch]$ReversedSaleSameTime,
     [switch]$ReversedSaleLate,
     [switch]$ReversedSaleLaterReceipt,
     [switch]$ReversedSaleLaterReceipts,
@@ -60,6 +61,9 @@ param(
     [switch]$BackdatedInvoiceSaleIssueBoundary,
     [switch]$BackdatedInvoiceSaleIssueReceipt,
     [switch]$BackdatedInvoiceDeliveryReceipt,
+    [switch]$BackdatedInvoiceSaleGoods,
+    [switch]$BackdatedInvoiceDeliveryGoods,
+    [switch]$InvoiceBeforeSaleGoods,
     [switch]$InvoiceBeforeTwoIssues,
     [switch]$BackdatedInvoiceDepleted,
     [switch]$BackdatedPurchaseInvoice,
@@ -68,6 +72,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods) {
+    $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
+    if ($cases.Count -ne 1) { throw 'Choose this replay case on its own.' }
+}
 if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $BackdatedInvoiceTenIssues -or $BackdatedInvoiceTenConcurrent -or $BackdatedInvoiceIssueBoundary -or $BackdatedInvoiceMixedReceipt -or $BackdatedInvoiceMixedReceiptFirst -or $BackdatedInvoiceMixedGoods -or $BackdatedInvoiceMixedGoodsFirst -or $BackdatedInvoiceSameOrder -or $BackdatedInvoiceSameOrderGoodsFirst -or $BackdatedInvoiceDirectSale -or $InvoiceBeforeDirectSale -or $BackdatedInvoiceSaleReturn -or $BackdatedInvoiceUnbilledDelivery -or $BackdatedInvoiceBilledDelivery -or $BackdatedInvoiceDeliveryReturn -or $BackdatedInvoiceDirectSaleIssue -or $BackdatedInvoiceDeliveryIssue -or $BackdatedInvoiceDirectSaleTwoIssues -or $BackdatedInvoiceSaleIssueBoundary -or $BackdatedInvoiceSaleIssueReceipt -or $BackdatedInvoiceDeliveryReceipt -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
@@ -112,6 +120,9 @@ try {
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($InvoiceBeforeSaleGoods) { 'SqlServer_purchase_invoice_before_sale_and_goods_receipt_rolls_back_atomically' }
+        elseif ($BackdatedInvoiceSaleGoods) { 'SqlServer_backdated_purchase_invoice_reprices_sale_and_goods_receipt_atomically' }
+        elseif ($BackdatedInvoiceDeliveryGoods) { 'SqlServer_backdated_purchase_invoice_reprices_delivery_and_goods_receipt_atomically' }
         elseif ($BackdatedInvoiceSaleIssueReceipt) { 'SqlServer_backdated_purchase_invoice_reprices_sale_issue_and_receipt_atomically' }
         elseif ($BackdatedInvoiceDeliveryReceipt) { 'SqlServer_backdated_purchase_invoice_reprices_delivery_and_receipt_atomically' }
         elseif ($BackdatedInvoiceSaleIssueBoundary) { 'SqlServer_backdated_purchase_invoice_replays_sale_and_ninety_nine_issues_at_boundary' }
@@ -157,6 +168,7 @@ try {
         elseif ($ReversedSaleLaterReceipts) { 'SqlServer_late_receipt_before_multiple_later_receipts_repeats_atomically' }
         elseif ($ReversedSaleLaterReceipt) { 'SqlServer_late_receipt_before_later_receipt_repeats_atomically' }
         elseif ($ReversedSaleLate) { 'SqlServer_late_receipt_reprices_canceled_sale_and_repeats_atomically' }
+        elseif ($ReversedSaleSameTime) { 'SqlServer_same_time_receipt_and_reversed_sale_remain_blocked_atomically' }
         elseif ($ReversedSaleCycle) { 'SqlServer_receipt_repost_reverses_sale_correction_once_and_is_atomic' }
         elseif ($ReversedSaleCorrection) { 'SqlServer_receipt_rollback_reprices_reversed_sale_once_and_is_atomic' }
         elseif ($ReversedSaleGoods) { 'SqlServer_goods_receipt_with_neutral_reversed_sale_posts_and_rolls_back' }

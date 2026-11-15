@@ -22,7 +22,7 @@ public sealed partial class PoInvoiceService
             return Array.Empty<InvoiceDirectSaleProof>();
         if (sales.Length != 1 || histories.Any(h =>
                 h.TrxType is not (IvTrxTypes.SalesOut or IvTrxTypes.MiscellaneousIssue
-                    or IvTrxTypes.MiscellaneousReceipt)))
+                    or IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)))
             return null;
         if (!string.IsNullOrWhiteSpace(sales[0].DoNo))
             return Array.Empty<InvoiceDirectSaleProof>();

@@ -275,7 +275,7 @@ public sealed partial class PoInvoiceService
         // needs a separate reversed-sale proof. Keep that order blocked until
         // both documents can be rolled back safely.
         if (salesEvents.Length == 1 && events.Any(e =>
-                issuesById[(int)e.EventId].TrxType == IvTrxTypes.MiscellaneousReceipt
+                (issuesById[(int)e.EventId].TrxType is IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
                 && e.Key.CompareTo(salesEvents[0].Key) < 0))
             return null;
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, company, branch, issues, ct);
