@@ -26,7 +26,11 @@ $patterns = @(
     'Backdated_purchase_invoice_before_sale_and_issue_respects_disabled_replay',
     'Backdated_purchase_invoice_rejects_damaged_sale_issue_cost',
     'Backdated_purchase_invoice_rejects_mixed_sale_issue_and_return_draft',
-    'Backdated_purchase_invoice_rejects_sale_and_later_receipt',
+    'Backdated_purchase_invoice_reprices_sale_and_receipt',
+    'Backdated_purchase_invoice_rejects_receipt_before_sale',
+    'Backdated_purchase_invoice_reprices_sale_issue_and_receipt',
+    'Backdated_purchase_invoice_rejects_damaged_sale_receipt',
+    'Backdated_purchase_invoice_before_sale_receipt_respects_disabled_replay',
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
     'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
@@ -156,7 +160,11 @@ $required = @(
     'Backdated_purchase_invoice_before_sale_and_issue_respects_disabled_replay',
     'Backdated_purchase_invoice_rejects_damaged_sale_issue_cost',
     'Backdated_purchase_invoice_rejects_mixed_sale_issue_and_return_draft',
-    'Backdated_purchase_invoice_rejects_sale_and_later_receipt',
+    'Backdated_purchase_invoice_reprices_sale_and_receipt',
+    'Backdated_purchase_invoice_rejects_receipt_before_sale',
+    'Backdated_purchase_invoice_reprices_sale_issue_and_receipt',
+    'Backdated_purchase_invoice_rejects_damaged_sale_receipt',
+    'Backdated_purchase_invoice_before_sale_receipt_respects_disabled_replay',
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
     'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
@@ -290,6 +298,8 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryIssue
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDirectSaleTwoIssues
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleIssueBoundary
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleIssueReceipt
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryReceipt
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDepleted
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost

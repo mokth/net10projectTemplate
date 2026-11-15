@@ -207,7 +207,7 @@ public sealed partial class PoInvoiceService
         if (projection.HistoricalQuantityBeforeCandidate != 0m || projection.HistoricalValueBeforeCandidate != 0m)
         {
             // This route accepts ordinary Inventory issues and fixed-cost
-            // receipts, or one proven sale with Inventory issues, on one pile.
+            // receipts, and at most one proven sale, on one pile.
             if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || balances.Length != 1)
                 return null;
             var split = StockPurchaseVarianceAllocator.Allocate(adjustment.TotalAdjustmentAmount,
@@ -270,6 +270,14 @@ public sealed partial class PoInvoiceService
         var issuesById = issues.ToDictionary(h => h.Id);
         var ownersById = owners.ToDictionary(p => p.Id);
         var stepsById = steps.ToDictionary(s => s.EventId);
+        var salesEvents = events.Where(e => issuesById[(int)e.EventId].TrxType == IvTrxTypes.SalesOut).ToArray();
+        // Removing a receipt before a sale that was corrected by this invoice
+        // needs a separate reversed-sale proof. Keep that order blocked until
+        // both documents can be rolled back safely.
+        if (salesEvents.Length == 1 && events.Any(e =>
+                issuesById[(int)e.EventId].TrxType == IvTrxTypes.MiscellaneousReceipt
+                && e.Key.CompareTo(salesEvents[0].Key) < 0))
+            return null;
         var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, company, branch, issues, ct);
         var changes = new List<InvoiceIssueChange>(events.Count);
         var receipts = new List<IvInventoryPostingService.WacFixedReceiptProof>();
@@ -293,6 +301,10 @@ public sealed partial class PoInvoiceService
             {
                 if (issue.TrxType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
                     || step.SignedValue != movement.OldSignedValue)
+                    return null;
+                if (issue.TrxType == IvTrxTypes.MiscellaneousReceipt
+                    && (issue.BaseUnitPrices is not null || issue.UnitPrice is not decimal receiptUnit
+                        || receiptUnit < 0m || StockLedgerPrecision.Money(receiptUnit) != facts[0].UnitCost))
                     return null;
                 var receipt = IvInventoryPostingService.ValidateOriginalWacFixedReceipt(
                     company, branch, item, epochId, balanceId, issue, movement, owner, facts[0]);
