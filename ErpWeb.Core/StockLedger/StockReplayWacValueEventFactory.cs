@@ -1,3 +1,4 @@
+using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
@@ -12,7 +13,10 @@ namespace ErpWeb.Core.StockLedger;
 public static class StockReplayWacValueEventFactory
 {
     public static StockReplayWacEvent Create(
-        StockValuationFact fact, StockPosting owner)
+        StockValuationFact fact, StockPosting owner) => CreateCore(fact, owner, false);
+
+    private static StockReplayWacEvent CreateCore(
+        StockValuationFact fact, StockPosting owner, bool allowReceiptOrigin)
     {
         ArgumentNullException.ThrowIfNull(fact);
         ArgumentNullException.ThrowIfNull(owner);
@@ -30,7 +34,7 @@ public static class StockReplayWacValueEventFactory
             || fact.InventoryHistoryId is not null || fact.BaseQty != 0m
             || fact.CostMethod != StockCostMethods.MovingAverage
             || fact.ValuationStatus != StockValuationStatuses.Valued
-            || fact.OriginalValuationFactId is not null
+            || !allowReceiptOrigin && fact.OriginalValuationFactId is not null
             || fact.ReversesValuationFactId is not null
             || fact.Direction is not (-1 or 1)
             || fact.CostAmount < 0m
@@ -46,6 +50,43 @@ public static class StockReplayWacValueEventFactory
             0m, signedValue, 0m, FixedSignedValue: signedValue);
     }
 
+    // A purchase invoice's PPV refers to a GR for settlement, but its value
+    // belongs at the invoice's key, not immediately after the GR. Callers must
+    // separately prove the complete settlement and any replacement generation.
+    internal static StockReplayWacEvent CreatePurchaseInvoiceAdjustment(
+        StockValuationFact fact, StockValuationFact receipt, IvTrxHistory history,
+        StockPosting receiptOwner, StockPosting invoiceOwner)
+    {
+        if (fact.OriginalValuationFactId != receipt.Id || fact.StockPostingId != invoiceOwner.Id
+            || invoiceOwner.SourceModule != "PROCUREMENT" || invoiceOwner.SourceDocumentType != "PO_INVOICE"
+            || invoiceOwner.PostingRole != "PRIMARY" || invoiceOwner.CommandType != "PROCUREMENT_PO_INVOICE_PRIMARY"
+            || invoiceOwner.ReversesPostingId is not null || invoiceOwner.EffectiveAt < receipt.EffectiveAt
+            || invoiceOwner.PostingSequence <= receiptOwner.PostingSequence
+            || fact.SourceDocumentType != invoiceOwner.SourceDocumentType
+            || fact.SourceDocumentId != invoiceOwner.SourceDocumentId || fact.SourceDocumentNo != invoiceOwner.SourceDocumentNo
+            || string.IsNullOrWhiteSpace(fact.SourceDocumentLine)
+            || fact.ValuationSource != StockValuationSources.PurchasePriceVariance
+            || fact.MovementCode != (fact.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
+            || fact.ValuationVersion != 1 || fact.CostAmount <= 0m || fact.BaseCostAmount != fact.CostAmount
+            || fact.InventoryHistoryId is not null || fact.FromBalLocId is not null || fact.ToBalLocId is not null
+            || receipt.Id <= 0 || receipt.InventoryHistoryId != history.Id || history.TrxType != IvTrxTypes.GoodsReceive
+            || history.EntryRole != "ORIGINAL" || history.BatchStatus != IvBatchStatuses.Posted
+            || history.StockPostingId != receiptOwner.Id || receipt.StockPostingId != receiptOwner.Id
+            || receiptOwner.SealedAtUtc is null || receiptOwner.SourceModule != "INVENTORY"
+            || receiptOwner.SourceDocumentType != IvTrxTypes.GoodsReceive || receiptOwner.PostingRole != "PRIMARY"
+            || receiptOwner.CommandType != "IV_POST_GR" || receiptOwner.EffectiveAt != receipt.EffectiveAt
+            || receipt.EffectiveAt != history.TrxDtTime || receipt.Direction != 1 || receipt.BaseQty <= 0m
+            || receipt.ValuationStatus != StockValuationStatuses.Valued || receipt.ValuationSource != StockValuationSources.ReceiptActual
+            || receipt.ReversesValuationFactId is not null || receipt.OriginalValuationFactId is not null
+            || receipt.CompanyCode != fact.CompanyCode || receipt.BranchCode != fact.BranchCode
+            || receipt.LedgerEpochId != fact.LedgerEpochId || receipt.ItemCode != fact.ItemCode
+            || receipt.BaseUom != fact.BaseUom || receipt.CostMethod != StockCostMethods.MovingAverage
+            || history.CompanyCode != fact.CompanyCode || history.BranchCode != fact.BranchCode
+            || history.LedgerEpochId != fact.LedgerEpochId || history.ICode != fact.ItemCode)
+            throw Corrupt($"Purchase value fact {fact.Id} has no exact invoice and goods-receipt authority.");
+        return CreateCore(fact, invoiceOwner, true);
+    }
+
     /// <summary>
     /// A corrected zero-quantity adjustment stays at its original business
     /// owner's key. The replay root that wrote it supplies audit ownership,
@@ -55,13 +96,35 @@ public static class StockReplayWacValueEventFactory
         StockValuationFact active,
         StockValuationFact original,
         StockPosting originalOwner,
-        StockPosting correctionOwner)
+        StockPosting correctionOwner) =>
+        CreateCorrectedCore(active, original, originalOwner, correctionOwner,
+            Create(original, originalOwner));
+
+    internal static StockReplayWacEvent CreateCorrectedPurchaseInvoiceAdjustment(
+        StockValuationFact active, StockValuationFact original,
+        StockValuationFact receipt, IvTrxHistory history,
+        StockPosting receiptOwner, StockPosting invoiceOwner, StockPosting correctionOwner)
+    {
+        var originalEvent = CreatePurchaseInvoiceAdjustment(original, receipt,
+            history, receiptOwner, invoiceOwner);
+        if (active.ValuationSource != StockValuationSources.PurchasePriceVariance
+            || active.BaseCostAmount != active.CostAmount || active.CostAmount <= 0m
+            || active.ValuationVersion <= original.ValuationVersion)
+            throw Corrupt($"Purchase value fact {active.Id} has invalid replacement evidence.");
+        return CreateCorrectedCore(active, original, invoiceOwner, correctionOwner, originalEvent);
+    }
+
+    private static StockReplayWacEvent CreateCorrectedCore(
+        StockValuationFact active,
+        StockValuationFact original,
+        StockPosting originalOwner,
+        StockPosting correctionOwner,
+        StockReplayWacEvent originalEvent)
     {
         ArgumentNullException.ThrowIfNull(active);
         ArgumentNullException.ThrowIfNull(original);
         ArgumentNullException.ThrowIfNull(originalOwner);
         ArgumentNullException.ThrowIfNull(correctionOwner);
-        var originalEvent = Create(original, originalOwner);
         if (active.Id <= 0 || active.StockPostingId != correctionOwner.Id
             || correctionOwner.Id == originalOwner.Id
             || correctionOwner.SealedAtUtc is null

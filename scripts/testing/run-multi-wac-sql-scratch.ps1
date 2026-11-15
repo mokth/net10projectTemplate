@@ -8,16 +8,53 @@ param(
     [switch]$MixedLocations,
     [switch]$BothItems,
     [switch]$EditRace,
-    [switch]$InjectFailure
+    [switch]$InjectFailure,
+    [switch]$SalesReturn,
+    [switch]$SalesReturnRolledBack,
+    [switch]$SalesReturnFailure,
+    [switch]$ReversedSale,
+    [switch]$ReversedSaleEdit,
+    [switch]$ReversedSaleBusy,
+    [switch]$ReversedSaleSingle,
+    [switch]$ReversedSaleGoods,
+    [switch]$ReversedSaleCorrection,
+    [switch]$ReversedSaleCycle,
+    [switch]$ReversedSaleLate,
+    [switch]$ReversedSaleLaterReceipt,
+    [switch]$ReversedSaleLaterReceipts,
+    [switch]$ReversedSaleMixedReceipts,
+    [switch]$ReversedSaleLaterIssue,
+    [switch]$ReversedSaleReceiptFirstIssue,
+    [switch]$ReversedSaleMultipleIssues,
+    [switch]$ReversedSaleReceiptFirstMultipleIssues,
+    [switch]$ReversedSaleMixedReceiptsAndIssues,
+    [switch]$ReversedSaleReceiptFirstInterleaved,
+    [switch]$NeutralLaterPurchaseInvoice,
+    [switch]$FullyCapitalizedPurchaseVariance,
+    [switch]$PartialPurchaseVariance,
+    [switch]$PartialPurchaseVarianceLot,
+    [switch]$BackdatedPurchaseInvoice,
+    [switch]$BackdatedPurchaseCreditNotePost,
+    [switch]$BackdatedPurchaseCreditNoteRollback
 )
 
 $ErrorActionPreference = 'Stop'
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot) {
+    $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
+    if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
+}
 if ($SameItem -and $RepeatedAndOther) { throw 'Choose one receipt shape.' }
 if ($TwoPiles -and ($SameItem -or $RepeatedAndOther)) { throw 'Two-pile tests use their own receipt shape.' }
 if ($MixedLocations -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines)) { throw 'Mixed-location tests use their own receipt shape.' }
 if ($BothItems -and (-not $MixedLocations -or $EditRace -or $InjectFailure)) { throw 'The both-item concurrency case requires only -MixedLocations.' }
 if ($MoreLines -and -not $TwoPiles) { throw 'The multi-line case requires -TwoPiles.' }
 if ($InjectFailure -and ($EditRace -or -not ($RepeatedAndOther -or $TwoPiles -or $MixedLocations))) { throw 'Choose a receipt shape for failure injection.' }
+if ($NeutralLaterPurchaseInvoice -and @($SameItem, $RepeatedAndOther, $TwoPiles, $MoreLines, $MixedLocations, $BothItems, $EditRace, $InjectFailure, $SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 0) { throw 'Choose the purchase invoice case on its own.' }
+if ($FullyCapitalizedPurchaseVariance -and @($NeutralLaterPurchaseInvoice, $SameItem, $RepeatedAndOther, $TwoPiles, $MoreLines, $MixedLocations, $BothItems, $EditRace, $InjectFailure, $SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 0) { throw 'Choose the purchase variance case on its own.' }
+if ($PartialPurchaseVariance -and @($FullyCapitalizedPurchaseVariance, $NeutralLaterPurchaseInvoice, $SameItem, $RepeatedAndOther, $TwoPiles, $MoreLines, $MixedLocations, $BothItems, $EditRace, $InjectFailure, $SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 0) { throw 'Choose the partial purchase variance case on its own.' }
+if ($BackdatedPurchaseInvoice -and @($PartialPurchaseVariance, $FullyCapitalizedPurchaseVariance, $NeutralLaterPurchaseInvoice, $SameItem, $RepeatedAndOther, $TwoPiles, $MoreLines, $MixedLocations, $BothItems, $EditRace, $InjectFailure, $SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 0) { throw 'Choose the backdated purchase invoice case on its own.' }
+if (@($SalesReturn, $SalesReturnRolledBack, $SalesReturnFailure, $ReversedSale, $ReversedSaleEdit, $ReversedSaleBusy, $ReversedSaleSingle, $ReversedSaleGoods, $ReversedSaleCorrection, $ReversedSaleCycle, $ReversedSaleLate, $ReversedSaleLaterReceipt, $ReversedSaleLaterReceipts, $ReversedSaleMixedReceipts, $ReversedSaleLaterIssue, $ReversedSaleReceiptFirstIssue, $ReversedSaleMultipleIssues, $ReversedSaleReceiptFirstMultipleIssues, $ReversedSaleMixedReceiptsAndIssues, $ReversedSaleReceiptFirstInterleaved).Where({ $_ }).Count -gt 1) { throw 'Choose one Sales case.' }
+if (($SalesReturn -or $SalesReturnRolledBack -or $SalesReturnFailure -or $ReversedSale -or $ReversedSaleEdit -or $ReversedSaleBusy -or $ReversedSaleSingle -or $ReversedSaleGoods -or $ReversedSaleCorrection -or $ReversedSaleCycle -or $ReversedSaleLate -or $ReversedSaleLaterReceipt -or $ReversedSaleLaterReceipts -or $ReversedSaleMixedReceipts -or $ReversedSaleLaterIssue -or $ReversedSaleReceiptFirstIssue -or $ReversedSaleMultipleIssues -or $ReversedSaleReceiptFirstMultipleIssues -or $ReversedSaleMixedReceiptsAndIssues -or $ReversedSaleReceiptFirstInterleaved) -and ($SameItem -or $RepeatedAndOther -or $TwoPiles -or $MoreLines -or $MixedLocations -or $BothItems -or $EditRace -or $InjectFailure)) { throw 'Choose the Sales case on its own.' }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $scratch = 'Codex_ReplayNeutral_Test_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 if ($scratch -cnotmatch '^Codex_ReplayNeutral_Test_[0-9a-f]{12}$') {
@@ -45,7 +82,34 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($BothItems) { 'Concurrent_both_item_locations_receipt_posts_and_rolls_back_once' }
+    $testName = if ($PartialPurchaseVarianceLot) { 'SqlServer_lot_receipt_replays_changed_purchase_variance_split' }
+        elseif ($BackdatedPurchaseCreditNotePost) { 'SqlServer_backdated_purchase_credit_note_post_rejects_later_issue_atomically' }
+        elseif ($BackdatedPurchaseCreditNoteRollback) { 'SqlServer_backdated_purchase_credit_note_rollback_rejects_later_issue_atomically' }
+        elseif ($BackdatedPurchaseInvoice) { 'SqlServer_backdated_purchase_invoice_variance_rejects_later_active_issue' }
+        elseif ($PartialPurchaseVariance) { 'SqlServer_misc_receipt_replays_changed_purchase_variance_split_atomically' }
+        elseif ($FullyCapitalizedPurchaseVariance) { 'SqlServer_misc_receipt_before_purchase_variance_is_atomic_and_avoids_busy_po' }
+        elseif ($NeutralLaterPurchaseInvoice) { 'SqlServer_misc_receipt_before_neutral_purchase_invoice_is_atomic_and_avoids_busy_po' }
+        elseif ($ReversedSaleReceiptFirstInterleaved) { 'SqlServer_receipt_first_rollback_reprices_issues_around_later_receipt_atomically' }
+        elseif ($ReversedSaleMixedReceiptsAndIssues) { 'SqlServer_late_receipt_reprices_canceled_sale_and_mixed_receipts_and_issues_atomically' }
+        elseif ($ReversedSaleReceiptFirstMultipleIssues) { 'SqlServer_receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues_atomically' }
+        elseif ($ReversedSaleMultipleIssues) { 'SqlServer_late_receipt_reprices_canceled_sale_and_multiple_later_issues_atomically' }
+        elseif ($ReversedSaleReceiptFirstIssue) { 'SqlServer_receipt_first_rollback_reprices_canceled_sale_and_later_issue_atomically' }
+        elseif ($ReversedSaleLaterIssue) { 'SqlServer_late_receipt_reprices_canceled_sale_and_later_issue_atomically' }
+        elseif ($ReversedSaleMixedReceipts) { 'SqlServer_late_receipt_before_mixed_later_receipts_repeats_atomically' }
+        elseif ($ReversedSaleLaterReceipts) { 'SqlServer_late_receipt_before_multiple_later_receipts_repeats_atomically' }
+        elseif ($ReversedSaleLaterReceipt) { 'SqlServer_late_receipt_before_later_receipt_repeats_atomically' }
+        elseif ($ReversedSaleLate) { 'SqlServer_late_receipt_reprices_canceled_sale_and_repeats_atomically' }
+        elseif ($ReversedSaleCycle) { 'SqlServer_receipt_repost_reverses_sale_correction_once_and_is_atomic' }
+        elseif ($ReversedSaleCorrection) { 'SqlServer_receipt_rollback_reprices_reversed_sale_once_and_is_atomic' }
+        elseif ($ReversedSaleGoods) { 'SqlServer_goods_receipt_with_neutral_reversed_sale_posts_and_rolls_back' }
+        elseif ($ReversedSaleSingle) { 'SqlServer_singleline_receipt_with_reversed_sale_waits_safely' }
+        elseif ($ReversedSaleBusy) { 'SqlServer_backdated_reversed_sale_does_not_wait_for_invoice_lock' }
+        elseif ($ReversedSaleEdit) { 'SqlServer_backdated_reversed_sale_rejects_changed_invoice' }
+        elseif ($ReversedSale) { 'SqlServer_backdated_receipt_with_reversed_sale_and_later_issue' }
+        elseif ($SalesReturnFailure) { 'SqlServer_backdated_receipt_sales_return_is_atomic_on_failure' }
+        elseif ($SalesReturnRolledBack) { 'SqlServer_backdated_receipt_after_rolled_back_return' }
+        elseif ($SalesReturn) { 'SqlServer_backdated_receipt_reprices_two_sales_and_one_return' }
+        elseif ($BothItems) { 'Concurrent_both_item_locations_receipt_posts_and_rolls_back_once' }
         elseif ($MixedLocations -and $InjectFailure) { 'Mixed_item_location_receipt_rolls_back_database_failures_atomically' }
         elseif ($MixedLocations -and $EditRace) { 'Mixed_item_location_receipt_rejects_draft_edit_after_planning' }
         elseif ($MixedLocations) { 'Concurrent_mixed_item_location_receipt_posts_and_rolls_back_once' }

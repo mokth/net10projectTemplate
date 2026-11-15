@@ -15,6 +15,8 @@ public sealed record StockReplayWacInsertionPlan(
     string PlanHash)
 {
     internal long[] ExcludedReversedIssueValueFactIds { get; init; } = [];
+    internal bool ExcludesReversedSaleCycle { get; init; }
+    internal long? PurchaseVarianceFactId { get; init; }
 }
 
 /// <summary>
@@ -33,7 +35,7 @@ public static class StockReplayWacInsertionPlanner
         if (!StringComparer.Ordinal.Equals(plan.PlanHash,
                 Hash(plan.CompanyCode, plan.BranchCode, plan.ItemCode,
                     plan.PhysicalPlan, plan.Candidate,
-                    plan.Tail, plan.Projection, plan.ExcludedReversedIssueValueFactIds)))
+                    plan.Tail, plan.Projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId)))
             throw Stale("The prepared WAC insertion plan changed.");
     }
 
@@ -58,7 +60,13 @@ public static class StockReplayWacInsertionPlanner
         StockReplayPhysicalPlan physicalPlan,
         StockReplayWacEvent candidate,
         CancellationToken cancellationToken = default) =>
-        BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, candidate, [], cancellationToken);
+        BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, candidate, [], false, null, cancellationToken);
+
+    internal static Task<StockReplayWacInsertionPlan> BuildForPurchaseVarianceAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayPhysicalPlan physicalPlan, StockReplayWacEvent candidate, long factId,
+        CancellationToken cancellationToken = default) =>
+        BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, candidate, [], false, factId, cancellationToken);
 
     internal static Task<StockReplayWacInsertionPlan> BuildForReversedIssueAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
@@ -73,13 +81,30 @@ public static class StockReplayWacInsertionPlanner
             || proof.ReceiptValue != candidate.FixedSignedValue)
             throw Invalid("The reversed Production issue value pair is incomplete.");
         return BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, candidate,
-            new[] { issueId, reverseId }.Order().ToArray(), cancellationToken);
+            new[] { issueId, reverseId }.Order().ToArray(), false, null, cancellationToken);
+    }
+
+    internal static Task<StockReplayWacInsertionPlan> BuildForReversedSaleAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayPhysicalPlan physicalPlan, StockReplayWacEvent candidate,
+        IvInventoryPostingService.ReversedSaleCycleState cycle, CancellationToken cancellationToken = default)
+    {
+        var undoingRemoval = cycle.RootRole == "REVERSAL" && cycle.ActiveRootId is > 0
+            && cycle.SaleDeltaId is > 0 && cycle.ReversalDeltaId is > 0 && cycle.SaleDeltaId != cycle.ReversalDeltaId;
+        var repostingInsertion = cycle.RootRole == "PRIMARY" && cycle.ActiveRootId is null
+            && cycle.SaleDeltaId is null && cycle.ReversalDeltaId is null && cycle.ValueIds.Length >= 4;
+        if ((!undoingRemoval && !repostingInsertion) || cycle.ReceiptBalanceId != physicalPlan.BalLocId
+            || cycle.ReceiptQuantity != physicalPlan.Candidate.SignedDelta
+            || cycle.ReceiptValue != candidate.FixedSignedValue)
+            throw Invalid("The reversed sale value pair or receipt differs from its verified replay evidence.");
+        return BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, candidate,
+            cycle.ValueIds, true, null, cancellationToken);
     }
 
     private static async Task<StockReplayWacInsertionPlan> BuildCoreAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayPhysicalPlan physicalPlan, StockReplayWacEvent candidate,
-        long[] excludedValueIds, CancellationToken cancellationToken)
+        long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(physicalPlan);
@@ -95,15 +120,17 @@ public static class StockReplayWacInsertionPlanner
         if (pileItem != itemCode)
             throw Invalid("The WAC plan's candidate pile belongs to another item.");
         var tail = await ReadTailAsync(db, companyCode, branchCode, itemCode,
-            physicalPlan.Candidate.Key, excludedValueIds, cancellationToken);
+            physicalPlan.Candidate.Key, excludedValueIds, excludeSaleCycle, purchaseFactId, cancellationToken);
         var projection = StockReplayWacTailProjector.SimulateSinglePileInsertion(
             tail, physicalPlan, candidate);
         var hash = Hash(companyCode, branchCode, itemCode,
-            physicalPlan, candidate, tail, projection, excludedValueIds);
+            physicalPlan, candidate, tail, projection, excludedValueIds, excludeSaleCycle, purchaseFactId);
         return new(companyCode, branchCode, itemCode,
             physicalPlan, candidate, tail, projection, hash)
         {
-            ExcludedReversedIssueValueFactIds = excludedValueIds.ToArray()
+            ExcludedReversedIssueValueFactIds = excludedValueIds.ToArray(),
+            ExcludesReversedSaleCycle = excludeSaleCycle,
+            PurchaseVarianceFactId = purchaseFactId
         };
     }
 
@@ -124,7 +151,7 @@ public static class StockReplayWacInsertionPlanner
             || !StringComparer.Ordinal.Equals(plan.PlanHash,
                 Hash(plan.CompanyCode, plan.BranchCode, plan.ItemCode,
                     plan.PhysicalPlan, plan.Candidate, plan.Tail, plan.Projection,
-                    plan.ExcludedReversedIssueValueFactIds)))
+                    plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId)))
             throw Stale("The WAC insertion evidence changed after planning.");
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(
             context, plan.PhysicalPlan, cancellationToken);
@@ -142,7 +169,7 @@ public static class StockReplayWacInsertionPlanner
         {
             currentTail = await ReadTailAsync(
                 context.Db, plan.CompanyCode, plan.BranchCode, plan.ItemCode,
-                plan.Candidate.Key, plan.ExcludedReversedIssueValueFactIds, cancellationToken);
+                plan.Candidate.Key, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId, cancellationToken);
             currentProjection = StockReplayWacTailProjector.SimulateSinglePileInsertion(
                 currentTail, plan.PhysicalPlan, plan.Candidate);
         }
@@ -155,16 +182,21 @@ public static class StockReplayWacInsertionPlanner
         if (!StringComparer.Ordinal.Equals(plan.PlanHash,
             Hash(plan.CompanyCode, plan.BranchCode, plan.ItemCode,
                 plan.PhysicalPlan, plan.Candidate,
-                currentTail, currentProjection, plan.ExcludedReversedIssueValueFactIds)))
+                currentTail, currentProjection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId)))
             throw Stale("The active WAC tail changed after replay planning.");
     }
 
     private static Task<StockReplayWacFinancialTail> ReadTailAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
-        StockReplayEventKey after, long[] excludedValueIds, CancellationToken cancellationToken) =>
-        excludedValueIds.Length == 0
+        StockReplayEventKey after, long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId, CancellationToken cancellationToken) =>
+        purchaseFactId is long factId
+            ? StockReplayWacFinancialTailReader.ReadLaterForPurchaseVarianceAsync(db, companyCode, branchCode, itemCode, after, factId, cancellationToken)
+            : excludedValueIds.Length == 0
             ? StockReplayWacFinancialTailReader.ReadLaterAsync(db, companyCode, branchCode, itemCode, after, cancellationToken)
-            : StockReplayWacFinancialTailReader.ReadLaterForReversedIssueAsync(
+            : excludeSaleCycle
+                ? StockReplayWacFinancialTailReader.ReadLaterForReversedSaleAsync(
+                    db, companyCode, branchCode, itemCode, after, excludedValueIds, cancellationToken)
+                : StockReplayWacFinancialTailReader.ReadLaterForReversedIssueAsync(
                 db, companyCode, branchCode, itemCode, after, excludedValueIds, cancellationToken);
 
     private static string Hash(
@@ -174,12 +206,12 @@ public static class StockReplayWacInsertionPlanner
         StockReplayPhysicalPlan physicalPlan,
         StockReplayWacEvent candidate,
         StockReplayWacFinancialTail tail,
-        StockReplayWacResult projection, long[] excludedValueIds) =>
+        StockReplayWacResult projection, long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId) =>
         StockPostingFingerprint.Create(new
         {
             companyCode, branchCode, itemCode,
             physicalPlan.PlanHash,
-            excludedValueIds,
+            excludedValueIds, excludeSaleCycle, purchaseFactId,
             candidate,
             tail.CurrentQuantity,
             tail.CurrentValue,

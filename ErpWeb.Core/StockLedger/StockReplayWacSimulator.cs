@@ -1,12 +1,15 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Model.Entities.StockLedger;
+using System.Text.Json.Serialization;
 
 namespace ErpWeb.Core.StockLedger;
 
 /// <summary>
 /// One item-level WAC event. Old signed quantity/value rewind the active tail;
 /// fixed value is the receipt or value-only authority on replay; a bound Sales
-/// return instead follows its repriced sale. Count events carry a frozen observation.
+/// return follows its repriced sale, and an authorized purchase variance is
+/// allocated at its invoice time. Count events carry a frozen observation.
 /// </summary>
 public sealed record StockReplayWacEvent(
     long EventId,
@@ -20,7 +23,12 @@ public sealed record StockReplayWacEvent(
     decimal? CountPreQuantity = null,
     long? ReturnOfSaleEventId = null,
     long? SalesReturnAllocationId = null,
-    long? ReversedProductionIssueEventId = null);
+    long? ReversedProductionIssueEventId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    StockReplayPurchaseVariance? PurchaseVariance = null);
+
+/// <summary>Immutable invoice variance and settlement quantity for a value-only replay event.</summary>
+public sealed record StockReplayPurchaseVariance(decimal TotalVariance, decimal SettledQuantity);
 
 public sealed record StockReplayWacStep(
     long EventId,
@@ -250,6 +258,13 @@ public static class StockReplayWacSimulator
             deltaValue = StockLedgerPrecision.Money(
                 -sale.SignedValue * deltaQty / -sale.SignedQuantity);
         }
+        else if (movement.PurchaseVariance is { } purchase)
+        {
+            var capitalizable = StockLedgerPrecision.Quantity(Math.Min(beforeQty, purchase.SettledQuantity));
+            deltaValue = StockPurchaseVarianceAllocator.Allocate(purchase.TotalVariance,
+                purchase.SettledQuantity, capitalizable, beforeValue,
+                StockCostMethods.MovingAverage).Inventory;
+        }
         else if (deltaQty > 0m)
         {
             deltaValue = movement.FixedSignedValue!.Value;
@@ -328,6 +343,7 @@ public static class StockReplayWacSimulator
                 || movement.ReturnOfSaleEventId.HasValue
                 || movement.SalesReturnAllocationId.HasValue
                 || movement.ReversedProductionIssueEventId.HasValue
+                || movement.PurchaseVariance is not null
                 || movement.Key.EffectiveAt
                     != StockReplayEventKey.CountEndOfDay(movement.Key.EffectiveAt))
                 throw new ArgumentException($"Count WAC event {movement.EventId} is invalid.");
@@ -347,6 +363,18 @@ public static class StockReplayWacSimulator
                     || movement.FixedSignedValue != movement.OldSignedValue
                     || movement.ReturnOfSaleEventId.HasValue
                     || movement.SalesReturnAllocationId.HasValue)
+            || movement.PurchaseVariance is { } purchase
+                && (movement.EventId <= int.MaxValue
+                    || movement.OldSignedQuantity != 0m || movement.ReplaySignedQuantity != 0m
+                    || movement.FixedSignedValue != movement.OldSignedValue
+                    || movement.ReturnOfSaleEventId.HasValue || movement.SalesReturnAllocationId.HasValue
+                    || movement.ReversedProductionIssueEventId.HasValue
+                    || purchase.TotalVariance == 0m
+                    || StockLedgerPrecision.Money(purchase.TotalVariance) != purchase.TotalVariance
+                    || purchase.SettledQuantity <= 0m
+                    || StockLedgerPrecision.Quantity(purchase.SettledQuantity) != purchase.SettledQuantity
+                    || movement.OldSignedValue * Math.Sign(purchase.TotalVariance) < 0m
+                    || Math.Abs(movement.OldSignedValue) > Math.Abs(purchase.TotalVariance))
             || movement.ReplaySignedQuantity < 0m && movement.FixedSignedValue.HasValue
             || movement.ReplaySignedQuantity >= 0m
                 && movement.FixedSignedValue is not decimal authorizedValue

@@ -15,7 +15,8 @@ public static class StockReplayWacMrRootWriter
     public static async Task<IReadOnlyList<int>> InsertAsync(
         StockPostingContext context, StockReplayWacInsertionPlan plan,
         int batchNo, CancellationToken cancellationToken = default,
-        bool goodsReceipt = false, bool allowInvoiced = false)
+        bool goodsReceipt = false, bool allowInvoiced = false,
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -184,7 +185,7 @@ public static class StockReplayWacMrRootWriter
 
         var tail = await StockReplayWacTailRepricingWriter
             .AppendPreparedInsertionTailAsync(context, permit, plan, 2,
-                cancellationToken, allowSalesReturn: true);
+                cancellationToken, allowSalesReturn: true, purchasePermit: purchasePermit);
         await StockReplayWacCostStateWriter.ApplyAsync(
             context, permit, cancellationToken);
         return new[] { history.Id }.Concat(tail.RepricedHistoryIds).ToArray();

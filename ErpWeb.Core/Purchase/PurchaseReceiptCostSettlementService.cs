@@ -830,9 +830,16 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                         $"Invoice {invoice.DocNo} has an unbalanced reversed purchase-cost adjustment generation.");
                 continue;
             }
+            var activeAdjustment = root;
             if (chain.Count > 1 && root.InventoryAdjustmentAmount != 0m)
-                return PurchaseReceiptSettlementResult.Fail(
-                    $"Invoice {invoice.DocNo} has a credit-note value adjustment that needs full inventory replay before PI rollback.");
+            {
+                var replayed = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(
+                    db, chain, cancellationToken);
+                if (replayed is null)
+                    return PurchaseReceiptSettlementResult.Fail(
+                        $"Invoice {invoice.DocNo} has a credit-note value adjustment that needs full inventory replay before PI rollback.");
+                activeAdjustment = replayed.Active;
+            }
             if (quantity != root.BaseQty
                 || SignedAdjustmentMoney(chain,
                     x => x.ActualBaseAmount) != root.ActualBaseAmount
@@ -847,14 +854,14 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                 || StockLedgerPrecision.Money(chain.Sum(x =>
                     x.TotalAdjustmentAmount)) != root.TotalAdjustmentAmount
                 || StockLedgerPrecision.Money(chain.Sum(x =>
-                    x.InventoryAdjustmentAmount)) != root.InventoryAdjustmentAmount
+                    x.InventoryAdjustmentAmount)) != activeAdjustment.InventoryAdjustmentAmount
                 || StockLedgerPrecision.Money(chain.Sum(x =>
-                    x.ConsumedVarianceAmount)) != root.ConsumedVarianceAmount
+                    x.ConsumedVarianceAmount)) != activeAdjustment.ConsumedVarianceAmount
                 || chain.Count % 2 == 0)
                 return PurchaseReceiptSettlementResult.Fail(
                     $"Invoice {invoice.DocNo} has a partially restored purchase-cost adjustment generation.");
-            activeAdjustments.Add(root);
-            adjustmentLeafByRoot.Add(root.Id, chain[^1].Id);
+            activeAdjustments.Add(activeAdjustment);
+            adjustmentLeafByRoot.Add(activeAdjustment.Id, chain[^1].Id);
         }
         var adjustments = activeAdjustments.ToArray();
 
@@ -1947,17 +1954,8 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                 var variance = StockLedgerPrecision.Money(row.AllocatedActualBaseAmount - referenceAmount);
                 var capitalizableQty = StockLedgerPrecision.Quantity(
                     Math.Min(remainingCapitalizableQty, row.SettledBaseQty));
-                var inventoryAmount = variance == 0m || capitalizableQty <= 0m
-                    ? 0m
-                    : StockLedgerPrecision.Money(variance * capitalizableQty / row.SettledBaseQty);
-
-                if (method == StockCostMethods.Standard)
-                    inventoryAmount = 0m;
-                else if (inventoryAmount < 0m)
-                    inventoryAmount = Math.Max(-runningValue, inventoryAmount);
-
-                inventoryAmount = StockLedgerPrecision.Money(inventoryAmount);
-                var consumedAmount = StockLedgerPrecision.Money(variance - inventoryAmount);
+                var (inventoryAmount, consumedAmount) = StockPurchaseVarianceAllocator.Allocate(
+                    variance, row.SettledBaseQty, capitalizableQty, runningValue, method);
                 runningValue = StockLedgerPrecision.Money(runningValue + inventoryAmount);
                 remainingCapitalizableQty = StockLedgerPrecision.Quantity(
                     remainingCapitalizableQty - capitalizableQty);

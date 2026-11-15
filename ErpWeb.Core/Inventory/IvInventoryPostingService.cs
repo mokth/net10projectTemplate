@@ -2548,6 +2548,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, StockOutNoLinesMessage(expectedTrxType));
         }
 
+        var correctionItems = details.Where(d => !string.IsNullOrWhiteSpace(d.ICode))
+            .Select(d => d.ICode!).Distinct().ToArray();
+        if (correctionItems.Length != 0 && await HasUnresolvedReversedSaleValueAsync(
+                db, companyCode, branchCode, correctionItems, batch.TrxDtTime, cancellationToken))
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "This stock issue has an existing reversed-sale cost correction that needs replay.");
+
         if (await _posting.HistoryExistsForBatchAsync(db, companyCode, branchCode, batchNo, cancellationToken))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "History already exists for this batch.");

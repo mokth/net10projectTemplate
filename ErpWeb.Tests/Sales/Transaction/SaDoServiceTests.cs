@@ -1507,7 +1507,17 @@ public class SaDoServiceTests : IAsyncLifetime
             if (returnAllocationStage == 10)
             {
                 var billedReceiptRollback = await receipt.RollbackAsync([savedReceipt.BatchNo]);
-                Assert.True(billedReceiptRollback.Succeeded, billedReceiptRollback.ErrorMessage);
+                Assert.False(billedReceiptRollback.Succeeded);
+                await using var unchanged = await _factory.CreateDbContextAsync();
+                Assert.Equal(IvBatchStatuses.Posted, (await unchanged.IvTrxBatches
+                    .SingleAsync(b => b.BatchNo == savedReceipt.BatchNo)).BatchStatus);
+                var state = await unchanged.StockCostStates.SingleAsync();
+                Assert.Equal((20m, 95m), (state.OnHandBaseQty, state.InventoryValue));
+                Assert.Equal(20m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+                Assert.Equal(19m, (await unchanged.StockValuationFacts.SingleAsync(f =>
+                    f.SourceDocumentType == "SA_DO" && f.MovementCode == "SALE_OUT_REVERSAL"
+                    && f.StockPosting!.PostingRole == "REVERSAL")).CostAmount);
+                return;
             }
             await using var finalBilled = await _factory.CreateDbContextAsync();
             Assert.Equal(1, await finalBilled.IvTrxHistories.CountAsync(h =>
@@ -1569,6 +1579,19 @@ public class SaDoServiceTests : IAsyncLifetime
             await afterDo.StockValuationFacts.Where(f => f.Id == reversal.Id)
                 .ExecuteUpdateAsync(update => update.SetProperty(f => f.CostAmount,
                     reversal.CostAmount));
+            var blocked = await receipt.RollbackAsync([savedReceipt.BatchNo]);
+            Assert.False(blocked.Succeeded);
+            await using var afterBlockedReceipt = await _factory.CreateDbContextAsync();
+            Assert.Equal(IvBatchStatuses.Posted, (await afterBlockedReceipt.IvTrxBatches
+                .SingleAsync(b => b.BatchNo == savedReceipt.BatchNo)).BatchStatus);
+            var state = await afterBlockedReceipt.StockCostStates.SingleAsync();
+            Assert.Equal((20m, 95m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(receiptShape == 2 ? 17m : 20m,
+                (await afterBlockedReceipt.IvBalLocs.SingleAsync(b => b.Id == balId)).StdQty);
+            Assert.Equal(19m, (await afterBlockedReceipt.StockValuationFacts.SingleAsync(f =>
+                f.SourceDocumentType == "SA_DO" && f.MovementCode == "SALE_OUT_REVERSAL"
+                && f.StockPosting!.PostingRole == "REVERSAL")).CostAmount);
+            return;
         }
         var receiptRollback = await receipt.RollbackAsync([savedReceipt.BatchNo]);
         Assert.True(receiptRollback.Succeeded, receiptRollback.ErrorMessage);
