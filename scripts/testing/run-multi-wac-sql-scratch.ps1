@@ -64,6 +64,9 @@ param(
     [switch]$BackdatedInvoiceSaleGoods,
     [switch]$BackdatedInvoiceDeliveryGoods,
     [switch]$InvoiceBeforeSaleGoods,
+    [switch]$InvoiceRollbackCanceledSale,
+    [switch]$InvoicePostCanceledSale,
+    [switch]$InvoiceDuringCanceledSale,
     [switch]$InvoiceBeforeTwoIssues,
     [switch]$BackdatedInvoiceDepleted,
     [switch]$BackdatedPurchaseInvoice,
@@ -72,7 +75,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods) {
+if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods -or $InvoiceRollbackCanceledSale -or $InvoicePostCanceledSale -or $InvoiceDuringCanceledSale) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose this replay case on its own.' }
 }
@@ -120,6 +123,9 @@ try {
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($InvoiceDuringCanceledSale) { 'SqlServer_purchase_invoice_during_canceled_sale_is_blocked_atomically' }
+        elseif ($InvoiceRollbackCanceledSale) { 'SqlServer_purchase_invoice_rollback_after_sale_cancellation_is_blocked_atomically' }
+        elseif ($InvoicePostCanceledSale) { 'SqlServer_backdated_purchase_invoice_after_sale_cancellation_is_blocked_atomically' }
         elseif ($InvoiceBeforeSaleGoods) { 'SqlServer_purchase_invoice_before_sale_and_goods_receipt_rolls_back_atomically' }
         elseif ($BackdatedInvoiceSaleGoods) { 'SqlServer_backdated_purchase_invoice_reprices_sale_and_goods_receipt_atomically' }
         elseif ($BackdatedInvoiceDeliveryGoods) { 'SqlServer_backdated_purchase_invoice_reprices_delivery_and_goods_receipt_atomically' }

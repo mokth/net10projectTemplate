@@ -38,6 +38,11 @@ $patterns = @(
     'Backdated_purchase_invoice_rejects_damaged_goods_receipt_after_sale',
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
+    'Purchase_invoice_rollback_after_sale_cancellation_is_blocked_atomically',
+    'Backdated_purchase_invoice_after_sale_cancellation_is_blocked_atomically',
+    'Purchase_invoice_during_canceled_sale_is_blocked_atomically',
+    'Backdated_purchase_invoice_with_damaged_canceled_sale_is_blocked_atomically',
+    'Zero_variance_purchase_invoice_after_sale_cancellation_can_post_and_rollback',
     'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
     'Backdated_purchase_invoice_reprices_delivery_and_rolls_back',
     'Purchase_invoice_before_delivery_reprices_cost_on_rollback',
@@ -178,6 +183,11 @@ $required = @(
     'Backdated_purchase_invoice_rejects_damaged_goods_receipt_after_sale',
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
+    'Purchase_invoice_rollback_after_sale_cancellation_is_blocked_atomically',
+    'Backdated_purchase_invoice_after_sale_cancellation_is_blocked_atomically',
+    'Purchase_invoice_during_canceled_sale_is_blocked_atomically',
+    'Backdated_purchase_invoice_with_damaged_canceled_sale_is_blocked_atomically',
+    'Zero_variance_purchase_invoice_after_sale_cancellation_can_post_and_rollback',
     'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
     'Backdated_purchase_invoice_reprices_delivery_and_rolls_back',
     'Purchase_invoice_before_delivery_reprices_cost_on_rollback',
@@ -315,6 +325,9 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleGoods
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryGoods
         & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeSaleGoods
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceRollbackCanceledSale
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoicePostCanceledSale
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceDuringCanceledSale
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDepleted
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost

@@ -1286,6 +1286,10 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                 var affectedItems = settlement.Adjustments.Where(a => a.TotalAdjustmentAmount != 0m
                         || a.InventoryAdjustmentAmount != 0m)
                     .Select(a => a.ItemCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if (affectedItems.Length > 0 && await HasLaterCanceledSaleAsync(db, write.CompanyCode,
+                        write.BranchCode!, begin.Context.Epoch.Id, begin.Context.Posting.EffectiveAt,
+                        begin.Context.Posting.PostingSequence, affectedItems, cancellationToken))
+                    return ($"Cannot post purchase {(isCreditNote ? "credit note" : "invoice")} {invoice.DocNo}: a canceled sale has stock costs that must be recalculated first.", null);
                 if (affectedItems.Length > 0 && await HasLaterActiveWacCostAsync(db, write.CompanyCode,
                         write.BranchCode!, begin.Context.Epoch.Id, begin.Context.Posting.EffectiveAt,
                         begin.Context.Posting.PostingSequence, affectedItems, cancellationToken))
@@ -1673,6 +1677,10 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                         && a.SourceCostingRevision == invoice.CostingRevision
                         && (a.InventoryAdjustmentAmount != 0m || isCreditNote && a.TotalAdjustmentAmount != 0m))
                     .Select(a => a.ItemCode).Distinct().ToArrayAsync(cancellationToken);
+                if (affectedItems.Length > 0 && await HasLaterCanceledSaleAsync(db, write.CompanyCode,
+                        write.BranchCode!, original.LedgerEpochId, original.EffectiveAt,
+                        original.PostingSequence, affectedItems, cancellationToken))
+                    return ($"Cannot roll back purchase {(isCreditNote ? "credit note" : "invoice")} {invoice.DocNo}: a canceled sale has stock costs that must be recalculated first.", null);
                 var ownReplayFacts = isInvoice
                     ? await StockReplayPurchaseVarianceGenerationReader.ValidatedActiveFactIdsAsync(db,
                         write.CompanyCode, write.BranchCode!, invoice.DocNo, invoice.CostingRevision, cancellationToken)
@@ -1745,6 +1753,26 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                 await _stockCoordinator.AbortInTransactionAsync(begin.Context, CancellationToken.None);
         }
     }
+
+    // A canceled sale is absent from the active tail, but its issue and reversal
+    // can still cross the invoice date and require historical recosting.
+    private static Task<bool> HasLaterCanceledSaleAsync(
+        AppDbContext db, string company, string branch, long epoch, DateTime effectiveAt,
+        long sequence, string[] affectedItems, CancellationToken cancellationToken) =>
+        db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.CompanyCode == company && h.BranchCode == branch
+            && h.LedgerVersion == 2 && (h.LedgerEpochId == epoch || h.LedgerEpochId == null)
+            && h.TrxType == IvTrxTypes.SalesOut && h.ICode != null && affectedItems.Contains(h.ICode)
+            && db.IvTrxHistories.Any(r => r.CompanyCode == company && r.BranchCode == branch
+                && r.ReversesHistoryId == h.Id
+                && (h.TrxDtTime > effectiveAt || h.TrxDtTime == effectiveAt
+                        && !db.StockPostings.Any(p => p.Id == h.StockPostingId && p.CompanyCode == company
+                            && p.BranchCode == branch && p.LedgerEpochId == epoch && p.SealedAtUtc != null
+                            && p.PostingSequence <= sequence)
+                    || r.TrxDtTime > effectiveAt || r.TrxDtTime == effectiveAt
+                        && !db.StockPostings.Any(p => p.Id == r.StockPostingId && p.CompanyCode == company
+                            && p.BranchCode == branch && p.LedgerEpochId == epoch && p.SealedAtUtc != null
+                            && p.PostingSequence <= sequence))),
+            cancellationToken);
 
     private static async Task<bool> HasLaterActiveWacCostAsync(
         AppDbContext db, string company, string branch, long epoch, DateTime effectiveAt,
