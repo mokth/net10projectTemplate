@@ -2440,6 +2440,14 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             invoiceUnitPrice: 11m, testBackdatedCreditNote: type == "CN" ? "cdn-replay" : "cdn-replay-dn");
 
     [Theory]
+    [InlineData("CN")]
+    [InlineData("DN")]
+    public Task Purchase_credit_note_replays_multiple_later_issues_and_repeats_rollback(string type) =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: type == "CN" ? "cdn-replay" : "cdn-replay-dn",
+            cdnReplayCase: "multiple");
+
+    [Theory]
     [InlineData("closed")]
     [InlineData("source")]
     [InlineData("stale")]
@@ -2775,6 +2783,15 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         await PreparePurchaseReplaySqlFixtureAsync();
         await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay");
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_purchase_cdn_replays_multiple_later_issues_and_repeats_rollback()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "multiple");
     }
 
     private async Task ExerciseHistoricalConsumedInvoiceAsync(bool enabled, bool consumedBeforeInvoice,
@@ -4259,6 +4276,23 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             });
             Assert.True(laterIssue.Succeeded, laterIssue.ErrorMessage);
             Assert.True((await issue.PostAsync([laterIssue.BatchNo])).Succeeded);
+            int? secondIssueBatchNo = null;
+            if (cdnReplayCase == "multiple")
+            {
+                var secondIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+                {
+                    TrxDate = FixedToday.AddDays(1),
+                    Lines = [new IvMiscIssueLineRequest
+                    {
+                        FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                        Quantity = 2m, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+                    }]
+                });
+                Assert.True(secondIssue.Succeeded, secondIssue.ErrorMessage);
+                var secondPost = await issue.PostAsync([secondIssue.BatchNo]);
+                Assert.True(secondPost.Succeeded, secondPost.ErrorMessage);
+                secondIssueBatchNo = secondIssue.BatchNo;
+            }
             async Task<(decimal Qty, decimal Value, decimal Balance, string Status, int Postings, int Facts, int Adjustments)> EvidenceAsync()
             {
                 await using var db = await _factory.CreateDbContextAsync();
@@ -4342,7 +4376,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 async Task AssertReplayStateAsync(decimal value, decimal issueCost, bool posted)
                 {
                     var state = await EvidenceAsync();
-                    Assert.Equal((17m, value, 17m, posted ? "POSTED" : "NEW"),
+                    var expectedQty = secondIssueBatchNo.HasValue ? 15m : 17m;
+                    Assert.Equal((expectedQty, value, expectedQty, posted ? "POSTED" : "NEW"),
                         (state.Qty, state.Value, state.Balance, state.Status));
                     await using var db = await _factory.CreateDbContextAsync();
                     if (qaHoldId is long holdId)
@@ -4355,11 +4390,20 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                         && h.EntryRole == "ORIGINAL");
                     var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
                     Assert.Equal(issueCost, Assert.Single(active[history.Id]).CostAmount);
+                    if (secondIssueBatchNo is int secondBatch)
+                    {
+                        var second = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == secondBatch
+                            && h.EntryRole == "ORIGINAL");
+                        var secondActive = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [second]);
+                        var secondCost = !posted ? 8.666666m
+                            : testBackdatedCreditNote == "cdn-replay" ? 8.555556m : 8.777778m;
+                        Assert.Equal(secondCost, Assert.Single(secondActive[second.Id]).CostAmount);
+                    }
                     var month = new DateTime(FixedToday.Year, FixedToday.Month, 1);
                     Assert.Null(await StockValuationSnapshotBuilder.AppendAsync(db, "DEMO", "HQ", month,
                         month.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
                 }
-                await AssertReplayStateAsync(73.666667m, 4.333333m, posted: false);
+                await AssertReplayStateAsync(secondIssueBatchNo.HasValue ? 65.000001m : 73.666667m, 4.333333m, posted: false);
                 bool isSqlServer;
                 await using (var provider = await _factory.CreateDbContextAsync())
                     isSqlServer = provider.Database.IsSqlServer();
@@ -4422,7 +4466,10 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                         var posted = await ChangeCdnAsync(posting: true);
                         Assert.True(posted.Succeeded, $"Cycle {cycle}: {posted.ErrorMessage}");
                     }
-                    await AssertReplayStateAsync(testBackdatedCreditNote == "cdn-replay" ? 72.722222m : 74.611111m,
+                    var expectedValue = secondIssueBatchNo.HasValue
+                        ? testBackdatedCreditNote == "cdn-replay" ? 64.166666m : 65.833333m
+                        : testBackdatedCreditNote == "cdn-replay" ? 72.722222m : 74.611111m;
+                    await AssertReplayStateAsync(expectedValue,
                         testBackdatedCreditNote == "cdn-replay" ? 4.277778m : 4.388889m, posted: true);
                     if (cdnReplayCase is "audit" or "settlement")
                     {
@@ -4463,7 +4510,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                         var replayRollback = await ChangeCdnAsync(posting: false);
                         Assert.True(replayRollback.Succeeded, $"Cycle {cycle}: {replayRollback.ErrorMessage}");
                     }
-                    await AssertReplayStateAsync(73.666667m, 4.333333m, posted: false);
+                    await AssertReplayStateAsync(secondIssueBatchNo.HasValue ? 65.000001m : 73.666667m, 4.333333m, posted: false);
                 }
                 return;
             }
