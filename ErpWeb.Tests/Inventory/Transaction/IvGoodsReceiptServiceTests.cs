@@ -2432,6 +2432,29 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: scenario);
 
+    [Theory]
+    [InlineData("CN")]
+    [InlineData("DN")]
+    public Task Purchase_credit_note_replays_later_issue_and_repeats_rollback(string type) =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: type == "CN" ? "cdn-replay" : "cdn-replay-dn");
+
+    [Theory]
+    [InlineData("closed")]
+    [InlineData("source")]
+    [InlineData("stale")]
+    [InlineData("extra")]
+    [InlineData("audit")]
+    [InlineData("settlement")]
+    public Task Purchase_credit_note_replay_rejects_unproven_evidence(string refusal) =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: refusal);
+
+    [Fact]
+    public Task Purchase_credit_note_replay_preserves_qa_hold() =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "qa");
+
     [Fact]
     public Task Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback() =>
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 5.565217m, 122.434783m,
@@ -2743,6 +2766,15 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         await PreparePurchaseReplaySqlFixtureAsync();
         await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-rollback");
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_purchase_cdn_replays_later_issue_and_repeats_rollback()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay");
     }
 
     private async Task ExerciseHistoricalConsumedInvoiceAsync(bool enabled, bool consumedBeforeInvoice,
@@ -3818,7 +3850,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         bool invoiceBeforeReceiptAfterIssue = false, string? testBackdatedCreditNote = null,
         bool allowPartialVariance = false, bool damagePurchaseGeneration = false, bool lotControlled = false,
         bool testZeroOriginalVariance = false, bool testLegacyWithoutZeroAnchor = false,
-        bool testZeroInvoiceOnly = false)
+        bool testZeroInvoiceOnly = false, string? cdnReplayCase = null)
     {
         await EnsureActiveStockLedgerAsync();
         if (lotControlled)
@@ -4152,13 +4184,30 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             }
         }
 
-        if (testBackdatedCreditNote is "cdn-post" or "cdn-rollback")
+        if (testBackdatedCreditNote is "cdn-post" or "cdn-rollback" or "cdn-replay" or "cdn-replay-dn")
         {
             var tenant = InventoryTenantTestHelper.CreateTenantContext(location: "MAIN");
             var access = new Mock<IAccessRightService>();
             access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
-            var branchLock = new BranchStockTransactionLock();
+            IBranchStockTransactionLock branchLock = new BranchStockTransactionLock();
+            if (cdnReplayCase == "stale")
+            {
+                var actualLock = branchLock;
+                var changed = false;
+                var mock = new Mock<IBranchStockTransactionLock>();
+                mock.Setup(x => x.AcquireAsync(It.IsAny<AppDbContext>(), It.IsAny<string>(),
+                        It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                    .Returns(async (AppDbContext locked, string company, string branch, CancellationToken token) =>
+                    {
+                        await actualLock.AcquireAsync(locked, company, branch, token);
+                        if (changed) return;
+                        changed = true;
+                        await locked.PoInvoiceDetails.Where(d => d.DocNo == piDocNo)
+                            .ExecuteUpdateAsync(u => u.SetProperty(d => d.NetAmount, d => d.NetAmount + 1m), token);
+                    });
+                branchLock = mock.Object;
+            }
             var coordinator = new StockPostingCoordinator(_factory, tenant, branchLock,
                 new StockPeriodGuard(), new NoActiveStockFreezeGuard(), new InventoryValuationService());
             var postingRepo = new IvStockPostingRepository();
@@ -4170,10 +4219,14 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 NullLogger<PoCdnService>.Instance, stockCoordinator: coordinator,
                 costPostingCommands: new PurchaseCostPostingCommandFactory(),
                 costAdjustments: new PurchaseCostAdjustmentPostingService(coordinator, new StockValueAdjustmentWriter()),
-                cdnCostAdjustments: new PurchaseCdnCostAdjustmentService());
+                cdnCostAdjustments: new PurchaseCdnCostAdjustmentService(), branchStockLock: branchLock,
+                configuration: testBackdatedCreditNote is "cdn-replay" or "cdn-replay-dn"
+                    ? new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+                        { ["OpenPeriodBackdatedReplayEnabled"] = "true" }).Build() : null);
             var saved = await cdn.SaveNewAsync(new PoCdnSaveRequest
             {
-                Type = "CN", DocDate = FixedToday, VendorCode = "SUP01", InvNo = piDocNo,
+                Type = testBackdatedCreditNote == "cdn-replay-dn" ? "DN" : "CN",
+                DocDate = FixedToday, VendorCode = "SUP01", InvNo = piDocNo,
                 ReturnStock = false, Currency = "MYR", ReasonCode = "PRICE_ADJUSTMENT",
                 SupplierDocNo = "SUP-CN-REPLAY", SupplierDocDate = FixedToday, TaxGrCode = "SR",
                 Lines = [new PoCdnLineRequest
@@ -4214,6 +4267,205 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                     (await db.PoCdns.SingleAsync(c => c.DocNo == noteNo)).Status,
                     await db.StockPostings.CountAsync(), await db.StockValuationFacts.CountAsync(),
                     await db.PurchaseCostAdjustments.CountAsync());
+            }
+            if (testBackdatedCreditNote is "cdn-replay" or "cdn-replay-dn")
+            {
+                if (cdnReplayCase == "closed")
+                {
+                    await using var closed = await _factory.CreateDbContextAsync();
+                    var first = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+                    closed.IvPeriodCloseHdrs.Add(new IvPeriodCloseHdr
+                    {
+                        CompanyCode = "DEMO", BranchCode = "HQ", PeriodFrom = first,
+                        PeriodTo = first.AddMonths(1).AddDays(-1), Status = IvPeriodCloseStatuses.Closed
+                    });
+                    await closed.SaveChangesAsync();
+                }
+                else if (cdnReplayCase == "source")
+                {
+                    await using var changed = await _factory.CreateDbContextAsync();
+                    await changed.PoInvoiceDetails.Where(d => d.DocNo == piDocNo)
+                        .ExecuteUpdateAsync(u => u.SetProperty(d => d.NetAmount, d => d.NetAmount + 1m));
+                }
+                else if (cdnReplayCase == "extra")
+                {
+                    var extra = await receipt.SaveNewAsync(MiscRequest(FixedToday.AddDays(1), 1m, 10m));
+                    Assert.True(extra.Succeeded, extra.ErrorMessage);
+                    var extraPost = await receipt.PostAsync([extra.BatchNo]);
+                    Assert.True(extraPost.Succeeded, extraPost.ErrorMessage);
+                }
+                if (cdnReplayCase is "closed" or "source" or "stale" or "extra")
+                {
+                    var refusalBefore = await EvidenceAsync();
+                    var refused = await cdn.PostAsync([await KeyAsync()]);
+                    Assert.False(refused.Succeeded);
+                    if (cdnReplayCase == "closed")
+                        Assert.Contains("closed", refused.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                    if (cdnReplayCase == "stale")
+                    {
+                        Assert.Contains("changed", refused.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                        await using var check = await _factory.CreateDbContextAsync();
+                        Assert.Equal(33m, (await check.PoInvoiceDetails.SingleAsync(d => d.DocNo == piDocNo)).NetAmount);
+                    }
+                    Assert.Equal(refusalBefore, await EvidenceAsync());
+                    return;
+                }
+                long? qaHoldId = null;
+                if (cdnReplayCase == "qa")
+                {
+                    await using var qa = await _factory.CreateDbContextAsync();
+                    var balance = await qa.IvBalLocs.SingleAsync(b => b.Id == pileId);
+                    qa.QaPolicies.Add(new QaPolicy
+                    {
+                        CompanyCode = "DEMO", Version = 1, Enabled = true, IsPublished = true,
+                        PhysicalHoldEnabled = true, CreatedDate = DateTime.UtcNow, CreatedBy = "TEST"
+                    });
+                    var qaLine = new QaCaseLine { LineNo = 1, ItemCode = "A100", Uom = "EA", Qty = 17m };
+                    var qaCase = new QaCase
+                    {
+                        CompanyCode = "DEMO", BranchCode = "HQ", CaseNo = "QA-CDN-REPLAY", CaseDate = FixedToday,
+                        Status = QaCaseStatuses.Approved, SourceType = QaSourceTypes.InventoryStock,
+                        CreatedDate = DateTime.UtcNow, CreatedBy = "TEST", Lines = [qaLine]
+                    };
+                    var hold = new QaPhysicalHold
+                    {
+                        CompanyCode = "DEMO", BranchCode = "HQ", CaseLine = qaLine, BalLocId = pileId,
+                        ItemCode = balance.ICode, WarehouseCode = balance.WhCode, LocationCode = balance.LocCode,
+                        LotNo = balance.LotNo ?? string.Empty, ItemStatus = balance.IStatus, ReservedBaseQty = 17m,
+                        Status = QaLogicalHoldStatuses.Active, Cause = QaLogicalHoldCauses.KeepHold, CreatedAtUtc = DateTime.UtcNow
+                    };
+                    qaCase.PhysicalHolds.Add(hold);
+                    qa.QaCases.Add(qaCase);
+                    await qa.SaveChangesAsync();
+                    qaHoldId = hold.Uid;
+                }
+                async Task AssertReplayStateAsync(decimal value, decimal issueCost, bool posted)
+                {
+                    var state = await EvidenceAsync();
+                    Assert.Equal((17m, value, 17m, posted ? "POSTED" : "NEW"),
+                        (state.Qty, state.Value, state.Balance, state.Status));
+                    await using var db = await _factory.CreateDbContextAsync();
+                    if (qaHoldId is long holdId)
+                    {
+                        var hold = await db.QaPhysicalHolds.SingleAsync(h => h.Uid == holdId);
+                        Assert.Equal((QaLogicalHoldStatuses.Active, 17m, pileId),
+                            (hold.Status, hold.ReservedBaseQty, hold.BalLocId));
+                    }
+                    var history = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == laterIssue.BatchNo
+                        && h.EntryRole == "ORIGINAL");
+                    var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                    Assert.Equal(issueCost, Assert.Single(active[history.Id]).CostAmount);
+                    var month = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+                    Assert.Null(await StockValuationSnapshotBuilder.AppendAsync(db, "DEMO", "HQ", month,
+                        month.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
+                }
+                await AssertReplayStateAsync(73.666667m, 4.333333m, posted: false);
+                bool isSqlServer;
+                await using (var provider = await _factory.CreateDbContextAsync())
+                    isSqlServer = provider.Database.IsSqlServer();
+                async Task<PoCdnOperationResult> ChangeCdnAsync(bool posting) => posting
+                    ? await cdn.PostAsync([await KeyAsync()]) : await cdn.RollbackAsync([await KeyAsync()]);
+                async Task AssertSqlContextClearedAsync()
+                {
+                    await using var check = await _factory.CreateDbContextAsync();
+                    await check.Database.OpenConnectionAsync();
+                    await using var command = check.Database.GetDbConnection().CreateCommand();
+                    command.CommandText = "SELECT SESSION_CONTEXT(N'STOCK_LEDGER_V2_POSTING_ID')";
+                    Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
+                }
+                async Task AssertSqlFailureAndBusyAsync(bool posting)
+                {
+                    var snapshot = await EvidenceAsync();
+                    await using (var holding = await _factory.CreateDbContextAsync())
+                    await using (var tx = await holding.Database.BeginTransactionAsync())
+                    {
+                        var held = await holding.PoCdns.FromSqlInterpolated($@"SELECT * FROM dbo.PoCdn WITH (UPDLOCK, HOLDLOCK)
+                            WHERE CompanyCode = {"DEMO"} AND BranchCode = {"HQ"} AND DocNo = {noteNo}")
+                            .AsNoTracking().ToArrayAsync();
+                        Assert.Single(held);
+                        var refused = await ChangeCdnAsync(posting).WaitAsync(TimeSpan.FromSeconds(15));
+                        Assert.False(refused.Succeeded);
+                        Assert.Contains("busy", refused.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                        await tx.RollbackAsync();
+                    }
+                    Assert.Equal(snapshot, await EvidenceAsync());
+                    await AssertSqlContextClearedAsync();
+                    const string constraint = "TestRejectCdnIssueReplay";
+                    var rejected = (posting ? 4.277778m : 4.333333m).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    await using (var db = await _factory.CreateDbContextAsync())
+                        await db.Database.ExecuteSqlRawAsync($"ALTER TABLE [StockValuationFact] WITH NOCHECK ADD CONSTRAINT [{constraint}] CHECK ([MovementCode] <> N'ISSUE_OUT' OR [CostAmount] <> {rejected})");
+                    try
+                    {
+                        Assert.False((await ChangeCdnAsync(posting)).Succeeded);
+                    }
+                    finally
+                    {
+                        await using var db = await _factory.CreateDbContextAsync();
+                        await db.Database.ExecuteSqlRawAsync($"ALTER TABLE [StockValuationFact] DROP CONSTRAINT [{constraint}]");
+                    }
+                    Assert.Equal(snapshot, await EvidenceAsync());
+                    await AssertSqlContextClearedAsync();
+                }
+                for (var cycle = 0; cycle < 2; cycle++)
+                {
+                    if (isSqlServer && cycle == 0)
+                    {
+                        await AssertSqlFailureAndBusyAsync(posting: true);
+                        var attempts = await Task.WhenAll(ChangeCdnAsync(true), ChangeCdnAsync(true))
+                            .WaitAsync(TimeSpan.FromSeconds(45));
+                        Assert.Single(attempts, a => a.Succeeded);
+                        Assert.Single(attempts, a => !a.Succeeded);
+                        await AssertSqlContextClearedAsync();
+                    }
+                    else
+                    {
+                        var posted = await ChangeCdnAsync(posting: true);
+                        Assert.True(posted.Succeeded, $"Cycle {cycle}: {posted.ErrorMessage}");
+                    }
+                    await AssertReplayStateAsync(testBackdatedCreditNote == "cdn-replay" ? 72.722222m : 74.611111m,
+                        testBackdatedCreditNote == "cdn-replay" ? 4.277778m : 4.388889m, posted: true);
+                    if (cdnReplayCase is "audit" or "settlement")
+                    {
+                        await using (var damaged = await _factory.CreateDbContextAsync())
+                        {
+                            if (cdnReplayCase == "audit")
+                            {
+                                var effect = await damaged.StockReplayEffects.Where(e =>
+                                    e.EffectKind == StockReplayInvoiceIssueAudit.CreditNoteEffectKind).Select(e => e.Id).FirstAsync();
+                                await damaged.StockReplayEffects.Where(e => e.Id == effect)
+                                    .ExecuteUpdateAsync(u => u.SetProperty(e => e.OriginalEntityId, (long?)null));
+                            }
+                            else
+                                await damaged.PurchaseReceiptCostSettlements.Where(s => s.PiDocNo == piDocNo)
+                                    .ExecuteUpdateAsync(u => u.SetProperty(s => s.AllocatedActualBaseAmount,
+                                        s => s.AllocatedActualBaseAmount + 1m));
+                        }
+                        var auditBefore = await EvidenceAsync();
+                        Assert.False((await cdn.RollbackAsync([await KeyAsync()])).Succeeded);
+                        Assert.Equal(auditBefore, await EvidenceAsync());
+                        await using var check = await _factory.CreateDbContextAsync();
+                        var month = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+                        Assert.NotNull(await StockValuationSnapshotBuilder.AppendAsync(check, "DEMO", "HQ", month,
+                            month.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
+                        return;
+                    }
+                    if (isSqlServer && cycle == 0)
+                    {
+                        await AssertSqlFailureAndBusyAsync(posting: false);
+                        var attempts = await Task.WhenAll(ChangeCdnAsync(false), ChangeCdnAsync(false))
+                            .WaitAsync(TimeSpan.FromSeconds(45));
+                        Assert.Single(attempts, a => a.Succeeded);
+                        Assert.Single(attempts, a => !a.Succeeded);
+                        await AssertSqlContextClearedAsync();
+                    }
+                    else
+                    {
+                        var replayRollback = await ChangeCdnAsync(posting: false);
+                        Assert.True(replayRollback.Succeeded, $"Cycle {cycle}: {replayRollback.ErrorMessage}");
+                    }
+                    await AssertReplayStateAsync(73.666667m, 4.333333m, posted: false);
+                }
+                return;
             }
             var before = await EvidenceAsync();
             var result = testBackdatedCreditNote == "cdn-post"

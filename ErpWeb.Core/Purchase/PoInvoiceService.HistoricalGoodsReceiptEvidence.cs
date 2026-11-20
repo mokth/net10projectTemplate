@@ -12,7 +12,7 @@ namespace ErpWeb.Core.Purchase;
 
 public sealed partial class PoInvoiceService
 {
-    private sealed record InvoiceGoodsReceiptPurchaseProof(
+    internal sealed record InvoiceGoodsReceiptPurchaseProof(
         int HistoryId, long FactId, int BatchId, string PoNo, short PoRelNo, short PoLineNo,
         byte[] OrderVersion, string OrderStatus, string? ItemCode, string? PurchaseUom, string? StdUom,
         decimal Received, decimal Returned, decimal ReturnedOnCredit, decimal Invoiced);

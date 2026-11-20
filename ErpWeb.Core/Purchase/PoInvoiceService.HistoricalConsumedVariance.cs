@@ -15,14 +15,14 @@ public sealed partial class PoInvoiceService
         string PoNo, short PoRelNo, short PoLineNo, long ReceiptFactId,
         string BaseUom, PurchaseCostAdjustmentRequest Adjustment, InvoiceIssueReplay? IssueReplay);
 
-    private sealed record InvoiceIssueChange(
+    internal sealed record InvoiceIssueChange(
         StockReplayWacEvent Issue, StockReplayWacStep IssueStep, long IssueOwnerId, long PriorFactId);
 
-    private sealed record InvoiceIssueTailProof(IReadOnlyList<InvoiceIssueChange> Changes, string EvidenceHash,
+    internal sealed record InvoiceIssueTailProof(IReadOnlyList<InvoiceIssueChange> Changes, string EvidenceHash,
         IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts, IReadOnlyList<InvoiceDirectSaleProof> Sales,
         IReadOnlyList<InvoiceDeliverySaleProof> Deliveries);
 
-    private sealed record InvoiceIssueReplay(
+    internal sealed record InvoiceIssueReplay(
         IReadOnlyList<InvoiceIssueChange> Changes, string TailEvidenceHash,
         IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts,
         IReadOnlyList<InvoiceDirectSaleProof> Sales,
@@ -269,7 +269,7 @@ public sealed partial class PoInvoiceService
             line.PoRelNo.Value, line.PoLineNo.Value, receipt.Id, receipt.BaseUom, adjustment, issueReplay);
     }
 
-    private static async Task<InvoiceIssueTailProof?> PlanInvoiceIssueChangesAsync(
+    internal static async Task<InvoiceIssueTailProof?> PlanInvoiceIssueChangesAsync(
         AppDbContext db, string company, string branch, string item, long epochId, int balanceId,
         string invoiceDocNo, string invoicePoNo, short invoicePoRelNo, short invoicePoLineNo,
         decimal invoiceQty, bool invoicePosted,
