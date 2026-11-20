@@ -128,6 +128,7 @@ $required = @(
     'SubconPostBlockedTests', 'SubconModeTests',
     'Purchase_credit_note_refuses_unreplayed_later_issue',
     'Purchase_credit_note_replays_later_issue_and_repeats_rollback',
+    'Purchase_credit_note_replays_multiple_later_issues_and_repeats_rollback',
     'Purchase_credit_note_replay_rejects_unproven_evidence',
     'Purchase_credit_note_replay_preserves_qa_hold',
     'Backdated_wac_misc_receipt_replays_after_value_neutral_purchase_invoice',
@@ -355,6 +356,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterIssuePost
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterIssueRollback
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnIssueReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnMultiIssueReplay
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts

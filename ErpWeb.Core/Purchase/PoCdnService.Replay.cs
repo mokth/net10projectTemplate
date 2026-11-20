@@ -68,8 +68,8 @@ public sealed partial class PoCdnService
             && lines.Length == 1 && orders.Length == 1 && orderLines.Length == 1;
     }
 
-    // The first route supports a single financial CN/DN and one later ordinary
-    // issue. All other dependencies continue through the existing safety guard.
+    // Financial CN/DN replay supports ordinary issues on one stock pile.
+    // Other dependencies continue through the existing safety guard.
     private async Task<CdnIssueReplayPlan?> PlanCdnIssueReplayAsync(
         AppDbContext db, PoCdn cdn, PoInvoice invoice, bool posting, CancellationToken ct)
     {
@@ -263,20 +263,21 @@ public sealed partial class PoCdnService
         var tail = posting
             ? await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch, item, key, ct)
             : await StockReplayWacFinancialTailReader.ReadLaterForCdnRemovalAsync(db, company, branch, item, key, priorFact!.Id, ct);
-        if (tail.LaterEvents.Count != 1 || tail.CurrentQuantity != states[0].OnHandBaseQty
-            || tail.CurrentValue != states[0].InventoryValue || tail.LaterEvents[0].EventId is not (> 0 and <= int.MaxValue)
-            || tail.LaterEvents[0].Key.EffectiveAt.Year != cdn.DocDate.Year
-            || tail.LaterEvents[0].Key.EffectiveAt.Month != cdn.DocDate.Month)
+        if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount
+            || tail.CurrentQuantity != states[0].OnHandBaseQty || tail.CurrentValue != states[0].InventoryValue
+            || tail.LaterEvents.Any(e => e.EventId is not (> 0 and <= int.MaxValue)
+                || e.Key.EffectiveAt.Year != cdn.DocDate.Year || e.Key.EffectiveAt.Month != cdn.DocDate.Month))
             return null;
-        var historyId = (int)tail.LaterEvents[0].EventId;
-        if (!await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.Id == historyId && h.CompanyCode == company
-                && h.BranchCode == branch && h.TrxType == IvTrxTypes.MiscellaneousIssue, ct))
+        var historyIds = tail.LaterEvents.Select(e => (int)e.EventId).ToArray();
+        if (await db.IvTrxHistories.AsNoTracking().CountAsync(h => historyIds.Contains(h.Id)
+                && h.CompanyCode == company && h.BranchCode == branch && h.ICode == item
+                && h.TrxType == IvTrxTypes.MiscellaneousIssue, ct) != historyIds.Length)
             return null;
         var policies = await db.StockCostPolicyRevisions.AsNoTracking().Where(p => p.CompanyCode == company
             && p.BranchCode == branch && p.Status == StockCostPolicyStatuses.Active
             && p.EffectiveFrom <= cdn.DocDate.Date && (p.EffectiveTo == null || p.EffectiveTo > cdn.DocDate.Date))
             .Select(p => new { p.Id, p.CostMethod, p.EffectiveFrom, p.EffectiveTo, p.Status }).ToArrayAsync(ct);
-        var lastDate = tail.LaterEvents[0].Key.EffectiveAt.Date;
+        var lastDate = tail.LaterEvents.Max(e => e.Key.EffectiveAt).Date;
         if (policies.Length != 1 || policies[0].EffectiveTo is DateTime end && end.Date <= lastDate
             || await db.StockCostPolicyRevisions.AsNoTracking().AnyAsync(p => p.CompanyCode == company
                 && p.BranchCode == branch && p.Status == StockCostPolicyStatuses.Active && p.Id != policies[0].Id
@@ -312,7 +313,7 @@ public sealed partial class PoCdnService
             epochs[0].Id, balances[0].Id, invoice.DocNo, invoiceLine.PoNo, invoiceLine.PoRelNo.Value,
             invoiceLine.PoLineNo.Value, invoiceLine.Qty, invoicePosted: true,
             tail.LaterEvents, projectedSteps, ct);
-        if (proof is null || proof.Changes.Count != 1 || proof.GoodsReceipts.Count != 0
+        if (proof is null || proof.GoodsReceipts.Count != 0
             || proof.Sales.Count != 0 || proof.Deliveries.Count != 0)
             return null;
         var replay = new PoInvoiceService.InvoiceIssueReplay(proof.Changes, proof.EvidenceHash,
