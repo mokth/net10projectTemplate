@@ -13,7 +13,8 @@ public sealed partial class PoInvoiceService
     private sealed record CanceledSaleInvoiceReplayPlan(
         string Fingerprint, long EpochId, long Watermark, string ItemCode,
         string PoNo, short PoRelNo, short PoLineNo, string SaleInvoiceNo, int SaleBatchId, int SaleBatchNo, int SaleLineId,
-        bool Posting, long PurchasePostingId, long PurchaseFactId, long ReceiptFactId, int BalanceId,
+        bool Posting, bool PrimaryCorrection, PurchaseCostAdjustmentRequest? InitialAdjustment,
+        long PurchasePostingId, long PurchaseFactId, long ReceiptFactId, int BalanceId,
         int SaleHistoryId, int ReversalHistoryId, long SaleFactId, long ReversalFactId,
         long? SaleCorrectionId, long? ReversalCorrectionId, long[] SaleCycleFactIds,
         decimal SaleQuantity, decimal OriginalSaleCost, decimal CurrentSaleCost, decimal CorrectedSaleCost,
@@ -27,10 +28,10 @@ public sealed partial class PoInvoiceService
     {
         if (invoice.Type != PoInvoiceTypes.Invoice
             || invoice.Status != (posting ? PoInvoiceStatuses.New : PoInvoiceStatuses.Posted)
-            || posting && invoice.CostingRevision <= 0
             || invoice.DeletedAtUtc is not null || invoice.Details.Count != 1)
             return null;
-        var sourceRevision = posting ? invoice.CostingRevision - 1 : invoice.CostingRevision;
+        var firstPost = posting && invoice.CostingRevision == 0;
+        var sourceRevision = posting && !firstPost ? invoice.CostingRevision - 1 : invoice.CostingRevision;
         var line = invoice.Details.Single();
         if (string.IsNullOrWhiteSpace(line.ICode) || string.IsNullOrWhiteSpace(line.PoNo)
             || line.PoRelNo is null || line.PoLineNo is null)
@@ -38,25 +39,44 @@ public sealed partial class PoInvoiceService
         var company = invoice.CompanyCode;
         var branch = invoice.BranchCode;
         var item = line.ICode.Trim();
+        // Avoid running the settlement preview twice for ordinary invoices.
+        // This route only accepts a sale strictly later than the invoice date;
+        // the existing guard still handles every other canceled-sale shape.
+        if (firstPost && !await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
+                h.CompanyCode == company && h.BranchCode == branch && h.ICode == item
+                && h.TrxType == IvTrxTypes.SalesOut && h.TrxDtTime > invoice.DocDate
+                && db.IvTrxHistories.Any(r => r.CompanyCode == company && r.BranchCode == branch
+                    && r.ReversesHistoryId == h.Id), ct))
+            return null;
+        var candidate = firstPost ? await PlanConsumedInvoiceAsync(db, invoice, ct, allowCanceledSaleOnly: true) : null;
+        if (firstPost && (candidate is null || candidate.IssueReplay is not null
+                || candidate.Adjustment.InventoryAdjustmentAmount != candidate.Adjustment.TotalAdjustmentAmount
+                || candidate.Adjustment.ConsumedVarianceAmount != 0m))
+            return null;
         var roots = await db.StockPostings.AsNoTracking().Where(p => p.CompanyCode == company
             && p.BranchCode == branch && p.SourceModule == "PROCUREMENT"
             && p.SourceDocumentType == "PO_INVOICE" && p.SourceDocumentId == invoice.DocNo
             && p.DocumentRevision == sourceRevision && p.PostingRole == "PRIMARY"
             && p.SealedAtUtc != null).ToArrayAsync(ct);
-        if (roots.Length != 1 || roots[0].CommandType != "PROCUREMENT_PO_INVOICE_PRIMARY"
-            || roots[0].EffectiveAt != invoice.DocDate || roots[0].ReversesPostingId is not null)
+        if (firstPost ? roots.Length != 0 : roots.Length != 1
+                || roots[0].CommandType != "PROCUREMENT_PO_INVOICE_PRIMARY"
+                || roots[0].EffectiveAt != invoice.DocDate || roots[0].ReversesPostingId is not null)
             return null;
-        var root = roots[0];
+        var root = firstPost ? new StockPosting
+        {
+            LedgerEpochId = candidate!.EpochId, EffectiveAt = invoice.DocDate,
+            PostingSequence = checked(candidate.Watermark + 1)
+        } : roots[0];
         if (!await HasLaterCanceledSaleAsync(db, company, branch, root.LedgerEpochId,
                 root.EffectiveAt, root.PostingSequence, [item], ct))
             return null;
-        var rootReversals = await db.StockPostings.AsNoTracking().Where(p => p.ReversesPostingId == root.Id).ToArrayAsync(ct);
-        if (posting ? rootReversals.Length != 1 || rootReversals[0].SealedAtUtc is null
+        var rootReversals = firstPost ? Array.Empty<StockPosting>() : await db.StockPostings.AsNoTracking().Where(p => p.ReversesPostingId == root.Id).ToArrayAsync(ct);
+        if (!firstPost && (posting ? rootReversals.Length != 1 || rootReversals[0].SealedAtUtc is null
                 || rootReversals[0].CompanyCode != company || rootReversals[0].BranchCode != branch
                 || rootReversals[0].LedgerEpochId != root.LedgerEpochId || rootReversals[0].PostingRole != "REVERSAL"
-            : rootReversals.Length != 0)
+            : rootReversals.Length != 0))
             return null;
-        var priorReversal = posting ? rootReversals[0] : null;
+        var priorReversal = posting && !firstPost ? rootReversals[0] : null;
         var invoiceSnapshot = new
         {
             invoice.DocNo, invoice.Type, invoice.DocDate, invoice.Currency, invoice.CurrRate, CostingRevision = sourceRevision,
@@ -65,52 +85,75 @@ public sealed partial class PoInvoiceService
                 x.Line, x.ICode, x.StdQty, x.NetAmount, x.PoNo, x.PoRelNo, x.PoLineNo, x.ReferencedInvoiceLineNo
             }).ToArray()
         };
-        if (StockPostingFingerprint.Create(new { Kind = "INVOICE_ROLLBACK_SOURCE" }, invoiceSnapshot).SourceSnapshotHash
+        if (!firstPost && (StockPostingFingerprint.Create(new { Kind = "INVOICE_ROLLBACK_SOURCE" }, invoiceSnapshot).SourceSnapshotHash
                 != root.SourceSnapshotHash
-            || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(root.SourceSnapshotJson)) != root.SourceSnapshotHash)
+            || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(root.SourceSnapshotJson)) != root.SourceSnapshotHash))
             return null;
-        var adjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
-            a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE"
-            && a.SourceDocumentNo == invoice.DocNo && a.SourceCostingRevision == sourceRevision
-            && a.StockPostingId == root.Id).ToArrayAsync(ct);
-        var settlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s =>
-            s.CompanyCode == company && s.BranchCode == branch && s.PiDocNo == invoice.DocNo
-            && s.PiCostingRevision == sourceRevision && s.StockPostingId == root.Id).ToArrayAsync(ct);
-        if (adjustments.Length != 1 || settlements.Length != 1
-            || adjustments[0].StockPostingId != root.Id || adjustments[0].ReversesAdjustmentId is not null
-            || adjustments[0].InventoryAdjustmentAmount == 0m || adjustments[0].ConsumedVarianceAmount != 0m
-            || adjustments[0].InventoryAdjustmentAmount != adjustments[0].TotalAdjustmentAmount
-            || adjustments[0].InventoryAdjustmentFactId is not long purchaseFactId
-            || settlements[0].StockPostingId != root.Id || settlements[0].ReversesSettlementId is not null)
-            return null;
-        var adjustmentReversals = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
-            a.ReversesAdjustmentId == adjustments[0].Id).ToArrayAsync(ct);
-        var settlementReversals = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s =>
-            s.ReversesSettlementId == settlements[0].Id).ToArrayAsync(ct);
-        if (posting ? adjustmentReversals.Length != 1 || settlementReversals.Length != 1
-                || adjustmentReversals[0].StockPostingId != priorReversal!.Id
-                || settlementReversals[0].StockPostingId != priorReversal.Id
-            : adjustmentReversals.Length != 0 || settlementReversals.Length != 0)
-            return null;
-        if (await db.PurchaseCostAdjustments.AsNoTracking().CountAsync(a => a.CompanyCode == company
-                && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE" && a.SourceDocumentNo == invoice.DocNo
-                && a.SourceCostingRevision == sourceRevision, ct) != (posting ? 2 : 1)
-            || await db.PurchaseReceiptCostSettlements.AsNoTracking().CountAsync(s => s.CompanyCode == company
-                && s.BranchCode == branch && s.PiDocNo == invoice.DocNo && s.PiCostingRevision == sourceRevision, ct)
-                != (posting ? 2 : 1))
-            return null;
-        var generation = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(db, adjustments, ct);
-        if (generation is null || generation.OriginalFact.Id != purchaseFactId || generation.ActiveFact.Id != purchaseFactId
-            || generation.Original.ItemCode != item || generation.Original.PoNo != line.PoNo
-            || generation.Original.PoRelNo != line.PoRelNo || generation.Original.PoLineNo != line.PoLineNo
-            || settlements[0].ReceiptValuationFactId != generation.OriginalFact.OriginalValuationFactId
-            || settlements[0].SettledBaseQty != line.StdQty)
-            return null;
-        var purchaseReversals = await db.StockValuationFacts.AsNoTracking().Where(f =>
-            f.ReversesValuationFactId == purchaseFactId).ToArrayAsync(ct);
-        if (posting ? purchaseReversals.Length != 1 || purchaseReversals[0].StockPostingId != priorReversal!.Id
-            : purchaseReversals.Length != 0)
-            return null;
+        long purchaseFactId, receiptFactId, settlementId;
+        decimal inventoryVariance;
+        string purchaseFingerprint;
+        if (firstPost)
+        {
+            if (await db.StockPostings.AsNoTracking().AnyAsync(p => p.CompanyCode == company && p.BranchCode == branch
+                    && p.SourceModule == "PROCUREMENT" && p.SourceDocumentType == "PO_INVOICE"
+                    && p.SourceDocumentId == invoice.DocNo, ct))
+                return null;
+            purchaseFactId = 0;
+            receiptFactId = candidate!.ReceiptFactId;
+            settlementId = 0;
+            inventoryVariance = candidate.Adjustment.InventoryAdjustmentAmount;
+            purchaseFingerprint = candidate.Fingerprint;
+        }
+        else
+        {
+            var adjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+                a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE"
+                && a.SourceDocumentNo == invoice.DocNo && a.SourceCostingRevision == sourceRevision
+                && a.StockPostingId == root.Id).ToArrayAsync(ct);
+            var settlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s =>
+                s.CompanyCode == company && s.BranchCode == branch && s.PiDocNo == invoice.DocNo
+                && s.PiCostingRevision == sourceRevision && s.StockPostingId == root.Id).ToArrayAsync(ct);
+            if (adjustments.Length != 1 || settlements.Length != 1
+                || adjustments[0].StockPostingId != root.Id || adjustments[0].ReversesAdjustmentId is not null
+                || adjustments[0].InventoryAdjustmentAmount == 0m || adjustments[0].ConsumedVarianceAmount != 0m
+                || adjustments[0].InventoryAdjustmentAmount != adjustments[0].TotalAdjustmentAmount
+                || adjustments[0].InventoryAdjustmentFactId is not long existingPurchaseFactId
+                || settlements[0].StockPostingId != root.Id || settlements[0].ReversesSettlementId is not null)
+                return null;
+            var adjustmentReversals = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+                a.ReversesAdjustmentId == adjustments[0].Id).ToArrayAsync(ct);
+            var settlementReversals = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s =>
+                s.ReversesSettlementId == settlements[0].Id).ToArrayAsync(ct);
+            if (posting ? adjustmentReversals.Length != 1 || settlementReversals.Length != 1
+                    || adjustmentReversals[0].StockPostingId != priorReversal!.Id
+                    || settlementReversals[0].StockPostingId != priorReversal.Id
+                : adjustmentReversals.Length != 0 || settlementReversals.Length != 0)
+                return null;
+            if (await db.PurchaseCostAdjustments.AsNoTracking().CountAsync(a => a.CompanyCode == company
+                    && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE" && a.SourceDocumentNo == invoice.DocNo
+                    && a.SourceCostingRevision == sourceRevision, ct) != (posting ? 2 : 1)
+                || await db.PurchaseReceiptCostSettlements.AsNoTracking().CountAsync(s => s.CompanyCode == company
+                    && s.BranchCode == branch && s.PiDocNo == invoice.DocNo && s.PiCostingRevision == sourceRevision, ct)
+                    != (posting ? 2 : 1))
+                return null;
+            var generation = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(db, adjustments, ct);
+            if (generation is null || generation.OriginalFact.Id != existingPurchaseFactId || generation.ActiveFact.Id != existingPurchaseFactId
+                || generation.Original.ItemCode != item || generation.Original.PoNo != line.PoNo
+                || generation.Original.PoRelNo != line.PoRelNo || generation.Original.PoLineNo != line.PoLineNo
+                || settlements[0].ReceiptValuationFactId != generation.OriginalFact.OriginalValuationFactId
+                || settlements[0].SettledBaseQty != line.StdQty)
+                return null;
+            var purchaseReversals = await db.StockValuationFacts.AsNoTracking().Where(f =>
+                f.ReversesValuationFactId == existingPurchaseFactId).ToArrayAsync(ct);
+            if (posting ? purchaseReversals.Length != 1 || purchaseReversals[0].StockPostingId != priorReversal!.Id
+                : purchaseReversals.Length != 0)
+                return null;
+            purchaseFactId = existingPurchaseFactId;
+            receiptFactId = settlements[0].ReceiptValuationFactId;
+            settlementId = settlements[0].Id;
+            inventoryVariance = adjustments[0].InventoryAdjustmentAmount;
+            purchaseFingerprint = generation.Fingerprint;
+        }
         var epochs = await db.StockLedgerEpochs.AsNoTracking().Where(e => e.CompanyCode == company
             && e.BranchCode == branch && e.Status == StockLedgerEpochStatuses.Active && e.Version == 2).ToArrayAsync(ct);
         if (epochs.Length != 1 || epochs[0].Id != root.LedgerEpochId
@@ -120,7 +163,7 @@ public sealed partial class PoInvoiceService
             && s.BranchCode == branch).Select(s => (long?)s.LastSequence).SingleOrDefaultAsync(ct) ?? 0;
         var latest = await db.StockPostings.AsNoTracking().Where(p => p.CompanyCode == company
             && p.BranchCode == branch && p.SealedAtUtc != null).MaxAsync(p => (long?)p.PostingSequence, ct) ?? 0;
-        if (watermark < latest || watermark == long.MaxValue)
+        if (watermark < latest || watermark == long.MaxValue || firstPost && watermark != candidate!.Watermark)
             return null;
         var states = await db.StockCostStates.AsNoTracking().Where(s => s.CompanyCode == company
             && s.BranchCode == branch && s.ItemCode == item).ToArrayAsync(ct);
@@ -256,22 +299,30 @@ public sealed partial class PoInvoiceService
         var correctionRootIds = corrections.Select(f => f.StockPostingId).Distinct().ToArray();
         if (correctionRootIds.Length > 100)
             return null;
+        var primaryCorrection = firstPost;
         if (correctionRootIds.Length != 0)
         {
             var correctionRoots = await db.StockPostings.AsNoTracking().Where(p => correctionRootIds.Contains(p.Id)).ToArrayAsync(ct);
             if (correctionRoots.Length != correctionRootIds.Length || correctionRoots.Any(p => p.SourceModule != "PROCUREMENT"
                     || p.SourceDocumentType != "PO_INVOICE" || p.SourceDocumentId != invoice.DocNo)
+                || correctionRoots.Select(p => p.PostingRole).Distinct().Count() != 1
+                || correctionRoots.Any(p => p.PostingRole is not ("PRIMARY" or "REVERSAL"))
                 || !await StockValuationSnapshotBuilder.ValidateReversedSaleCorrectionsAsync(db,
                     company, branch, correctionRootIds, ct))
                 return null;
+            primaryCorrection = correctionRoots[0].PostingRole == "PRIMARY";
         }
         var reversedCorrectionIds = undoFacts.Select(f => f.ReversesValuationFactId!.Value).ToHashSet();
         var activeCorrections = corrections.Where(f => !reversedCorrectionIds.Contains(f.Id)).ToArray();
         var saleCorrection = activeCorrections.SingleOrDefault(f => f.OriginalValuationFactId == saleFact.Id);
         var reverseCorrection = activeCorrections.SingleOrDefault(f => f.OriginalValuationFactId == reverseFact.Id);
-        if (posting ? activeCorrections.Length != 2 || saleCorrection is null || reverseCorrection is null
-                || saleCorrection.StockPostingId != priorReversal!.Id || reverseCorrection.StockPostingId != priorReversal.Id
-            : activeCorrections.Length != 0)
+        if (primaryCorrection
+            ? posting ? activeCorrections.Length != 0 || !firstPost && !correctionRootIds.Contains(root.Id)
+                : activeCorrections.Length != 2 || saleCorrection is null || reverseCorrection is null
+                    || saleCorrection.StockPostingId != root.Id || reverseCorrection.StockPostingId != root.Id
+            : posting ? activeCorrections.Length != 2 || saleCorrection is null || reverseCorrection is null
+                    || saleCorrection.StockPostingId != priorReversal!.Id || reverseCorrection.StockPostingId != priorReversal.Id
+                : activeCorrections.Length != 0)
             return null;
         var currentSaleCost = saleFact.CostAmount - (saleCorrection?.SignedValue ?? 0m);
         if (currentSaleCost < 0m || reverseFact.CostAmount + (reverseCorrection?.SignedValue ?? 0m) != currentSaleCost)
@@ -316,7 +367,7 @@ public sealed partial class PoInvoiceService
             || tail.CurrentValue != states[0].InventoryValue)
             return null;
         var removed = new StockReplayWacEvent(long.MaxValue - purchaseFactId, anchor, 0m,
-            generation.ActiveFact.SignedValue, 0m, generation.ActiveFact.SignedValue);
+            inventoryVariance, 0m, inventoryVariance);
         var pair = new[]
         {
             new StockReplayWacEvent(sale.Id, saleKey, -saleFact.BaseQty, -currentSaleCost, -saleFact.BaseQty),
@@ -349,9 +400,9 @@ public sealed partial class PoInvoiceService
         var correctedCost = -projectedSteps.Single(s => s.EventId == sale.Id).SignedValue;
         if (finalQuantity != tail.CurrentQuantity
             || finalValue != StockLedgerPrecision.Money(tail.CurrentValue
-                + (posting ? adjustments[0].InventoryAdjustmentAmount : -adjustments[0].InventoryAdjustmentAmount))
+                + (posting ? inventoryVariance : -inventoryVariance))
             || correctedCost < 0m || correctedCost == currentSaleCost
-            || posting && correctedCost != saleFact.CostAmount
+            || (posting != primaryCorrection) && correctedCost != saleFact.CostAmount
             || projectedSteps.Single(s => s.EventId == reverse.Id).SignedValue != correctedCost)
             return null;
         var order = await db.PoOrders.AsNoTracking().Where(p => p.CompanyCode == company && p.BranchCode == branch
@@ -365,7 +416,7 @@ public sealed partial class PoInvoiceService
         {
             invoice.DocNo, invoice.DocDate, invoice.RowVersion, invoice.CostingRevision, invoiceSnapshot,
             Root = new { root.Id, root.PostingSequence, root.RequestFingerprint, root.SourceSnapshotHash, root.LedgerEpochId },
-            generation.Fingerprint, SettlementId = settlements[0].Id, policies, order, orderLine, watermark,
+            purchaseFingerprint, SettlementId = settlementId, policies, order, orderLine, watermark,
             Balance = new { balances[0].Id, balances[0].StdQty, balances[0].RowVersion },
             State = new { states[0].Id, states[0].OnHandBaseQty, states[0].InventoryValue,
                 states[0].LastValuationFactId, states[0].LastPostingSequence, states[0].RowVersion },
@@ -378,16 +429,16 @@ public sealed partial class PoInvoiceService
             SaleDocument = new { saleInvoice.InvNo, saleInvoice.RowVersion, saleInvoice.InvDate,
                 saleInvoice.Status, saleInvoice.RollbackDate, saleLine.Id, saleLine.Line, saleLine.ICode,
                 saleLine.StdQty, saleLine.StdUom, saleLine.NetAmount },
-            Batch = new { batch.Id, batch.BatchNo, batch.BatchStatus, batch.RefNo }, posting,
+            Batch = new { batch.Id, batch.BatchNo, batch.BatchStatus, batch.RefNo }, posting, primaryCorrection,
             Cycle = cycleFactIds, CurrentSaleCost = currentSaleCost, CorrectedSaleCost = correctedCost,
             projectedSteps, finalQuantity, finalValue
         }).SourceSnapshotHash;
         return new(fingerprint, root.LedgerEpochId, watermark, item, line.PoNo.Trim(), line.PoRelNo.Value,
-            line.PoLineNo.Value, sale.InvNo, batch.Id, sale.BatchNo, saleLine.Id, posting, root.Id,
-            purchaseFactId, settlements[0].ReceiptValuationFactId, balances[0].Id,
+            line.PoLineNo.Value, sale.InvNo, batch.Id, sale.BatchNo, saleLine.Id, posting, primaryCorrection,
+            candidate?.Adjustment, root.Id, purchaseFactId, receiptFactId, balances[0].Id,
             sale.Id, reverse.Id, saleFact.Id, reverseFact.Id, saleCorrection?.Id, reverseCorrection?.Id,
             cycleFactIds, saleFact.BaseQty, saleFact.CostAmount, currentSaleCost, correctedCost,
-            adjustments[0].InventoryAdjustmentAmount, tail.CurrentQuantity, tail.CurrentValue, finalValue);
+            inventoryVariance, tail.CurrentQuantity, tail.CurrentValue, finalValue);
     }
 
     private static async Task<bool> LockCanceledSaleInvoiceAsync(
@@ -416,26 +467,32 @@ public sealed partial class PoInvoiceService
             && details.Length == 1;
     }
 
-    private static async Task WriteCanceledSaleInvoiceRemovalAsync(
+    private static async Task WriteCanceledSaleInvoiceCorrectionAsync(
         StockPostingContext context, CanceledSaleInvoiceReplayPlan plan,
         PurchaseCostAdjustmentRequest request, CancellationToken ct)
     {
         context.EnsureUnsealed();
         var value = request.ValueAdjustment;
-        if (plan.Posting || context.Db.Database.CurrentTransaction is null || context.CostMethod != StockCostMethods.MovingAverage
+        if (plan.Posting != plan.PrimaryCorrection || context.Db.Database.CurrentTransaction is null || context.CostMethod != StockCostMethods.MovingAverage
             || context.Posting.SourceModule != "PROCUREMENT" || context.Posting.SourceDocumentType != "PO_INVOICE"
-            || context.Posting.PostingRole != "REVERSAL" || context.Posting.ReversesPostingId != plan.PurchasePostingId
+            || context.Posting.PostingRole != (plan.Posting ? "PRIMARY" : "REVERSAL")
+            || (plan.Posting ? context.Posting.ReversesPostingId is not null : context.Posting.ReversesPostingId != plan.PurchasePostingId)
             || context.Epoch.Id != plan.EpochId || context.Posting.PostingSequence != checked(plan.Watermark + 1)
             || plan.Fingerprint.Length != 64 || value is null || value.PostingLineNo != request.SourceDocumentLine
             || value.PostingLineNo > int.MaxValue - 2 || value.SplitOrdinal != 0 || value.ItemCode != plan.ItemCode
-            || value.Amount != Math.Abs(plan.InventoryVariance) || value.Direction * value.Amount != -plan.InventoryVariance
-            || value.Direction is not (-1 or 1) || value.OriginalValuationFactId != plan.PurchaseFactId
-            || value.ReversesValuationFactId != plan.PurchaseFactId
-            || request.ReversesAdjustmentId is not > 0 || request.CostMethod != StockCostMethods.MovingAverage
+            || value.Amount != Math.Abs(plan.InventoryVariance)
+            || value.Direction * value.Amount != (plan.Posting ? plan.InventoryVariance : -plan.InventoryVariance)
+            || value.Direction is not (-1 or 1)
+            || (plan.Posting ? value.OriginalValuationFactId != plan.ReceiptFactId || value.ReversesValuationFactId is not null
+                    || request.ReversesAdjustmentId is not null
+                : value.OriginalValuationFactId != plan.PurchaseFactId || value.ReversesValuationFactId != plan.PurchaseFactId
+                    || request.ReversesAdjustmentId is not > 0)
+            || request.CostMethod != StockCostMethods.MovingAverage
             || request.SourceDocumentType != "PO_INVOICE" || request.SourceDocumentNo != context.Posting.SourceDocumentNo
             || request.SourceCostingRevision != context.Posting.DocumentRevision || request.ItemCode != plan.ItemCode
-            || request.InventoryAdjustmentAmount != -plan.InventoryVariance
-            || request.TotalAdjustmentAmount != -plan.InventoryVariance || request.ConsumedVarianceAmount != 0m
+            || request.InventoryAdjustmentAmount != (plan.Posting ? plan.InventoryVariance : -plan.InventoryVariance)
+            || request.TotalAdjustmentAmount != (plan.Posting ? plan.InventoryVariance : -plan.InventoryVariance)
+            || request.ConsumedVarianceAmount != 0m
             || request.PoNo != plan.PoNo || request.PoRelNo != plan.PoRelNo || request.PoLineNo != plan.PoLineNo)
             throw InvoiceReplayInvalid("The canceled-sale replay has no matching locked invoice authority.");
 
@@ -508,28 +565,34 @@ public sealed partial class PoInvoiceService
         };
     }
 
-    private static async Task WriteCanceledSaleInvoiceRepostAsync(
+    private static async Task WriteCanceledSaleInvoiceCorrectionUndoAsync(
         StockPostingContext context, CanceledSaleInvoiceReplayPlan plan,
         PurchaseCostAdjustmentRequest request, CancellationToken ct)
     {
         context.EnsureUnsealed();
         var value = request.ValueAdjustment;
-        if (!plan.Posting || context.Db.Database.CurrentTransaction is null || context.CostMethod != StockCostMethods.MovingAverage
+        if (plan.Posting == plan.PrimaryCorrection || context.Db.Database.CurrentTransaction is null || context.CostMethod != StockCostMethods.MovingAverage
             || context.Posting.SourceModule != "PROCUREMENT" || context.Posting.SourceDocumentType != "PO_INVOICE"
-            || context.Posting.PostingRole != "PRIMARY" || context.Posting.ReversesPostingId is not null
+            || context.Posting.PostingRole != (plan.Posting ? "PRIMARY" : "REVERSAL")
+            || (plan.Posting ? context.Posting.ReversesPostingId is not null : context.Posting.ReversesPostingId != plan.PurchasePostingId)
             || context.Epoch.Id != plan.EpochId || context.Posting.PostingSequence != checked(plan.Watermark + 1)
             || plan.Fingerprint.Length != 64 || plan.SaleCorrectionId is not long saleCorrectionId
             || plan.ReversalCorrectionId is not long reverseCorrectionId || value is null
             || value.PostingLineNo != request.SourceDocumentLine || value.PostingLineNo > int.MaxValue - 2
             || value.SplitOrdinal != 0 || value.ItemCode != plan.ItemCode
-            || value.Amount != Math.Abs(plan.InventoryVariance) || value.Direction * value.Amount != plan.InventoryVariance
-            || value.Direction is not (-1 or 1) || value.OriginalValuationFactId != plan.ReceiptFactId
-            || value.ReversesValuationFactId is not null || request.ReversesAdjustmentId is not null
+            || value.Amount != Math.Abs(plan.InventoryVariance)
+            || value.Direction * value.Amount != (plan.Posting ? plan.InventoryVariance : -plan.InventoryVariance)
+            || value.Direction is not (-1 or 1)
+            || (plan.Posting ? value.OriginalValuationFactId != plan.ReceiptFactId || value.ReversesValuationFactId is not null
+                    || request.ReversesAdjustmentId is not null
+                : value.OriginalValuationFactId != plan.PurchaseFactId || value.ReversesValuationFactId != plan.PurchaseFactId
+                    || request.ReversesAdjustmentId is not > 0)
             || request.CostMethod != StockCostMethods.MovingAverage || request.SourceDocumentType != "PO_INVOICE"
             || request.SourceDocumentNo != context.Posting.SourceDocumentNo
             || request.SourceCostingRevision != context.Posting.DocumentRevision || request.ItemCode != plan.ItemCode
-            || request.InventoryAdjustmentAmount != plan.InventoryVariance
-            || request.TotalAdjustmentAmount != plan.InventoryVariance || request.ConsumedVarianceAmount != 0m
+            || request.InventoryAdjustmentAmount != (plan.Posting ? plan.InventoryVariance : -plan.InventoryVariance)
+            || request.TotalAdjustmentAmount != (plan.Posting ? plan.InventoryVariance : -plan.InventoryVariance)
+            || request.ConsumedVarianceAmount != 0m
             || request.PoNo != plan.PoNo || request.PoRelNo != plan.PoRelNo || request.PoLineNo != plan.PoLineNo)
             throw InvoiceReplayInvalid("The canceled-sale repost has no matching locked invoice authority.");
         var db = context.Db;

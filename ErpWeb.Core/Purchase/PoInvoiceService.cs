@@ -1000,8 +1000,7 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                         && x.BranchCode == write.BranchCode && x.DocNo == docNo, cancellationToken);
                 if (draft is not null)
                 {
-                    if (draft.CostingRevision > 0)
-                        canceledSaleRepost = await PlanCanceledSaleInvoiceReplayAsync(preview, draft, cancellationToken, posting: true);
+                    canceledSaleRepost = await PlanCanceledSaleInvoiceReplayAsync(preview, draft, cancellationToken, posting: true);
                     if (canceledSaleRepost is null)
                         consumedPlan = await PlanConsumedInvoiceAsync(preview, draft, cancellationToken);
                 }
@@ -1359,12 +1358,25 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
                 if (useIssueReplay || consumedPlan is not null || settlement.Adjustments.Count != 1
                     || settlement.Settlements.Count != 1
                     || settlement.Settlements[0].ReceiptValuationFactId != canceledSaleRepost.ReceiptFactId
-                    || canceledSaleRepost.SaleCorrectionId is not long correctionId)
+                    || canceledSaleRepost.InitialAdjustment is not null
+                        && canceledSaleRepost.InitialAdjustment != settlement.Adjustments[0])
                     return ("The canceled-sale invoice evidence changed. Retry the document.", null);
-                var correctionRootId = await db.StockValuationFacts.AsNoTracking().Where(f => f.Id == correctionId)
-                    .Select(f => f.StockPostingId).SingleAsync(cancellationToken);
-                await WriteCanceledSaleInvoiceRepostAsync(begin.Context, canceledSaleRepost,
-                    settlement.Adjustments[0], cancellationToken);
+                long correctionRootId;
+                if (canceledSaleRepost.PrimaryCorrection)
+                {
+                    correctionRootId = begin.Context.Posting.Id;
+                    await WriteCanceledSaleInvoiceCorrectionAsync(begin.Context, canceledSaleRepost,
+                        settlement.Adjustments[0], cancellationToken);
+                }
+                else
+                {
+                    if (canceledSaleRepost.SaleCorrectionId is not long correctionId)
+                        return ("The canceled-sale invoice evidence changed. Retry the document.", null);
+                    correctionRootId = await db.StockValuationFacts.AsNoTracking().Where(f => f.Id == correctionId)
+                        .Select(f => f.StockPostingId).SingleAsync(cancellationToken);
+                    await WriteCanceledSaleInvoiceCorrectionUndoAsync(begin.Context, canceledSaleRepost,
+                        settlement.Adjustments[0], cancellationToken);
+                }
                 await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, [], cancellationToken);
                 if (!await StockValuationSnapshotBuilder.ValidateReversedSaleCorrectionsAsync(db,
                         write.CompanyCode, write.BranchCode!, [correctionRootId], cancellationToken))
@@ -1802,11 +1814,25 @@ public sealed partial class PoInvoiceService : IPoInvoiceService
             {
                 if (useIssueRemoval || reversal.Adjustments.Count != 1 || reversal.Settlements.Count != 1)
                     return ("The canceled-sale invoice evidence changed. Retry the document.", null);
-                await WriteCanceledSaleInvoiceRemovalAsync(begin.Context, canceledSaleRemoval,
-                    reversal.Adjustments[0], cancellationToken);
+                long correctionRootId;
+                if (canceledSaleRemoval.PrimaryCorrection)
+                {
+                    if (canceledSaleRemoval.SaleCorrectionId is not long correctionId)
+                        return ("The canceled-sale invoice evidence changed. Retry the document.", null);
+                    correctionRootId = await db.StockValuationFacts.AsNoTracking().Where(f => f.Id == correctionId)
+                        .Select(f => f.StockPostingId).SingleAsync(cancellationToken);
+                    await WriteCanceledSaleInvoiceCorrectionUndoAsync(begin.Context, canceledSaleRemoval,
+                        reversal.Adjustments[0], cancellationToken);
+                }
+                else
+                {
+                    correctionRootId = begin.Context.Posting.Id;
+                    await WriteCanceledSaleInvoiceCorrectionAsync(begin.Context, canceledSaleRemoval,
+                        reversal.Adjustments[0], cancellationToken);
+                }
                 await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, [], cancellationToken);
                 if (!await StockValuationSnapshotBuilder.ValidateReversedSaleCorrectionsAsync(db,
-                        write.CompanyCode, write.BranchCode!, [begin.Context.Posting.Id], cancellationToken))
+                        write.CompanyCode, write.BranchCode!, [correctionRootId], cancellationToken))
                     throw InvoiceReplayInvalid("The canceled-sale correction has incomplete audit evidence.");
             }
             else if (useIssueRemoval)

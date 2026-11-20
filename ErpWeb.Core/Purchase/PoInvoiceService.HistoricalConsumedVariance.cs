@@ -33,7 +33,7 @@ public sealed partial class PoInvoiceService
     // Prove the historical variance and complete active WAC tail before the
     // branch lock and again inside the same locked transaction.
     private async Task<ConsumedInvoicePlan?> PlanConsumedInvoiceAsync(
-        AppDbContext db, PoInvoice invoice, CancellationToken ct)
+        AppDbContext db, PoInvoice invoice, CancellationToken ct, bool allowCanceledSaleOnly = false)
     {
         if (_receiptSettlements is null || invoice.Type != PoInvoiceTypes.Invoice
             || invoice.Status != PoInvoiceStatuses.New || invoice.Details.Count != 1
@@ -170,6 +170,33 @@ public sealed partial class PoInvoiceService
             checked(watermark + 1), "PURCHASE_INVOICE", 0);
         var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db,
             invoice.CompanyCode, invoice.BranchCode, item, key, ct);
+        if (allowCanceledSaleOnly && tail.LaterEvents.Count == 0)
+        {
+            // The ordinary active tail omits a sale that has already been
+            // canceled. Its two historical legs are proved separately by the
+            // canceled-sale planner before this preview can authorize a write.
+            var candidateBalances = await db.IvBalLocs.AsNoTracking().Where(b =>
+                b.CompanyCode == invoice.CompanyCode && b.BranchCode == invoice.BranchCode && b.ICode == item)
+                .OrderBy(b => b.Id).Select(b => new { b.Id, b.StdQty, b.RowVersion }).ToArrayAsync(ct);
+            if (candidateBalances.Length != 1 || candidateBalances[0].StdQty != tail.CurrentQuantity
+                || state[0].OnHandBaseQty != tail.CurrentQuantity || state[0].InventoryValue != tail.CurrentValue
+                || tail.CurrentQuantity < adjustment.BaseQty
+                || adjustment.InventoryAdjustmentAmount != adjustment.TotalAdjustmentAmount
+                || adjustment.ConsumedVarianceAmount != 0m)
+                return null;
+            var candidateFingerprint = StockPostingFingerprint.Create(new { Kind = "PI_CANCELED_SALE_PREVIEW" }, new
+            {
+                invoice.DocNo, invoice.DocDate, invoice.RowVersion, invoice.CostingRevision,
+                invoice.Currency, invoice.CurrRate, line.Line, line.ICode, line.Qty, line.UnitPrice,
+                line.SellingUom, line.StdUom, line.StdQty, line.NetAmount, line.PoNo, line.PoRelNo,
+                line.PoLineNo, Epoch = epoch[0].Id, watermark,
+                State = new { state[0].Id, state[0].OnHandBaseQty, state[0].InventoryValue,
+                    state[0].LastValuationFactId, state[0].LastPostingSequence, state[0].RowVersion },
+                policies, order, orderLine, candidateBalances, receipt, receiptHistory, adjustment
+            }).SourceSnapshotHash;
+            return new(candidateFingerprint, epoch[0].Id, watermark, item, line.PoNo.Trim(),
+                line.PoRelNo.Value, line.PoLineNo.Value, receipt.Id, receipt.BaseUom, adjustment, null);
+        }
         if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount || tail.LaterEvents.Any(e =>
                 e.EventId is not (> 0 and <= int.MaxValue)
                 || e.Key.EffectiveAt.Year != invoice.DocDate.Year

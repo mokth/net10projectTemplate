@@ -39,6 +39,7 @@ $patterns = @(
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
     'Purchase_invoice_before_canceled_sale_reprices_both_legs_on_rollback_and_repost',
+    'Backdated_purchase_invoice_after_canceled_sale_',
     'Purchase_invoice_canceled_sale_replay_',
     'Purchase_invoice_canceled_sale_repost_rejects_damaged_audit',
     'Purchase_invoice_rollback_after_sale_cancellation_is_blocked_atomically',
@@ -187,6 +188,10 @@ $required = @(
     'Backdated_purchase_invoice_rejects_sale_with_return_draft',
     'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
     'Purchase_invoice_before_canceled_sale_reprices_both_legs_on_rollback_and_repost',
+    'Backdated_purchase_invoice_after_canceled_sale_posts_and_rolls_back',
+    'Backdated_purchase_invoice_after_canceled_sale_rejects_unproven_evidence',
+    'Backdated_purchase_invoice_after_canceled_sale_respects_qa_hold',
+    'Backdated_purchase_invoice_after_canceled_sale_rejects_damaged_audit',
     'Purchase_invoice_canceled_sale_replay_respects_disabled_flag',
     'Purchase_invoice_canceled_sale_replay_rejects_changed_or_closed_evidence',
     'Purchase_invoice_canceled_sale_replay_rejects_later_receipt',
@@ -335,6 +340,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryGoods
         & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeSaleGoods
         & $sqlRunner -Server $SqlServer -NoBuild -InvoiceCanceledSaleCycle
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceCanceledSaleCycle
         & $sqlRunner -Server $SqlServer -NoBuild -InvoiceRollbackCanceledSale
         & $sqlRunner -Server $SqlServer -NoBuild -InvoicePostCanceledSale
         & $sqlRunner -Server $SqlServer -NoBuild -InvoiceDuringCanceledSale
