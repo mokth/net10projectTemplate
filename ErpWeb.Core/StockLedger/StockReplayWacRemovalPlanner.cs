@@ -182,8 +182,8 @@ public static class StockReplayWacRemovalPlanner
             ? await StockReplayWacFinancialTailReader.ReadLaterForPurchaseVarianceAsync(
                 db, companyCode, branchCode, itemCode, before, factId, cancellationToken)
             : excludedValueIds.Length == 0
-            ? await StockReplayWacFinancialTailReader.ReadLaterAsync(
-                db, companyCode, branchCode, itemCode, before, cancellationToken)
+            ? await StockReplayWacFinancialTailReader.ReadLaterForRemovalAsync(
+                db, companyCode, branchCode, itemCode, before, physical.Key, cancellationToken)
             : excludeSaleCycle
                 ? await StockReplayWacFinancialTailReader.ReadLaterForReversedSaleAsync(
                     db, companyCode, branchCode, itemCode, before, excludedValueIds, cancellationToken)

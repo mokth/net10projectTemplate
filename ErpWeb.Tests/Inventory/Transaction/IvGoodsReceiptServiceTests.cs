@@ -2455,6 +2455,16 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-" + operation);
 
     [Fact]
+    public Task Purchase_credit_note_and_issue_rollback_share_business_date() =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-sameday");
+
+    [Fact]
+    public Task Purchase_issue_rollback_rejects_later_same_day_credit_note() =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-later-note");
+
+    [Fact]
     public Task Purchase_credit_note_issue_rollback_rejects_damaged_earlier_note() =>
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-damaged");
@@ -2813,6 +2823,15 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         await PreparePurchaseReplaySqlFixtureAsync();
         await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-rollback");
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_purchase_cdn_and_issue_rollback_share_business_date()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-sameday");
     }
 
     private async Task ExerciseHistoricalConsumedInvoiceAsync(bool enabled, bool consumedBeforeInvoice,
@@ -3909,7 +3928,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 IStatus = "ACTIVE", Reason = "ADJ", ExpiryDate = lotControlled ? FixedToday.AddYears(1) : null
             }]
         };
-        var hasCanceledIssue = cdnReplayCase is "canceled-post" or "canceled-rollback" or "canceled-damaged";
+        var hasCanceledIssue = cdnReplayCase is "canceled-post" or "canceled-rollback" or "canceled-damaged"
+            or "canceled-sameday" or "canceled-later-note";
         var opening = await receipt.SaveNewAsync(MiscRequest(FixedToday.AddDays(-5),
             hasCanceledIssue ? 3m : 15m, hasCanceledIssue ? 1m : 3m));
         Assert.True(opening.Succeeded, opening.ErrorMessage);
@@ -4283,7 +4303,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 var note = await db.PoCdns.SingleAsync(c => c.DocNo == noteNo);
                 return new PoCdnKeyedRequest { DocNo = noteNo, RowVersion = note.RowVersion };
             }
-            if (testBackdatedCreditNote == "cdn-rollback" || cdnReplayCase is "canceled-rollback" or "canceled-damaged")
+            if (testBackdatedCreditNote == "cdn-rollback" || cdnReplayCase is "canceled-rollback" or "canceled-damaged" or "canceled-sameday")
             {
                 var posted = await cdn.PostAsync([await KeyAsync()]);
                 Assert.True(posted.Succeeded, posted.ErrorMessage);
@@ -4293,7 +4313,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             {
                 var canceledIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
                 {
-                    TrxDate = FixedToday.AddDays(1),
+                    TrxDate = cdnReplayCase is "canceled-sameday" or "canceled-later-note" ? FixedToday : FixedToday.AddDays(1),
                     Lines = [new IvMiscIssueLineRequest
                     {
                         FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
@@ -4307,7 +4327,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             }
             var laterIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
             {
-                TrxDate = FixedToday.AddDays(1),
+                TrxDate = cdnReplayCase is "canceled-sameday" or "canceled-later-note" ? FixedToday : FixedToday.AddDays(1),
                 Lines = [new IvMiscIssueLineRequest
                 {
                     FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
@@ -4318,25 +4338,35 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             Assert.True((await issue.PostAsync([laterIssue.BatchNo])).Succeeded);
             if (canceledIssueBatchNo is int canceledBatch)
             {
+                async Task<(decimal Qty, decimal Value, decimal Balance, int Postings, int Facts, string Status)> IssueSnapshotAsync()
+                {
+                    await using var snapshotDb = await _factory.CreateDbContextAsync();
+                    var state = await snapshotDb.StockCostStates.SingleAsync();
+                    return (state.OnHandBaseQty, state.InventoryValue, (await snapshotDb.IvBalLocs.SingleAsync()).StdQty,
+                        await snapshotDb.StockPostings.CountAsync(), await snapshotDb.StockValuationFacts.CountAsync(),
+                        (await snapshotDb.IvTrxBatches.SingleAsync(b => b.BatchNo == canceledBatch)).BatchStatus);
+                }
                 if (cdnReplayCase == "canceled-damaged")
                 {
                     await using (var damageDb = await _factory.CreateDbContextAsync())
                         await damageDb.PurchaseReceiptCostSettlements.Where(s => s.PiDocNo == piDocNo)
                             .ExecuteUpdateAsync(u => u.SetProperty(s => s.AllocatedActualBaseAmount,
                                 s => s.AllocatedActualBaseAmount + 1m));
-                    async Task<(decimal Qty, decimal Value, decimal Balance, int Postings, int Facts, string Status)> SnapshotAsync()
-                    {
-                        await using var snapshotDb = await _factory.CreateDbContextAsync();
-                        var state = await snapshotDb.StockCostStates.SingleAsync();
-                        return (state.OnHandBaseQty, state.InventoryValue, (await snapshotDb.IvBalLocs.SingleAsync()).StdQty,
-                            await snapshotDb.StockPostings.CountAsync(), await snapshotDb.StockValuationFacts.CountAsync(),
-                            (await snapshotDb.IvTrxBatches.SingleAsync(b => b.BatchNo == canceledBatch)).BatchStatus);
-                    }
-                    var damagedBefore = await SnapshotAsync();
+                    var damagedBefore = await IssueSnapshotAsync();
                     var refused = await issue.RollbackAsync([canceledBatch]);
                     Assert.False(refused.Succeeded);
                     Assert.Contains("evidence", refused.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-                    Assert.Equal(damagedBefore, await SnapshotAsync());
+                    Assert.Equal(damagedBefore, await IssueSnapshotAsync());
+                    return;
+                }
+                if (cdnReplayCase == "canceled-later-note")
+                {
+                    var posted = await cdn.PostAsync([await KeyAsync()]);
+                    Assert.True(posted.Succeeded, posted.ErrorMessage);
+                    var beforeLaterNote = await IssueSnapshotAsync();
+                    var refused = await issue.RollbackAsync([canceledBatch]);
+                    Assert.False(refused.Succeeded, "A later purchase note requires its own replay proof.");
+                    Assert.Equal(beforeLaterNote, await IssueSnapshotAsync());
                     return;
                 }
                 var canceledRollback = await issue.RollbackAsync([canceledBatch]);
@@ -4401,7 +4431,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                     await AssertCanceledStateAsync(30m, 6m, posted: false);
                     var repost = await cdn.PostAsync([await KeyAsync()]);
                     Assert.True(repost.Succeeded, repost.ErrorMessage);
-                    await AssertCanceledStateAsync(29.166667m, 5.833333m, posted: true);
+                    await AssertCanceledStateAsync(cdnReplayCase == "canceled-sameday" ? 29m : 29.166667m,
+                        cdnReplayCase == "canceled-sameday" ? 6m : 5.833333m, posted: true);
                 }
                 return;
             }

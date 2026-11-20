@@ -31,6 +31,17 @@ public static class StockReplayWacFinancialTailReader
         CancellationToken cancellationToken = default) =>
         ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after, [], false, null, cancellationToken);
 
+    internal static Task<StockReplayWacFinancialTail> ReadLaterForRemovalAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayEventKey after, StockReplayEventKey removed, CancellationToken cancellationToken = default)
+    {
+        if (removed.EffectiveAt == DateTime.MinValue
+            || after.EffectiveAt != removed.EffectiveAt.AddTicks(-1))
+            throw new ArgumentException("A removal read must begin immediately before its target.");
+        return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
+            [], false, null, cancellationToken, removalKey: removed);
+    }
+
     // Only receipt replay with an independently verified complete isolated
     // issue/reversal or sale/reversal pair may omit its two zero-net deltas.
     internal static Task<StockReplayWacFinancialTail> ReadLaterForReversedIssueAsync(
@@ -81,7 +92,7 @@ public static class StockReplayWacFinancialTailReader
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
         bool excludeSaleCycle, long? permittedPurchaseFactId, CancellationToken cancellationToken,
-        long? permittedCdnAnchorId = null)
+        long? permittedCdnAnchorId = null, StockReplayEventKey? removalKey = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (string.IsNullOrWhiteSpace(companyCode)
@@ -352,6 +363,8 @@ public static class StockReplayWacFinancialTailReader
                 && receiptHistoryIds.Contains(h.ReversesHistoryId.Value))
             .Select(h => h.ReversesHistoryId!.Value)
             .ToArrayAsync(cancellationToken)).ToHashSet();
+        bool IsEarlierPurchaseKey(StockReplayEventKey key) => key.CompareTo(after) <= 0
+            || removalKey is StockReplayEventKey target && key.CompareTo(target) < 0;
         foreach (var fact in activeValues)
         {
             if (fact.MovementCode == "PRODUCTION_ISSUE_REPLAY_VALUE")
@@ -380,8 +393,8 @@ public static class StockReplayWacFinancialTailReader
             if (fact.SourceDocumentType == "PO_INVOICE" && invoiceOwner.SourceModule == "PROCUREMENT"
                 && invoiceOwner.SourceDocumentType == "PO_INVOICE" && invoiceFact.Id > 0
                 && invoiceFact.Id < long.MaxValue - int.MaxValue
-                && new StockReplayEventKey(invoiceOwner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
-                    invoiceOwner.PostingSequence, $"V{invoiceFact.Id:D20}", 0).CompareTo(after) <= 0)
+                && IsEarlierPurchaseKey(new StockReplayEventKey(invoiceOwner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                    invoiceOwner.PostingSequence, $"V{invoiceFact.Id:D20}", 0)))
             {
                 if (!await StockReplayPurchaseVarianceGenerationReader.IsProvenActiveFactAsync(db,
                         companyCode, branchCode, invoiceFact.Id, fact.Id, cancellationToken))
@@ -391,8 +404,8 @@ public static class StockReplayWacFinancialTailReader
             if (fact.SourceDocumentType == "PO_CDN" && owner.SourceModule == "PROCUREMENT"
                 && owner.SourceDocumentType == "PO_CDN" && fact.Id > 0
                 && fact.Id < long.MaxValue - int.MaxValue
-                && new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
-                    owner.PostingSequence, $"V{fact.Id:D20}", 0).CompareTo(after) <= 0)
+                && IsEarlierPurchaseKey(new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                    owner.PostingSequence, $"V{fact.Id:D20}", 0)))
             {
                 if (!await StockReplayInvoiceIssueAudit.ValidateEarlierCdnAsync(db, companyCode, branchCode,
                         owner, fact, cancellationToken))
