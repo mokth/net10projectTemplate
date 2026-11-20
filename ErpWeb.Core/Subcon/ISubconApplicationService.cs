@@ -27,4 +27,10 @@ public interface ISubconApplicationService
     Task<SubconResult> DeleteReceiptDraftAsync(SubconKeyCommand command, CancellationToken cancellationToken = default);
 
     Task<SubconResult> PostReceiptAsync(SubconKeyCommand command, CancellationToken cancellationToken = default);
+
+    Task<SubconResult> SearchDispatchLinesAsync(SubconDispatchLineLookupQuery query, CancellationToken cancellationToken = default);
+
+    Task<SubconResult> GetJobAsync(string jobNo, CancellationToken cancellationToken = default);
+
+    Task<SubconResult> SaveJobDraftAsync(SubconJobSaveCommand command, CancellationToken cancellationToken = default);
 }

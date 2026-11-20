@@ -380,8 +380,10 @@ public partial class SaInvoice : PageBase, IDisposable
     protected bool IsEditingLine => _editingLine is not null;
     protected string PopupTitle => IsEditingLine ? "Edit line" : "Add line";
     protected string PopupPrimaryText => IsEditingLine ? "Update item" : "Add item";
+    protected bool CanEditPopupItem => CanEditDocument && !Popup.HasSource;
+    protected bool CanEditPopupCommercialTerms => CanEditDocument && !Popup.HasSource;
     protected bool PopupInclusiveLocked =>
-        Lines.Count > 1 || (_editingLine is null && Lines.Count > 0);
+        Popup.HasSource || Lines.Count > 1 || (_editingLine is null && Lines.Count > 0);
     protected SaInvoiceLineCalcState PopupCalc => BuildPopupCalc();
 
     protected void TogglePopupAdvanced()
@@ -1629,6 +1631,11 @@ public partial class SaInvoice : PageBase, IDisposable
 
     protected Task OnPopupItemClearedAsync()
     {
+        if (Popup.HasSource)
+        {
+            return Task.CompletedTask;
+        }
+
         Popup.ICode = string.Empty;
         Popup.IDesc = null;
         return Task.CompletedTask;
@@ -1637,6 +1644,10 @@ public partial class SaInvoice : PageBase, IDisposable
     protected async Task OnPopupItemSelectedAsync(IvStockMasterLookupRow item)
     {
         ArgumentNullException.ThrowIfNull(item);
+        if (Popup.HasSource)
+        {
+            return;
+        }
 
         Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
@@ -1680,12 +1691,22 @@ public partial class SaInvoice : PageBase, IDisposable
     /// </summary>
     protected async Task OnPopupBasisChangedAsync(bool inclusive)
     {
+        if (Popup.HasSource)
+        {
+            return;
+        }
+
         Popup.IsInclusive = inclusive;
         await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
     }
 
     protected async Task OnPopupTaxChangedAsync(string? taxGrCode)
     {
+        if (Popup.HasSource)
+        {
+            return;
+        }
+
         Popup.TaxGrCode = taxGrCode;
         await ResolvePopupPriceOnQtyTaxOrBasisAsync(assignDiscountSlots: false);
     }
@@ -1801,6 +1822,11 @@ public partial class SaInvoice : PageBase, IDisposable
 
     protected void OnPopupDiscountModeChanged(bool amountMode)
     {
+        if (Popup.HasSource)
+        {
+            return;
+        }
+
         PopupDiscountIsAmount = amountMode;
         if (amountMode)
         {
@@ -2508,6 +2534,11 @@ public sealed class SaInvoiceLineVm
     public short? CustRel { get; set; }
     public string? CustPo { get; set; }
     public bool HasSource => !string.IsNullOrWhiteSpace(SoNo) || LinkDo;
+    public string SourceDisplay => LinkDo && !string.IsNullOrWhiteSpace(DoNo)
+        ? $"DO {DoNo}{(DoLine is > 0 ? $" #{DoLine.Value}" : string.Empty)}"
+        : (!string.IsNullOrWhiteSpace(SoNo)
+            ? $"SO {SoNo}{(SoLine is > 0 ? $" #{SoLine.Value}" : string.Empty)}"
+            : string.Empty);
     public string? SoRevDisplay =>
         string.IsNullOrWhiteSpace(SoNo) ? null : (CustRel is > 0 ? CustRel.Value.ToString() : "1");
     public string? SoLineDisplay => SoLine is > 0 ? SoLine.Value.ToString() : null;
@@ -2655,7 +2686,8 @@ public sealed class SaInvoiceLineVm
             ItemDiscount6 = ItemDiscount6,
             ItemDiscAmount = ItemDiscAmount,
             ItemDiscAmount1 = ItemDiscAmount1,
-            IsInclusive = IsInclusive
+            IsInclusive = IsInclusive,
+            OrderType = OrderType
         };
 
     public static SaInvoiceLineVm FromDto(SaInvoiceLineDto dto) =>
@@ -2742,6 +2774,7 @@ public sealed class SaInvoiceLineVm
             ItemDiscAmount1 = dto.ItemDiscAmount1,
             IsInclusive = dto.IsInclusive,
             TaxGrCode = dto.TaxGroup,
+            OrderType = dto.OrderType,
             Amount = dto.Amount,
             TaxAmt = dto.TaxAmt,
             NetAmount = dto.NetAmount,

@@ -64,6 +64,33 @@ public sealed class MachineSchedulePlannerInterval
     public DateTime End { get; init; }
 }
 
+public static class MachineSchedulePlannerCalendarBandKind
+{
+    public const string WorkingShift = "WORKING_SHIFT";
+    public const string ShiftBreak = "SHIFT_BREAK";
+    public const string OffDay = "OFF_DAY";
+    public const string PublicHoliday = "PUBLIC_HOLIDAY";
+    public const string Preventive = "PREVENTIVE";
+    public const string Breakdown = "BREAKDOWN";
+    public const string Repair = "REPAIR";
+    public const string Service = "SERVICE";
+}
+
+public sealed class MachineSchedulePlannerCalendarBand
+{
+    public DateTime Start { get; init; }
+    public DateTime End { get; init; }
+    public string BandKind { get; init; } = string.Empty;
+    public bool IsProductive { get; init; }
+    public bool IsHardUnavailable { get; init; }
+    public string? HolidayName { get; init; }
+    public string? ShiftGroupCode { get; init; }
+    public string? ShiftCode { get; init; }
+    public string? ShiftDescription { get; init; }
+    public string? ReasonCode { get; init; }
+    public string? Description { get; init; }
+}
+
 public sealed class MachineSchedulePlannerResource
 {
     public string MachineCode { get; init; } = string.Empty;
@@ -71,6 +98,7 @@ public sealed class MachineSchedulePlannerResource
     public string? MachineDescription { get; init; }
     public IReadOnlyList<MachineSchedulePlannerInterval> UsableIntervals { get; init; } = [];
     public IReadOnlyList<MachineSchedulePlannerInterval> MaintenanceIntervals { get; init; } = [];
+    public IReadOnlyList<MachineSchedulePlannerCalendarBand> CalendarBands { get; init; } = [];
 }
 
 public sealed class MachineSchedulePlannerJob
@@ -226,6 +254,20 @@ public sealed class MachineSchedulePlannerAppointment
     public int LabelId { get; init; }
     public bool IsMaintenance { get; init; }
     public bool IsExternalCapacity { get; init; }
+
+    public long? WorkOrderId { get; init; }
+    public long? OperationId { get; init; }
+    public long? WorkOrderMachineId { get; init; }
+    public long? SegmentId { get; init; }
+    public string? WorkOrderNo { get; init; }
+    public string? MachineCode { get; init; }
+    public string? SegmentKind { get; init; }
+    public decimal? PlannedOutputQty { get; init; }
+    public string? OutputUom { get; init; }
+    public bool IsLocked { get; init; }
+    public bool IsLate { get; init; }
+    public bool IsDraft { get; init; }
+    public bool IsConflict { get; init; }
 }
 
 /// <summary>Frozen scheduler label IDs. Never reuse these numbers dynamically.</summary>
@@ -252,6 +294,8 @@ public sealed class MachineSchedulePlannerBoard
     public IReadOnlyList<MachineSchedulePlannerJob> Jobs { get; init; } = [];
     public IReadOnlyList<MachineSchedulePlannerSegment> Segments { get; init; } = [];
     public IReadOnlyList<MachineSchedulePlannerAppointment> Appointments { get; init; } = [];
+    public IReadOnlyList<MachineScheduleDraftHiddenInterval> HiddenOccupiedIntervals { get; init; } = [];
+    public string BoardFingerprint { get; init; } = string.Empty;
     public int LockedJobCount { get; init; }
     public int UnverifiedJobCount { get; init; }
     public int UnscheduledRemainingWorkOrderCount { get; init; }
@@ -668,6 +712,21 @@ SELECT CASE WHEN OBJECT_ID(N'dbo.PrMachineScheduleAllocation', N'U') IS NOT NULL
                 AND name = N'UQ_PrMachineScheduleAllocation_Machine_Revision_Fragment')
     AND EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(N'dbo.PrMachineScheduleAllocation')
                 AND name = N'CK_PrMachineScheduleAllocation_PositiveInterval')
+    AND OBJECT_ID(N'dbo.PrMachineScheduleSegment', N'U') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleSegment', N'SegmentSetID') IS NOT NULL
+    AND OBJECT_ID(N'dbo.PrMachineScheduleSegmentSet', N'U') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleSegmentSet', N'WorkOrderMachineID') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleSegmentSet', N'Mode') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleSegmentSet', N'PlanningState') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleSegmentSet', N'IsCurrent') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleSegmentSet', N'PlannedQtyBasis') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrMachineScheduleSegmentSet')
+                AND name = N'UX_PrMachineScheduleSegmentSet_OneCurrent')
+    AND OBJECT_ID(N'dbo.PrMachineScheduleAllocationSegment', N'U') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleAllocationSegment', N'AllocationID') IS NOT NULL
+    AND COL_LENGTH(N'dbo.PrMachineScheduleAllocationSegment', N'SegmentID') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.PrMachineScheduleAllocationSegment')
+                AND name = N'UX_PrMachineScheduleAllocationSegment_Allocation')
 THEN 1 ELSE 0 END;";
             var value = await command.ExecuteScalarAsync(ct);
             return Convert.ToInt32(value) == 1;
@@ -992,13 +1051,14 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 .ToListAsync(cancellationToken));
         }
 
-        var calendars = await LoadMachineCalendarsAsync(
+        var calendarLoad = await LoadMachineCalendarsAsync(
             db,
             scope.CompanyCode,
             machineCodes,
             DateOnly.FromDateTime(windowStart).AddDays(-1),
             DateOnly.FromDateTime(windowEnd).AddDays(1),
             cancellationToken);
+        var calendars = calendarLoad.Schedules;
 
         var mastersByCode = machineRows
             .GroupBy(x => x.MachineCode, StringComparer.OrdinalIgnoreCase)
@@ -1017,7 +1077,15 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 {
                     Start = x.Start,
                     End = x.End
-                }).ToList() ?? []
+                }).ToList() ?? [],
+                CalendarBands = BuildCalendarBands(
+                    code,
+                    windowStart,
+                    windowEnd,
+                    calendar,
+                    calendarLoad.HolidaysByDate,
+                    calendarLoad.Preventives,
+                    calendarLoad.Downtimes)
             };
         }).ToList();
 
@@ -1293,7 +1361,9 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         // the allocation schema installed, and the allocation DbSet must not be touched in that case.
         var readiness = await _readiness.GetReadinessAsync(cancellationToken);
         var externalMachineCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hiddenIntervals = new List<MachineScheduleDraftHiddenInterval>();
         if (readiness.AllocationSchemaReady && machineCodes.Count > 0)
+        {
             await AddExternalCapacityAppointmentsAsync(
                 db,
                 scope,
@@ -1302,7 +1372,18 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 windowEnd,
                 appointments,
                 externalMachineCodes,
+                hiddenIntervals,
                 cancellationToken);
+            await LoadOffFilterHiddenIntervalsAsync(
+                db,
+                scope,
+                machineCodes,
+                jobMachineIds,
+                windowStart,
+                windowEnd,
+                hiddenIntervals,
+                cancellationToken);
+        }
 
         var lateWorkOrderCount = jobs.Where(x => x.IsLateToRequiredDate)
             .Select(x => x.WorkOrderId)
@@ -1324,6 +1405,8 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
             Jobs = jobs,
             Segments = plannerSegments,
             Appointments = appointments,
+            HiddenOccupiedIntervals = hiddenIntervals,
+            BoardFingerprint = ComputeBoardFingerprint(jobs, plannerSegments, appointments),
             LockedJobCount = jobs.Count(x => x.IsLocked),
             UnverifiedJobCount = unverified,
             UnscheduledRemainingWorkOrderCount = jobs
@@ -1516,6 +1599,7 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         DateTime windowEnd,
         List<MachineSchedulePlannerAppointment> appointments,
         HashSet<string> externalMachineCodes,
+        List<MachineScheduleDraftHiddenInterval> hiddenIntervals,
         CancellationToken cancellationToken)
     {
         var branchCode = scope.BranchCode ?? string.Empty;
@@ -1562,13 +1646,100 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                     Start = DateTime.SpecifyKind(row.StartDateTime, DateTimeKind.Unspecified),
                     End = DateTime.SpecifyKind(row.EndDateTime, DateTimeKind.Unspecified),
                     ResourceId = row.MachineCode,
+                    MachineCode = row.MachineCode,
                     LabelId = MachineSchedulePlannerLabelIds.ReservedOtherBranch,
                     IsMaintenance = false,
                     IsExternalCapacity = true
                 });
+                hiddenIntervals.Add(new MachineScheduleDraftHiddenInterval
+                {
+                    MachineCode = row.MachineCode,
+                    WorkOrderNo = "Other branch",
+                    Start = DateTime.SpecifyKind(row.StartDateTime, DateTimeKind.Unspecified),
+                    End = DateTime.SpecifyKind(row.EndDateTime, DateTimeKind.Unspecified),
+                    IsExternal = true
+                });
                 externalMachineCodes.Add(row.MachineCode);
             }
         }
+    }
+
+    private static async Task LoadOffFilterHiddenIntervalsAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        IReadOnlyList<string> machineCodes,
+        IReadOnlyCollection<long> visibleMachineIds,
+        DateTime windowStart,
+        DateTime windowEnd,
+        List<MachineScheduleDraftHiddenInterval> hiddenIntervals,
+        CancellationToken cancellationToken)
+    {
+        var branchCode = scope.BranchCode ?? string.Empty;
+        var visibleSet = visibleMachineIds.ToHashSet();
+        foreach (var machineBatch in machineCodes.Chunk(800))
+        {
+            var rows = await db.ProductionMachineScheduleAllocations.AsNoTracking()
+                .Where(allocation => allocation.CompanyCode == scope.CompanyCode
+                    && allocation.BranchCode == branchCode
+                    && machineBatch.Contains(allocation.MachineCode)
+                    && allocation.StartDateTime < windowEnd
+                    && allocation.EndDateTime > windowStart)
+                .Join(db.ProductionWorkOrderMachines.AsNoTracking(),
+                    allocation => allocation.WorkOrderMachineId,
+                    machine => machine.Uid,
+                    (allocation, machine) => new { Allocation = allocation, Machine = machine })
+                .Where(x => x.Machine.IsSelected
+                    && x.Machine.Operation != null
+                    && x.Machine.Operation.WorkOrder != null
+                    && x.Machine.Operation.WorkOrder.CompanyCode == scope.CompanyCode
+                    && x.Machine.Operation.WorkOrder.BranchCode == branchCode
+                    && (x.Machine.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.Released
+                        || x.Machine.Operation.WorkOrder.Status == ProductionWorkOrderStatuses.InProgress)
+                    && x.Machine.ScheduleRevision == x.Allocation.ScheduleRevision
+                    && x.Machine.MachineCode == x.Allocation.MachineCode
+                    && x.Machine.OperationId == x.Allocation.WorkOrderOperationId
+                    && x.Machine.Operation.WorkOrder.Uid == x.Allocation.WorkOrderId)
+                .Select(x => new
+                {
+                    x.Allocation.MachineCode,
+                    x.Allocation.WorkOrderId,
+                    x.Allocation.WorkOrderMachineId,
+                    x.Machine.Operation!.WorkOrder!.WorkOrderNo,
+                    x.Allocation.StartDateTime,
+                    x.Allocation.EndDateTime
+                })
+                .ToListAsync(cancellationToken);
+
+            foreach (var row in rows)
+            {
+                if (visibleSet.Contains(row.WorkOrderMachineId))
+                    continue;
+                hiddenIntervals.Add(new MachineScheduleDraftHiddenInterval
+                {
+                    MachineCode = row.MachineCode,
+                    WorkOrderId = row.WorkOrderId,
+                    WorkOrderMachineId = row.WorkOrderMachineId,
+                    WorkOrderNo = row.WorkOrderNo,
+                    Start = DateTime.SpecifyKind(row.StartDateTime, DateTimeKind.Unspecified),
+                    End = DateTime.SpecifyKind(row.EndDateTime, DateTimeKind.Unspecified)
+                });
+            }
+        }
+    }
+
+    private static string ComputeBoardFingerprint(
+        IReadOnlyList<MachineSchedulePlannerJob> jobs,
+        IReadOnlyList<MachineSchedulePlannerSegment> segments,
+        IReadOnlyList<MachineSchedulePlannerAppointment> appointments)
+    {
+        var jobPart = string.Join(";", jobs.OrderBy(x => x.WorkOrderMachineId)
+            .Select(x => $"{x.WorkOrderId}:{x.WorkOrderMachineId}:{x.ScheduleRevision}:{x.MachineScheduleRevision}:{x.PlannedStart:O}:{x.PlannedCompletion:O}"));
+        var segPart = string.Join(";", segments.OrderBy(x => x.SegmentId)
+            .Select(x => $"{x.SegmentId}:{x.SegmentKind}:{x.Start:O}:{x.Completion:O}:{x.PlannedOutputQty}"));
+        var appPart = string.Join(";", appointments.OrderBy(x => x.Id)
+            .Select(x => $"{x.Id}:{x.ResourceId}:{x.Start:O}:{x.End:O}"));
+        var bytes = System.Text.Encoding.UTF8.GetBytes($"{jobPart}|{segPart}|{appPart}");
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
     }
 
     private static async Task<MachineSchedulePlannerLookupPage> GetWorkCentreLookupPageAsync(
@@ -1777,13 +1948,24 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
 
         return new MachineSchedulePlannerAppointment
         {
-            Id = $"wo-{job.OperationId}-{fragmentNo}",
+            Id = segment is not null ? $"seg-{segment.Uid}-{fragmentNo}" : $"wo-{job.OperationId}-{fragmentNo}",
             Subject = subject,
             Description = details,
-            Location = $"operation:{job.OperationId}",
+            Location = segment is not null ? $"segment:{segment.Uid}" : $"operation:{job.OperationId}",
             Start = start,
             End = end,
             ResourceId = job.MachineCode,
+            WorkOrderId = job.WorkOrderId,
+            OperationId = job.OperationId,
+            WorkOrderMachineId = job.WorkOrderMachineId,
+            SegmentId = segment?.Uid,
+            WorkOrderNo = job.WorkOrderNo,
+            MachineCode = job.MachineCode,
+            SegmentKind = segmentKind,
+            PlannedOutputQty = segment?.PlannedOutputQty ?? job.PlannedQuantity,
+            OutputUom = segment?.OutputUom ?? job.OutputUom,
+            IsLocked = job.IsLocked,
+            IsLate = job.IsLateToRequiredDate,
             // Execution lock is the strongest visual signal. Otherwise the business segment kind
             // gets its permanent color, then lateness for a plain scheduled fragment.
             LabelId = job.IsLocked
@@ -1824,7 +2006,7 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         }
     }
 
-    private static async Task<Dictionary<string, ScheduleMachineData>> LoadMachineCalendarsAsync(
+    private static async Task<LoadedMachineCalendars> LoadMachineCalendarsAsync(
         AppDbContext db,
         string companyCode,
         IReadOnlyList<string> machineCodes,
@@ -1833,7 +2015,11 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
         CancellationToken ct)
     {
         if (machineCodes.Count == 0)
-            return new Dictionary<string, ScheduleMachineData>(StringComparer.OrdinalIgnoreCase);
+            return new LoadedMachineCalendars(
+                new Dictionary<string, ScheduleMachineData>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<DateOnly, string?>(),
+                [],
+                []);
 
         // Load all visible machine calendars in batches. The read model must not issue a query per bar
         // or per resource, and the only date span is the visible window plus overnight ownership.
@@ -1848,6 +2034,17 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                     && x.Dt >= start && x.Dt <= end)
                 .ToListAsync(ct));
         }
+
+        var holidayRows = await db.PrHolidays.AsNoTracking()
+            .Where(x => x.DateOff != null && x.DateOff >= start && x.DateOff <= end)
+            .ToListAsync(ct);
+        var holidaysByDate = holidayRows
+            .Where(x => x.DateOff.HasValue)
+            .GroupBy(x => DateOnly.FromDateTime(x.DateOff!.Value))
+            .ToDictionary(
+                g => g.Key,
+                g => Normalize(g.Select(x => x.Description).FirstOrDefault(d => !string.IsNullOrWhiteSpace(d))));
+
         var groupCodes = calendars.Where(x => CalendarYearFingerprint.NormalizeDateCd(x.DateCd) == "W"
                 && !string.IsNullOrWhiteSpace(x.ShfGrpCd))
             .Select(x => x.ShfGrpCd!)
@@ -1890,6 +2087,7 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                     definitions.Add(new ShiftSourceDefinition
                     {
                         ShiftCd = shift.ShiftCd,
+                        ShiftDescription = Normalize(shift.ShiftDes),
                         Start = ShiftTimeCalculator.FromLegacyDateTime(shift.StartTm) ?? default,
                         End = ShiftTimeCalculator.FromLegacyDateTime(shift.EndTm) ?? default,
                         Breaks = PrShiftBreakMapper.ResolveBreaks(shift, childBreaks)
@@ -1964,8 +2162,193 @@ public sealed class MachineSchedulePlannerService : IMachineSchedulePlannerServi
                 // A malformed calendar remains visible on the board as unverified work.
             }
         }
-        return results;
+        return new LoadedMachineCalendars(results, holidaysByDate, preventives, downtimes);
     }
+
+    private static IReadOnlyList<MachineSchedulePlannerCalendarBand> BuildCalendarBands(
+        string machineCode,
+        DateTime windowStart,
+        DateTime windowEnd,
+        ScheduleMachineData? calendar,
+        IReadOnlyDictionary<DateOnly, string?> holidaysByDate,
+        IReadOnlyList<PrPreventive> preventives,
+        IReadOnlyList<MachineDowntimeWindow> downtimes)
+    {
+        var bands = new List<MachineSchedulePlannerCalendarBand>();
+
+        void AddClippedBand(
+            DateTime rawStart,
+            DateTime rawEnd,
+            string kind,
+            bool isProductive,
+            bool isHardUnavailable,
+            string? holidayName = null,
+            string? shiftGroupCode = null,
+            string? shiftCode = null,
+            string? shiftDescription = null,
+            string? reasonCode = null,
+            string? description = null)
+        {
+            var start = DateTime.SpecifyKind(rawStart < windowStart ? windowStart : rawStart, DateTimeKind.Unspecified);
+            var end = DateTime.SpecifyKind(rawEnd > windowEnd ? windowEnd : rawEnd, DateTimeKind.Unspecified);
+            if (end <= start)
+                return;
+            bands.Add(new MachineSchedulePlannerCalendarBand
+            {
+                Start = start,
+                End = end,
+                BandKind = kind,
+                IsProductive = isProductive,
+                IsHardUnavailable = isHardUnavailable,
+                HolidayName = holidayName,
+                ShiftGroupCode = shiftGroupCode,
+                ShiftCode = shiftCode,
+                ShiftDescription = shiftDescription,
+                ReasonCode = reasonCode,
+                Description = description
+            });
+        }
+
+        static DateTime MinutesToDateTime(DateOnly d, int minutesFromMidnight)
+        {
+            var days = minutesFromMidnight / 1440;
+            var rem = minutesFromMidnight % 1440;
+            return d.AddDays(days).ToDateTime(TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(rem)), DateTimeKind.Unspecified);
+        }
+
+        var firstDate = DateOnly.FromDateTime(windowStart).AddDays(-1);
+        var lastDate = DateOnly.FromDateTime(windowEnd).AddDays(1);
+        for (var date = firstDate; date <= lastDate; date = date.AddDays(1))
+        {
+            var dayStart = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+            var dayEnd = date.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+            CalendarDayRow? dayRow = null;
+            calendar?.CalendarByDate.TryGetValue(date, out dayRow);
+
+            if (holidaysByDate.TryGetValue(date, out var holidayName))
+            {
+                AddClippedBand(
+                    dayStart,
+                    dayEnd,
+                    MachineSchedulePlannerCalendarBandKind.PublicHoliday,
+                    isProductive: false,
+                    isHardUnavailable: true,
+                    holidayName: holidayName ?? "Public holiday",
+                    description: holidayName ?? "Public holiday");
+                continue;
+            }
+
+            if (dayRow is null)
+                continue;
+
+            if (string.Equals(dayRow.DateCd, "H", StringComparison.OrdinalIgnoreCase))
+            {
+                AddClippedBand(
+                    dayStart,
+                    dayEnd,
+                    MachineSchedulePlannerCalendarBandKind.PublicHoliday,
+                    isProductive: false,
+                    isHardUnavailable: true,
+                    holidayName: "Holiday",
+                    description: "Holiday");
+                continue;
+            }
+
+            if (!string.Equals(dayRow.DateCd, "W", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(dayRow.ShfGrpCd)
+                || calendar?.ShiftGroups.TryGetValue(dayRow.ShfGrpCd, out var group) != true)
+            {
+                AddClippedBand(
+                    dayStart,
+                    dayEnd,
+                    MachineSchedulePlannerCalendarBandKind.OffDay,
+                    isProductive: false,
+                    isHardUnavailable: false,
+                    description: "Off day");
+                continue;
+            }
+
+            foreach (var shift in group.Shifts)
+            {
+                foreach (var fragment in ProductionCalendarScheduler.BuildShiftWorkingFragments(date, shift))
+                {
+                    AddClippedBand(
+                        fragment.Start,
+                        fragment.End,
+                        MachineSchedulePlannerCalendarBandKind.WorkingShift,
+                        isProductive: true,
+                        isHardUnavailable: false,
+                        shiftGroupCode: group.ShiftGroupCode,
+                        shiftCode: shift.ShiftCd,
+                        shiftDescription: shift.ShiftDescription,
+                        description: string.IsNullOrWhiteSpace(shift.ShiftDescription)
+                            ? $"Shift {shift.ShiftCd}"
+                            : $"{shift.ShiftCd} · {shift.ShiftDescription}");
+                }
+
+                foreach (var brk in ErpWeb.Core.Planning.ShiftTimeCalculator.ExpandBreakSegments(shift.Start, shift.End, shift.Breaks))
+                {
+                    AddClippedBand(
+                        MinutesToDateTime(date, brk.Start),
+                        MinutesToDateTime(date, brk.EndExclusive),
+                        MachineSchedulePlannerCalendarBandKind.ShiftBreak,
+                        isProductive: false,
+                        isHardUnavailable: false,
+                        shiftGroupCode: group.ShiftGroupCode,
+                        shiftCode: shift.ShiftCd,
+                        shiftDescription: shift.ShiftDescription,
+                        description: $"Break · {shift.ShiftCd}");
+                }
+            }
+        }
+
+        foreach (var row in preventives.Where(x => string.Equals(x.MachineCd, machineCode, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (!PreventiveWindowNormalizer.TryNormalize(row.DownDt, row.StartTm, row.EndTm, out var normalized, out _))
+                continue;
+            AddClippedBand(
+                normalized.WindowStart,
+                normalized.WindowEnd,
+                MachineSchedulePlannerCalendarBandKind.Preventive,
+                isProductive: false,
+                isHardUnavailable: true,
+                reasonCode: Normalize(row.ReasonCd),
+                description: Normalize(row.Remark) ?? "Planned preventive maintenance");
+        }
+
+        foreach (var downtime in downtimes.Where(x => string.Equals(x.MachineCode, machineCode, StringComparison.OrdinalIgnoreCase)))
+        {
+            var bandKind = downtime.MaintenanceType.Trim().ToUpperInvariant() switch
+            {
+                PrMaintenanceTypes.Breakdown => MachineSchedulePlannerCalendarBandKind.Breakdown,
+                PrMaintenanceTypes.Service => MachineSchedulePlannerCalendarBandKind.Service,
+                _ => MachineSchedulePlannerCalendarBandKind.Repair
+            };
+            var desc = downtime.IsOpenEnded
+                ? $"{downtime.MaintenanceType} (open-ended)"
+                : $"{downtime.MaintenanceType} ({downtime.MaintenanceStatus})";
+            AddClippedBand(
+                downtime.Start,
+                downtime.End,
+                bandKind,
+                isProductive: false,
+                isHardUnavailable: true,
+                reasonCode: downtime.MaintenanceType,
+                description: desc);
+        }
+
+        return bands
+            .OrderBy(x => x.Start)
+            .ThenBy(x => x.End)
+            .ThenBy(x => x.BandKind, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private sealed record LoadedMachineCalendars(
+        Dictionary<string, ScheduleMachineData> Schedules,
+        IReadOnlyDictionary<DateOnly, string?> HolidaysByDate,
+        IReadOnlyList<PrPreventive> Preventives,
+        IReadOnlyList<MachineDowntimeWindow> Downtimes);
 
     private static (DateTime Start, DateTime End) NormalizeWindow(DateTime start, DateTime end)
     {

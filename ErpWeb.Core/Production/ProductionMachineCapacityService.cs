@@ -558,7 +558,6 @@ public sealed class ProductionMachineCapacityService : IProductionMachineCapacit
     {
         if (!ValidateSetIdentity(row, set)
             || set.PlanningState == ProductionMachineSchedulePlanningStates.Completed
-            || set.PlanningState == ProductionMachineSchedulePlanningStates.ReplanRequired
             || set.Mode is not (ProductionMachineScheduleSegmentSetModes.FullPlan
                 or ProductionMachineScheduleSegmentSetModes.RemainingOnly)
             || !string.Equals(set.ScheduleSourceHash, row.ScheduleSourceHash, StringComparison.Ordinal)

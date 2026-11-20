@@ -33,8 +33,12 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
                 MachineScheduleAdvancedPlacementEngine.Normalize(machineCode),
                 StringComparison.Ordinal))
             .ToList();
-        var affected = machineSegments
+        var overlappingMachineIds = machineSegments
             .Where(x => x.PlannedStartDateTime < downEnd && x.PlannedCompletionDateTime > downStart)
+            .Select(x => x.WorkOrderMachineId)
+            .ToHashSet();
+        var affected = machineSegments
+            .Where(x => overlappingMachineIds.Contains(x.WorkOrderMachineId))
             .ToList();
         var orderIds = affected.Select(x => x.WorkOrderId)
             .Append(plan.TargetOrder.Uid)
@@ -75,56 +79,17 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
             }
 
             var totalQty = segments.Sum(x => x.PlannedOutputQty);
-            var (prefixQty, prefixBoundary) = await QuantityBeforeSplitAsync(context, first.WorkOrderMachineId,
-                segments, downStart, operation, machine, cancellationToken);
             var planned = new List<PlannedSegment>();
-            if (prefixQty > 0m && segments.Count > 0)
-            {
-                var prefixFragments = context.FragmentsBefore(first.WorkOrderMachineId, prefixBoundary);
-                if (prefixFragments.Count > 0)
-                {
-                    var prefixPlan = await SegmentCalculatorAsync(operation, machine, prefixQty, cancellationToken);
-                    planned.Add(new PlannedSegment
-                    {
-                        Existing = first,
-                        WorkOrderId = order.Uid,
-                        WorkOrderNo = order.WorkOrderNo,
-                        OperationId = operation.Uid,
-                        OperationCode = operation.OperationCode,
-                        WorkOrderMachineId = machine.Uid,
-                        MachineCode = machine.MachineCode,
-                        Kind = first.SegmentKind,
-                        Status = ProductionMachineScheduleSegmentStatuses.Planned,
-                        SourceSegmentId = first.SourceSegmentId,
-                        Qty = prefixQty,
-                        Uom = first.OutputUom,
-                        CycleCount = prefixPlan.CycleCount,
-                        CycleSlots = prefixPlan.CycleSlots,
-                        RunMinutes = prefixPlan.RunMinutes,
-                        SetupSeconds = first.ScheduledSetupSeconds,
-                        ConversionSeconds = first.ScheduledConversionSeconds,
-                        QueueSeconds = first.ScheduledQueueSeconds,
-                        Start = first.PlannedStartDateTime,
-                        Completion = prefixFragments.Max(x => x.End),
-                        SourceHash = first.SegmentScheduleSourceHash ?? string.Empty,
-                        HorizonStart = first.CalendarHorizonStart,
-                        HorizonEnd = first.CalendarHorizonEnd,
-                        Fragments = prefixFragments,
-                        Reason = "Prefix kept before maintenance downtime."
-                    });
-                    context.Supersede(segments.Where(x => x.Uid != first.Uid));
-                }
-                else
-                {
-                    prefixQty = 0m;
-                    context.Supersede(segments);
-                }
-            }
-            else
-            {
-                prefixQty = 0m;
-                context.Supersede(segments);
-            }
+            var prefixQty = await AppendKeptPrefixSegmentsAsync(
+                context,
+                segments,
+                downStart,
+                order,
+                operation,
+                machine,
+                "Prefix kept before maintenance downtime.",
+                planned,
+                cancellationToken);
 
             var resumeQty = totalQty - prefixQty;
             if (resumeQty > 0m && isOpenEnded)
@@ -132,6 +97,8 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
                 // A repair window without an end cannot produce a trustworthy resume date. Keep
                 // only the already-known prefix and leave the rest genuinely unscheduled.
                 plan.HasUnscheduledRemaining = true;
+                plan.UnscheduledMachineIds.Add(machine.Uid);
+                plan.UnscheduledWorkOrderIds.Add(order.Uid);
                 plan.Warnings.Add(
                     $"Work Order {order.WorkOrderNo} operation {operation.OperationCode} has "
                     + $"{resumeQty:n4} {operation.PlannedOutputUom} held behind open-ended maintenance. "
@@ -447,37 +414,81 @@ internal sealed partial class MachineScheduleAdvancedPlanBuilder
     {
         if (segments.Count == 0)
             return (0m, split);
-        var first = segments[0];
+        var ordered = segments
+            .OrderBy(x => x.SegmentSequence)
+            .ThenBy(x => x.PlannedStartDateTime)
+            .ToList();
+        var first = ordered[0];
         if (split <= first.PlannedStartDateTime)
             return (0m, first.PlannedStartDateTime);
-        if (machine.CycleSeconds <= 0m && split < segments.Max(x => x.PlannedCompletionDateTime))
+        var maxCompletion = ordered.Max(x => x.PlannedCompletionDateTime);
+        if (split >= maxCompletion)
+            return (ordered.Sum(x => x.PlannedOutputQty), maxCompletion);
+        if (machine.CycleSeconds <= 0m)
             throw new MachineScheduleQuantityConversionException(
                 "This machine has no positive cycle duration. Partial time-based split is unavailable; move the whole job or correct the machine standard.");
-        if (machine.CycleSeconds <= 0m)
-            return (segments.Sum(x => x.PlannedOutputQty), segments.Max(x => x.PlannedCompletionDateTime));
-        var overheadSeconds = Math.Max(0m, machine.SetupSeconds + machine.ConversionSeconds + machine.QueueSeconds);
-        var fragments = context.FragmentsBefore(machineId, DateTime.MaxValue);
-        var boundary = MachineScheduleSegmentCalculator.ResolveCompletedProductiveBoundary(
-            fragments, split, overheadSeconds, machine.CycleSeconds);
-        if (boundary.CompletedSlots <= 0)
-            return (0m, first.PlannedStartDateTime);
-        var totalQty = segments.Sum(x => x.PlannedOutputQty);
-        var totalPlan = await SegmentCalculatorAsync(operation, machine, totalQty, cancellationToken);
-        var prefixCycles = Math.Min(totalPlan.CycleCount,
-            boundary.CompletedSlots * machine.ParallelMachineCount);
-        if (prefixCycles <= 0m)
-            return (0m, first.PlannedStartDateTime);
-        var operationUom = (operation.PlannedOutputUom ?? string.Empty).Trim();
-        var cycleUom = string.IsNullOrWhiteSpace(machine.OutputPerCycleUom)
-            ? operationUom : machine.OutputPerCycleUom.Trim();
-        var converted = await _uom.ConvertAsync(
-            _scope.CompanyCode, operation.OperationCode,
-            prefixCycles * machine.OutputPerCycle,
-            cycleUom, operationUom, cancellationToken);
-        if (!converted.Succeeded)
-            throw new MachineScheduleQuantityConversionException(
-                converted.FailureMessage ?? $"No approved conversion from {cycleUom} to {operationUom}.");
-        return (Math.Clamp(converted.Quantity, 0m, totalQty), boundary.Resolved);
+
+        var allFragments = context.FragmentsBefore(machineId, DateTime.MaxValue);
+        var totalQty = ordered.Sum(x => x.PlannedOutputQty);
+        var completedQty = 0m;
+        var resolvedBoundary = first.PlannedStartDateTime;
+
+        foreach (var seg in ordered)
+        {
+            if (split <= seg.PlannedStartDateTime)
+                break;
+
+            if (split >= seg.PlannedCompletionDateTime)
+            {
+                completedQty += seg.PlannedOutputQty;
+                resolvedBoundary = seg.PlannedCompletionDateTime;
+                continue;
+            }
+
+            var segFragments = allFragments
+                .Select(f => new TimeInterval(
+                    f.Start < seg.PlannedStartDateTime ? seg.PlannedStartDateTime : f.Start,
+                    f.End > seg.PlannedCompletionDateTime ? seg.PlannedCompletionDateTime : f.End))
+                .Where(f => f.End > f.Start)
+                .OrderBy(f => f.Start)
+                .ToList();
+            var overheadSeconds = Math.Max(0m,
+                seg.ScheduledSetupSeconds + seg.ScheduledConversionSeconds + seg.ScheduledQueueSeconds);
+            var boundary = MachineScheduleSegmentCalculator.ResolveCompletedProductiveBoundary(
+                segFragments, split, overheadSeconds, machine.CycleSeconds);
+            if (boundary.CompletedSlots <= 0)
+            {
+                return completedQty > 0m
+                    ? (Math.Clamp(completedQty, 0m, totalQty), resolvedBoundary)
+                    : (0m, first.PlannedStartDateTime);
+            }
+
+            var segPlan = await SegmentCalculatorAsync(operation, machine, seg.PlannedOutputQty, cancellationToken);
+            var prefixCycles = Math.Min(segPlan.CycleCount,
+                boundary.CompletedSlots * machine.ParallelMachineCount);
+            if (prefixCycles <= 0m)
+            {
+                return completedQty > 0m
+                    ? (Math.Clamp(completedQty, 0m, totalQty), resolvedBoundary)
+                    : (0m, first.PlannedStartDateTime);
+            }
+
+            var operationUom = (operation.PlannedOutputUom ?? string.Empty).Trim();
+            var cycleUom = string.IsNullOrWhiteSpace(machine.OutputPerCycleUom)
+                ? operationUom : machine.OutputPerCycleUom.Trim();
+            var converted = await _uom.ConvertAsync(
+                _scope.CompanyCode, operation.OperationCode,
+                prefixCycles * machine.OutputPerCycle,
+                cycleUom, operationUom, cancellationToken);
+            if (!converted.Succeeded)
+                throw new MachineScheduleQuantityConversionException(
+                    converted.FailureMessage ?? $"No approved conversion from {cycleUom} to {operationUom}.");
+
+            var segPrefixQty = Math.Clamp(converted.Quantity, 0m, seg.PlannedOutputQty);
+            return (Math.Clamp(completedQty + segPrefixQty, 0m, totalQty), boundary.Resolved);
+        }
+
+        return (Math.Clamp(completedQty, 0m, totalQty), resolvedBoundary);
     }
 
     private sealed class PlanContext

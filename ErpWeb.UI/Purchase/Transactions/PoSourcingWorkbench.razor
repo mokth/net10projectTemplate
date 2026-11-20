@@ -1,0 +1,709 @@
+@page "/purchase/sourcing/{Mode:regex(^(new|edit|view)$)}"
+@page "/purchase/sourcing/{Mode:regex(^(new|edit|view)$)}/{SourcingId:long}"
+
+@using ErpWeb.Model.Entities.Purchase
+@inherits PageBase
+
+<PageTitle>@PageHeading</PageTitle>
+
+<MenuAuthorize MenuCode="@MenuCodes.PurchaseSourcing">
+    <SaDocPage>
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="sdoc-toast sdoc-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="sdoc-toast__close" @onclick="DismissStatus" aria-label="Dismiss">×</button>
+            </div>
+        }
+        <SdValidationSummary Errors="@ValidationErrors" FallbackMessage="@ErrorMessage" OnDismiss="DismissError" />
+
+        @if (IsLoading)
+        {
+            <div class="sdoc-loading">
+                <p class="mb-0">Loading purchase sourcing workbench…</p>
+            </div>
+        }
+        else
+        {
+            <header class="sdoc-titlebar">
+                <h1 class="sdoc-titlebar__title" title="@($"{PageHeading} · {SourcingNoDisplay}")">@PageHeading · @SourcingNoDisplay</h1>
+                <span class="sdoc-titlebar__status" title="@StatusDisplay">
+                    @StatusDisplay
+                    <span class="sdoc-titlebar__status-extra">@ModeChip</span>
+                </span>
+                <div class="sdoc-titlebar__kpi">
+                    <span>Quotes</span>
+                    <strong>@ActiveQuoteCount</strong>
+                </div>
+            </header>
+
+            <nav class="posrc-tabs" aria-label="Sourcing workbench sections">
+                <button type="button"
+                        class="posrc-tab @(ActiveTabIndex == 0 ? "is-active" : string.Empty)"
+                        @onclick="() => SelectTabAsync(0)">
+                    <i class="fa-solid fa-clipboard-list"></i>
+                    <span>1. Request (@Lines.Count)</span>
+                </button>
+                <button type="button"
+                        class="posrc-tab @(ActiveTabIndex == 1 ? "is-active" : string.Empty)"
+                        disabled="@IsNew"
+                        @onclick="() => SelectTabAsync(1)">
+                    <i class="fa-solid fa-file-invoice-dollar"></i>
+                    <span>2. Supplier Quotations (@Quotes.Count)</span>
+                </button>
+                <button type="button"
+                        class="posrc-tab @(ActiveTabIndex == 2 ? "is-active" : string.Empty)"
+                        disabled="@IsNew"
+                        @onclick="() => SelectTabAsync(2)">
+                    <i class="fa-solid fa-scale-balanced"></i>
+                    <span>3. Compare &amp; Award</span>
+                </button>
+            </nav>
+
+            @if (ActiveTabIndex == 0)
+            {
+                <section class="sdoc-master">
+                    <div class="sdoc-section-label">Sourcing Request Header</div>
+                    <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-header-form">
+                        <DxFormLayoutGroup ColSpanMd="4">
+                            <HeaderContentTemplate>Document</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="RFQ No." ColSpanMd="12">
+                                    <Template>
+                                        <DxTextBox Text="@SourcingNoDisplay" ReadOnly="true" ValidationEnabled="false" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Source Type" ColSpanMd="12">
+                                    <Template>
+                                        <DxComboBox Data="@SourceTypeOptions"
+                                                    TextFieldName="@nameof(CodeNameOption.Name)"
+                                                    ValueFieldName="@nameof(CodeNameOption.Code)"
+                                                    Value="@SourceType"
+                                                    ValueChanged="@((string v) => { SourceType = v; MarkDirty(); })"
+                                                    Enabled="@(CanEditDocument && IsNew)"
+                                                    ValueExpression="@(() => SourceType)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Request Date" ColSpanMd="12">
+                                    <Template>
+                                        <DxDateEdit Date="@RequestDate"
+                                                    DateChanged="@((DateTime d) => { RequestDate = d.Date; MarkDirty(); })"
+                                                    DisplayFormat="dd/MM/yyyy"
+                                                    Enabled="@CanEditDocument"
+                                                    DateExpression="@(() => RequestDate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Response Due" ColSpanMd="12">
+                                    <Template>
+                                        <DxDateEdit T="DateTime?"
+                                                    Date="@ResponseDueDate"
+                                                    DateChanged="@((DateTime? d) => { ResponseDueDate = d?.Date; MarkDirty(); })"
+                                                    DisplayFormat="dd/MM/yyyy"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    Enabled="@CanEditDocument"
+                                                    DateExpression="@(() => ResponseDueDate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+
+                        <DxFormLayoutGroup ColSpanMd="4">
+                            <HeaderContentTemplate>Scope &amp; Ownership</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="Title" ColSpanMd="12">
+                                    <Template>
+                                        <DxTextBox Text="@Title"
+                                                   TextChanged="@((string v) => { Title = v; MarkDirty(); })"
+                                                   MaxLength="200"
+                                                   Enabled="@CanEditDocument"
+                                                   CssClass="required-field"
+                                                   TextExpression="@(() => Title)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Buyer" ColSpanMd="12">
+                                    <Template>
+                                        <DxComboBox Data="@Lookups.Buyers"
+                                                    TextFieldName="@nameof(PoOrderCodeLookupRow.DisplayText)"
+                                                    ValueFieldName="@nameof(PoOrderCodeLookupRow.Code)"
+                                                    Value="@BuyerCode"
+                                                    ValueChanged="@((string? v) => { BuyerCode = v; MarkDirty(); })"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    Enabled="@CanEditDocument"
+                                                    ValueExpression="@(() => BuyerCode)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Department" ColSpanMd="12">
+                                    <Template>
+                                        <DxComboBox Data="@Lookups.Departments"
+                                                    TextFieldName="@nameof(PoOrderCodeLookupRow.DisplayText)"
+                                                    ValueFieldName="@nameof(PoOrderCodeLookupRow.Code)"
+                                                    Value="@DepartmentCode"
+                                                    ValueChanged="@((string? v) => { DepartmentCode = v; MarkDirty(); })"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    Enabled="@CanEditDocument"
+                                                    ValueExpression="@(() => DepartmentCode)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Project" ColSpanMd="12">
+                                    <Template>
+                                        <DxComboBox Data="@Lookups.Projects"
+                                                    TextFieldName="@nameof(PoOrderCodeLookupRow.DisplayText)"
+                                                    ValueFieldName="@nameof(PoOrderCodeLookupRow.Code)"
+                                                    Value="@ProjectId"
+                                                    ValueChanged="@((string? v) => { ProjectId = v; MarkDirty(); })"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    Enabled="@CanEditDocument"
+                                                    ValueExpression="@(() => ProjectId)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+
+                        <DxFormLayoutGroup ColSpanMd="4">
+                            <HeaderContentTemplate>Currency &amp; Delivery</HeaderContentTemplate>
+                            <Items>
+                                <DxFormLayoutItem Caption="Base Currency" ColSpanMd="12">
+                                    <Template>
+                                        <DxComboBox Data="@Lookups.Currencies"
+                                                    TextFieldName="@nameof(PoOrderCodeLookupRow.DisplayText)"
+                                                    ValueFieldName="@nameof(PoOrderCodeLookupRow.Code)"
+                                                    Value="@BaseCurrency"
+                                                    ValueChanged="@((string v) => { BaseCurrency = v; MarkDirty(); })"
+                                                    Enabled="@CanEditDocument"
+                                                    ValueExpression="@(() => BaseCurrency)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Warehouse" ColSpanMd="12">
+                                    <Template>
+                                        <DxComboBox Data="@Lookups.Warehouses"
+                                                    TextFieldName="@nameof(IvWarehouseLookupRow.DisplayText)"
+                                                    ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
+                                                    Value="@DefaultToWarehouse"
+                                                    ValueChanged="@((string? v) => { DefaultToWarehouse = v; MarkDirty(); })"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    Enabled="@CanEditDocument"
+                                                    ValueExpression="@(() => DefaultToWarehouse)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Required ETA" ColSpanMd="12">
+                                    <Template>
+                                        <DxDateEdit T="DateTime?"
+                                                    Date="@RequiredEtaDate"
+                                                    DateChanged="@((DateTime? d) => { RequiredEtaDate = d?.Date; MarkDirty(); })"
+                                                    DisplayFormat="dd/MM/yyyy"
+                                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    Enabled="@CanEditDocument"
+                                                    DateExpression="@(() => RequiredEtaDate)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                                <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                                    <Template>
+                                        <DxMemo Text="@Remarks"
+                                                TextChanged="@((string? v) => { Remarks = v; MarkDirty(); })"
+                                                Rows="2"
+                                                MaxLength="500"
+                                                Enabled="@CanEditDocument"
+                                                TextExpression="@(() => Remarks)" />
+                                    </Template>
+                                </DxFormLayoutItem>
+                            </Items>
+                        </DxFormLayoutGroup>
+                    </DxFormLayout>
+                </section>
+
+                <section class="sdoc-lines">
+                    <div class="sdoc-lines__toolbar">
+                        <div class="sdoc-section-label">Requested Items (@Lines.Count)</div>
+                        @if (CanEditDocument)
+                        {
+                            <div class="sdoc-lines__toolbar-actions">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Add Item Line"
+                                          IconCssClass="fa-solid fa-plus"
+                                          Click="@OpenNewLinePopup" />
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          Text="Import Open PR Lines"
+                                          IconCssClass="fa-solid fa-file-import"
+                                          Click="@OpenImportPrLinesPopupAsync" />
+                            </div>
+                        }
+                    </div>
+
+                    <DxGrid Data="@Lines"
+                            KeyFieldName="@nameof(PoSourcingLineDto.LineNo)"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                            TextWrapEnabled="false"
+                            ShowSearchBox="false"
+                            ShowGroupPanel="false"
+                            CssClass="sdoc-line-grid">
+                        <Columns>
+                            <DxGridCommandColumn Width="90px" FixedPosition="GridColumnFixedPosition.Left" Caption="Actions" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (PoSourcingLineDto)context.DataItem;
+                                    }
+                                    @if (CanEditDocument)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-pen"
+                                                  Click="@(() => OpenEditLinePopup(row))" />
+                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-trash"
+                                                  Click="@(() => RemoveLine(row))" />
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.LineNo)" Caption="#" Width="65px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.SourcePrNo)" Caption="Source PR" Width="130px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.ItemCode)" Caption="Item Code" Width="150px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.ItemDescription)" Caption="Description" MinWidth="220" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.RequestedPurchaseQty)" Caption="Req Qty" DisplayFormat="n4" Width="120px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.RequestedPurchaseUom)" Caption="UOM" Width="90px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.PackSize)" Caption="Pack" DisplayFormat="n4" Width="90px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.AwardedPurchaseQty)" Caption="Awarded" DisplayFormat="n4" Width="115px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingLineDto.ConvertedPurchaseQty)" Caption="Converted" DisplayFormat="n4" Width="115px" />
+                        </Columns>
+                    </DxGrid>
+                </section>
+
+                <section class="sdoc-lines">
+                    <div class="sdoc-lines__toolbar">
+                        <div class="sdoc-section-label">Invited / Candidate Suppliers (@Suppliers.Count)</div>
+                        @if (CanEditDocument)
+                        {
+                            <div class="sdoc-lines__toolbar-actions">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Add Supplier"
+                                          IconCssClass="fa-solid fa-user-plus"
+                                          Click="@OpenNewSupplierPopup" />
+                            </div>
+                        }
+                    </div>
+
+                    <DxGrid Data="@Suppliers"
+                            KeyFieldName="@nameof(PoSourcingSupplierDto.SupplierName)"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                            TextWrapEnabled="false"
+                            ShowSearchBox="false"
+                            ShowGroupPanel="false"
+                            CssClass="sdoc-line-grid">
+                        <Columns>
+                            <DxGridCommandColumn Width="75px" FixedPosition="GridColumnFixedPosition.Left" Caption="Actions" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var row = (PoSourcingSupplierDto)context.DataItem;
+                                    }
+                                    @if (CanEditDocument)
+                                    {
+                                        <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                                  RenderStyleMode="ButtonRenderStyleMode.Text"
+                                                  IconCssClass="fa-solid fa-trash"
+                                                  Click="@(() => RemoveSupplier(row))" />
+                                    }
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingSupplierDto.SupplierCode)" Caption="Supplier Code" Width="140px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingSupplierDto.SupplierName)" Caption="Supplier Name" MinWidth="220" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingSupplierDto.DefaultCurrency)" Caption="Currency" Width="95px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingSupplierDto.PaymentTerm)" Caption="Pay Term" Width="110px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingSupplierDto.ResponseStatus)" Caption="Status" Width="120px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingSupplierDto.ContactPerson)" Caption="Contact" Width="150px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingSupplierDto.Email)" Caption="Email" Width="180px" />
+                        </Columns>
+                    </DxGrid>
+                </section>
+            }
+            else if (ActiveTabIndex == 1)
+            {
+                <section class="sdoc-lines">
+                    <div class="sdoc-lines__toolbar">
+                        <div class="sdoc-section-label">Supplier Quotations (@Quotes.Count)</div>
+                        @if (CanEditDocument && Suppliers.Count > 0)
+                        {
+                            <div class="sdoc-lines__toolbar-actions">
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Record Supplier Quotation"
+                                          IconCssClass="fa-solid fa-plus"
+                                          Click="@OpenNewQuotePopup" />
+                            </div>
+                        }
+                    </div>
+
+                    <DxGrid Data="@Quotes"
+                            KeyFieldName="@nameof(PoSourcingQuoteDto.QuoteId)"
+                            ColumnResizeMode="GridColumnResizeMode.ColumnsContainer"
+                            TextWrapEnabled="false"
+                            ShowSearchBox="false"
+                            ShowGroupPanel="false"
+                            CssClass="sdoc-line-grid">
+                        <Columns>
+                            <DxGridCommandColumn Width="110px" FixedPosition="GridColumnFixedPosition.Left" Caption="Actions" NewButtonVisible="false" EditButtonVisible="false" DeleteButtonVisible="false">
+                                <CellDisplayTemplate>
+                                    @{
+                                        var q = (PoSourcingQuoteDto)context.DataItem;
+                                    }
+                                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                              RenderStyleMode="ButtonRenderStyleMode.Text"
+                                              IconCssClass="fa-solid fa-pen"
+                                              ToolTip="Edit or revise quotation"
+                                              Click="@(() => OpenEditQuotePopup(q))" />
+                                </CellDisplayTemplate>
+                            </DxGridCommandColumn>
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.SupplierName)" Caption="Supplier" MinWidth="200" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.SupplierQuoteNo)" Caption="Supplier Quote No." Width="160px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.QuoteRevNo)" Caption="Rev" Width="70px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.Status)" Caption="Status" Width="115px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.QuoteDate)" Caption="Quote Date" DisplayFormat="dd/MM/yyyy" Width="115px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.ValidUntilDate)" Caption="Valid Until" DisplayFormat="dd/MM/yyyy" Width="115px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.Currency)" Caption="Curr" Width="85px" />
+                            <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.ExchangeRate)" Caption="FX Rate" DisplayFormat="n6" Width="110px" />
+                            @if (Lookups.CanViewCost)
+                            {
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.TotalQuoteAmount)" Caption="Total (Quote Curr)" DisplayFormat="n2" Width="150px" />
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingQuoteDto.TotalComparableBaseAmount)" Caption="@($"Comparable ({BaseCurrency})")" DisplayFormat="n2" Width="160px" />
+                            }
+                        </Columns>
+                    </DxGrid>
+                </section>
+            }
+            else if (ActiveTabIndex == 2)
+            {
+                <section class="sdoc-lines">
+                    <div class="sdoc-lines__toolbar">
+                        <div class="sdoc-section-label">Normalized Landed-Cost Comparison Matrix (Base Currency: @BaseCurrency)</div>
+                        <div class="sdoc-lines__toolbar-actions">
+                            @if (CanApproveAward && Comparison?.Matrix.Lines.Count > 0)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Approve Award Selection"
+                                          IconCssClass="fa-solid fa-award"
+                                          Click="@SaveAndApproveAwardAsync"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                            @if (LatestApprovedAward is not null && Lookups.CanCreatePr)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                          Text="Convert Award to PR"
+                                          IconCssClass="fa-solid fa-file-Pen"
+                                          Click="@(() => OpenConversionPopupAsync(PoSourcingConversionTargetTypes.Pr))"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                            @if (LatestApprovedAward is not null && Lookups.CanCreatePo)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                          Text="Convert Award to PO"
+                                          IconCssClass="fa-solid fa-file-signature"
+                                          Click="@(() => OpenConversionPopupAsync(PoSourcingConversionTargetTypes.Po))"
+                                          Enabled="@(!IsSubmitting)" />
+                            }
+                        </div>
+                    </div>
+
+                    @if (Comparison is null || Comparison.Matrix.Lines.Count == 0)
+                    {
+                        <p class="text-muted">Record at least one supplier quotation to view the side-by-side comparison matrix.</p>
+                    }
+                    else
+                    {
+                        var distinctOffersHeader = Comparison.Matrix.Lines
+                            .SelectMany(l => l.Offers)
+                            .GroupBy(o => o.QuoteId)
+                            .Select(g => g.First())
+                            .OrderBy(o => o.SupplierName)
+                            .ToList();
+
+                        <div class="posrc-matrix-wrap">
+                            <table class="posrc-matrix">
+                                <thead>
+                                    <tr>
+                                        <th>Line / Item</th>
+                                        <th>Requested Qty</th>
+                                        @foreach (var qs in distinctOffersHeader)
+                                        {
+                                            <th>
+                                                <div>@qs.SupplierName</div>
+                                                <small class="text-muted">@qs.SupplierQuoteRef (Rev @qs.QuoteRevNo) · @qs.Currency (FX @((qs.ExchangeRateToBase ?? 1m).ToString("n4")))</small>
+                                            </th>
+                                        }
+                                        <th>Selection Reason / Exception</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var lineRow in Comparison.Matrix.Lines)
+                                    {
+                                        var draftSel = GetOrCreateAwardDraft(lineRow);
+                                        <tr>
+                                            <td>
+                                                <strong>#@lineRow.LineNo @(lineRow.ICode ?? "FREE-TEXT")</strong>
+                                                <div>@lineRow.Description</div>
+                                                @if (lineRow.OnlyOneSupplierQuoted)
+                                                {
+                                                    <span class="posrc-badge posrc-badge--warn">Single Quote</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                @lineRow.RequestedQty.ToString("n4") @lineRow.RequestedUom
+                                            </td>
+                                            @foreach (var qs in distinctOffersHeader)
+                                            {
+                                                var cell = lineRow.Offers.FirstOrDefault(c => c.QuoteId == qs.QuoteId);
+                                                if (cell is null)
+                                                {
+                                                    <td>—</td>
+                                                }
+                                                else
+                                                {
+                                                    var isSelected = draftSel.QuoteLineId == cell.QuoteLineId;
+                                                    <td class="@(cell.IsLowestComparableOffer ? "posrc-cell--lowest" : (!cell.IsComparable ? "posrc-cell--noncomparable" : string.Empty))">
+                                                        <div>
+                                                            <label>
+                                                                <input type="radio"
+                                                                       name="@($"award-line-{lineRow.SourcingLineId}")"
+                                                                       checked="@isSelected"
+                                                                       disabled="@(!cell.IsComparable || !CanApproveAward)"
+                                                                       @onchange="@(() => SelectAwardCell(lineRow.SourcingLineId, cell.QuoteLineId, lineRow.RequestedQty))" />
+                                                                @if (Lookups.CanViewCost && cell.IsComparable)
+                                                                {
+                                                                    <strong>@BaseCurrency @cell.NormalizedBaseUnitCost.ToString("n4") / @lineRow.StdUom</strong>
+                                                                }
+                                                                else if (!Lookups.CanViewCost)
+                                                                {
+                                                                    <strong>[Cost Redacted]</strong>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <span>@cell.LineStatus</span>
+                                                                }
+                                                            </label>
+                                                        </div>
+                                                        @if (cell.IsLowestComparableOffer)
+                                                        {
+                                                            <span class="posrc-badge posrc-badge--low">Lowest Landed</span>
+                                                        }
+                                                        @if (cell.IsShortestLeadTimeOffer)
+                                                        {
+                                                            <span class="posrc-badge posrc-badge--fast">Fastest Lead Time</span>
+                                                        }
+                                                        @if (!cell.IsComparable && !string.IsNullOrWhiteSpace(cell.NonComparableReason))
+                                                        {
+                                                            <div class="posrc-badge posrc-badge--err">@cell.NonComparableReason</div>
+                                                        }
+                                                        @if (cell.HasMoqWarning && !string.IsNullOrWhiteSpace(cell.MoqWarningMessage))
+                                                        {
+                                                            <div class="posrc-badge posrc-badge--warn">@cell.MoqWarningMessage</div>
+                                                        }
+                                                    </td>
+                                                }
+                                            }
+                                            <td>
+                                                <DxTextBox @bind-Text="@draftSel.SelectionReasonCode"
+                                                           NullText="Reason code (if non-lowest)"
+                                                           Enabled="@CanApproveAward"
+                                                           CssClass="mb-1" />
+                                                <DxTextBox @bind-Text="@draftSel.ExceptionReason"
+                                                           NullText="Exception reason (if expired/MOQ)"
+                                                           Enabled="@CanApproveAward" />
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </section>
+
+                @if (Conversions.Count > 0)
+                {
+                    <section class="sdoc-lines">
+                        <div class="sdoc-section-label">Converted PR / PO Documents (@Conversions.Count)</div>
+                        <DxGrid Data="@Conversions"
+                                KeyFieldName="@nameof(PoSourcingConversionDto.ConversionId)"
+                                ShowSearchBox="false"
+                                ShowGroupPanel="false"
+                                CssClass="sdoc-line-grid">
+                            <Columns>
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingConversionDto.TargetType)" Caption="Target" Width="90px" />
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingConversionDto.TargetDocNo)" Caption="Document No." Width="160px" />
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingConversionDto.TargetRelNo)" Caption="Rev" Width="75px" />
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingConversionDto.Status)" Caption="Status" Width="160px" />
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingConversionDto.StatusReason)" Caption="Lifecycle Sync Notes" MinWidth="240" />
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingConversionDto.CreatedBy)" Caption="Created By" Width="120px" />
+                                <DxGridDataColumn FieldName="@nameof(PoSourcingConversionDto.CreatedDate)" Caption="Created Date" DisplayFormat="dd/MM/yyyy HH:mm" Width="160px" />
+                            </Columns>
+                        </DxGrid>
+                    </section>
+                }
+            }
+
+            <footer class="sdoc-footer">
+                <p class="sdoc-footer__hint">@(IsDirty ? "Unsaved changes" : "Ready") · @Lines.Count line(s) · @Suppliers.Count supplier(s)</p>
+                <div class="sdoc-footer__actions">
+                    @if (IsReadOnlyMode)
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Close"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnClose" />
+                        @if (CanEditFromView)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="Edit"
+                                      IconCssClass="fa-solid fa-pen"
+                                      Click="@OnEditFromView" />
+                        }
+                    }
+                    else
+                    {
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                  Text="Cancel"
+                                  IconCssClass="fa-solid fa-xmark"
+                                  Click="@OnCancel"
+                                  Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@(IsSubmitting ? "Saving…" : "Save")"
+                                  IconCssClass="fa-solid fa-floppy-disk"
+                                  Click="@OnSaveDraftAsync"
+                                  Enabled="@(!IsSubmitting && CanEditDocument)" />
+                    }
+                </div>
+            </footer>
+        }
+
+        <DxPopup HeaderText="RFQ Item Line"
+                 CloseOnOutsideClick="false"
+                 Width="680px"
+                 CssClass="sdoc-popup common-popup"
+                 @bind-Visible="@LinePopupVisible">
+            <Content>
+                <div class="sdoc-popup-body">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Item Code" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@EditingLine.ItemCode" MaxLength="50" NullText="Master item code (optional for free-text)" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="One-Time / Free-Text" ColSpanMd="6">
+                            <Template>
+                                <DxCheckBox @bind-Checked="@EditingLine.OneTimeItemYn" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Description" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@EditingLine.ItemDescription" MaxLength="200" CssClass="required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Requested Qty" ColSpanMd="4">
+                            <Template>
+                                <DxSpinEdit @bind-Value="@EditingLine.RequestedPurchaseQty" MinValue="0.0001m" DisplayFormat="n4" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Purchase UOM" ColSpanMd="4">
+                            <Template>
+                                <DxTextBox @bind-Text="@EditingLine.RequestedPurchaseUom" MaxLength="10" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Pack Size" ColSpanMd="4">
+                            <Template>
+                                <DxSpinEdit @bind-Value="@EditingLine.PackSize" MinValue="0.0001m" DisplayFormat="n4" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => LinePopupVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply" Click="@CommitLinePopup" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Add Invited / Candidate Supplier"
+                 CloseOnOutsideClick="false"
+                 Width="600px"
+                 CssClass="sdoc-popup common-popup"
+                 @bind-Visible="@SupplierPopupVisible">
+            <Content>
+                <div class="sdoc-popup-body">
+                    <DxFormLayout SizeMode="SizeMode.Small">
+                        <DxFormLayoutItem Caption="Supplier Code" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@EditingSupplier.SupplierCode" MaxLength="60" NullText="Optional for ad-hoc vendor" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Default Currency" ColSpanMd="6">
+                            <Template>
+                                <DxComboBox Data="@Lookups.Currencies"
+                                            TextFieldName="@nameof(PoOrderCodeLookupRow.DisplayText)"
+                                            ValueFieldName="@nameof(PoOrderCodeLookupRow.Code)"
+                                            @bind-Value="@EditingSupplier.DefaultCurrency" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Supplier Name" ColSpanMd="12">
+                            <Template>
+                                <DxTextBox @bind-Text="@EditingSupplier.SupplierName" MaxLength="200" CssClass="required-field" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Contact Person" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@EditingSupplier.ContactPerson" MaxLength="100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                        <DxFormLayoutItem Caption="Email" ColSpanMd="6">
+                            <Template>
+                                <DxTextBox @bind-Text="@EditingSupplier.Email" MaxLength="100" />
+                            </Template>
+                        </DxFormLayoutItem>
+                    </DxFormLayout>
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => SupplierPopupVisible = false)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Add Supplier" Click="@CommitSupplierPopup" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+
+        <DxPopup HeaderText="Convert Award to PR / PO"
+                 CloseOnOutsideClick="false"
+                 Width="720px"
+                 CssClass="sdoc-popup common-popup"
+                 @bind-Visible="@ConversionPopupVisible">
+            <Content>
+                <div class="sdoc-popup-body">
+                    @if (ConversionPreview is not null)
+                    {
+                        @if (ConversionPreview.BlockingErrors.Count > 0)
+                        {
+                            <div class="sdoc-popup-error">
+                                @foreach (var err in ConversionPreview.BlockingErrors)
+                                {
+                                    <div>@err</div>
+                                }
+                            </div>
+                        }
+                        @foreach (var grp in ConversionPreview.Groups)
+                        {
+                            <div class="mb-2">
+                                <strong>@grp.GroupKeyDescription</strong>
+                                <span> · @grp.LineCount line(s) · Net @grp.Currency @grp.TotalNetAmount.ToString("n2")</span>
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="iv-popup-footer">
+                    <div class="iv-popup-footer__actions">
+                        <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => ConversionPopupVisible = false)" Enabled="@(!IsSubmitting)" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                  Text="@($"Confirm Convert to {PendingConversionTargetType}")"
+                                  Click="@ExecuteConversionAsync"
+                                  Enabled="@(!IsSubmitting && ConversionPreview?.CanProceed == true)" />
+                    </div>
+                </div>
+            </Content>
+        </DxPopup>
+    </SaDocPage>
+</MenuAuthorize>

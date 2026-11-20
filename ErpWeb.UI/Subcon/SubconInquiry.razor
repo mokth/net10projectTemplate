@@ -22,6 +22,10 @@
                 <h1 class="iv-title">Inquiry / Statement</h1>
                 <div class="iv-chips">
                     <span class="iv-chip">@TotalCountLabel</span>
+                    @if (HasActiveFilters)
+                    {
+                        <span class="iv-chip">Filtered</span>
+                    }
                     <span class="iv-chip">Read-only</span>
                     <span class="iv-chip">Drafts only</span>
                 </div>
@@ -38,12 +42,23 @@
                         <DxTextBox InputId="subcon-inquiry-search"
                                    Text="@SearchText"
                                    TextChanged="OnSearchTextChanged"
+                                   TextExpression="@(() => SearchText)"
                                    NullText="Search supplier, item, document…"
                                    ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                    CssClass="w-100"
                                    BindValueMode="BindValueMode.OnInput" />
                     </div>
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              IconCssClass="fa-solid fa-magnifying-glass"
+                              CssClass="erp-inline-search__button"
+                              Click="@ApplySearchAsync"
+                              aria-label="Search subcontract statement"
+                              title="Search subcontract statement" />
                 </div>
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="FILTER"
+                          IconCssClass="fa-solid fa-filter"
+                          Click="@OpenFilterPopup" />
             </div>
 
             @if (IsBootstrapping)
@@ -62,7 +77,8 @@
             else
             {
                 <div class="iv-list-desktop">
-                    <CommonDataGridEx T="SubconListRow"
+                    <CommonDataGridEx @ref="Grid"
+                                      T="SubconListRow"
                                       Columns="@Columns"
                                       Buttons="@Buttons"
                                       ActionButtons="@ActionButtons"
@@ -79,7 +95,69 @@
                                       allowSelect="false"
                                       OnActionEventHandle="@OnActionClick" />
                 </div>
+                <div class="iv-list-compact">
+                    @foreach (var row in CompactRows)
+                    {
+                        <button type="button"
+                                class="iv-list-compact__item"
+                                @onclick="() => NavigateView(row.DocNo)">
+                            <span class="iv-list-compact__code">@row.DocNo</span>
+                            <span class="iv-list-compact__desc">@row.SupplierName · @row.TrxDate.ToString("dd/MM/yyyy")</span>
+                            <div class="iv-list-compact__meta">
+                                <span class="iv-status">@row.Status</span>
+                                <span class="iv-chip">@row.LineCount line(s)</span>
+                            </div>
+                        </button>
+                    }
+                </div>
             }
         </section>
     </div>
+
+    <DxPopup HeaderText="Filter subcontract statement"
+             CloseOnOutsideClick="false"
+             ShowFooter="true"
+             Width="min(480px, 95vw)"
+             CssClass="common-popup"
+             @bind-Visible="@FilterPopupVisible">
+        <BodyContentTemplate Context="popupCtx">
+            <div class="iv-popup-body">
+                <DxFormLayout SizeMode="SizeMode.Small">
+                    <DxFormLayoutItem Caption="Status" ColSpanMd="12">
+                        <Template Context="field">
+                            <DxComboBox Data="@StatusFilterOptions"
+                                        @bind-Value="@DraftStatusFilter"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date from" ColSpanMd="6">
+                        <Template Context="field">
+                            <DxDateEdit @bind-Date="@DraftDateFrom"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                    <DxFormLayoutItem Caption="Date to" ColSpanMd="6">
+                        <Template Context="field">
+                            <DxDateEdit @bind-Date="@DraftDateTo"
+                                        DisplayFormat="dd/MM/yyyy"
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                        </Template>
+                    </DxFormLayoutItem>
+                </DxFormLayout>
+            </div>
+        </BodyContentTemplate>
+        <FooterContentTemplate Context="footerCtx">
+            <div class="iv-popup-footer">
+                <div class="iv-popup-footer__actions">
+                    <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                              Text="Clear"
+                              Click="@ClearFiltersAsync" />
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="Apply"
+                              Click="@ApplyFiltersAsync" />
+                </div>
+            </div>
+        </FooterContentTemplate>
+    </DxPopup>
 </MenuAuthorize>

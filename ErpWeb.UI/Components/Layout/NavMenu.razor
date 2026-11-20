@@ -2,20 +2,61 @@
 @implements IDisposable
 
 <nav class="nav-tree-wrap" aria-label="Primary">
-    @if (_items is null)
+    <div class="nav-toolbar">
+        <label class="nav-sr-only" for="nav-menu-search">Search menu</label>
+        <div class="nav-search">
+            <i class="fa-solid fa-magnifying-glass nav-search__icon" aria-hidden="true"></i>
+            <DxTextBox InputId="nav-menu-search"
+                       Text="@_searchText"
+                       TextChanged="@OnSearchTextChanged"
+                       TextExpression="@(() => _searchText)"
+                       BindValueMode="BindValueMode.OnInput"
+                       NullText="Search menu…"
+                       ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                       Enabled="@(_allItems is not null)"
+                       CssClass="nav-search__input"
+                       @onkeydown="OnSearchKeyDown" />
+        </div>
+
+        <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                  RenderStyleMode="ButtonRenderStyleMode.Outline"
+                  IconCssClass="@ExpandCollapseIconCss"
+                  CssClass="@ExpandCollapseButtonCss"
+                  Enabled="@CanToggleExpandCollapse"
+                  Click="@ToggleExpandCollapseAll"
+                  aria-label="@ExpandCollapseLabel"
+                  aria-pressed="@(_allExpanded ? "true" : "false")"
+                  title="@ExpandCollapseLabel" />
+    </div>
+
+    @if (_allItems is null)
     {
         <span class="nav-tree-loading">Loading…</span>
+    }
+    else if (_visibleItems.Count == 0)
+    {
+        <div class="nav-empty" role="status">
+            <i class="fa-solid fa-magnifying-glass nav-empty__icon" aria-hidden="true"></i>
+            <p class="nav-empty__title">No matching menu items</p>
+            <p class="nav-empty__hint">Nothing matched "@_searchText.Trim()".</p>
+            <button type="button" class="nav-empty__clear" @onclick="ClearSearch">
+                Clear search
+            </button>
+        </div>
     }
     else
     {
         <div class="nav-tree-scroll">
             @* When a document was opened from Purchase Inquiry (returnUrl present), disable
                Prefix URL matching so /purchase/orders/view/… does not expand Transactions. *@
-            <DxTreeView Data="@_items"
+            <DxTreeView @ref="_treeView"
+                        Data="@_visibleItems"
                         CssClass="nav-tree"
                         AllowSelectNodes="true"
                         UrlMatchMode="@_urlMatchMode"
-                        AnimationType="LayoutAnimationType.Slide">
+                        AnimationType="LayoutAnimationType.Slide"
+                        AfterExpand="@OnTreeExpansionChanged"
+                        AfterCollapse="@OnTreeExpansionChanged">
                 <DataMappings>
                     <DxTreeViewDataMapping Text="Name"
                                            Name="Code"
@@ -30,7 +71,7 @@
 
     <div class="nav-utilities">
         <a href="@ChangePasswordRoute" class="nav-utilities__link">
-            <i class="fa-solid fa-key"></i>
+            <i class="fa-solid fa-key" aria-hidden="true"></i>
             <span>Change Password</span>
         </a>
     </div>

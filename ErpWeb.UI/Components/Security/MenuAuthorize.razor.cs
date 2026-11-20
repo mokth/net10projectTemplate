@@ -1,4 +1,5 @@
 using ErpWeb.Core.Menus;
+using ErpWeb.Core.Purchase;
 using ErpWeb.UI.Services;
 using Microsoft.AspNetCore.Components;
 
@@ -8,6 +9,9 @@ public partial class MenuAuthorize
 {
     [Inject]
     private IAccessRightService AccessRights { get; set; } = default!;
+
+    [Inject]
+    private IPurchaseSourcingFeatureGuard PurchaseSourcingGuard { get; set; } = default!;
 
     [Inject]
     private AppNavigation Navigation { get; set; } = default!;
@@ -41,6 +45,13 @@ public partial class MenuAuthorize
         _authorized = false;
 
         if (string.IsNullOrWhiteSpace(MenuCode))
+        {
+            Navigation.NavigateTo("/unauthorized");
+            return;
+        }
+
+        if (string.Equals(MenuCode, MenuCodes.PurchaseSourcing, StringComparison.OrdinalIgnoreCase) &&
+            !await PurchaseSourcingGuard.IsEnabledAsync())
         {
             Navigation.NavigateTo("/unauthorized");
             return;

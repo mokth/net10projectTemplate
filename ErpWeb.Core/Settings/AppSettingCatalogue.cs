@@ -39,6 +39,7 @@ public static class AppSettingCatalogue
     {
         public const string AllowOverReceipt = "ALLOW_OVER_RECEIPT";
         public const string RequirePrApproval = "REQUIRE_PR_APPROVAL";
+        public const string SourcingEnabled = "SOURCING_ENABLED";
     }
 
     public static class AdminKeys
@@ -146,6 +147,15 @@ public static class AppSettingCatalogue
         "true",
         Description: "Require a purchase requisition to be approved before it can be ordered. Not yet wired.");
 
+    public static readonly AppSettingDefinition ProcurementSourcingEnabled = new(
+        AppSettingModules.Procurement,
+        ProcurementKeys.SourcingEnabled,
+        AppSettingType.Flag,
+        AppSettingScope.Company,
+        "false",
+        Description: "Allow buyers to collect supplier quotations, compare offers and create PR/PO. Turn off to use normal purchasing only.",
+        DisplayName: "Supplier Quotation Comparison");
+
     public static readonly AppSettingDefinition AdminSessionTimeoutMinutes = new(
         AppSettingModules.Admin,
         AdminKeys.SessionTimeoutMinutes,
@@ -216,6 +226,7 @@ public static class AppSettingCatalogue
 
         ProcurementAllowOverReceipt,
         ProcurementRequirePrApproval,
+        ProcurementSourcingEnabled,
 
         InventoryAllowNegativeStock,
         InventoryQtyDecimals,

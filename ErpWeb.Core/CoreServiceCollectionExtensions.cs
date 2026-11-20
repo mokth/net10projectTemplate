@@ -306,6 +306,7 @@ public static class CoreServiceCollectionExtensions
 
         services.AddScoped<ISubconInventorySourceAdapter, SubconBlockedInventorySourceAdapter>();
         services.AddScoped<ISubconProductionSourceAdapter, SubconBlockedProductionSourceAdapter>();
+        services.AddScoped<ISubconBomReadService, SubconBomReadService>();
         services.AddScoped<ISubconApplicationService, SubconApplicationService>();
 
         services.AddScoped<IQaPolicyService, QaPolicyService>();
@@ -361,14 +362,20 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IProcurementApprovalService, ProcurementApprovalService>();
         services.AddScoped<IProcurementApprovalGuard>(sp => sp.GetRequiredService<IProcurementApprovalService>());
 
-        services.AddScoped<IPoPrService, PoPrService>();
+        services.AddScoped<IPurchaseSourcingFeatureGuard, PurchaseSourcingFeatureGuard>();
+
+        services.AddScoped<PoPrService>();
+        services.AddScoped<IPoPrService>(sp => sp.GetRequiredService<PoPrService>());
         services.AddScoped<IWorkOrderMaterialProcurementTraceService, WorkOrderMaterialProcurementTraceService>();
 
         services.AddScoped<IPoPrAttachmentService, PoPrAttachmentService>();
 
-        services.AddScoped<IPoOrderService, PoOrderService>();
+        services.AddScoped<PoOrderService>();
+        services.AddScoped<IPoOrderService>(sp => sp.GetRequiredService<PoOrderService>());
 
         services.AddScoped<IPoOrderAttachmentService, PoOrderAttachmentService>();
+
+        services.AddScoped<IPoSourcingService, PoSourcingService>();
 
         services.AddScoped<IPoInvoiceService, PoInvoiceService>();
 

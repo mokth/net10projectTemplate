@@ -211,6 +211,7 @@ public static class MenuCodes
     public const string PurchaseAuthorised = "PO_AUTHORISED";
     public const string PurchasePurItem = "PO_PUR_ITEM";
     public const string PurchaseTransactions = "PO_TRANSACTIONS";
+    public const string PurchaseSourcing = "PO_SOURCING";
     public const string PurchaseRequisition = "PO_PR";
     public const string PurchaseOrder = "PO_ORDER";
     public const string PurchaseInvoice = "PO_INVOICE";

@@ -232,8 +232,9 @@ public partial class SaDo : PageBase, IDisposable
         : ShowPopupAdvanced ? "Fewer details" : "More details";
     protected string PopupTitle => IsEditingLine ? "Edit line" : "Add line";
     protected string PopupPrimaryText => IsEditingLine ? "Update item" : "Add item";
+    protected bool CanEditPopupItem => CanEditDocument && !Popup.HasSource;
     protected bool PopupInclusiveLocked =>
-        Lines.Count > 1 || (_editingLine is null && Lines.Count > 0);
+        Popup.HasSource || Lines.Count > 1 || (_editingLine is null && Lines.Count > 0);
     protected SaInvoiceLineCalcState PopupCalc => BuildPopupCalc();
 
     protected void TogglePopupAdvanced()
@@ -1174,6 +1175,11 @@ public partial class SaDo : PageBase, IDisposable
 
     protected Task OnPopupItemClearedAsync()
     {
+        if (Popup.HasSource)
+        {
+            return Task.CompletedTask;
+        }
+
         Popup.ICode = string.Empty;
         Popup.IDesc = null;
         _priceHint = null;
@@ -1183,6 +1189,10 @@ public partial class SaDo : PageBase, IDisposable
     protected async Task OnPopupItemSelectedAsync(IvStockMasterLookupRow item)
     {
         ArgumentNullException.ThrowIfNull(item);
+        if (Popup.HasSource)
+        {
+            return;
+        }
 
         Popup.ICode = item.ICode;
         Popup.IDesc = item.IDesc;
@@ -1917,6 +1927,9 @@ public sealed class SaDoLineVm
     public short? CustRel { get; set; }
     public string? CustPo { get; set; }
     public bool HasSource => !string.IsNullOrWhiteSpace(SoNo);
+    public string SourceDisplay => HasSource
+        ? $"SO {SoNo}{(SoLine is > 0 ? $" #{SoLine.Value}" : string.Empty)}"
+        : string.Empty;
     public string? SoRevDisplay => HasSource ? (CustRel is > 0 ? CustRel.Value.ToString() : "1") : null;
     public string? SoLineDisplay => SoLine is > 0 ? SoLine.Value.ToString() : null;
     public bool LinkDo { get; set; }
@@ -1959,6 +1972,7 @@ public sealed class SaDoLineVm
     public decimal ItemDiscAmount1 { get; set; }
     public bool IsInclusive { get; set; }
     public string? TaxGrCode { get; set; }
+    public string? OrderType { get; set; }
     public decimal Amount { get; set; }
     public decimal TaxAmt { get; set; }
     public decimal NetAmount { get; set; }
@@ -1997,6 +2011,7 @@ public sealed class SaDoLineVm
         ItemDiscAmount1 = ItemDiscAmount1,
         IsInclusive = IsInclusive,
         TaxGrCode = TaxGrCode,
+        OrderType = OrderType,
         Amount = Amount,
         TaxAmt = TaxAmt,
         NetAmount = NetAmount,
@@ -2032,6 +2047,7 @@ public sealed class SaDoLineVm
             ItemDiscAmount1 = ItemDiscAmount1,
             IsInclusive = IsInclusive,
             TaxGrCode = TaxGrCode,
+            OrderType = OrderType,
             Remarks = Remarks
         };
 
@@ -2049,7 +2065,8 @@ public sealed class SaDoLineVm
             ItemDiscount6 = ItemDiscount6,
             ItemDiscAmount = ItemDiscAmount,
             ItemDiscAmount1 = ItemDiscAmount1,
-            IsInclusive = IsInclusive
+            IsInclusive = IsInclusive,
+            OrderType = OrderType
         };
 
     public static SaDoLineVm FromDto(SaDoLineDto dto) =>
@@ -2083,6 +2100,7 @@ public sealed class SaDoLineVm
             ItemDiscAmount1 = dto.ItemDiscAmount1,
             IsInclusive = dto.IsInclusive,
             TaxGrCode = dto.TaxGroup,   // SaDoLineDto uses TaxGroup; VM uses TaxGrCode
+            OrderType = dto.OrderType,
             Amount = dto.Amount,
             TaxAmt = dto.TaxAmt,
             NetAmount = dto.NetAmount,
@@ -2126,6 +2144,7 @@ public sealed class SaDoLineVm
             ItemDiscAmount1 = dto.ItemDiscAmount1,
             IsInclusive = dto.IsInclusive,
             TaxGrCode = dto.TaxGroup,
+            OrderType = dto.OrderType,
             Amount = dto.Amount,
             TaxAmt = dto.TaxAmt,
             NetAmount = dto.NetAmount,

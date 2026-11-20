@@ -517,11 +517,14 @@
                 @if (!string.IsNullOrWhiteSpace(PopupError))
                 {
                     <p class="sdoc-popup-error">@PopupError</p>
-                    }
-                    @if (!string.IsNullOrWhiteSpace(_priceHint))
-                    {
-                        <p class="sdoc-field-hint">Price source: @_priceHint</p>
-                    }
+                }
+                @if (Popup.HasSource)
+                {
+                    <p class="sdoc-field-hint">Source: @Popup.SourceDisplay · Agreed price: @Popup.UnitPrice.ToString("n4")</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(_priceHint))
+                {
+                    <p class="sdoc-field-hint">Price source: @_priceHint</p>
                 }
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
                     <DxFormLayoutItem Caption="Item" ColSpanMd="12">
@@ -529,7 +532,7 @@
                             <IvStockMasterPicker ICode="@Popup.ICode"
                                                  Selected="@OnPopupItemSelectedAsync"
                                                  Cleared="@OnPopupItemClearedAsync"
-                                                 Enabled="@CanEditDocument"
+                                                 Enabled="@CanEditPopupItem"
                                                  NullText="Item code"
                                                  InputCssClass="required-field" />
                         </Template>

@@ -10,6 +10,8 @@ public sealed class SubconResult
     public SubconReceiptDto? Receipt { get; init; }
     public SubconListPage? ListPage { get; init; }
     public SubconWorkbenchPage? Workbench { get; init; }
+    public SubconDispatchLineLookupPage? DispatchLineLookup { get; init; }
+    public SubconJobDto? Job { get; init; }
     public bool CanUseProductionMode { get; init; }
 
     public static SubconResult Fail(string message) => new() { Succeeded = false, ErrorMessage = message };
@@ -17,17 +19,23 @@ public sealed class SubconResult
     public static SubconResult OkPolicy(SubconPolicyDto policy, string? info = null) =>
         new() { Succeeded = true, Policy = policy, InfoMessage = info };
 
-    public static SubconResult OkDispatch(SubconDispatchDto value, bool canUseProductionMode = false) =>
-        new() { Succeeded = true, Dispatch = value, CanUseProductionMode = canUseProductionMode };
+    public static SubconResult OkDispatch(SubconDispatchDto item, bool canUseProductionMode = false) =>
+        new() { Succeeded = true, Dispatch = item, CanUseProductionMode = canUseProductionMode };
 
-    public static SubconResult OkReceipt(SubconReceiptDto value) =>
-        new() { Succeeded = true, Receipt = value };
+    public static SubconResult OkReceipt(SubconReceiptDto item) =>
+        new() { Succeeded = true, Receipt = item };
 
     public static SubconResult OkList(SubconListPage page, bool canUseProductionMode = false) =>
         new() { Succeeded = true, ListPage = page, CanUseProductionMode = canUseProductionMode };
 
     public static SubconResult OkWorkbench(SubconWorkbenchPage page, bool canUseProductionMode = false) =>
         new() { Succeeded = true, Workbench = page, CanUseProductionMode = canUseProductionMode };
+
+    public static SubconResult OkDispatchLineLookup(SubconDispatchLineLookupPage page) =>
+        new() { Succeeded = true, DispatchLineLookup = page };
+
+    public static SubconResult OkJob(SubconJobDto job, SubconDispatchDto? dispatch = null, bool canUseProductionMode = false) =>
+        new() { Succeeded = true, Job = job, Dispatch = dispatch, CanUseProductionMode = canUseProductionMode };
 }
 
 public sealed class SubconPolicyDto
@@ -210,4 +218,143 @@ public sealed class SubconKeyCommand
 {
     public string DocNo { get; init; } = string.Empty;
     public byte[]? RowVersion { get; init; }
+}
+
+public sealed record SubconDispatchLineLookupQuery
+{
+    public string? SupplierCode { get; set; }
+    public string? SearchText { get; set; }
+    public string? ExcludeReceiptDocNo { get; set; }
+    public int Skip { get; set; }
+    public int Take { get; set; } = 20;
+}
+
+public sealed class SubconDispatchLineLookupRow
+{
+    public string DispatchDocNo { get; init; } = string.Empty;
+    public int DispatchLineNo { get; init; }
+    public DateTime TrxDate { get; init; }
+    public string SupplierCode { get; init; } = string.Empty;
+    public string? SupplierName { get; init; }
+    public string ItemCode { get; init; } = string.Empty;
+    public string? ItemName { get; init; }
+    public string Uom { get; init; } = string.Empty;
+    public decimal DispatchedQty { get; init; }
+    public decimal AllocatedQty { get; init; }
+    public decimal RemainingQty { get; init; }
+    public string? WarehouseCode { get; init; }
+    public string? LocationCode { get; init; }
+}
+
+public sealed class SubconDispatchLineLookupPage
+{
+    public IReadOnlyList<SubconDispatchLineLookupRow> Rows { get; init; } = [];
+    public int TotalCount { get; init; }
+}
+
+public sealed class SubconJobDto
+{
+    public string JobNo { get; init; } = string.Empty;
+    public DateTime TrxDate { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public string JobKind { get; init; } = SubconJobKinds.Processing;
+    public string Mode { get; init; } = SubconModes.Inventory;
+    public string SupplierCode { get; init; } = string.Empty;
+    public string? SupplierName { get; init; }
+    public string? TargetItemCode { get; init; }
+    public string? TargetItemName { get; init; }
+    public string? TargetUom { get; init; }
+    public decimal TargetQty { get; init; }
+    public string? DefinitionCode { get; init; }
+    public int? BomVersion { get; init; }
+    public bool IsManualKit { get; init; }
+    public string? PrimaryDispatchDocNo { get; init; }
+    public DateTime? PromisedReturnDate { get; init; }
+    public string? PoNo { get; init; }
+    public short? PoRelNo { get; init; }
+    public short? PoLineNo { get; init; }
+    public string? Remarks { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+    public IReadOnlyList<SubconJobMaterialDto> Materials { get; init; } = [];
+    public IReadOnlyList<SubconJobOutputDto> Outputs { get; init; } = [];
+    public string PostBlockedReason { get; init; } = SubconBlockedReasons.NoAtomicInventorySeam;
+}
+
+public sealed class SubconJobMaterialDto
+{
+    public int LineNo { get; init; }
+    public string ItemCode { get; init; } = string.Empty;
+    public string? ItemName { get; init; }
+    public string Uom { get; init; } = string.Empty;
+    public decimal RequiredQty { get; init; }
+    public decimal SendNowQty { get; init; }
+    public decimal ScrapPercent { get; init; }
+    public string? WarehouseCode { get; init; }
+    public string? LocationCode { get; init; }
+    public int? IvBalLocId { get; init; }
+    public bool IsManualAddition { get; init; }
+    public string? Remarks { get; init; }
+}
+
+public sealed class SubconJobOutputDto
+{
+    public int LineNo { get; init; }
+    public string OutputKind { get; init; } = SubconOutputKinds.FinishedGood;
+    public string ItemCode { get; init; } = string.Empty;
+    public string? ItemName { get; init; }
+    public string Uom { get; init; } = string.Empty;
+    public decimal ExpectedQty { get; init; }
+    public string? WarehouseCode { get; init; }
+    public string? LocationCode { get; init; }
+    public string? Remarks { get; init; }
+}
+
+public sealed class SubconJobSaveCommand
+{
+    public string? JobNo { get; init; }
+    public DateTime TrxDate { get; init; }
+    public string JobKind { get; init; } = SubconJobKinds.Processing;
+    public string Mode { get; init; } = SubconModes.Inventory;
+    public string SupplierCode { get; init; } = string.Empty;
+    public string? TargetItemCode { get; init; }
+    public string? TargetUom { get; init; }
+    public decimal TargetQty { get; init; }
+    public string? DefinitionCode { get; init; }
+    public int? BomVersion { get; init; }
+    public bool IsManualKit { get; init; }
+    public DateTime? PromisedReturnDate { get; init; }
+    public string? PoNo { get; init; }
+    public short? PoRelNo { get; init; }
+    public short? PoLineNo { get; init; }
+    public string? Remarks { get; init; }
+    public byte[]? RowVersion { get; init; }
+    public IReadOnlyList<SubconJobMaterialSaveCommand> Materials { get; init; } = [];
+    public IReadOnlyList<SubconJobOutputSaveCommand> Outputs { get; init; } = [];
+}
+
+public sealed class SubconJobMaterialSaveCommand
+{
+    public int LineNo { get; init; }
+    public string ItemCode { get; init; } = string.Empty;
+    public string? Uom { get; init; }
+    public decimal RequiredQty { get; init; }
+    public decimal SendNowQty { get; init; }
+    public decimal ScrapPercent { get; init; }
+    public string? WarehouseCode { get; init; }
+    public string? LocationCode { get; init; }
+    public int? IvBalLocId { get; init; }
+    public bool IsManualAddition { get; init; }
+    public string? Remarks { get; init; }
+}
+
+public sealed class SubconJobOutputSaveCommand
+{
+    public int LineNo { get; init; }
+    public string OutputKind { get; init; } = SubconOutputKinds.FinishedGood;
+    public string ItemCode { get; init; } = string.Empty;
+    public string? Uom { get; init; }
+    public decimal ExpectedQty { get; init; }
+    public string? WarehouseCode { get; init; }
+    public string? LocationCode { get; init; }
+    public string? Remarks { get; init; }
 }

@@ -58,6 +58,21 @@
                                       OnButtonEventHandle="@OnButtonClick"
                                       OnActionEventHandle="@OnActionClick" />
                 </div>
+                <div class="iv-list-compact">
+                    @foreach (var row in CompactRows)
+                    {
+                        <button type="button"
+                                class="iv-list-compact__item"
+                                @onclick="() => NavigateView(row.DocNo)">
+                            <span class="iv-list-compact__code">@row.DocNo</span>
+                            <span class="iv-list-compact__desc">@row.SupplierName · @row.TrxDate.ToString("dd/MM/yyyy")</span>
+                            <div class="iv-list-compact__meta">
+                                <span class="iv-status">@row.Status</span>
+                                <span class="iv-chip">@row.LineCount line(s)</span>
+                            </div>
+                        </button>
+                    }
+                </div>
             }
         </section>
     </div>

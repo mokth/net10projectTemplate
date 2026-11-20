@@ -68,6 +68,8 @@ public sealed class PoOrderService : IPoOrderService
 
 		public short? ExistingLineNo { get; init; }
 
+		public short AssignedLineNo { get; set; }
+
 		public string? PrNo { get; init; }
 
 		public short? PrLineNo { get; init; }
@@ -195,7 +197,9 @@ public sealed class PoOrderService : IPoOrderService
 
 	private readonly IProcurementApprovalGuard _approval;
 
-	public PoOrderService(IDbContextFactory<AppDbContext> dbFactory, IInventoryTenantContext tenant, IAccessRightService accessRights, IDocumentNumberingService documentNumbers, ICurrentDateService dates, IPoOrderRepository repository, IOptions<PoOrderOptions> options, IPoOrderAttachmentService attachments, ILogger<PoOrderService> logger, IProcurementApprovalGuard approval)
+	private readonly IPurchaseSourcingFeatureGuard? _sourcingGuard;
+
+	public PoOrderService(IDbContextFactory<AppDbContext> dbFactory, IInventoryTenantContext tenant, IAccessRightService accessRights, IDocumentNumberingService documentNumbers, ICurrentDateService dates, IPoOrderRepository repository, IOptions<PoOrderOptions> options, IPoOrderAttachmentService attachments, ILogger<PoOrderService> logger, IProcurementApprovalGuard approval, IPurchaseSourcingFeatureGuard? sourcingGuard = null)
 	{
 		_dbFactory = dbFactory;
 		_tenant = tenant;
@@ -207,6 +211,7 @@ public sealed class PoOrderService : IPoOrderService
 		_attachments = attachments;
 		_logger = logger;
 		_approval = approval ?? throw new ArgumentNullException(nameof(approval));
+		_sourcingGuard = sourcingGuard;
 	}
 
 	public async Task<PoOrderOperationResult> CreateTempDocIdAsync(CancellationToken cancellationToken = default(CancellationToken))
@@ -579,7 +584,24 @@ public sealed class PoOrderService : IPoOrderService
 		return result;
 	}
 
-	public async Task<PoOrderOperationResult> SaveNewAsync(PoOrderSaveRequest? request, CancellationToken cancellationToken = default(CancellationToken))
+	public Task<PoOrderOperationResult> SaveNewAsync(PoOrderSaveRequest? request, CancellationToken cancellationToken = default(CancellationToken))
+	{
+		return SaveNewCoreAsync(request, sourcingHook: null, cancellationToken);
+	}
+
+	internal Task<PoOrderOperationResult> SaveNewFromSourcingAsync(
+		PoOrderSaveRequest? request,
+		PoSourcingPoSaveHook sourcingHook,
+		CancellationToken cancellationToken = default(CancellationToken))
+	{
+		ArgumentNullException.ThrowIfNull(sourcingHook);
+		return SaveNewCoreAsync(request, sourcingHook, cancellationToken);
+	}
+
+	private async Task<PoOrderOperationResult> SaveNewCoreAsync(
+		PoOrderSaveRequest? request,
+		PoSourcingPoSaveHook? sourcingHook,
+		CancellationToken cancellationToken)
 	{
 		if (request == null)
 		{
@@ -603,6 +625,20 @@ public sealed class PoOrderService : IPoOrderService
 			{
 				try
 				{
+					if (sourcingHook is not null)
+					{
+						var beforeLockError = await sourcingHook.BeforeDocumentLocksAsync(
+							db,
+							cancellationToken);
+						if (beforeLockError is not null)
+						{
+							await tx.RollbackAsync(cancellationToken);
+							await DiscardDraftSafeAsync(tempDocId, cancellationToken);
+							poOrderOperationResult = PoOrderOperationResult.Fail(beforeLockError, PoOrderErrorKind.BusinessRule);
+							goto end_IL_05b5;
+						}
+					}
+
 					// Legacy-aware Department / Project validation (shared rule — see MsRefLookupRules).
 					Dictionary<string, string> refErrors = await ValidateDeptProjectAsync(
 						db, context.CompanyCode, context.BranchCode, priorDeptCode: null, priorProjId: null,
@@ -707,6 +743,21 @@ public sealed class PoOrderService : IPoOrderService
 								// Persist PO lines first so LivePoConsumedForPrAsync (and PR stamps) see this document.
 								await db.SaveChangesAsync(cancellationToken);
 								await StampPrConsumptionAsync(db, context.CompanyCode, context.BranchCode, CollectPrKeys(header.Details), header.PoNo, cancellationToken);
+								if (sourcingHook is not null)
+								{
+									var beforeCommitError = await sourcingHook.BeforeCommitAsync(
+										db,
+										header,
+										header.Details.OrderBy(x => x.Line).ToList(),
+										cancellationToken);
+									if (beforeCommitError is not null)
+									{
+										await tx.RollbackAsync(cancellationToken);
+										await DiscardDraftSafeAsync(tempDocId, cancellationToken);
+										poOrderOperationResult = PoOrderOperationResult.Fail(beforeCommitError, PoOrderErrorKind.BusinessRule);
+										goto end_IL_05b5;
+									}
+								}
 								await db.SaveChangesAsync(cancellationToken);
 								await tx.CommitAsync(cancellationToken);
 								if (tempDocId != null)
@@ -844,6 +895,17 @@ public sealed class PoOrderService : IPoOrderService
 								header.ModifiedDate = _dates.Now;
 								header.ModifiedBy = Truncate(context.UserId, 20);
 								TouchRowVersion(db, header);
+								await PoSourcingTargetLifecycleSync.OnTargetCancelledOrDeletedAsync(
+									db,
+									context.CompanyCode,
+									context.BranchCode,
+									PoSourcingConversionTargetTypes.Po,
+									header.PoNo,
+									header.PoRelNo,
+									actionVerb: "cancelled",
+									actorUserId: context.UserId ?? string.Empty,
+									nowUtc: DateTime.UtcNow,
+									cancellationToken: cancellationToken);
 								await RecalculatePrStampsAsync(db, context.CompanyCode, context.BranchCode, CollectPrKeys(header.Details), cancellationToken);
 								await db.SaveChangesAsync(cancellationToken);
 								await tx.CommitAsync(cancellationToken);
@@ -940,6 +1002,17 @@ public sealed class PoOrderService : IPoOrderService
 							{
 								db.PoAttachFiles.RemoveRange(attachRows);
 							}
+							await PoSourcingTargetLifecycleSync.OnTargetCancelledOrDeletedAsync(
+								db,
+								context.CompanyCode,
+								context.BranchCode,
+								PoSourcingConversionTargetTypes.Po,
+								header.PoNo,
+								header.PoRelNo,
+								actionVerb: "deleted",
+								actorUserId: context.UserId ?? string.Empty,
+								nowUtc: DateTime.UtcNow,
+								cancellationToken: cancellationToken);
 							db.PoOrders.Remove(header);
 							await RecalculatePrStampsAsync(db, context.CompanyCode, context.BranchCode, prKeys, cancellationToken);
 							await db.SaveChangesAsync(cancellationToken);
@@ -1194,7 +1267,42 @@ public sealed class PoOrderService : IPoOrderService
 										short lineNo = 1;
 										foreach (PreparedLine line in prepared.Lines)
 										{
-											newHeader.Details.Add(ToDetailEntity(newHeader, line, lineNo++));
+											short assigned = lineNo++;
+											line.AssignedLineNo = assigned;
+											newHeader.Details.Add(ToDetailEntity(newHeader, line, assigned));
+										}
+										var sourcingRemapsRevise = prepared.Lines
+											.OrderBy(x => x.RequestOrder)
+											.Select(x => new PoSourcingLineRemap(
+												x.ExistingLineNo,
+												x.AssignedLineNo,
+												x.ICode,
+												x.PurchaseUom,
+												x.PoPurQty,
+												x.PoQty,
+												x.PoUnitPrice,
+												newHeader.VendCode))
+											.ToList();
+										var sourcingReviseError = await PoSourcingTargetLifecycleSync.OnTargetUpdatedOrRevisedAsync(
+											db,
+											_sourcingGuard,
+											context.CompanyCode,
+											context.BranchCode,
+											PoSourcingConversionTargetTypes.Po,
+											header.PoNo,
+											oldRelNo: header.PoRelNo,
+											newRelNo: newHeader.PoRelNo,
+											newHeaderSupplierCode: newHeader.VendCode,
+											isRevise: true,
+											remappedLines: sourcingRemapsRevise,
+											actorUserId: context.UserId ?? string.Empty,
+											nowUtc: DateTime.UtcNow,
+											cancellationToken: cancellationToken);
+										if (sourcingReviseError is not null)
+										{
+											await tx.RollbackAsync(cancellationToken);
+											poOrderOperationResult = PoOrderOperationResult.Fail(sourcingReviseError, PoOrderErrorKind.BusinessRule);
+											goto end_IL_0604;
 										}
 										if (_approval is not null)
 										{
@@ -1251,6 +1359,39 @@ public sealed class PoOrderService : IPoOrderService
 										else
 										{
 											ApplyHeaderRequest(header, request, request.PoDate?.Date ?? header.PoDate ?? _dates.Today.Date);
+											var sourcingRemapsEdit = prepared.Lines
+												.OrderBy(x => x.RequestOrder)
+												.Select(x => new PoSourcingLineRemap(
+													x.ExistingLineNo,
+													x.AssignedLineNo,
+													x.ICode,
+													x.PurchaseUom,
+													x.PoPurQty,
+													x.PoQty,
+													x.PoUnitPrice,
+													header.VendCode))
+												.ToList();
+											var sourcingEditError = await PoSourcingTargetLifecycleSync.OnTargetUpdatedOrRevisedAsync(
+												db,
+												_sourcingGuard,
+												context.CompanyCode,
+												context.BranchCode,
+												PoSourcingConversionTargetTypes.Po,
+												header.PoNo,
+												oldRelNo: header.PoRelNo,
+												newRelNo: header.PoRelNo,
+												newHeaderSupplierCode: header.VendCode,
+												isRevise: false,
+												remappedLines: sourcingRemapsEdit,
+												actorUserId: context.UserId ?? string.Empty,
+												nowUtc: DateTime.UtcNow,
+												cancellationToken: cancellationToken);
+											if (sourcingEditError is not null)
+											{
+												await tx.RollbackAsync(cancellationToken);
+												poOrderOperationResult = PoOrderOperationResult.Fail(sourcingEditError, PoOrderErrorKind.BusinessRule);
+												goto end_IL_0604;
+											}
 											header.Status = PoStatusPolicy.CalculateOperationalStatus(header, (PoOrderDetail d) => IsServiceLine(d, itemTypes));
 											header.ModifiedDate = _dates.Now;
 											header.ModifiedBy = Truncate(context.UserId, 20);
@@ -1891,7 +2032,9 @@ public sealed class PoOrderService : IPoOrderService
 		short num = 1;
 		foreach (PreparedLine item3 in prepared.OrderBy((PreparedLine x) => x.RequestOrder))
 		{
-			header.Details.Add(ToDetailEntity(header, item3, num++));
+			short assigned = num++;
+			item3.AssignedLineNo = assigned;
+			header.Details.Add(ToDetailEntity(header, item3, assigned));
 		}
 		return null;
 	}

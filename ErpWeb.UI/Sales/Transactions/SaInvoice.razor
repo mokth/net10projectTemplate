@@ -612,13 +612,17 @@
                 {
                     <p class="sdoc-popup-error">@PopupError</p>
                 }
+                @if (Popup.HasSource)
+                {
+                    <p class="sdoc-field-hint">Source: @Popup.SourceDisplay · Agreed price: @((Popup.OriginalUnitPrice ?? Popup.UnitPrice).ToString("n4"))</p>
+                }
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
                     <DxFormLayoutItem Caption="Item" ColSpanMd="12">
                         <Template>
                             <IvStockMasterPicker ICode="@Popup.ICode"
                                                  Selected="@OnPopupItemSelectedAsync"
                                                  Cleared="@OnPopupItemClearedAsync"
-                                                 Enabled="@CanEditDocument"
+                                                 Enabled="@CanEditPopupItem"
                                                  NullText="Item code"
                                                  InputCssClass="required-field" />
                         </Template>
@@ -696,7 +700,7 @@
                                         ValueChanged="@((string? v) => OnPopupTaxChangedAsync(v))"
                                         SearchMode="ListSearchMode.AutoSearch"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                        Enabled="@CanEditDocument"
+                                        Enabled="@CanEditPopupCommercialTerms"
                                         NullText="Use header tax"
                                         CssClass="w-100" ValueExpression="@(() => Popup.TaxGrCode)" />
                         </Template>
@@ -716,11 +720,11 @@
                                 <DxButton RenderStyle="@(PopupDiscountIsAmount ? ButtonRenderStyle.Secondary : ButtonRenderStyle.Primary)"
                                           Text="Percent"
                                           Click="@(() => OnPopupDiscountModeChanged(false))"
-                                          Enabled="@CanEditDocument" />
+                                          Enabled="@CanEditPopupCommercialTerms" />
                                 <DxButton RenderStyle="@(PopupDiscountIsAmount ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
                                           Text="Amount"
                                           Click="@(() => OnPopupDiscountModeChanged(true))"
-                                          Enabled="@CanEditDocument" />
+                                          Enabled="@CanEditPopupCommercialTerms" />
                             </div>
                         </Template>
                     </DxFormLayoutItem>
@@ -728,12 +732,12 @@
                     {
                         <DxFormLayoutItem Caption="Disc amt 1" ColSpanMd="6" BeginRow="true">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditPopupCommercialTerms" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Disc amt 2" ColSpanMd="6">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount1" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                <DxSpinEdit @bind-Value="@Popup.ItemDiscAmount1" Increment="0.01m" ShowSpinButtons="false" Enabled="@CanEditPopupCommercialTerms" />
                             </Template>
                         </DxFormLayoutItem>
                     }
@@ -741,32 +745,32 @@
                     {
                         <DxFormLayoutItem Caption="Disc %1" ColSpanMd="4" BeginRow="true">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditPopupCommercialTerms" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Disc %2" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount2" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount2" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditPopupCommercialTerms" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Disc %3" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount3" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount3" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditPopupCommercialTerms" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Disc %4" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount4" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount4" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditPopupCommercialTerms" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Disc %5" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount5" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount5" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditPopupCommercialTerms" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Disc %6" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount6" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditDocument" />
+                                <DxSpinEdit @bind-Value="@Popup.ItemDiscount6" Increment="0.1m" ShowSpinButtons="false" Enabled="@CanEditPopupCommercialTerms" />
                             </Template>
                         </DxFormLayoutItem>
                     }

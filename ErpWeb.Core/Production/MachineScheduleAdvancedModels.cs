@@ -172,4 +172,9 @@ public interface IMachineScheduleAdvancedPlanningService
         MachineScheduleAdvancedRequest request, CancellationToken cancellationToken = default);
     Task<Inventory.IvMasterOperationResult<MachineScheduleAdvancedCommitResult>> CommitMaintenanceReplanAsync(
         MachineScheduleAdvancedRequest request, CancellationToken cancellationToken = default);
+
+    Task<Inventory.IvMasterOperationResult<MachineScheduleDraftPreview>> PreviewDraftAsync(
+        MachineScheduleDraftRequest request, CancellationToken cancellationToken = default);
+    Task<Inventory.IvMasterOperationResult<MachineScheduleDraftCommitResult>> CommitDraftAsync(
+        MachineScheduleDraftRequest request, CancellationToken cancellationToken = default);
 }

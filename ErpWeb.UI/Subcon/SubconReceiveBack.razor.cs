@@ -17,9 +17,18 @@ public partial class SubconReceiveBack : PageBase
     [Inject] private IAccessRightService AccessRights { get; set; } = default!;
     [Inject] private ICurrentDateService Clock { get; set; } = default!;
 
+    private const int DispatchLookupPageSize = 20;
+
+    private bool _isDirty;
+
     protected bool IsSubmitting;
     protected bool LinePopupVisible;
+    protected bool DiscardConfirmVisible;
     protected bool CanEditAfterView;
+    protected string DispatchLookupSearch = string.Empty;
+    protected int DispatchLookupSkip;
+    protected int DispatchLookupTotal;
+    protected IReadOnlyList<SubconDispatchLineLookupRow> DispatchLookupRows { get; private set; } = [];
     protected HeaderVm Header { get; set; } = new();
     protected List<LineVm> Lines { get; set; } = [];
     protected LineVm DraftLine { get; set; } = new();
@@ -58,12 +67,84 @@ public partial class SubconReceiveBack : PageBase
 
         Header = HeaderVm.From(result.Receipt);
         Lines = result.Receipt.Lines.Select(LineVm.From).ToList();
+        _isDirty = false;
+    }
+
+    protected void OnTrxDateChanged(DateTime date)
+    {
+        Header.TrxDate = date;
+        _isDirty = true;
+    }
+
+    protected void OnRemarksChanged(string? value)
+    {
+        Header.Remarks = value;
+        _isDirty = true;
     }
 
     protected void OnSupplierSelected(PoSupplierLookupRow row)
     {
         Header.SupplierCode = row.SuppCode;
         Header.SupplierName = row.SuppName;
+        DispatchLookupRows = [];
+        DispatchLookupTotal = 0;
+        _isDirty = true;
+    }
+
+    protected async Task OpenAddLinePopupAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Header.SupplierCode))
+        {
+            ErrorMessage = SubconMessages.SupplierRequired;
+            return;
+        }
+
+        ErrorMessage = null;
+        DraftLine = new LineVm();
+        DispatchLookupSearch = string.Empty;
+        await LoadDispatchLookupAsync(0);
+        LinePopupVisible = true;
+    }
+
+    protected async Task OnDispatchLookupSearchChanged(string value)
+    {
+        DispatchLookupSearch = value;
+        await LoadDispatchLookupAsync(0);
+    }
+
+    protected async Task LoadDispatchLookupAsync(int skip)
+    {
+        var result = await Subcon.SearchDispatchLinesAsync(new SubconDispatchLineLookupQuery
+        {
+            SupplierCode = Header.SupplierCode,
+            SearchText = DispatchLookupSearch,
+            ExcludeReceiptDocNo = IsNew ? null : Header.DocNo,
+            Skip = skip,
+            Take = DispatchLookupPageSize
+        });
+        if (!result.Succeeded || result.DispatchLineLookup is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        DispatchLookupSkip = skip;
+        DispatchLookupRows = result.DispatchLineLookup.Rows;
+        DispatchLookupTotal = result.DispatchLineLookup.TotalCount;
+    }
+
+    protected void SelectDispatchLine(SubconDispatchLineLookupRow row)
+    {
+        var alreadyInDraft = Lines
+            .Where(x => string.Equals(x.DispatchDocNo, row.DispatchDocNo, StringComparison.OrdinalIgnoreCase)
+                        && x.DispatchLineNo == row.DispatchLineNo)
+            .Sum(x => x.Qty);
+        var availableNow = Math.Max(0m, row.RemainingQty - alreadyInDraft);
+        DraftLine.DispatchDocNo = row.DispatchDocNo;
+        DraftLine.DispatchLineNo = row.DispatchLineNo;
+        DraftLine.Uom = row.Uom;
+        DraftLine.RemainingQty = availableNow;
+        DraftLine.Qty = availableNow;
     }
 
     protected void CommitLine()
@@ -74,9 +155,16 @@ public partial class SubconReceiveBack : PageBase
             return;
         }
 
-        DraftLine.LineNo = Lines.Count + 1;
+        if (DraftLine.RemainingQty > 0m && DraftLine.Qty > DraftLine.RemainingQty)
+        {
+            ErrorMessage = $"You can receive only {DraftLine.RemainingQty:0.####} {DraftLine.Uom} on this dispatch.";
+            return;
+        }
+
+        DraftLine.LineNo = Lines.Count == 0 ? 1 : Lines.Max(x => x.LineNo) + 1;
         Lines.Add(DraftLine);
         DraftLine = new LineVm();
+        _isDirty = true;
         LinePopupVisible = false;
     }
 
@@ -88,6 +176,8 @@ public partial class SubconReceiveBack : PageBase
         {
             remaining.LineNo = n++;
         }
+
+        _isDirty = true;
     }
 
     protected async Task OnSaveAsync()
@@ -120,10 +210,27 @@ public partial class SubconReceiveBack : PageBase
             return;
         }
 
+        _isDirty = false;
         Navigation.NavigateTo($"/subcon/receive-back/view/{result.Receipt.DocNo}");
     }
 
-    protected void OnCancel() => Navigation.NavigateTo("/subcon/receive-back");
+    protected void OnCancel()
+    {
+        if (!IsView && _isDirty)
+        {
+            DiscardConfirmVisible = true;
+            return;
+        }
+
+        Navigation.NavigateTo("/subcon/receive-back");
+    }
+
+    protected void ConfirmDiscard()
+    {
+        DiscardConfirmVisible = false;
+        _isDirty = false;
+        Navigation.NavigateTo("/subcon/receive-back");
+    }
 
     protected sealed class HeaderVm
     {
@@ -155,6 +262,7 @@ public partial class SubconReceiveBack : PageBase
         public string DispatchDocNo { get; set; } = string.Empty;
         public int DispatchLineNo { get; set; } = 1;
         public decimal Qty { get; set; }
+        public decimal RemainingQty { get; set; }
         public string Uom { get; set; } = string.Empty;
 
         public static LineVm From(SubconReceiptLineDto dto) => new()

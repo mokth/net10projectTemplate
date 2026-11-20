@@ -10493,6 +10493,524 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         }
     }
 
+    [Theory]
+    [InlineData("A100", "SVC1")]
+    [InlineData("SVC1", "A100")]
+    [InlineData("PACK1", "A100")]
+    public async Task F1_DoLinkedInvoice_RejectsMismatchedItem_BeforeAnySideEffect(
+        string doItem,
+        string submittedItem)
+    {
+        const string doNo = "DO-F1-MISMATCH";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaDos.Add(new SaDo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DoNo = doNo,
+                DoDate = FixedToday,
+                Status = SaDoStatuses.Posted,
+                CustCode = "CUST01",
+                Currency = "MYR",
+                CurrRate = 1m,
+                LocationCode = "SITE",
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                Details =
+                [
+                    new SaDoDetail
+                    {
+                        CompanyCode = "DEMO",
+                        BranchCode = "HQ",
+                        DoNo = doNo,
+                        Line = 1,
+                        SoNo = string.Empty,
+                        ICode = doItem,
+                        IDesc = "DO Item",
+                        Qty = 5m,
+                        StdQty = 5m,
+                        StdPsize = 1m,
+                        StdUom = "EA",
+                        SellingUom = "EA",
+                        UnitPrice = 10m,
+                        FrWarehouse = "MAIN",
+                        StockControl = !string.Equals(doItem, "SVC1", StringComparison.OrdinalIgnoreCase)
+                    }
+                ]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var sut = CreateSut();
+        var save = await sut.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    LinkDo = true,
+                    DoNo = doNo,
+                    DoLine = 1,
+                    ICode = submittedItem,
+                    Qty = 2m,
+                    UnitPrice = 10m,
+                    FrWarehouse = "MAIN"
+                }
+            ]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Validation, save.ErrorKind);
+        Assert.True(save.ValidationErrors.TryGetValue("Lines[0].ICode", out var message));
+        Assert.Equal("This item differs from the selected SO/DO line. Remove and reselect the source line.", message);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(0, await verify.SaInvoices.CountAsync());
+        Assert.Equal(0, await verify.SaDocApplications.CountAsync());
+        Assert.Equal(0, await verify.IvTrxBatches.CountAsync());
+    }
+
+    [Fact]
+    public async Task F1_DoLinkedInvoice_RejectsUpstreamSoDoItemMismatch()
+    {
+        const string soNo = "SO-F1-UPSTREAM";
+        const string doNo = "DO-F1-UPSTREAM";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaSos.Add(new SaSo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SoNo = soNo,
+                CustRel = 1,
+                IsCurrent = true,
+                LastCustRel = 1,
+                SoDate = FixedToday,
+                Status = SaSoStatuses.New,
+                CustCode = "CUST01",
+                Currency = "MYR",
+                CurrRate = 1m,
+                PayCode = "NET30",
+                LocationCode = "SITE",
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                Details =
+                [
+                    new SaSoDetail
+                    {
+                        CompanyCode = "DEMO",
+                        BranchCode = "HQ",
+                        SoNo = soNo,
+                        Line = 1,
+                        CustRel = 1,
+                        ICode = "PACK1",
+                        IDesc = "Packed",
+                        OrderQty = 5m,
+                        BalanceQty = 5m,
+                        StdQty = 60m,
+                        StdPsize = 12m,
+                        StdUom = "EA",
+                        SellingUom = "BOX",
+                        UnitPrice = 10m,
+                        Warehouse = "MAIN",
+                        StockControl = true
+                    }
+                ]
+            });
+            db.SaDos.Add(new SaDo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                DoNo = doNo,
+                DoDate = FixedToday,
+                Status = SaDoStatuses.Posted,
+                CustCode = "CUST01",
+                Currency = "MYR",
+                CurrRate = 1m,
+                LocationCode = "SITE",
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                Details =
+                [
+                    new SaDoDetail
+                    {
+                        CompanyCode = "DEMO",
+                        BranchCode = "HQ",
+                        DoNo = doNo,
+                        Line = 1,
+                        SoNo = soNo,
+                        SoLine = 1,
+                        CustRel = 1,
+                        ICode = "A100",
+                        IDesc = "Corrupted DO Item",
+                        Qty = 2m,
+                        StdQty = 2m,
+                        StdPsize = 1m,
+                        StdUom = "EA",
+                        SellingUom = "EA",
+                        UnitPrice = 10m,
+                        FrWarehouse = "MAIN",
+                        StockControl = true
+                    }
+                ]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var save = await CreateSut().SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    LinkDo = true,
+                    DoNo = doNo,
+                    DoLine = 1,
+                    SoNo = soNo,
+                    SoLine = 1,
+                    CustRel = 1,
+                    ICode = "A100",
+                    Qty = 2m,
+                    UnitPrice = 10m,
+                    FrWarehouse = "MAIN"
+                }
+            ]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.True(save.ValidationErrors.TryGetValue("Lines[0].ICode", out var message));
+        Assert.Equal("This item differs from the selected SO/DO line. Remove and reselect the source line.", message);
+    }
+
+    [Theory]
+    [InlineData("A100", "SVC1")]
+    [InlineData("SVC1", "A100")]
+    [InlineData("PACK1", "A100")]
+    public async Task F1_SoLinkedInvoice_RejectsMismatchedItem_BeforeAnyStockSideEffect(
+        string soItem,
+        string submittedItem)
+    {
+        const string soNo = "SO-INV-F1-MISMATCH";
+        await SeedBalLocAsync(50m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SaSos.Add(new SaSo
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                SoNo = soNo,
+                CustRel = 1,
+                IsCurrent = true,
+                LastCustRel = 1,
+                SoDate = FixedToday,
+                Status = SaSoStatuses.New,
+                CustCode = "CUST01",
+                Currency = "MYR",
+                CurrRate = 1m,
+                PayCode = "NET30",
+                LocationCode = "SITE",
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                Details =
+                [
+                    new SaSoDetail
+                    {
+                        CompanyCode = "DEMO",
+                        BranchCode = "HQ",
+                        SoNo = soNo,
+                        Line = 1,
+                        CustRel = 1,
+                        ICode = soItem,
+                        IDesc = "SO Item",
+                        OrderQty = 5m,
+                        BalanceQty = 5m,
+                        StdQty = 5m,
+                        StdPsize = 1m,
+                        StdUom = "EA",
+                        SellingUom = "EA",
+                        UnitPrice = 10m,
+                        Warehouse = "MAIN",
+                        StockControl = !string.Equals(soItem, "SVC1", StringComparison.OrdinalIgnoreCase)
+                    }
+                ]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var save = await CreateSut().SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            Lines =
+            [
+                new SaInvoiceLineRequest
+                {
+                    SoNo = soNo,
+                    SoLine = 1,
+                    CustRel = 1,
+                    ICode = submittedItem,
+                    Qty = 2m,
+                    UnitPrice = 10m,
+                    FrWarehouse = "MAIN"
+                }
+            ]
+        });
+
+        Assert.False(save.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Validation, save.ErrorKind);
+        Assert.True(save.ValidationErrors.TryGetValue("Lines[0].ICode", out var message));
+        Assert.Equal("This item differs from the selected SO/DO line. Remove and reselect the source line.", message);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(0, await verify.SaInvoices.CountAsync());
+        Assert.Equal(0, await verify.SaDocApplications.CountAsync());
+        Assert.Equal(0, await verify.IvTrxBatches.CountAsync());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task F2_LinkedInvoice_EnforcesCommercialTerms_AndServerAuthoritativePriceOverride(bool linkDo)
+    {
+        var soNo = linkDo ? "SO-F2-DO" : "SO-F2-DIRECT";
+        var doNo = "DO-F2-GOV";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            if (linkDo)
+            {
+                db.SaDos.Add(new SaDo
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    DoNo = doNo,
+                    DoDate = FixedToday,
+                    Status = SaDoStatuses.Posted,
+                    CustCode = "CUST01",
+                    Currency = "MYR",
+                    CurrRate = 1m,
+                    LocationCode = "SITE",
+                    RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                    Details =
+                    [
+                        new SaDoDetail
+                        {
+                            CompanyCode = "DEMO",
+                            BranchCode = "HQ",
+                            DoNo = doNo,
+                            Line = 1,
+                            SoNo = string.Empty,
+                            ICode = "SVC1",
+                            IDesc = "Service",
+                            Qty = 10m,
+                            StdQty = 10m,
+                            StdPsize = 1m,
+                            StdUom = "EA",
+                            SellingUom = "EA",
+                            UnitPrice = 10m,
+                            OriginalUnitPrice = 12m,
+                            OverrideReason = "DO-UPSTREAM",
+                            ItemDiscount = 10m,
+                            ItemDiscount2 = 5m,
+                            IsInclusive = true,
+                            TaxGroup = "SR",
+                            OrderType = "STD",
+                            FrWarehouse = "MAIN",
+                            StockControl = false
+                        }
+                    ]
+                });
+            }
+            else
+            {
+                db.SaSos.Add(new SaSo
+                {
+                    CompanyCode = "DEMO",
+                    BranchCode = "HQ",
+                    SoNo = soNo,
+                    CustRel = 1,
+                    IsCurrent = true,
+                    LastCustRel = 1,
+                    SoDate = FixedToday,
+                    Status = SaSoStatuses.New,
+                    CustCode = "CUST01",
+                    Currency = "MYR",
+                    CurrRate = 1m,
+                    PayCode = "NET30",
+                    LocationCode = "SITE",
+                    RowVersion = [1, 0, 0, 0, 0, 0, 0, 0],
+                    Details =
+                    [
+                        new SaSoDetail
+                        {
+                            CompanyCode = "DEMO",
+                            BranchCode = "HQ",
+                            SoNo = soNo,
+                            Line = 1,
+                            CustRel = 1,
+                            ICode = "SVC1",
+                            IDesc = "Service",
+                            OrderQty = 10m,
+                            BalanceQty = 10m,
+                            StdQty = 10m,
+                            StdPsize = 1m,
+                            StdUom = "EA",
+                            SellingUom = "EA",
+                            UnitPrice = 10m,
+                            OriginalUnitPrice = 12m,
+                            OverrideReason = "SO-UPSTREAM",
+                            ItemDiscount = 10m,
+                            ItemDiscount2 = 5m,
+                            IsInclusive = true,
+                            TaxGroup = "SR",
+                            OrderType = "STD",
+                            Warehouse = "MAIN",
+                            StockControl = false
+                        }
+                    ]
+                });
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        SaInvoiceLineRequest ValidLine(decimal qty = 2m) => new()
+        {
+            LinkDo = linkDo,
+            DoNo = linkDo ? doNo : null,
+            DoLine = linkDo ? (short)1 : null,
+            SoNo = linkDo ? null : soNo,
+            SoLine = linkDo ? null : (short)1,
+            CustRel = linkDo ? null : (short)1,
+            ICode = "SVC1",
+            Qty = qty,
+            UnitPrice = 10m,
+            ItemDiscount = 10m,
+            ItemDiscount2 = 5m,
+            IsInclusive = true,
+            TaxGrCode = "SR",
+            OrderType = "STD",
+            FrWarehouse = "MAIN"
+        };
+
+        SaInvoiceSaveRequest Wrap(SaInvoiceLineRequest line) => new()
+        {
+            InvDate = FixedToday,
+            CustCode = "CUST01",
+            Currency = "MYR",
+            PayCode = "NET30",
+            SalesmanCode = "SM1",
+            TaxGrCode = "SR",
+            Lines = [line]
+        };
+
+        var numbering = new FakeDocumentNumberingService();
+        var sutNoOverride = CreateSut(numbering: numbering, access: DenyPermission(PermissionCodes.PriceOverride));
+        var sutWithOverride = CreateSut(numbering: numbering);
+
+        // 1. Tampered UnitPrice with OriginalUnitPrice = null and no PRICE_OVERRIDE -> PermissionRequiredMessage on UnitPrice
+        var tamperedNoPerm = ValidLine();
+        tamperedNoPerm.UnitPrice = 8m;
+        tamperedNoPerm.OriginalUnitPrice = null;
+        var resNoPerm = await sutNoOverride.SaveNewAsync(Wrap(tamperedNoPerm));
+        Assert.False(resNoPerm.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Validation, resNoPerm.ErrorKind);
+        Assert.True(resNoPerm.ValidationErrors.TryGetValue("UnitPrice", out var permErr1));
+        Assert.Equal(SaPriceOverridePolicy.PermissionRequiredMessage, permErr1);
+
+        // 2. Tampered UnitPrice with forged OriginalUnitPrice == UnitPrice and no PRICE_OVERRIDE -> PermissionRequiredMessage on UnitPrice
+        var forgedNoPerm = ValidLine();
+        forgedNoPerm.UnitPrice = 8m;
+        forgedNoPerm.OriginalUnitPrice = 8m;
+        var resForgedNoPerm = await sutNoOverride.SaveNewAsync(Wrap(forgedNoPerm));
+        Assert.False(resForgedNoPerm.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Validation, resForgedNoPerm.ErrorKind);
+        Assert.True(resForgedNoPerm.ValidationErrors.TryGetValue("UnitPrice", out var permErr2));
+        Assert.Equal(SaPriceOverridePolicy.PermissionRequiredMessage, permErr2);
+
+        // 3. Tampered UnitPrice WITH PRICE_OVERRIDE but missing OverrideReason -> ReasonRequiredMessage on UnitPrice
+        var tamperedNoReason = ValidLine();
+        tamperedNoReason.UnitPrice = 8m;
+        tamperedNoReason.OriginalUnitPrice = null;
+        var resNoReason = await sutWithOverride.SaveNewAsync(Wrap(tamperedNoReason));
+        Assert.False(resNoReason.Succeeded);
+        Assert.Equal(SaInvoiceErrorKind.Validation, resNoReason.ErrorKind);
+        Assert.True(resNoReason.ValidationErrors.TryGetValue("UnitPrice", out var reasonErr));
+        Assert.Equal(SaPriceOverridePolicy.ReasonRequiredMessage, reasonErr);
+
+        // 4. Tampered commercial terms (discount, inclusive, tax, orderType) rejected even WITH PRICE_OVERRIDE
+        var tamperedDisc = ValidLine();
+        tamperedDisc.ItemDiscount2 = 0m;
+        var resDisc = await sutWithOverride.SaveNewAsync(Wrap(tamperedDisc));
+        Assert.False(resDisc.Succeeded);
+        Assert.True(resDisc.ValidationErrors.ContainsKey("Lines[0].ItemDiscount"));
+
+        var tamperedInc = ValidLine();
+        tamperedInc.IsInclusive = false;
+        var resInc = await sutWithOverride.SaveNewAsync(Wrap(tamperedInc));
+        Assert.False(resInc.Succeeded);
+        Assert.True(resInc.ValidationErrors.ContainsKey("Lines[0].IsInclusive"));
+
+        var tamperedTax = ValidLine();
+        tamperedTax.TaxGrCode = "ZR";
+        var resTax = await sutWithOverride.SaveNewAsync(Wrap(tamperedTax));
+        Assert.False(resTax.Succeeded);
+        Assert.True(resTax.ValidationErrors.ContainsKey("Lines[0].TaxGrCode"));
+
+        var tamperedOrderType = ValidLine();
+        tamperedOrderType.OrderType = "EXP";
+        var resOrderType = await sutWithOverride.SaveNewAsync(Wrap(tamperedOrderType));
+        Assert.False(resOrderType.Succeeded);
+        Assert.True(resOrderType.ValidationErrors.ContainsKey("Lines[0].OrderType"));
+
+        // 5. Unchanged inherited source price succeeds WITHOUT PRICE_OVERRIDE and stores OriginalUnitPrice = null
+        var okUnchanged = await sutNoOverride.SaveNewAsync(Wrap(ValidLine(2m)));
+        Assert.True(okUnchanged.Succeeded, okUnchanged.ErrorMessage);
+        var unchangedLine = Assert.Single(okUnchanged.Document!.Lines);
+        Assert.Equal(10m, unchangedLine.UnitPrice);
+        Assert.Null(unchangedLine.OriginalUnitPrice);
+        Assert.Null(unchangedLine.OverrideReason);
+        Assert.Equal("STD", unchangedLine.OrderType);
+
+        // 6. Authorized override on linked Invoice succeeds WITH PRICE_OVERRIDE + OverrideReason,
+        // and server records true source.UnitPrice (10m) even if client sent OriginalUnitPrice = null or forged 8m.
+        var authorizedOverride = ValidLine(3m);
+        authorizedOverride.UnitPrice = 8m;
+        authorizedOverride.OriginalUnitPrice = null;
+        authorizedOverride.OverrideReason = "INV-SPECIAL";
+        var okOverridden = await sutWithOverride.SaveNewAsync(Wrap(authorizedOverride));
+        Assert.True(okOverridden.Succeeded, okOverridden.ErrorMessage);
+        var overriddenLine = Assert.Single(okOverridden.Document!.Lines);
+        Assert.Equal(8m, overriddenLine.UnitPrice);
+        Assert.Equal(10m, overriddenLine.OriginalUnitPrice);
+        Assert.Equal("INV-SPECIAL", overriddenLine.OverrideReason);
+
+        // 7. Subsequent Qty edit on that existing NEW draft preserves the prior authorized override
+        // without re-demanding PRICE_OVERRIDE when UnitPrice is unchanged from the saved draft (8m).
+        var editExisting = ValidLine(4m);
+        editExisting.UnitPrice = 8m;
+        editExisting.OriginalUnitPrice = 10m;
+        editExisting.OverrideReason = "INV-SPECIAL";
+        var editReq = Wrap(editExisting);
+        editReq.RowVersion = okOverridden.Document.RowVersion;
+        var updated = await sutNoOverride.UpdateAsync(okOverridden.InvNo!, editReq);
+        Assert.True(updated.Succeeded, updated.ErrorMessage);
+        var updatedLine = Assert.Single(updated.Document!.Lines);
+        Assert.Equal(4m, updatedLine.Qty);
+        Assert.Equal(8m, updatedLine.UnitPrice);
+        Assert.Equal(10m, updatedLine.OriginalUnitPrice);
+        Assert.Equal("INV-SPECIAL", updatedLine.OverrideReason);
+    }
+
     private async Task<SaInvoiceOperationResult> ShipAsync(
         SaInvoiceService sut,
         string invNo,
@@ -10530,7 +11048,8 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         string location = "SITE",
         IDocumentNumberingService? numbering = null,
         IInventoryTenantContext? tenant = null,
-        ICurrentDateService? currentDate = null)
+        ICurrentDateService? currentDate = null,
+        Mock<IAccessRightService>? access = null)
     {
         tenant ??= InventoryTenantTestHelper.CreateTenantContext(location: location);
         var postingRepo = new IvStockPostingRepository();
@@ -10539,7 +11058,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         return new(
             _factory,
             tenant,
-            Access().Object,
+            (access ?? Access()).Object,
             new RunningNumberService(),
             numbering ?? new FakeDocumentNumberingService(),
             currentDate ?? new FixedCurrentDateService(FixedToday),
@@ -10573,6 +11092,22 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     {
         var access = new Mock<IAccessRightService>();
         access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        return access;
+    }
+
+    private static Mock<IAccessRightService> DenyPermission(string permission)
+    {
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(
+                It.IsAny<string>(),
+                It.Is<string>(p => string.Equals(p, permission, StringComparison.OrdinalIgnoreCase)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        access.Setup(x => x.CanAsync(
+                It.IsAny<string>(),
+                It.Is<string>(p => !string.Equals(p, permission, StringComparison.OrdinalIgnoreCase)),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         return access;
     }

@@ -125,7 +125,9 @@ public sealed partial class MachineScheduleAdvancedPlanningService
             machine.ScheduleRevision++;
             changedMachineIds.Add(machineId);
 
-            if (segmentEntities.Count > 0 && !plan.HasUnscheduledRemaining)
+            var machineUnscheduled = plan.UnscheduledMachineIds.Contains(machineId)
+                || (plan.HasUnscheduledRemaining && machineId == plan.TargetMachine.Uid);
+            if (segmentEntities.Count > 0 && !machineUnscheduled)
             {
                 var start = segmentEntities.Min(x => x.PlannedStartDateTime);
                 var completion = segmentEntities.Max(x => x.PlannedCompletionDateTime);
@@ -188,7 +190,7 @@ public sealed partial class MachineScheduleAdvancedPlanningService
                 : priorSetsByMachine.TryGetValue(machineId, out var previousSet)
                     ? previousSet.Mode
                     : ProductionMachineScheduleSegmentSetModes.FullPlan;
-            var planningState = plan.HasUnscheduledRemaining && machineId == plan.TargetMachine.Uid
+            var planningState = machineUnscheduled
                 ? plan.Action == MachineScheduleAdvancedAction.Hold
                     ? ProductionMachineSchedulePlanningStates.HeldUnscheduled
                     : plan.Action == MachineScheduleAdvancedAction.MaintenanceReplan
@@ -276,7 +278,8 @@ public sealed partial class MachineScheduleAdvancedPlanningService
             order.ScheduleRevision++;
             order.ModifiedDate = now;
             order.ModifiedBy = user;
-            if (plan.HasUnscheduledRemaining)
+            if (plan.UnscheduledWorkOrderIds.Contains(order.Uid)
+                || (plan.HasUnscheduledRemaining && order.Uid == plan.TargetOrder.Uid))
                 orderPlan.HasUnscheduledRemaining = true;
         }
 

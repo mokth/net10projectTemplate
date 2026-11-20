@@ -240,6 +240,8 @@
             Icon="fa-solid fa-file-circle-xmark" />
       <Menu Code="PO_SB_DN" Name="Self-billed Debit Note" Route="/purchase/self-billed-debit-notes" SortOrder="9"
             Icon="fa-solid fa-file-circle-question" />
+      <Menu Code="PO_SOURCING" Name="Purchase Sourcing (RFQ)" Route="/purchase/sourcing" SortOrder="10"
+            Icon="fa-solid fa-scale-balanced" />
     </Menu>
     <Menu Code="PO_APPROVAL" Name="Approval" SortOrder="3" Icon="fa-solid fa-stamp">
       <Menu Code="PO_APPROVAL_SETTINGS" Name="Purchase Approval" Route="/purchase/approval/settings" SortOrder="1"
