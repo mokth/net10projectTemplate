@@ -388,6 +388,17 @@ public static class StockReplayWacFinancialTailReader
                     throw Corrupt($"Earlier purchase value fact {fact.Id} has invalid invoice evidence.");
                 continue;
             }
+            if (fact.SourceDocumentType == "PO_CDN" && owner.SourceModule == "PROCUREMENT"
+                && owner.SourceDocumentType == "PO_CDN" && fact.Id > 0
+                && fact.Id < long.MaxValue - int.MaxValue
+                && new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                    owner.PostingSequence, $"V{fact.Id:D20}", 0).CompareTo(after) <= 0)
+            {
+                if (!await StockReplayInvoiceIssueAudit.ValidateEarlierCdnAsync(db, companyCode, branchCode,
+                        owner, fact, cancellationToken))
+                    throw Corrupt($"Earlier purchase credit/debit note value fact {fact.Id} has invalid evidence.");
+                continue;
+            }
             StockReplayWacEvent valueEvent;
             if (fact.OriginalValuationFactId is long originalId)
             {

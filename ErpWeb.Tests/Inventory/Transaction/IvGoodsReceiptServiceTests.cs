@@ -2448,6 +2448,18 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             cdnReplayCase: "multiple");
 
     [Theory]
+    [InlineData("post")]
+    [InlineData("rollback")]
+    public Task Purchase_credit_note_and_later_issues_replay_after_a_canceled_issue(string operation) =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-" + operation);
+
+    [Fact]
+    public Task Purchase_credit_note_issue_rollback_rejects_damaged_earlier_note() =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-damaged");
+
+    [Theory]
     [InlineData("closed")]
     [InlineData("source")]
     [InlineData("stale")]
@@ -2792,6 +2804,15 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         await PreparePurchaseReplaySqlFixtureAsync();
         await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "multiple");
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_purchase_cdn_and_issues_replay_after_a_canceled_issue()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-rollback");
     }
 
     private async Task ExerciseHistoricalConsumedInvoiceAsync(bool enabled, bool consumedBeforeInvoice,
@@ -3888,7 +3909,9 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 IStatus = "ACTIVE", Reason = "ADJ", ExpiryDate = lotControlled ? FixedToday.AddYears(1) : null
             }]
         };
-        var opening = await receipt.SaveNewAsync(MiscRequest(FixedToday.AddDays(-5), 15m, 3m));
+        var hasCanceledIssue = cdnReplayCase is "canceled-post" or "canceled-rollback" or "canceled-damaged";
+        var opening = await receipt.SaveNewAsync(MiscRequest(FixedToday.AddDays(-5),
+            hasCanceledIssue ? 3m : 15m, hasCanceledIssue ? 1m : 3m));
         Assert.True(opening.Succeeded, opening.ErrorMessage);
         var openingPost = await receipt.PostAsync([opening.BatchNo]);
         Assert.True(openingPost.Succeeded, openingPost.ErrorMessage);
@@ -4260,10 +4283,27 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 var note = await db.PoCdns.SingleAsync(c => c.DocNo == noteNo);
                 return new PoCdnKeyedRequest { DocNo = noteNo, RowVersion = note.RowVersion };
             }
-            if (testBackdatedCreditNote == "cdn-rollback")
+            if (testBackdatedCreditNote == "cdn-rollback" || cdnReplayCase is "canceled-rollback" or "canceled-damaged")
             {
                 var posted = await cdn.PostAsync([await KeyAsync()]);
                 Assert.True(posted.Succeeded, posted.ErrorMessage);
+            }
+            int? canceledIssueBatchNo = null;
+            if (hasCanceledIssue)
+            {
+                var canceledIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+                {
+                    TrxDate = FixedToday.AddDays(1),
+                    Lines = [new IvMiscIssueLineRequest
+                    {
+                        FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                        Quantity = 2m, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+                    }]
+                });
+                Assert.True(canceledIssue.Succeeded, canceledIssue.ErrorMessage);
+                var canceledPost = await issue.PostAsync([canceledIssue.BatchNo]);
+                Assert.True(canceledPost.Succeeded, canceledPost.ErrorMessage);
+                canceledIssueBatchNo = canceledIssue.BatchNo;
             }
             var laterIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
             {
@@ -4276,6 +4316,32 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             });
             Assert.True(laterIssue.Succeeded, laterIssue.ErrorMessage);
             Assert.True((await issue.PostAsync([laterIssue.BatchNo])).Succeeded);
+            if (canceledIssueBatchNo is int canceledBatch)
+            {
+                if (cdnReplayCase == "canceled-damaged")
+                {
+                    await using (var damageDb = await _factory.CreateDbContextAsync())
+                        await damageDb.PurchaseReceiptCostSettlements.Where(s => s.PiDocNo == piDocNo)
+                            .ExecuteUpdateAsync(u => u.SetProperty(s => s.AllocatedActualBaseAmount,
+                                s => s.AllocatedActualBaseAmount + 1m));
+                    async Task<(decimal Qty, decimal Value, decimal Balance, int Postings, int Facts, string Status)> SnapshotAsync()
+                    {
+                        await using var snapshotDb = await _factory.CreateDbContextAsync();
+                        var state = await snapshotDb.StockCostStates.SingleAsync();
+                        return (state.OnHandBaseQty, state.InventoryValue, (await snapshotDb.IvBalLocs.SingleAsync()).StdQty,
+                            await snapshotDb.StockPostings.CountAsync(), await snapshotDb.StockValuationFacts.CountAsync(),
+                            (await snapshotDb.IvTrxBatches.SingleAsync(b => b.BatchNo == canceledBatch)).BatchStatus);
+                    }
+                    var damagedBefore = await SnapshotAsync();
+                    var refused = await issue.RollbackAsync([canceledBatch]);
+                    Assert.False(refused.Succeeded);
+                    Assert.Contains("evidence", refused.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                    Assert.Equal(damagedBefore, await SnapshotAsync());
+                    return;
+                }
+                var canceledRollback = await issue.RollbackAsync([canceledBatch]);
+                Assert.True(canceledRollback.Succeeded, canceledRollback.ErrorMessage);
+            }
             int? secondIssueBatchNo = null;
             if (cdnReplayCase == "multiple")
             {
@@ -4301,6 +4367,43 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                     (await db.PoCdns.SingleAsync(c => c.DocNo == noteNo)).Status,
                     await db.StockPostings.CountAsync(), await db.StockValuationFacts.CountAsync(),
                     await db.PurchaseCostAdjustments.CountAsync());
+            }
+            if (hasCanceledIssue)
+            {
+                async Task AssertCanceledStateAsync(decimal value, decimal issueCost, bool posted)
+                {
+                    var current = await EvidenceAsync();
+                    Assert.Equal((5m, value, 5m, posted ? "POSTED" : "NEW"),
+                        (current.Qty, current.Value, current.Balance, current.Status));
+                    await using var check = await _factory.CreateDbContextAsync();
+                    var history = await check.IvTrxHistories.SingleAsync(h => h.BatchNo == laterIssue.BatchNo
+                        && h.EntryRole == "ORIGINAL");
+                    var active = await StockReplayValuationGenerationResolver.ResolveAsync(check, "DEMO", "HQ", [history]);
+                    Assert.Equal(issueCost, Assert.Single(active[history.Id]).CostAmount);
+                    var canceled = await check.IvTrxHistories.SingleAsync(h => h.BatchNo == canceledIssueBatchNo
+                        && h.EntryRole == "ORIGINAL");
+                    Assert.Single(await check.IvTrxHistories.Where(h => h.ReversesHistoryId == canceled.Id).ToArrayAsync());
+                    var month = new DateTime(FixedToday.Year, FixedToday.Month, 1);
+                    Assert.Null(await StockValuationSnapshotBuilder.AppendAsync(check, "DEMO", "HQ", month,
+                        month.AddMonths(1).AddDays(-1), "TEST", CancellationToken.None));
+                }
+                if (cdnReplayCase == "canceled-post")
+                {
+                    await AssertCanceledStateAsync(30m, 6m, posted: false);
+                    var posted = await cdn.PostAsync([await KeyAsync()]);
+                    Assert.True(posted.Succeeded, posted.ErrorMessage);
+                }
+                await AssertCanceledStateAsync(29.166667m, 5.833333m, posted: true);
+                for (var cycle = 0; cycle < 2; cycle++)
+                {
+                    var rollback = await cdn.RollbackAsync([await KeyAsync()]);
+                    Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+                    await AssertCanceledStateAsync(30m, 6m, posted: false);
+                    var repost = await cdn.PostAsync([await KeyAsync()]);
+                    Assert.True(repost.Succeeded, repost.ErrorMessage);
+                    await AssertCanceledStateAsync(29.166667m, 5.833333m, posted: true);
+                }
+                return;
             }
             if (testBackdatedCreditNote is "cdn-replay" or "cdn-replay-dn")
             {

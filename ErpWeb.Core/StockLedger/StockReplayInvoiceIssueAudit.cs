@@ -281,6 +281,31 @@ internal static class StockReplayInvoiceIssueAudit
         return true;
     }
 
+    internal static async Task<bool> ValidateEarlierCdnAsync(AppDbContext db, string company, string branch,
+        StockPosting owner, StockValuationFact value, CancellationToken ct)
+    {
+        if (owner.CompanyCode != company || owner.BranchCode != branch || owner.SealedAtUtc is null
+            || owner.SourceModule != "PROCUREMENT" || owner.SourceDocumentType != "PO_CDN"
+            || owner.CommandType != "PROCUREMENT_PO_CDN_PRIMARY" || owner.PostingRole != "PRIMARY"
+            || owner.ReversesPostingId is not null || owner.PostingSequence <= 0
+            || value.StockPostingId != owner.Id || value.ReversesValuationFactId is not null
+            || await db.StockPostings.AsNoTracking().AnyAsync(p => p.ReversesPostingId == owner.Id, ct))
+            return false;
+        var adjustments = await db.PurchaseCostAdjustments.AsNoTracking()
+            .Where(a => a.StockPostingId == owner.Id).ToArrayAsync(ct);
+        if (adjustments.Length != 1 || adjustments[0].InventoryAdjustmentFactId != value.Id
+            || !await ValidateCdnAuthorityAsync(db, company, branch, owner, adjustments[0], value, ct))
+            return false;
+        var hasRun = await db.StockReplayRuns.AsNoTracking().AnyAsync(r => r.RootStockPostingId == owner.Id, ct);
+        var hasEffects = await db.StockReplayEffects.AsNoTracking().AnyAsync(e => e.RootStockPostingId == owner.Id, ct);
+        var hasIssueFacts = await db.StockValuationFacts.AsNoTracking()
+            .AnyAsync(f => f.StockPostingId == owner.Id && f.InventoryHistoryId != null, ct);
+        if (hasRun || hasEffects || hasIssueFacts)
+            return await ValidateRootsAsync(db, company, branch, [owner.Id], null, ct);
+        return await db.StockValuationFacts.AsNoTracking().CountAsync(f => f.StockPostingId == owner.Id, ct) == 1
+            && !await db.PurchaseReceiptCostSettlements.AsNoTracking().AnyAsync(s => s.StockPostingId == owner.Id, ct);
+    }
+
     internal static async Task<bool> ValidateCdnAuthorityAsync(AppDbContext db, string company, string branch,
         StockPosting root, ErpWeb.Model.Entities.Purchase.PurchaseCostAdjustment adjustment,
         StockValuationFact value, CancellationToken ct)
