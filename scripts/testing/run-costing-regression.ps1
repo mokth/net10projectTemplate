@@ -126,6 +126,7 @@ $required = @(
     'StockReplayStandardSimulatorTests', 'InventoryValuationServiceTests',
     'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
     'SubconPostBlockedTests', 'SubconModeTests',
+    'Purchase_credit_note_refuses_unreplayed_later_issue',
     'Backdated_wac_misc_receipt_replays_after_value_neutral_purchase_invoice',
     'Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance',
     'Backdated_wac_misc_receipt_replays_partial_purchase_invoice_variance',
@@ -348,6 +349,8 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNoteRollback
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterIssuePost
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterIssueRollback
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts

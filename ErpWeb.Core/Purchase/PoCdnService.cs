@@ -10,6 +10,7 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
@@ -2228,6 +2229,10 @@ public sealed class PoCdnService : IPoCdnService
                 db, cdn, referencedInvoice, context.CostMethod, cancellationToken);
             if (!result.Succeeded)
                 return (result.Error ?? "Purchase CN/DN costing failed.", null);
+            if (!cdn.ReturnStock && context.CostMethod == StockCostMethods.MovingAverage
+                && await HasUnreplayedCdnDependenciesAsync(db, write, context.Epoch.Id,
+                    context.Posting.EffectiveAt, context.Posting.PostingSequence, result.Adjustments, cancellationToken))
+                return ("Cannot post this purchase credit/debit note while later stock costing needs replay.", null);
 
             await _costAdjustments.AppendInTransactionAsync(
                 context, result.Adjustments, cancellationToken);
@@ -2405,6 +2410,10 @@ public sealed class PoCdnService : IPoCdnService
                 db, cdn, original.Id, write.UserId!, cancellationToken);
             if (!reversal.Succeeded)
                 return (reversal.Error ?? "Purchase CN/DN costing rollback failed.", null);
+            if (begin.Context.CostMethod == StockCostMethods.MovingAverage
+                && await HasUnreplayedCdnDependenciesAsync(db, write, original.LedgerEpochId,
+                    original.EffectiveAt, original.PostingSequence, reversal.Adjustments, cancellationToken))
+                return ("Cannot roll back this purchase credit/debit note while later stock costing needs replay.", null);
             await _costAdjustments.AppendInTransactionAsync(
                 begin.Context, reversal.Adjustments, cancellationToken);
             await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
@@ -2426,6 +2435,19 @@ public sealed class PoCdnService : IPoCdnService
             if (!completed)
                 await _stockCoordinator.AbortInTransactionAsync(begin.Context, CancellationToken.None);
         }
+    }
+
+    private static async Task<bool> HasUnreplayedCdnDependenciesAsync(
+        AppDbContext db, UserContext write, long epoch, DateTime effectiveAt, long sequence,
+        IReadOnlyCollection<PurchaseCostAdjustmentRequest> adjustments, CancellationToken cancellationToken)
+    {
+        var items = adjustments.Where(a => a.TotalAdjustmentAmount != 0m || a.InventoryAdjustmentAmount != 0m)
+            .Select(a => a.ItemCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        return items.Length > 0
+            && (await PurchaseReplayChronologyGuard.HasLaterCanceledSaleAsync(db, write.CompanyCode!, write.BranchCode!,
+                    epoch, effectiveAt, sequence, items, cancellationToken)
+                || await PurchaseReplayChronologyGuard.HasLaterActiveWacCostAsync(db, write.CompanyCode!, write.BranchCode!,
+                    epoch, effectiveAt, sequence, items, cancellationToken));
     }
 
     private async Task<long?> FindVendorReturnPostingIdAsync(

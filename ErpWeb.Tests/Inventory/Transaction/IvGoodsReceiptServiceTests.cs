@@ -2425,6 +2425,13 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: invoiceUnitPrice, testBackdatedCreditNote: scenario);
 
+    [Theory]
+    [InlineData("cdn-post")]
+    [InlineData("cdn-rollback")]
+    public Task Purchase_credit_note_refuses_unreplayed_later_issue(string scenario) =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: scenario);
+
     [Fact]
     public Task Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback() =>
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 5.565217m, 122.434783m,
@@ -2718,6 +2725,24 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         await PreparePurchaseReplaySqlFixtureAsync();
         await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "rollback");
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_purchase_cdn_post_rejects_unreplayed_later_issue()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-post");
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_purchase_cdn_rollback_rejects_unreplayed_later_issue()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-rollback");
     }
 
     private async Task ExerciseHistoricalConsumedInvoiceAsync(bool enabled, bool consumedBeforeInvoice,
@@ -4125,6 +4150,101 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 var line = Assert.Single(snapshot.Lines);
                 Assert.Equal((state.OnHandBaseQty, state.InventoryValue), (line.ClosingQty, line.ClosingValue));
             }
+        }
+
+        if (testBackdatedCreditNote is "cdn-post" or "cdn-rollback")
+        {
+            var tenant = InventoryTenantTestHelper.CreateTenantContext(location: "MAIN");
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var branchLock = new BranchStockTransactionLock();
+            var coordinator = new StockPostingCoordinator(_factory, tenant, branchLock,
+                new StockPeriodGuard(), new NoActiveStockFreezeGuard(), new InventoryValuationService());
+            var postingRepo = new IvStockPostingRepository();
+            var cdn = new PoCdnService(_factory, tenant, access.Object, new FakePoCdnDocumentNumberingService(),
+                new RunningNumberService(), new FixedCurrentDateService(FixedToday.AddDays(1)),
+                new PoCdnRepository(), new PoInvoiceRepository(), postingRepo,
+                new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+                InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true),
+                NullLogger<PoCdnService>.Instance, stockCoordinator: coordinator,
+                costPostingCommands: new PurchaseCostPostingCommandFactory(),
+                costAdjustments: new PurchaseCostAdjustmentPostingService(coordinator, new StockValueAdjustmentWriter()),
+                cdnCostAdjustments: new PurchaseCdnCostAdjustmentService());
+            var saved = await cdn.SaveNewAsync(new PoCdnSaveRequest
+            {
+                Type = "CN", DocDate = FixedToday, VendorCode = "SUP01", InvNo = piDocNo,
+                ReturnStock = false, Currency = "MYR", ReasonCode = "PRICE_ADJUSTMENT",
+                SupplierDocNo = "SUP-CN-REPLAY", SupplierDocDate = FixedToday, TaxGrCode = "SR",
+                Lines = [new PoCdnLineRequest
+                {
+                    InvLineNo = 1, ICode = "A100", Qty = 1m, UnitPrice = 1m,
+                    TaxGroup = "SR", ItemGlCode = "GLPUR", StdCustPSize = 1m
+                }]
+            });
+            Assert.True(saved.Succeeded, saved.ErrorMessage);
+            var noteNo = saved.DocNo!;
+            async Task<PoCdnKeyedRequest> KeyAsync()
+            {
+                await using var db = await _factory.CreateDbContextAsync();
+                var note = await db.PoCdns.SingleAsync(c => c.DocNo == noteNo);
+                return new PoCdnKeyedRequest { DocNo = noteNo, RowVersion = note.RowVersion };
+            }
+            if (testBackdatedCreditNote == "cdn-rollback")
+            {
+                var posted = await cdn.PostAsync([await KeyAsync()]);
+                Assert.True(posted.Succeeded, posted.ErrorMessage);
+            }
+            var laterIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+            {
+                TrxDate = FixedToday.AddDays(1),
+                Lines = [new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    Quantity = 1m, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 3m
+                }]
+            });
+            Assert.True(laterIssue.Succeeded, laterIssue.ErrorMessage);
+            Assert.True((await issue.PostAsync([laterIssue.BatchNo])).Succeeded);
+            async Task<(decimal Qty, decimal Value, decimal Balance, string Status, int Postings, int Facts, int Adjustments)> EvidenceAsync()
+            {
+                await using var db = await _factory.CreateDbContextAsync();
+                var state = await db.StockCostStates.SingleAsync();
+                return (state.OnHandBaseQty, state.InventoryValue, (await db.IvBalLocs.SingleAsync()).StdQty,
+                    (await db.PoCdns.SingleAsync(c => c.DocNo == noteNo)).Status,
+                    await db.StockPostings.CountAsync(), await db.StockValuationFacts.CountAsync(),
+                    await db.PurchaseCostAdjustments.CountAsync());
+            }
+            var before = await EvidenceAsync();
+            var result = testBackdatedCreditNote == "cdn-post"
+                ? await cdn.PostAsync([await KeyAsync()])
+                : await cdn.RollbackAsync([await KeyAsync()]);
+            Assert.False(result.Succeeded, "The credit note must not leave a later stock issue at its old cost.");
+            Assert.Contains("later stock costing", result.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(before, await EvidenceAsync());
+            await using (var check = await _factory.CreateDbContextAsync())
+            {
+                if (check.Database.IsSqlServer())
+                {
+                    await check.Database.OpenConnectionAsync();
+                    await using var command = check.Database.GetDbConnection().CreateCommand();
+                    command.CommandText = "SELECT SESSION_CONTEXT(N'STOCK_LEDGER_V2_POSTING_ID')";
+                    Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
+                }
+            }
+            var issueRollback = await issue.RollbackAsync([laterIssue.BatchNo]);
+            Assert.True(issueRollback.Succeeded, issueRollback.ErrorMessage);
+            if (testBackdatedCreditNote == "cdn-post")
+            {
+                var posted = await cdn.PostAsync([await KeyAsync()]);
+                Assert.True(posted.Succeeded, posted.ErrorMessage);
+            }
+            var rolledBack = await cdn.RollbackAsync([await KeyAsync()]);
+            Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);
+            var restored = await EvidenceAsync();
+            Assert.Equal((18m, 78m, 18m, ErpWeb.Core.Purchase.PoCdnStatuses.New),
+                (restored.Qty, restored.Value, restored.Balance, restored.Status));
+            return;
         }
 
         if (testBackdatedCreditNote is not null)
