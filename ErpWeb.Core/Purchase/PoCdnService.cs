@@ -14,6 +14,8 @@ using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace ErpWeb.Core.Purchase;
@@ -22,7 +24,7 @@ namespace ErpWeb.Core.Purchase;
 /// Purchase Credit / Debit Notes. Financial supplier adjustment; the physical return is delegated
 /// to the existing Vendor Return posting, which already maintains PO ReturnQty / FinClosed.
 /// </summary>
-public sealed class PoCdnService : IPoCdnService
+public sealed partial class PoCdnService : IPoCdnService
 {
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly IInventoryTenantContext _tenant;
@@ -43,6 +45,8 @@ public sealed class PoCdnService : IPoCdnService
     private readonly IPurchaseCostAdjustmentPostingService? _costAdjustments;
     private readonly IPurchaseCdnCostAdjustmentService? _cdnCostAdjustments;
     private readonly IStockCostMethodResolver _costMethods;
+    private readonly IBranchStockTransactionLock? _branchStockLock;
+    private readonly bool _openPeriodBackdatedReplayEnabled;
 
     /// <summary>Test-only: invoked after the VR stock-out succeeds, before the CN is marked POSTED.</summary>
     internal Action? TestHookAfterStockOut { get; set; }
@@ -69,7 +73,9 @@ public sealed class PoCdnService : IPoCdnService
         IPurchaseCostPostingCommandFactory? costPostingCommands = null,
         IPurchaseCostAdjustmentPostingService? costAdjustments = null,
         IPurchaseCdnCostAdjustmentService? cdnCostAdjustments = null,
-        IStockCostMethodResolver? costMethods = null)
+        IStockCostMethodResolver? costMethods = null,
+        IBranchStockTransactionLock? branchStockLock = null,
+        IConfiguration? configuration = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -90,6 +96,8 @@ public sealed class PoCdnService : IPoCdnService
         _costAdjustments = costAdjustments;
         _cdnCostAdjustments = cdnCostAdjustments;
         _costMethods = costMethods ?? new StockCostMethodResolver();
+        _branchStockLock = branchStockLock;
+        _openPeriodBackdatedReplayEnabled = configuration?.GetValue<bool>("OpenPeriodBackdatedReplayEnabled") == true;
     }
 
     // ─────────────────────────── Context helpers ───────────────────────────
@@ -1930,12 +1938,22 @@ public sealed class PoCdnService : IPoCdnService
         CancellationToken cancellationToken)
     {
         var no = (item.DocNo ?? string.Empty).Trim();
+        var replay = await PreviewCdnIssueReplayAsync(write, no, posting: true, cancellationToken);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         StockPostingContext? activePosting = null;
         var postingCompleted = false;
         try
         {
+            if (replay is not null)
+            {
+                await _branchStockLock!.AcquireAsync(db, write.CompanyCode!, write.BranchCode!, cancellationToken);
+                if (db.Database.IsSqlServer() && !await LockCdnReplaySourcesAsync(db, write, no, replay, cancellationToken))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoCdnPostingItemResult.Failed(no, "The purchase evidence changed. Retry the document.");
+                }
+            }
             var cdn = await _cdns.LockForUpdateAsync(
                 db, write.CompanyCode!, write.BranchCode!, no, cancellationToken);
             if (cdn is null)
@@ -2029,6 +2047,17 @@ public sealed class PoCdnService : IPoCdnService
                             no, PoCdnReasonCodes.RemainingExceeded,
                             eval.Error ?? "Credit note total exceeds the invoice remaining.");
                     }
+                }
+            }
+
+            if (replay is not null)
+            {
+                var lockedPlan = referencedInvoice is null ? null
+                    : await PlanCdnIssueReplayAsync(db, cdn, referencedInvoice, posting: true, cancellationToken);
+                if (lockedPlan is null || lockedPlan.Fingerprint != replay.Fingerprint)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoCdnPostingItemResult.Failed(no, "The historical purchase or stock evidence changed. Retry the document.");
                 }
             }
 
@@ -2158,7 +2187,7 @@ public sealed class PoCdnService : IPoCdnService
             else
             {
                 costing = await PostCdnCostingAsync(
-                    db, write, cdn, referencedInvoice, cancellationToken);
+                    db, write, cdn, referencedInvoice, cancellationToken, replay);
             }
             if (costing.Error is not null)
             {
@@ -2192,6 +2221,16 @@ public sealed class PoCdnService : IPoCdnService
         {
             await tx.RollbackAsync(cancellationToken);
             return PoCdnPostingItemResult.Failed(no, PoCdnReasonCodes.Concurrency, "Document was changed by another user.");
+        }
+        catch (SqlException ex) when (ex.Number is 1205 or 1222)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return PoCdnPostingItemResult.Failed(no, "The purchase document is busy. Try again.");
+        }
+        catch (StockLedgerException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return PoCdnPostingItemResult.Failed(no, ex.Error.Message);
         }
         catch (Exception ex)
         {
@@ -2255,7 +2294,8 @@ public sealed class PoCdnService : IPoCdnService
         UserContext write,
         PoCdn cdn,
         PoInvoice? referencedInvoice,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CdnIssueReplayPlan? replay = null)
     {
         if (_stockCoordinator is null
             || _costPostingCommands is null
@@ -2307,11 +2347,28 @@ public sealed class PoCdnService : IPoCdnService
         var completed = false;
         try
         {
-            var append = await AppendCdnCostingAsync(
-                db, write, cdn, referencedInvoice, begin.Context, cancellationToken);
-            if (append.Error is not null)
-                return append;
-            await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            if (replay is null)
+            {
+                var append = await AppendCdnCostingAsync(
+                    db, write, cdn, referencedInvoice, begin.Context, cancellationToken);
+                if (append.Error is not null)
+                    return append;
+                await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            }
+            else
+            {
+                begin.Context.CostMethod = await _costMethods.ResolveAsync(db, write.CompanyCode!, write.BranchCode!,
+                    referencedInvoice!.DocDate, cancellationToken);
+                var result = await _cdnCostAdjustments.BuildAsync(db, cdn, referencedInvoice,
+                    begin.Context.CostMethod, cancellationToken);
+                if (!result.Succeeded || begin.Context.CostMethod != StockCostMethods.MovingAverage
+                    || begin.Context.Epoch.Id != replay.EpochId || begin.Context.Posting.PostingSequence != replay.Watermark + 1
+                    || result.Adjustments.Count != 1 || result.Adjustments.Single() != replay.Adjustment)
+                    return ("The historical purchase or stock evidence changed. Retry the document.", null);
+                var required = await PoInvoiceService.WriteInvoiceIssueReplayAsync(begin.Context, replay.Fingerprint,
+                    replay.Watermark, replay.Replay, result.Adjustments.Single(), cancellationToken);
+                await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, required, cancellationToken);
+            }
             completed = true;
             return (null, null);
         }
@@ -2336,7 +2393,8 @@ public sealed class PoCdnService : IPoCdnService
         AppDbContext db,
         UserContext write,
         PoCdn cdn,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CdnIssueReplayPlan? replay = null)
     {
         if (_stockCoordinator is null
             || _costPostingCommands is null
@@ -2410,13 +2468,26 @@ public sealed class PoCdnService : IPoCdnService
                 db, cdn, original.Id, write.UserId!, cancellationToken);
             if (!reversal.Succeeded)
                 return (reversal.Error ?? "Purchase CN/DN costing rollback failed.", null);
-            if (begin.Context.CostMethod == StockCostMethods.MovingAverage
+            if (replay is null && begin.Context.CostMethod == StockCostMethods.MovingAverage
                 && await HasUnreplayedCdnDependenciesAsync(db, write, original.LedgerEpochId,
                     original.EffectiveAt, original.PostingSequence, reversal.Adjustments, cancellationToken))
                 return ("Cannot roll back this purchase credit/debit note while later stock costing needs replay.", null);
-            await _costAdjustments.AppendInTransactionAsync(
-                begin.Context, reversal.Adjustments, cancellationToken);
-            await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            if (replay is null)
+            {
+                await _costAdjustments.AppendInTransactionAsync(
+                    begin.Context, reversal.Adjustments, cancellationToken);
+                await _stockCoordinator.CompleteInTransactionAsync(begin.Context, cancellationToken);
+            }
+            else
+            {
+                if (begin.Context.CostMethod != StockCostMethods.MovingAverage || original.Id != replay.OriginalPostingId
+                    || begin.Context.Epoch.Id != replay.EpochId || begin.Context.Posting.PostingSequence != replay.Watermark + 1
+                    || reversal.Adjustments.Count != 1 || reversal.Adjustments.Single() != replay.Adjustment)
+                    return ("The historical purchase or stock evidence changed. Retry the document.", null);
+                var required = await PoInvoiceService.WriteInvoiceIssueReplayAsync(begin.Context, replay.Fingerprint,
+                    replay.Watermark, replay.Replay, reversal.Adjustments.Single(), cancellationToken);
+                await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, required, cancellationToken);
+            }
             completed = true;
             return (null, null);
         }
@@ -2500,12 +2571,22 @@ public sealed class PoCdnService : IPoCdnService
         CancellationToken cancellationToken)
     {
         var no = (item.DocNo ?? string.Empty).Trim();
+        var replay = await PreviewCdnIssueReplayAsync(write, no, posting: false, cancellationToken);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         StockPostingContext? activePosting = null;
         var postingCompleted = false;
         try
         {
+            if (replay is not null)
+            {
+                await _branchStockLock!.AcquireAsync(db, write.CompanyCode!, write.BranchCode!, cancellationToken);
+                if (db.Database.IsSqlServer() && !await LockCdnReplaySourcesAsync(db, write, no, replay, cancellationToken))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoCdnPostingItemResult.Failed(no, "The purchase evidence changed. Retry the document.");
+                }
+            }
             var cdn = await _cdns.LockForUpdateAsync(
                 db, write.CompanyCode!, write.BranchCode!, no, cancellationToken);
             if (cdn is null)
@@ -2538,6 +2619,22 @@ public sealed class PoCdnService : IPoCdnService
             {
                 await tx.RollbackAsync(cancellationToken);
                 return PoCdnPostingItemResult.Failed(no, PoCdnReasonCodes.Concurrency, "Document was changed by another user.");
+            }
+
+            if (replay is not null)
+            {
+                await db.Entry(cdn).Collection(x => x.Details).LoadAsync(cancellationToken);
+                var invoice = await _invoices.LockForUpdateAsync(db, write.CompanyCode!, write.BranchCode!,
+                    replay.InvoiceNo, cancellationToken);
+                if (invoice is not null)
+                    await db.Entry(invoice).Collection(x => x.Details).LoadAsync(cancellationToken);
+                var lockedPlan = invoice is null ? null
+                    : await PlanCdnIssueReplayAsync(db, cdn, invoice, posting: false, cancellationToken);
+                if (lockedPlan is null || lockedPlan.Fingerprint != replay.Fingerprint)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return PoCdnPostingItemResult.Failed(no, "The historical purchase or stock evidence changed. Retry the document.");
+                }
             }
 
             var now = DateTime.UtcNow;
@@ -2623,7 +2720,7 @@ public sealed class PoCdnService : IPoCdnService
                              && x.SealedAtUtc != null,
                         cancellationToken);
                 var costing = await RollbackCdnCostingAsync(
-                    db, write, cdn, cancellationToken);
+                    db, write, cdn, cancellationToken, replay);
                 if (costing.Error is not null)
                 {
                     await tx.RollbackAsync(cancellationToken);
@@ -2654,6 +2751,16 @@ public sealed class PoCdnService : IPoCdnService
         {
             await tx.RollbackAsync(cancellationToken);
             return PoCdnPostingItemResult.Failed(no, PoCdnReasonCodes.Concurrency, "Document was changed by another user.");
+        }
+        catch (SqlException ex) when (ex.Number is 1205 or 1222)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return PoCdnPostingItemResult.Failed(no, "The purchase document is busy. Try again.");
+        }
+        catch (StockLedgerException ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return PoCdnPostingItemResult.Failed(no, ex.Error.Message);
         }
         catch (Exception ex)
         {

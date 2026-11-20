@@ -67,10 +67,21 @@ public static class StockReplayWacFinancialTailReader
             [], false, factId, cancellationToken);
     }
 
+    internal static Task<StockReplayWacFinancialTail> ReadLaterForCdnRemovalAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayEventKey after, long factId, CancellationToken cancellationToken = default)
+    {
+        if (factId <= 0 || factId >= long.MaxValue - int.MaxValue)
+            throw Corrupt("The purchase credit/debit note has no valid value fact identity.");
+        return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
+            [], false, null, cancellationToken, factId);
+    }
+
     private static async Task<StockReplayWacFinancialTail> ReadLaterCoreAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
-        bool excludeSaleCycle, long? permittedPurchaseFactId, CancellationToken cancellationToken)
+        bool excludeSaleCycle, long? permittedPurchaseFactId, CancellationToken cancellationToken,
+        long? permittedCdnAnchorId = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (string.IsNullOrWhiteSpace(companyCode)
@@ -226,6 +237,25 @@ public static class StockReplayWacFinancialTailReader
                 && f.EffectiveAt >= after.EffectiveAt.Date
                 && f.StockPosting!.SealedAtUtc != null)
             .ToArrayAsync(cancellationToken);
+        if (permittedCdnAnchorId is long cdnFactId)
+        {
+            var anchors = valueRows.Where(f => f.Id == cdnFactId).ToArray();
+            var anchor = anchors.SingleOrDefault();
+            var owner = anchor is null ? null : await db.StockPostings.AsNoTracking()
+                .SingleOrDefaultAsync(p => p.Id == anchor.StockPostingId, cancellationToken);
+            var adjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+                a.CompanyCode == companyCode && a.BranchCode == branchCode && a.InventoryAdjustmentFactId == cdnFactId)
+                .ToArrayAsync(cancellationToken);
+            if (anchor is null || owner is null || owner.SealedAtUtc is null || adjustments.Length != 1
+                || owner.SourceDocumentType != "PO_CDN" || owner.PostingRole != "PRIMARY"
+                || new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                    owner.PostingSequence, $"V{cdnFactId:D20}", 0) != after
+                || await db.StockValuationFacts.AsNoTracking().AnyAsync(f => f.ReversesValuationFactId == cdnFactId, cancellationToken)
+                || !await StockReplayInvoiceIssueAudit.ValidateCdnAuthorityAsync(db, companyCode, branchCode,
+                    owner, adjustments[0], anchor, cancellationToken))
+                throw Corrupt("The purchase credit/debit note has invalid removal evidence.");
+            valueRows = valueRows.Where(f => f.Id != cdnFactId).ToArray();
+        }
         if (excludedValueIds.Count != 0)
         {
             var excluded = valueRows.Where(f => excludedValueIds.Contains(f.Id)).ToArray();

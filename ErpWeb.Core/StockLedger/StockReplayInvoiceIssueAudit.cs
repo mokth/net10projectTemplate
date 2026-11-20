@@ -9,6 +9,7 @@ namespace ErpWeb.Core.StockLedger;
 internal static class StockReplayInvoiceIssueAudit
 {
     internal const string EffectKind = "PO_INVOICE_ISSUE_REPRICE";
+    internal const string CreditNoteEffectKind = "PO_CDN_ISSUE_REPRICE";
     internal const int MaxIssueCount = 100;
 
     internal static async Task<bool> ValidateForSnapshotAsync(AppDbContext db, string company,
@@ -18,16 +19,16 @@ internal static class StockReplayInvoiceIssueAudit
             f.CompanyCode == company && f.BranchCode == branch && f.InventoryHistoryId != null
             && f.EffectiveAt < exclusiveEnd && f.StockPosting!.SealedAtUtc != null
             && f.StockPosting.PostingSequence <= watermark && f.StockPosting.SourceModule == "PROCUREMENT"
-            && f.StockPosting.SourceDocumentType == "PO_INVOICE")
+            && (f.StockPosting.SourceDocumentType == "PO_INVOICE" || f.StockPosting.SourceDocumentType == "PO_CDN"))
             .Select(f => f.StockPostingId).Distinct().ToArrayAsync(ct);
         var runs = await db.StockReplayRuns.AsNoTracking().Where(r => r.CompanyCode == company
             && r.BranchCode == branch && r.EarliestEffectiveAt < exclusiveEnd
             && db.StockPostings.Any(p => p.Id == r.RootStockPostingId && p.CompanyCode == company
                 && p.BranchCode == branch && p.SourceModule == "PROCUREMENT"
-                && p.SourceDocumentType == "PO_INVOICE" && p.SealedAtUtc != null
+                && (p.SourceDocumentType == "PO_INVOICE" || p.SourceDocumentType == "PO_CDN") && p.SealedAtUtc != null
                 && p.PostingSequence <= watermark)).Select(r => r.RootStockPostingId).ToArrayAsync(ct);
         var effects = await db.StockReplayEffects.AsNoTracking().Where(e => e.CompanyCode == company
-            && e.BranchCode == branch && e.EffectKind == EffectKind
+            && e.BranchCode == branch && (e.EffectKind == EffectKind || e.EffectKind == CreditNoteEffectKind)
             && db.StockPostings.Any(p => p.Id == e.RootStockPostingId && p.CompanyCode == company
                 && p.BranchCode == branch && p.EffectiveAt < exclusiveEnd && p.SealedAtUtc != null
                 && p.PostingSequence <= watermark)).Select(e => e.RootStockPostingId).ToArrayAsync(ct);
@@ -54,7 +55,8 @@ internal static class StockReplayInvoiceIssueAudit
     {
         var roots = await db.StockValuationFacts.AsNoTracking().Where(f => f.CompanyCode == company
             && f.BranchCode == branch && f.InventoryHistoryId.HasValue && histories.Contains(f.InventoryHistoryId.Value)
-            && f.StockPosting!.SourceModule == "PROCUREMENT" && f.StockPosting.SourceDocumentType == "PO_INVOICE")
+            && f.StockPosting!.SourceModule == "PROCUREMENT"
+            && (f.StockPosting.SourceDocumentType == "PO_INVOICE" || f.StockPosting.SourceDocumentType == "PO_CDN"))
             .Select(f => f.StockPostingId).Distinct().ToArrayAsync(ct);
         return await ValidateRootsAsync(db, company, branch, roots, unsealedRootId, ct);
     }
@@ -72,7 +74,7 @@ internal static class StockReplayInvoiceIssueAudit
             && p.CompanyCode == company && p.BranchCode == branch).ToDictionaryAsync(p => p.Id, ct);
         var allRuns = await db.StockReplayRuns.AsNoTracking().Where(r => ids.Contains(r.RootStockPostingId)).ToArrayAsync(ct);
         var allEffects = await db.StockReplayEffects.AsNoTracking().Where(e =>
-            ids.Contains(e.RootStockPostingId) && e.EffectKind == EffectKind).ToArrayAsync(ct);
+            ids.Contains(e.RootStockPostingId) && (e.EffectKind == EffectKind || e.EffectKind == CreditNoteEffectKind)).ToArrayAsync(ct);
         var allFacts = await db.StockValuationFacts.AsNoTracking().Where(f => ids.Contains(f.StockPostingId)).ToArrayAsync(ct);
         var allAdjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a => ids.Contains(a.StockPostingId)).ToArrayAsync(ct);
         var allSettlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s => ids.Contains(s.StockPostingId)).ToArrayAsync(ct);
@@ -111,14 +113,18 @@ internal static class StockReplayInvoiceIssueAudit
             var facts = factsByRoot[id].ToArray();
             var adjustments = adjustmentsByRoot[id].ToArray();
             var settlements = settlementsByRoot[id].ToArray();
-            if (root is null || root.SourceModule != "PROCUREMENT" || root.SourceDocumentType != "PO_INVOICE"
+            if (root is null)
+                return false;
+            var isCreditNote = root.SourceDocumentType == "PO_CDN";
+            if (root.SourceModule != "PROCUREMENT" || root.SourceDocumentType is not ("PO_INVOICE" or "PO_CDN")
                 || root.PostingRole is not ("PRIMARY" or "REVERSAL")
-                || root.CommandType != $"PROCUREMENT_PO_INVOICE_{root.PostingRole}"
+                || root.CommandType != $"PROCUREMENT_{root.SourceDocumentType}_{root.PostingRole}"
                 || (root.PostingRole == "PRIMARY") != (root.ReversesPostingId is null)
                 || root.SealedAtUtc is null && (unsealedRootId != root.Id || db.Database.CurrentTransaction is null)
                 || root.PostingSequence <= 0 || string.IsNullOrWhiteSpace(root.SourceSnapshotJson)
                 || runs.Length != 1
-                || adjustments.Length != 1 || settlements.Length != 1)
+                || adjustments.Length != 1 || settlements.Length != (isCreditNote ? 0 : 1)
+                || effects.Any(e => e.EffectKind != (isCreditNote ? CreditNoteEffectKind : EffectKind)))
                 return false;
             try
             {
@@ -216,9 +222,8 @@ internal static class StockReplayInvoiceIssueAudit
             if (run.LatestEffectiveAt != latestIssue)
                 return false;
             var adjustment = adjustments[0];
-            var settlement = settlements[0];
             if (value.CompanyCode != company || value.BranchCode != branch || value.LedgerEpochId != root.LedgerEpochId
-                || value.SourceDocumentType != "PO_INVOICE" || value.SourceDocumentId != root.SourceDocumentId
+                || value.SourceDocumentType != root.SourceDocumentType || value.SourceDocumentId != root.SourceDocumentId
                 || value.SourceDocumentNo != root.SourceDocumentNo || value.EffectiveAt != root.EffectiveAt
                 || value.BusinessDate != root.BusinessDate || value.PeriodKey != root.PeriodKey
                 || value.BaseQty != 0m || value.CostMethod != StockCostMethods.MovingAverage
@@ -228,12 +233,20 @@ internal static class StockReplayInvoiceIssueAudit
                 || value.ValuationStatus != (root.PostingRole == "PRIMARY" ? StockValuationStatuses.Valued : StockValuationStatuses.Reversed)
                 || adjustment.InventoryAdjustmentFactId != value.Id || adjustment.InventoryAdjustmentAmount != value.SignedValue
                 || adjustment.CompanyCode != company || adjustment.BranchCode != branch
-                || adjustment.SourceDocumentType != "PO_INVOICE" || adjustment.SourceDocumentNo != root.SourceDocumentNo
+                || adjustment.SourceDocumentType != root.SourceDocumentType || adjustment.SourceDocumentNo != root.SourceDocumentNo
                 || adjustment.SourceCostingRevision != root.DocumentRevision || adjustment.ItemCode != value.ItemCode
-                || settlement.PiDocNo != root.SourceDocumentNo || settlement.PiCostingRevision != root.DocumentRevision
-                || settlement.ItemCode != value.ItemCode || settlement.SettledBaseQty != adjustment.BaseQty
                 || (root.PostingRole == "PRIMARY") != (value.ReversesValuationFactId is null)
-                || (root.PostingRole == "PRIMARY") != (adjustment.ReversesAdjustmentId is null)
+                || (root.PostingRole == "PRIMARY") != (adjustment.ReversesAdjustmentId is null))
+                return false;
+            if (isCreditNote)
+            {
+                if (!await ValidateCdnAuthorityAsync(db, company, branch, root, adjustment, value, ct))
+                    return false;
+                continue;
+            }
+            var settlement = settlements[0];
+            if (settlement.PiDocNo != root.SourceDocumentNo || settlement.PiCostingRevision != root.DocumentRevision
+                || settlement.ItemCode != value.ItemCode || settlement.SettledBaseQty != adjustment.BaseQty
                 || (root.PostingRole == "PRIMARY") != (settlement.ReversesSettlementId is null))
                 return false;
             if (root.PostingRole == "PRIMARY")
@@ -266,5 +279,182 @@ internal static class StockReplayInvoiceIssueAudit
             }
         }
         return true;
+    }
+
+    internal static async Task<bool> ValidateCdnAuthorityAsync(AppDbContext db, string company, string branch,
+        StockPosting root, ErpWeb.Model.Entities.Purchase.PurchaseCostAdjustment adjustment,
+        StockValuationFact value, CancellationToken ct)
+    {
+        var primary = root.PostingRole == "PRIMARY" ? root : await db.StockPostings.AsNoTracking()
+            .SingleOrDefaultAsync(p => p.Id == root.ReversesPostingId, ct);
+        if (primary is null || primary.CompanyCode != company || primary.BranchCode != branch
+            || primary.LedgerEpochId != root.LedgerEpochId || primary.SourceModule != "PROCUREMENT"
+            || primary.SourceDocumentType != "PO_CDN" || primary.CommandType != "PROCUREMENT_PO_CDN_PRIMARY"
+            || primary.PostingRole != "PRIMARY" || primary.ReversesPostingId is not null
+            || primary.SourceDocumentId != root.SourceDocumentId || primary.SourceDocumentNo != root.SourceDocumentNo
+            || primary.DocumentRevision != root.DocumentRevision || primary.EffectiveAt != root.EffectiveAt
+            || root.PostingRole == "REVERSAL" && (primary.SealedAtUtc is null || primary.PostingSequence >= root.PostingSequence))
+            return false;
+        try
+        {
+            if (StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(primary.SourceSnapshotJson)) != primary.SourceSnapshotHash)
+                return false;
+            using var document = System.Text.Json.JsonDocument.Parse(primary.SourceSnapshotJson);
+            var snapshot = document.RootElement;
+            if (!snapshot.TryGetProperty("docNo", out var docNo) || docNo.GetString() != root.SourceDocumentNo
+                || !snapshot.TryGetProperty("docDate", out var docDate) || docDate.GetDateTime() != root.EffectiveAt
+                || !snapshot.TryGetProperty("type", out var type) || type.GetString() is not ("CN" or "DN")
+                || !snapshot.TryGetProperty("invNo", out var invoiceNo) || string.IsNullOrWhiteSpace(invoiceNo.GetString())
+                || !snapshot.TryGetProperty("referencedInvoiceRevision", out var revision) || !revision.TryGetInt32(out var invoiceRevision)
+                || !snapshot.TryGetProperty("currRate", out var rate) || !rate.TryGetDecimal(out var currencyRate) || currencyRate <= 0m
+                || !snapshot.TryGetProperty("returnStock", out var returnStock) || returnStock.GetBoolean()
+                || !snapshot.TryGetProperty("lines", out var lines) || lines.ValueKind != System.Text.Json.JsonValueKind.Array
+                || lines.GetArrayLength() != 1)
+                return false;
+            var line = lines[0];
+            if (!line.TryGetProperty("line", out var lineNo) || !lineNo.TryGetInt32(out var sourceLine)
+                || !line.TryGetProperty("invLineNo", out var invoiceLine) || !invoiceLine.TryGetInt32(out var invoiceLineNo)
+                || !line.TryGetProperty("iCode", out var item) || item.GetString() != adjustment.ItemCode
+                || !line.TryGetProperty("stdQty", out var qty) || !qty.TryGetDecimal(out var quantity) || quantity <= 0m
+                || !line.TryGetProperty("netAmount", out var net) || !net.TryGetDecimal(out var netAmount) || netAmount <= 0m
+                || !line.TryGetProperty("isStockReturn", out var stockReturn) || stockReturn.GetBoolean()
+                || adjustment.SourceDocumentLine != sourceLine || adjustment.BaseQty != quantity)
+                return false;
+            var primaryAdjustment = root.PostingRole == "PRIMARY" ? adjustment
+                : await db.PurchaseCostAdjustments.AsNoTracking().SingleOrDefaultAsync(a =>
+                    a.Id == adjustment.ReversesAdjustmentId, ct);
+            var primaryValue = root.PostingRole == "PRIMARY" ? value
+                : await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f =>
+                    f.Id == value.ReversesValuationFactId, ct);
+            if (primaryAdjustment is null || primaryValue is null || primaryAdjustment.StockPostingId != primary.Id
+                || primaryValue.StockPostingId != primary.Id || primaryAdjustment.InventoryAdjustmentFactId != primaryValue.Id
+                || primaryAdjustment.CompanyCode != company || primaryAdjustment.BranchCode != branch
+                || primaryAdjustment.SourceDocumentType != "PO_CDN" || primaryAdjustment.SourceDocumentNo != primary.SourceDocumentNo
+                || primaryAdjustment.SourceCostingRevision != primary.DocumentRevision
+                || primaryAdjustment.SourceDocumentLine != sourceLine || primaryAdjustment.ItemCode != adjustment.ItemCode
+                || primaryAdjustment.BaseQty != quantity || primaryAdjustment.CostMethod != StockCostMethods.MovingAverage
+                || primaryAdjustment.ReversesAdjustmentId is not null || primaryValue.OriginalValuationFactId is not long receiptId
+                || primaryValue.ReversesValuationFactId is not null || primaryValue.ValuationStatus != StockValuationStatuses.Valued
+                || primaryValue.CompanyCode != company || primaryValue.BranchCode != branch
+                || primaryValue.LedgerEpochId != root.LedgerEpochId || primaryValue.SourceDocumentType != "PO_CDN"
+                || primaryValue.SourceDocumentId != primary.SourceDocumentId || primaryValue.SourceDocumentNo != primary.SourceDocumentNo
+                || primaryValue.EffectiveAt != primary.EffectiveAt || primaryValue.ItemCode != adjustment.ItemCode
+                || primaryValue.InventoryHistoryId is not null || primaryValue.BaseQty != 0m
+                || primaryValue.CostMethod != StockCostMethods.MovingAverage || primaryValue.ValuationSource != StockValuationSources.PurchasePriceVariance
+                || primaryValue.Direction is not (-1 or 1) || primaryValue.CostAmount < 0m
+                || primaryValue.BaseCostAmount != primaryValue.CostAmount || primaryValue.UnitCost != 0m
+                || primaryValue.ValuationVersion != 1 || primaryValue.TransactionCurrency is not null
+                || primaryValue.TransactionCostAmount is not null || primaryValue.ExchangeRate is not null
+                || primaryValue.SourceDocumentLine != sourceLine.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                || primaryValue.MovementCode != (primaryValue.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
+                || primaryAdjustment.InventoryAdjustmentAmount != primaryAdjustment.TotalAdjustmentAmount
+                || primaryAdjustment.ConsumedVarianceAmount != 0m || primaryAdjustment.TotalAdjustmentAmount == 0m
+                || primaryValue.SignedValue != primaryAdjustment.InventoryAdjustmentAmount)
+                return false;
+            var referencedInvoiceNo = invoiceNo.GetString()!;
+            var noteType = type.GetString()!;
+            var settlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s =>
+                s.CompanyCode == company && s.BranchCode == branch && s.PiDocNo == referencedInvoiceNo
+                && s.PiCostingRevision == invoiceRevision && s.PiLineNo == invoiceLineNo
+                && s.ReceiptValuationFactId == receiptId && s.ReversesSettlementId == null).ToArrayAsync(ct);
+            if (settlements.Length != 1 || settlements[0].ItemCode != adjustment.ItemCode
+                || settlements[0].SettledBaseQty < quantity || settlements[0].SettledBaseQty <= 0m
+                || await db.PurchaseReceiptCostSettlements.AsNoTracking().CountAsync(s => s.CompanyCode == company
+                    && s.BranchCode == branch && s.PiDocNo == referencedInvoiceNo && s.PiCostingRevision == invoiceRevision
+                    && s.PiLineNo == invoiceLineNo && s.ReversesSettlementId == null, ct) != 1
+                || await db.PurchaseReceiptCostSettlements.AsNoTracking().AnyAsync(s => s.ReversesSettlementId == settlements[0].Id, ct))
+                return false;
+            var invoiceOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p =>
+                p.Id == settlements[0].StockPostingId && p.CompanyCode == company && p.BranchCode == branch
+                && p.LedgerEpochId == root.LedgerEpochId && p.SourceModule == "PROCUREMENT"
+                && p.SourceDocumentType == "PO_INVOICE" && p.CommandType == "PROCUREMENT_PO_INVOICE_PRIMARY"
+                && p.SourceDocumentId == referencedInvoiceNo && p.DocumentRevision == invoiceRevision
+                && p.PostingRole == "PRIMARY" && p.ReversesPostingId == null && p.SealedAtUtc != null, ct);
+            if (invoiceOwner is null || invoiceOwner.EffectiveAt > primary.EffectiveAt
+                || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(invoiceOwner.SourceSnapshotJson)) != invoiceOwner.SourceSnapshotHash
+                || await db.StockPostings.AsNoTracking().AnyAsync(p => p.ReversesPostingId == invoiceOwner.Id, ct))
+                return false;
+            using var invoiceDocument = System.Text.Json.JsonDocument.Parse(invoiceOwner.SourceSnapshotJson);
+            var invoiceSnapshot = invoiceDocument.RootElement;
+            if (!invoiceSnapshot.TryGetProperty("docNo", out var piNo) || piNo.GetString() != referencedInvoiceNo
+                || !invoiceSnapshot.TryGetProperty("costingRevision", out var piRevision) || !piRevision.TryGetInt32(out var piRev)
+                || piRev != invoiceRevision || !invoiceSnapshot.TryGetProperty("currRate", out var piRate)
+                || !piRate.TryGetDecimal(out var invoiceRate) || invoiceRate <= 0m
+                || !invoiceSnapshot.TryGetProperty("lines", out var piLines) || piLines.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return false;
+            var matchingInvoiceLines = piLines.EnumerateArray().Where(x => x.TryGetProperty("line", out var n)
+                && n.TryGetInt32(out var number) && number == invoiceLineNo).ToArray();
+            if (matchingInvoiceLines.Length != 1 || !matchingInvoiceLines[0].TryGetProperty("iCode", out var piItem)
+                || piItem.GetString() != adjustment.ItemCode || !matchingInvoiceLines[0].TryGetProperty("stdQty", out var piQty)
+                || !piQty.TryGetDecimal(out var invoiceQty) || invoiceQty != settlements[0].SettledBaseQty
+                || !matchingInvoiceLines[0].TryGetProperty("netAmount", out var piNet) || !piNet.TryGetDecimal(out var invoiceNet)
+                || settlements[0].AllocatedActualBaseAmount != Costing.StockLedgerPrecision.Money(invoiceNet * invoiceRate))
+                return false;
+            var receipt = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f => f.Id == receiptId, ct);
+            if (receipt is null || receipt.CompanyCode != company || receipt.BranchCode != branch
+                || receipt.LedgerEpochId != root.LedgerEpochId || receipt.ItemCode != adjustment.ItemCode
+                || receipt.CostMethod != StockCostMethods.MovingAverage || receipt.Direction != 1
+                || receipt.InventoryHistoryId is not int receiptHistoryId || receipt.EffectiveAt > root.EffectiveAt
+                || receipt.ValuationStatus != StockValuationStatuses.Valued || receipt.ValuationSource != StockValuationSources.ReceiptActual
+                || receipt.ReversesValuationFactId is not null || receipt.OriginalValuationFactId is not null
+                || receipt.BaseQty != settlements[0].SettledBaseQty || receipt.BaseUom != primaryValue.BaseUom
+                || receipt.CostAmount != Costing.StockLedgerPrecision.Money(receipt.BaseQty * receipt.UnitCost)
+                || await db.StockValuationFacts.AsNoTracking().AnyAsync(f => f.ReversesValuationFactId == receipt.Id, ct))
+                return false;
+            var receiptOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == receipt.StockPostingId
+                && p.CompanyCode == company && p.BranchCode == branch && p.LedgerEpochId == root.LedgerEpochId
+                && p.SourceModule == "INVENTORY" && p.SourceDocumentType == IvTrxTypes.GoodsReceive
+                && p.CommandType == "IV_POST_GR" && p.PostingRole == "PRIMARY" && p.SealedAtUtc != null, ct);
+            var receiptHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == receiptHistoryId
+                && h.CompanyCode == company && h.BranchCode == branch && h.StockPostingId == receipt.StockPostingId
+                && h.LedgerVersion == 2 && h.LedgerEpochId == root.LedgerEpochId
+                && h.ICode == adjustment.ItemCode && h.TrxType == IvTrxTypes.GoodsReceive && h.EntryRole == "ORIGINAL"
+                && h.BatchStatus == IvBatchStatuses.Posted && h.ToStdUom == receipt.BaseUom && h.TrxDtTime == receipt.EffectiveAt
+                && h.PoNo == settlements[0].PoNo && h.PoRelNo == settlements[0].PoRelNo && h.PoLineNo == settlements[0].PoLineNo, ct);
+            if (receiptOwner is null || receiptHistory is null || receiptHistory.BaseUnitPrices is not decimal commercialUnit
+                || commercialUnit < 0m || receiptHistory.ToStdQty != receipt.BaseQty
+                || receiptOwner.EffectiveAt != receipt.EffectiveAt || receiptOwner.ReversesPostingId is not null
+                || await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.ReversesHistoryId == receiptHistory.Id, ct)
+                || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(receiptOwner.SourceSnapshotJson)) != receiptOwner.SourceSnapshotHash
+                || settlements[0].ReceiptInventoryHistoryId != receiptHistory.Id || settlements[0].ReceiptBatchNo != receiptHistory.BatchNo
+                || settlements[0].ReceiptCommercialUnitCost != Costing.StockLedgerPrecision.Money(commercialUnit)
+                || settlements[0].ReceiptCommercialBaseAmount != Costing.StockLedgerPrecision.Money(receipt.BaseQty * commercialUnit)
+                || settlements[0].ReceiptValuationUnitCost != receipt.UnitCost || settlements[0].ReceiptValuationBaseAmount != receipt.CostAmount
+                || settlements[0].CommercialVarianceAmount != Costing.StockLedgerPrecision.Money(
+                    settlements[0].AllocatedActualBaseAmount - settlements[0].ReceiptCommercialBaseAmount)
+                || settlements[0].ValuationVarianceAmount != Costing.StockLedgerPrecision.Money(
+                    settlements[0].AllocatedActualBaseAmount - settlements[0].ReceiptValuationBaseAmount))
+                return false;
+            var actual = Costing.StockLedgerPrecision.Money(netAmount * currencyRate);
+            var expectedTotal = noteType == "CN" ? -actual : actual;
+            var reference = Costing.StockLedgerPrecision.Money(settlements[0].ReceiptCommercialBaseAmount
+                * quantity / settlements[0].SettledBaseQty);
+            if (primaryAdjustment.AdjustmentType != (noteType == "CN" ? "PURCHASE_CN_PRICE_ADJUSTMENT" : "PURCHASE_DN_PRICE_ADJUSTMENT")
+                || primaryAdjustment.ActualBaseAmount != actual || primaryAdjustment.ReferenceBaseAmount != reference
+                || primaryAdjustment.CommercialReferenceAmount != reference || primaryAdjustment.TotalAdjustmentAmount != expectedTotal
+                || primaryAdjustment.PoNo != settlements[0].PoNo || primaryAdjustment.PoRelNo != settlements[0].PoRelNo
+                || primaryAdjustment.PoLineNo != settlements[0].PoLineNo || primaryValue.OriginalValuationFactId != receiptId)
+                return false;
+            return root.PostingRole == "PRIMARY" || adjustment.ReversesAdjustmentId == primaryAdjustment.Id
+                && value.ReversesValuationFactId == primaryValue.Id && value.OriginalValuationFactId == primaryValue.Id
+                && adjustment.AdjustmentType == primaryAdjustment.AdjustmentType
+                && adjustment.SourceDocumentLine == primaryAdjustment.SourceDocumentLine
+                && adjustment.CostMethod == primaryAdjustment.CostMethod
+                && adjustment.PoNo == primaryAdjustment.PoNo && adjustment.PoRelNo == primaryAdjustment.PoRelNo
+                && adjustment.PoLineNo == primaryAdjustment.PoLineNo
+                && adjustment.ActualBaseAmount == primaryAdjustment.ActualBaseAmount
+                && adjustment.ReferenceBaseAmount == primaryAdjustment.ReferenceBaseAmount
+                && adjustment.CommercialReferenceAmount == primaryAdjustment.CommercialReferenceAmount
+                && adjustment.TotalAdjustmentAmount == -primaryAdjustment.TotalAdjustmentAmount
+                && adjustment.InventoryAdjustmentAmount == -primaryAdjustment.InventoryAdjustmentAmount
+                && adjustment.ConsumedVarianceAmount == -primaryAdjustment.ConsumedVarianceAmount
+                && adjustment.BaseQty == primaryAdjustment.BaseQty && value.Direction == -primaryValue.Direction
+                && value.CostAmount == primaryValue.CostAmount && value.BaseUom == primaryValue.BaseUom
+                && value.ValuationVersion == primaryValue.ValuationVersion;
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException or OverflowException)
+        {
+            return false;
+        }
     }
 }

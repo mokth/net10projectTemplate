@@ -75,11 +75,12 @@ param(
     [switch]$BackdatedPurchaseCreditNotePost,
     [switch]$BackdatedPurchaseCreditNoteRollback,
     [switch]$PurchaseCdnLaterIssuePost,
-    [switch]$PurchaseCdnLaterIssueRollback
+    [switch]$PurchaseCdnLaterIssueRollback,
+    [switch]$PurchaseCdnIssueReplay
 )
 
 $ErrorActionPreference = 'Stop'
-if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods -or $InvoiceCanceledSaleCycle -or $BackdatedInvoiceCanceledSaleCycle -or $InvoiceRollbackCanceledSale -or $InvoicePostCanceledSale -or $InvoiceDuringCanceledSale -or $PurchaseCdnLaterIssuePost -or $PurchaseCdnLaterIssueRollback) {
+if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods -or $InvoiceCanceledSaleCycle -or $BackdatedInvoiceCanceledSaleCycle -or $InvoiceRollbackCanceledSale -or $InvoicePostCanceledSale -or $InvoiceDuringCanceledSale -or $PurchaseCdnLaterIssuePost -or $PurchaseCdnLaterIssueRollback -or $PurchaseCdnIssueReplay) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose this replay case on its own.' }
 }
@@ -127,6 +128,7 @@ try {
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($PurchaseCdnIssueReplay) { 'SqlServer_purchase_cdn_replays_later_issue_and_repeats_rollback' }
         elseif ($PurchaseCdnLaterIssuePost) { 'SqlServer_purchase_cdn_post_rejects_unreplayed_later_issue' }
         elseif ($PurchaseCdnLaterIssueRollback) { 'SqlServer_purchase_cdn_rollback_rejects_unreplayed_later_issue' }
         elseif ($BackdatedInvoiceCanceledSaleCycle) { 'SqlServer_backdated_purchase_invoice_after_canceled_sale_posts_and_rolls_back_atomically' }

@@ -10,14 +10,14 @@ public sealed partial class PoInvoiceService
 {
     // The invoice root writes its own value fact and the issue's exact
     // reversal/replacement before the projected WAC state is installed.
-    private static async Task<IReadOnlyList<int>> WriteInvoiceIssueReplayAsync(
+    internal static async Task<IReadOnlyList<int>> WriteInvoiceIssueReplayAsync(
         StockPostingContext context, string planHash, long watermark, InvoiceIssueReplay replay,
         PurchaseCostAdjustmentRequest request, CancellationToken ct)
     {
         context.EnsureUnsealed();
         var value = request.ValueAdjustment;
         if (context.Db.Database.CurrentTransaction is null || context.CostMethod != StockCostMethods.MovingAverage
-            || context.Posting.SourceModule != "PROCUREMENT" || context.Posting.SourceDocumentType != "PO_INVOICE"
+            || context.Posting.SourceModule != "PROCUREMENT" || context.Posting.SourceDocumentType is not ("PO_INVOICE" or "PO_CDN")
             || context.Posting.PostingRole is not ("PRIMARY" or "REVERSAL")
             || (context.Posting.PostingRole == "PRIMARY") != (context.Posting.ReversesPostingId is null)
             || context.Posting.PostingSequence != checked(watermark + 1)
@@ -37,7 +37,7 @@ public sealed partial class PoInvoiceService
             || context.Posting.PostingRole == "REVERSAL"
                 && value.OriginalValuationFactId != value.ReversesValuationFactId
             || request.CostMethod != StockCostMethods.MovingAverage
-            || request.SourceDocumentType != "PO_INVOICE" || request.SourceDocumentNo != context.Posting.SourceDocumentNo
+            || request.SourceDocumentType != context.Posting.SourceDocumentType || request.SourceDocumentNo != context.Posting.SourceDocumentNo
             || request.SourceCostingRevision != context.Posting.DocumentRevision
             || request.InventoryAdjustmentAmount != replay.InventoryVariance
             || request.ConsumedVarianceAmount != replay.ConsumedVariance
@@ -95,7 +95,9 @@ public sealed partial class PoInvoiceService
                 {
                     CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, ReplayRunId = run.Id,
                     RootStockPostingId = context.Posting.Id, BusinessOwnerPostingId = change.IssueOwnerId,
-                    EffectKind = StockReplayInvoiceIssueAudit.EffectKind, AffectedEntityType = StockReplayEffectTypes.StockValuationFact,
+                    EffectKind = context.Posting.SourceDocumentType == "PO_CDN"
+                        ? StockReplayInvoiceIssueAudit.CreditNoteEffectKind : StockReplayInvoiceIssueAudit.EffectKind,
+                    AffectedEntityType = StockReplayEffectTypes.StockValuationFact,
                     AffectedEntityId = changedFact, OriginalEntityId = change.PriorFactId, CreatedAtUtc = DateTime.UtcNow
                 });
         var permit = new StockReplayWacWritePermit(context, request.ItemCode, planHash,

@@ -7,7 +7,7 @@ namespace ErpWeb.Core.Purchase;
 
 public sealed partial class PoInvoiceService
 {
-    private sealed record InvoiceDirectSaleProof(int HistoryId, int BatchId, int BatchNo, short HistoryLine,
+    internal sealed record InvoiceDirectSaleProof(int HistoryId, int BatchId, int BatchNo, short HistoryLine,
         int? HistoryRevision, short? SaleLine, long OwnerId, int OwnerRevision,
         string OwnerFingerprint, string OwnerSnapshotHash,
         string InvoiceNo, byte[] InvoiceVersion,
