@@ -361,8 +361,9 @@ public static class StockValuationSnapshotBuilder
             var runs = await db.StockReplayRuns.AsNoTracking().Where(r => r.RootStockPostingId == rootId).ToArrayAsync(ct);
             var values = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == rootId
                 && f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue).ToArrayAsync(ct);
+            var purchaseRoot = root is { SourceModule: "PROCUREMENT", SourceDocumentType: "PO_INVOICE", PostingRole: "REVERSAL" };
             if (root is null || root.CompanyCode != company || root.BranchCode != branch || root.SealedAtUtc is null
-                || root.SourceModule != "INVENTORY" || root.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+                || !purchaseRoot && (root.SourceModule != "INVENTORY" || root.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt)
                 || root.PostingRole is not ("PRIMARY" or "REVERSAL")
                 || root.PostingRole == "PRIMARY" && root.ReversesPostingId is not null
                 || root.PostingRole == "REVERSAL" && root.ReversesPostingId is not > 0
@@ -437,51 +438,59 @@ public static class StockValuationSnapshotBuilder
             var effects = await db.StockReplayEffects.AsNoTracking().Where(e =>
                 e.AffectedEntityType == StockReplayEffectTypes.StockValuationFact
                 && valueIds.Contains(e.AffectedEntityId)).ToArrayAsync(ct);
-            var receiptRoots = await db.IvTrxHistories.AsNoTracking().Where(h => h.StockPostingId == rootId).ToArrayAsync(ct);
-            if (receiptRoots.Length != 1)
-                return false;
-            if (!await ValidateReversedSaleRootIssueAsync(db, company, branch, root, receiptRoots[0],
-                    sale, reverse, runs[0], ct))
-                return false;
-            var receiptBatchId = await db.IvTrxBatches.AsNoTracking().Where(b => b.CompanyCode == company
-                    && b.BranchCode == branch && b.BatchNo == receiptRoots[0].BatchNo
-                    && b.TrxType == IvTrxTypes.MiscellaneousReceipt)
-                .Select(b => (int?)b.Id).SingleOrDefaultAsync(ct);
-            if (receiptBatchId is not int batchId
-                || batchId.ToString(System.Globalization.CultureInfo.InvariantCulture) != root.SourceDocumentId
-                || receiptRoots[0].TrxType != IvTrxTypes.MiscellaneousReceipt
-                || receiptRoots[0].CompanyCode != company || receiptRoots[0].BranchCode != branch
-                || receiptRoots[0].LedgerEpochId != root.LedgerEpochId || receiptRoots[0].TrxDtTime != root.EffectiveAt
-                || receiptRoots[0].BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture) != root.SourceDocumentNo
-                || effects.Length != 2 || values.Any(v => !Matches(v, sources.Single(s => s.Id == v.OriginalValuationFactId)))
+            if (effects.Length != 2 || values.Any(v => !Matches(v, sources.Single(s => s.Id == v.OriginalValuationFactId)))
                 || values.Sum(v => v.SignedValue) != 0m)
                 return false;
-            if (root.PostingRole == "REVERSAL")
+            if (purchaseRoot)
             {
-                if (receiptRoots[0].EntryRole != "REVERSAL" || receiptRoots[0].ReversesHistoryId is not int receiptId
-                    || !await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.Id == receiptId
-                        && h.CompanyCode == company && h.BranchCode == branch
-                        && h.BatchNo == receiptRoots[0].BatchNo && h.TrxType == IvTrxTypes.MiscellaneousReceipt
-                        && h.EntryRole == "ORIGINAL" && h.StockPostingId == root.ReversesPostingId
-                        && db.StockPostings.Any(p => p.Id == h.StockPostingId && p.CompanyCode == company
-                            && p.BranchCode == branch && p.LedgerEpochId == root.LedgerEpochId && p.SealedAtUtc != null
-                            && p.SourceModule == root.SourceModule && p.SourceDocumentType == root.SourceDocumentType
-                            && p.SourceDocumentId == root.SourceDocumentId && p.SourceDocumentNo == root.SourceDocumentNo), ct))
+                if (!await ValidatePurchaseCanceledSaleRootAsync(db, company, branch, root, sale, reverse,
+                        saleHistory, reverseHistory, saleOwner, reverseOwner, runs[0], ct))
                     return false;
             }
             else
             {
-                var receiptFacts = await db.StockValuationFacts.AsNoTracking().Where(f =>
-                    f.InventoryHistoryId == receiptRoots[0].Id).ToArrayAsync(ct);
-                if (receiptRoots[0].EntryRole != "ORIGINAL" || receiptRoots[0].ReversesHistoryId is not null
-                    || receiptRoots[0].ICode != sale.ItemCode || receiptRoots[0].ToBalLocId is not > 0
-                    || receiptRoots[0].ToStdQty is not > 0m || receiptFacts.Length != 1
-                    || receiptFacts[0].StockPostingId != rootId || receiptFacts[0].LedgerEpochId != root.LedgerEpochId
-                    || receiptFacts[0].ItemCode != sale.ItemCode || receiptFacts[0].ToBalLocId != receiptRoots[0].ToBalLocId
-                    || receiptFacts[0].BaseQty != receiptRoots[0].ToStdQty || receiptFacts[0].Direction != 1
-                    || receiptFacts[0].CostMethod != StockCostMethods.MovingAverage
-                    || receiptFacts[0].ValuationStatus != StockValuationStatuses.Valued)
+                var receiptRoots = await db.IvTrxHistories.AsNoTracking().Where(h => h.StockPostingId == rootId).ToArrayAsync(ct);
+                if (receiptRoots.Length != 1 || !await ValidateReversedSaleRootIssueAsync(db, company, branch, root,
+                        receiptRoots[0], sale, reverse, runs[0], ct))
                     return false;
+                var receiptBatchId = await db.IvTrxBatches.AsNoTracking().Where(b => b.CompanyCode == company
+                        && b.BranchCode == branch && b.BatchNo == receiptRoots[0].BatchNo
+                        && b.TrxType == IvTrxTypes.MiscellaneousReceipt)
+                    .Select(b => (int?)b.Id).SingleOrDefaultAsync(ct);
+                if (receiptBatchId is not int batchId
+                    || batchId.ToString(System.Globalization.CultureInfo.InvariantCulture) != root.SourceDocumentId
+                    || receiptRoots[0].TrxType != IvTrxTypes.MiscellaneousReceipt
+                    || receiptRoots[0].CompanyCode != company || receiptRoots[0].BranchCode != branch
+                    || receiptRoots[0].LedgerEpochId != root.LedgerEpochId || receiptRoots[0].TrxDtTime != root.EffectiveAt
+                    || receiptRoots[0].BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture) != root.SourceDocumentNo)
+                    return false;
+                if (root.PostingRole == "REVERSAL")
+                {
+                    if (receiptRoots[0].EntryRole != "REVERSAL" || receiptRoots[0].ReversesHistoryId is not int receiptId
+                        || !await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.Id == receiptId
+                            && h.CompanyCode == company && h.BranchCode == branch
+                            && h.BatchNo == receiptRoots[0].BatchNo && h.TrxType == IvTrxTypes.MiscellaneousReceipt
+                            && h.EntryRole == "ORIGINAL" && h.StockPostingId == root.ReversesPostingId
+                            && db.StockPostings.Any(p => p.Id == h.StockPostingId && p.CompanyCode == company
+                                && p.BranchCode == branch && p.LedgerEpochId == root.LedgerEpochId && p.SealedAtUtc != null
+                                && p.SourceModule == root.SourceModule && p.SourceDocumentType == root.SourceDocumentType
+                                && p.SourceDocumentId == root.SourceDocumentId && p.SourceDocumentNo == root.SourceDocumentNo), ct))
+                        return false;
+                }
+                else
+                {
+                    var receiptFacts = await db.StockValuationFacts.AsNoTracking().Where(f =>
+                        f.InventoryHistoryId == receiptRoots[0].Id).ToArrayAsync(ct);
+                    if (receiptRoots[0].EntryRole != "ORIGINAL" || receiptRoots[0].ReversesHistoryId is not null
+                        || receiptRoots[0].ICode != sale.ItemCode || receiptRoots[0].ToBalLocId is not > 0
+                        || receiptRoots[0].ToStdQty is not > 0m || receiptFacts.Length != 1
+                        || receiptFacts[0].StockPostingId != rootId || receiptFacts[0].LedgerEpochId != root.LedgerEpochId
+                        || receiptFacts[0].ItemCode != sale.ItemCode || receiptFacts[0].ToBalLocId != receiptRoots[0].ToBalLocId
+                        || receiptFacts[0].BaseQty != receiptRoots[0].ToStdQty || receiptFacts[0].Direction != 1
+                        || receiptFacts[0].CostMethod != StockCostMethods.MovingAverage
+                        || receiptFacts[0].ValuationStatus != StockValuationStatuses.Valued)
+                        return false;
+                }
             }
             if (checkedPairs.Add((sale.Id, reverse.Id)))
             {
@@ -554,6 +563,189 @@ public static class StockValuationSnapshotBuilder
                     && e.EffectKind == StockReplayEffectTypes.SalesReversalValue
                     && e.AffectedEntityId == value.Id && e.OriginalEntityId == source.Id) == 1;
         }
+        return true;
+    }
+
+    private static async Task<bool> ValidatePurchaseCanceledSaleRootAsync(
+        AppDbContext db, string company, string branch, StockPosting root,
+        StockValuationFact sale, StockValuationFact reverse, IvTrxHistory saleHistory, IvTrxHistory reverseHistory,
+        StockPosting saleOwner, StockPosting reverseOwner, StockReplayRun run, CancellationToken ct)
+    {
+        if (root.CommandType != "PROCUREMENT_PO_INVOICE_REVERSAL" || root.ReversesPostingId is not long primaryId
+            || run.AffectedHistoryCount != 2 || run.PlanWatermark != root.PostingSequence - 1
+            || run.LatestEffectiveAt != reverse.EffectiveAt || saleOwner.CommandType != $"IV_POST_{IvTrxTypes.SalesOut}"
+            || reverseOwner.CommandType != $"IV_ROLLBACK_{IvTrxTypes.SalesOut}"
+            || saleOwner.EffectiveAt != sale.EffectiveAt || reverseOwner.EffectiveAt != reverse.EffectiveAt
+            || saleHistory.FromBalLocId != sale.FromBalLocId || saleHistory.FrStdQty != sale.BaseQty
+            || saleHistory.FrStdUom != sale.BaseUom || saleHistory.ToBalLocId is not null
+            || saleHistory.FromLotId is not null || !string.IsNullOrWhiteSpace(saleHistory.FrLotNo)
+            || reverseHistory.ToBalLocId != saleHistory.FromBalLocId || reverseHistory.ToStdQty != saleHistory.FrStdQty
+            || reverseHistory.ToStdUom != saleHistory.FrStdUom || reverseHistory.FromBalLocId is not null
+            || reverseHistory.ToLotId is not null || !string.IsNullOrWhiteSpace(reverseHistory.ToLotNo)
+            || reverseHistory.IStatus != saleHistory.IStatus || reverse.ToBalLocId != saleHistory.FromBalLocId
+            || await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.StockPostingId == root.Id, ct)
+            || await db.StockReplayEffects.AsNoTracking().CountAsync(e => e.RootStockPostingId == root.Id, ct) != 2)
+            return false;
+        var primary = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == primaryId, ct);
+        if (primary is null || primary.CompanyCode != company || primary.BranchCode != branch
+            || primary.LedgerEpochId != root.LedgerEpochId || primary.SealedAtUtc is null
+            || primary.SourceModule != "PROCUREMENT" || primary.SourceDocumentType != "PO_INVOICE"
+            || primary.CommandType != "PROCUREMENT_PO_INVOICE_PRIMARY" || primary.PostingRole != "PRIMARY"
+            || primary.ReversesPostingId is not null || primary.SourceDocumentId != root.SourceDocumentId
+            || primary.SourceDocumentNo != root.SourceDocumentNo || primary.DocumentRevision != root.DocumentRevision
+            || primary.EffectiveAt != root.EffectiveAt || primary.PostingSequence >= root.PostingSequence
+            || primary.SourceSnapshotHash != root.SourceSnapshotHash
+            || await db.StockPostings.AsNoTracking().CountAsync(p => p.ReversesPostingId == primary.Id, ct) != 1)
+            return false;
+        try
+        {
+            if (StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(primary.SourceSnapshotJson)) != primary.SourceSnapshotHash
+                || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(root.SourceSnapshotJson)) != root.SourceSnapshotHash
+                || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(saleOwner.SourceSnapshotJson)) != saleOwner.SourceSnapshotHash
+                || StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(reverseOwner.SourceSnapshotJson)) != reverseOwner.SourceSnapshotHash)
+                return false;
+        }
+        catch (System.Text.Json.JsonException) { return false; }
+        var original = await db.PurchaseCostAdjustments.AsNoTracking().Where(a => a.StockPostingId == primary.Id).ToArrayAsync(ct);
+        var reversed = await db.PurchaseCostAdjustments.AsNoTracking().Where(a => a.StockPostingId == root.Id).ToArrayAsync(ct);
+        var originalSettlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s => s.StockPostingId == primary.Id).ToArrayAsync(ct);
+        var reversedSettlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s => s.StockPostingId == root.Id).ToArrayAsync(ct);
+        var rootFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == root.Id).ToArrayAsync(ct);
+        if (original.Length != 1 || reversed.Length != 1 || originalSettlements.Length != 1
+            || reversedSettlements.Length != 1 || rootFacts.Length != 3
+            || original[0].InventoryAdjustmentFactId is not long originalFactId
+            || reversed[0].InventoryAdjustmentFactId is not long reversedFactId)
+            return false;
+        var originalAdjustment = original[0];
+        var reversal = reversed[0];
+        var originalSettlement = originalSettlements[0];
+        var reversalSettlement = reversedSettlements[0];
+        var value = rootFacts.SingleOrDefault(f => f.Id == reversedFactId);
+        var generation = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(db, original, ct);
+        if (generation is null || generation.OriginalFact.Id != originalFactId || value is null
+            || originalAdjustment.CompanyCode != company || originalAdjustment.BranchCode != branch
+            || originalAdjustment.SourceDocumentType != "PO_INVOICE" || originalAdjustment.SourceDocumentNo != root.SourceDocumentNo
+            || originalAdjustment.SourceCostingRevision != root.DocumentRevision || originalAdjustment.ItemCode != sale.ItemCode
+            || originalAdjustment.ReversesAdjustmentId is not null || originalAdjustment.ConsumedVarianceAmount != 0m
+            || originalAdjustment.InventoryAdjustmentAmount == 0m
+            || originalAdjustment.InventoryAdjustmentAmount != originalAdjustment.TotalAdjustmentAmount
+            || reversal.CompanyCode != company || reversal.BranchCode != branch || reversal.ReversesAdjustmentId != originalAdjustment.Id
+            || reversal.SourceDocumentType != originalAdjustment.SourceDocumentType || reversal.SourceDocumentNo != originalAdjustment.SourceDocumentNo
+            || reversal.SourceDocumentLine != originalAdjustment.SourceDocumentLine
+            || reversal.SourceCostingRevision != originalAdjustment.SourceCostingRevision || reversal.ItemCode != originalAdjustment.ItemCode
+            || reversal.PoNo != originalAdjustment.PoNo || reversal.PoRelNo != originalAdjustment.PoRelNo
+            || reversal.PoLineNo != originalAdjustment.PoLineNo || reversal.BaseQty != originalAdjustment.BaseQty
+            || reversal.CostMethod != originalAdjustment.CostMethod
+            || reversal.ActualBaseAmount != originalAdjustment.ActualBaseAmount
+            || reversal.ReferenceBaseAmount != originalAdjustment.ReferenceBaseAmount
+            || reversal.CommercialReferenceAmount != originalAdjustment.CommercialReferenceAmount
+            || reversal.TotalAdjustmentAmount != -originalAdjustment.TotalAdjustmentAmount
+            || reversal.InventoryAdjustmentAmount != -originalAdjustment.InventoryAdjustmentAmount
+            || reversal.ConsumedVarianceAmount != 0m || originalSettlement.CompanyCode != company
+            || originalSettlement.BranchCode != branch || originalSettlement.PiDocNo != root.SourceDocumentNo
+            || originalSettlement.PiCostingRevision != root.DocumentRevision || originalSettlement.ReversesSettlementId is not null
+            || reversalSettlement.CompanyCode != company || reversalSettlement.BranchCode != branch
+            || reversalSettlement.ReversesSettlementId != originalSettlement.Id
+            || reversalSettlement.PiDocNo != originalSettlement.PiDocNo || reversalSettlement.PiLineNo != originalSettlement.PiLineNo
+            || reversalSettlement.PiCostingRevision != originalSettlement.PiCostingRevision
+            || reversalSettlement.PoNo != originalSettlement.PoNo || reversalSettlement.PoRelNo != originalSettlement.PoRelNo
+            || reversalSettlement.PoLineNo != originalSettlement.PoLineNo || reversalSettlement.ItemCode != originalSettlement.ItemCode
+            || reversalSettlement.ReceiptValuationFactId != originalSettlement.ReceiptValuationFactId
+            || reversalSettlement.ReceiptInventoryHistoryId != originalSettlement.ReceiptInventoryHistoryId
+            || reversalSettlement.ReceiptBatchNo != originalSettlement.ReceiptBatchNo
+            || reversalSettlement.SettledBaseQty != originalSettlement.SettledBaseQty
+            || reversalSettlement.ReceiptCommercialUnitCost != originalSettlement.ReceiptCommercialUnitCost
+            || reversalSettlement.ReceiptCommercialBaseAmount != originalSettlement.ReceiptCommercialBaseAmount
+            || reversalSettlement.ReceiptValuationUnitCost != originalSettlement.ReceiptValuationUnitCost
+            || reversalSettlement.ReceiptValuationBaseAmount != originalSettlement.ReceiptValuationBaseAmount
+            || reversalSettlement.AllocatedActualBaseAmount != originalSettlement.AllocatedActualBaseAmount
+            || reversalSettlement.CommercialVarianceAmount != originalSettlement.CommercialVarianceAmount
+            || reversalSettlement.ValuationVarianceAmount != originalSettlement.ValuationVarianceAmount
+            || originalSettlement.ReceiptValuationFactId != generation.OriginalFact.OriginalValuationFactId
+            || value.CompanyCode != company || value.BranchCode != branch || value.LedgerEpochId != root.LedgerEpochId
+            || value.InventoryHistoryId is not null || value.BaseQty != 0m || value.ItemCode != sale.ItemCode
+            || value.CostMethod != StockCostMethods.MovingAverage || value.SourceDocumentType != "PO_INVOICE"
+            || value.SourceDocumentId != root.SourceDocumentId || value.SourceDocumentNo != root.SourceDocumentNo
+            || value.SourceDocumentLine != originalAdjustment.SourceDocumentLine.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            || value.EffectiveAt != root.EffectiveAt || value.BusinessDate != root.BusinessDate || value.PeriodKey != root.PeriodKey
+            || value.ReversesValuationFactId != originalFactId || value.OriginalValuationFactId != originalFactId
+            || value.ValuationStatus != StockValuationStatuses.Reversed || value.ValuationSource != StockValuationSources.PurchasePriceVariance
+            || value.Direction != -generation.OriginalFact.Direction || value.CostAmount != generation.OriginalFact.CostAmount
+            || value.MovementCode != (value.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
+            || value.BaseUom != generation.OriginalFact.BaseUom || value.UnitCost != 0m || value.ValuationVersion != 1
+            || value.TransactionCurrency is not null || value.TransactionCostAmount is not null || value.ExchangeRate is not null
+            || value.FromBalLocId is not null || value.ToBalLocId is not null
+            || value.SignedValue != reversal.InventoryAdjustmentAmount || value.BaseCostAmount != value.CostAmount
+            || rootFacts.Count(f => f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue) != 2)
+            return false;
+        return true;
+    }
+
+    private static async Task<bool> ValidatePurchaseCanceledSaleUndoRootAsync(
+        AppDbContext db, string company, string branch, StockPosting priorRoot, StockPosting undoRoot,
+        StockReplayRun run, StockValuationFact[] sources, CancellationToken ct)
+    {
+        if (priorRoot.DocumentRevision == int.MaxValue || undoRoot.DocumentRevision != priorRoot.DocumentRevision + 1
+            || undoRoot.CommandType != "PROCUREMENT_PO_INVOICE_PRIMARY" || undoRoot.PostingRole != "PRIMARY"
+            || undoRoot.ReversesPostingId is not null || run.AffectedHistoryCount != 2
+            || run.PlanWatermark != undoRoot.PostingSequence - 1
+            || await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.StockPostingId == undoRoot.Id, ct)
+            || await db.StockReplayEffects.AsNoTracking().CountAsync(e => e.RootStockPostingId == undoRoot.Id, ct) != 2)
+            return false;
+        try
+        {
+            if (StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(undoRoot.SourceSnapshotJson)) != undoRoot.SourceSnapshotHash)
+                return false;
+        }
+        catch (System.Text.Json.JsonException) { return false; }
+        var prior = await db.PurchaseCostAdjustments.AsNoTracking().Where(a => a.StockPostingId == priorRoot.Id).ToArrayAsync(ct);
+        var current = await db.PurchaseCostAdjustments.AsNoTracking().Where(a => a.StockPostingId == undoRoot.Id).ToArrayAsync(ct);
+        var priorSettlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s => s.StockPostingId == priorRoot.Id).ToArrayAsync(ct);
+        var currentSettlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s => s.StockPostingId == undoRoot.Id).ToArrayAsync(ct);
+        var facts = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == undoRoot.Id).ToArrayAsync(ct);
+        if (prior.Length != 1 || current.Length != 1 || priorSettlements.Length != 1 || currentSettlements.Length != 1
+            || facts.Length != 3 || current[0].InventoryAdjustmentFactId is not long valueId)
+            return false;
+        var oldAdjustment = prior[0];
+        var adjustment = current[0];
+        var oldSettlement = priorSettlements[0];
+        var settlement = currentSettlements[0];
+        var value = facts.SingleOrDefault(f => f.Id == valueId);
+        var generation = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(db, current, ct);
+        if (value is null || generation is null || generation.OriginalFact.Id != valueId
+            || oldAdjustment.CompanyCode != company || oldAdjustment.BranchCode != branch
+            || oldAdjustment.SourceDocumentType != "PO_INVOICE" || oldAdjustment.SourceDocumentNo != priorRoot.SourceDocumentNo
+            || oldAdjustment.ReversesAdjustmentId is not > 0 || oldAdjustment.ConsumedVarianceAmount != 0m
+            || adjustment.CompanyCode != company || adjustment.BranchCode != branch || adjustment.ReversesAdjustmentId is not null
+            || adjustment.SourceDocumentType != "PO_INVOICE" || adjustment.SourceDocumentNo != undoRoot.SourceDocumentNo
+            || adjustment.SourceCostingRevision != undoRoot.DocumentRevision || adjustment.SourceDocumentLine != oldAdjustment.SourceDocumentLine
+            || adjustment.ItemCode != oldAdjustment.ItemCode || sources.Any(s => s.ItemCode != adjustment.ItemCode)
+            || adjustment.PoNo != oldAdjustment.PoNo || adjustment.PoRelNo != oldAdjustment.PoRelNo
+            || adjustment.PoLineNo != oldAdjustment.PoLineNo || adjustment.BaseQty != oldAdjustment.BaseQty
+            || adjustment.CostMethod != StockCostMethods.MovingAverage || adjustment.CostMethod != oldAdjustment.CostMethod
+            || adjustment.ActualBaseAmount != oldAdjustment.ActualBaseAmount
+            || adjustment.ReferenceBaseAmount != oldAdjustment.ReferenceBaseAmount
+            || adjustment.CommercialReferenceAmount != oldAdjustment.CommercialReferenceAmount
+            || adjustment.TotalAdjustmentAmount != -oldAdjustment.TotalAdjustmentAmount
+            || adjustment.InventoryAdjustmentAmount != -oldAdjustment.InventoryAdjustmentAmount
+            || adjustment.ConsumedVarianceAmount != 0m || oldSettlement.ReversesSettlementId is not > 0
+            || settlement.ReversesSettlementId is not null || settlement.CompanyCode != company || settlement.BranchCode != branch
+            || settlement.PiDocNo != undoRoot.SourceDocumentNo || settlement.PiLineNo != oldSettlement.PiLineNo
+            || settlement.PiCostingRevision != undoRoot.DocumentRevision || settlement.ItemCode != adjustment.ItemCode
+            || settlement.ReceiptValuationFactId != oldSettlement.ReceiptValuationFactId
+            || settlement.SettledBaseQty != oldSettlement.SettledBaseQty
+            || settlement.ReceiptCommercialBaseAmount != oldSettlement.ReceiptCommercialBaseAmount
+            || settlement.ReceiptValuationBaseAmount != oldSettlement.ReceiptValuationBaseAmount
+            || settlement.AllocatedActualBaseAmount != oldSettlement.AllocatedActualBaseAmount
+            || value.CompanyCode != company || value.BranchCode != branch || value.LedgerEpochId != undoRoot.LedgerEpochId
+            || value.InventoryHistoryId is not null || value.BaseQty != 0m || value.ItemCode != adjustment.ItemCode
+            || value.SourceDocumentType != "PO_INVOICE" || value.SourceDocumentId != undoRoot.SourceDocumentId
+            || value.SourceDocumentNo != undoRoot.SourceDocumentNo || value.EffectiveAt != undoRoot.EffectiveAt
+            || value.BusinessDate != undoRoot.BusinessDate || value.PeriodKey != undoRoot.PeriodKey
+            || value.ReversesValuationFactId is not null || value.OriginalValuationFactId != settlement.ReceiptValuationFactId
+            || value.SignedValue != adjustment.InventoryAdjustmentAmount || value.BaseCostAmount != value.CostAmount
+            || facts.Count(f => f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValueUndo) != 2)
+            return false;
         return true;
     }
 
@@ -727,9 +919,13 @@ public static class StockValuationSnapshotBuilder
         var undoRoot = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == undoId, ct);
         var runs = await db.StockReplayRuns.AsNoTracking().Where(r => r.RootStockPostingId == undoId).ToArrayAsync(ct);
         var priorWasPrimary = priorRoot.PostingRole == "PRIMARY";
+        var purchaseUndo = priorRoot.SourceModule == "PROCUREMENT" && priorRoot.SourceDocumentType == "PO_INVOICE"
+            && priorRoot.PostingRole == "REVERSAL";
         if (undoRoot is null || undoRoot.CompanyCode != company || undoRoot.BranchCode != branch
             || undoRoot.LedgerEpochId != priorRoot.LedgerEpochId || undoRoot.SealedAtUtc is null
-            || undoRoot.SourceModule != "INVENTORY" || undoRoot.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || (purchaseUndo
+                ? undoRoot.SourceModule != "PROCUREMENT" || undoRoot.SourceDocumentType != "PO_INVOICE"
+                : undoRoot.SourceModule != "INVENTORY" || undoRoot.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt)
             || undoRoot.SourceDocumentId != priorRoot.SourceDocumentId || undoRoot.SourceDocumentNo != priorRoot.SourceDocumentNo
             || priorRoot.PostingRole is not ("PRIMARY" or "REVERSAL")
             || undoRoot.PostingRole != (priorWasPrimary ? "REVERSAL" : "PRIMARY")
@@ -747,47 +943,56 @@ public static class StockValuationSnapshotBuilder
             || undoValues.Sum(v => v.SignedValue) != 0m)
             return false;
 
-        var priorHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.StockPostingId == priorRoot.Id, ct);
-        var undoHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.StockPostingId == undoId, ct);
-        if (priorHistory is null || undoHistory is null)
-            return false;
-        var originalId = priorWasPrimary ? priorHistory.Id : priorHistory.ReversesHistoryId;
-        if (originalId is not int originalReceiptId)
-            return false;
-        var originalHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == originalReceiptId, ct);
-        var oldFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.InventoryHistoryId == originalReceiptId).ToArrayAsync(ct);
-        var rootFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == undoId).ToArrayAsync(ct);
-        var receiptFacts = rootFacts.Where(f => f.InventoryHistoryId == undoHistory.Id).ToArray();
-        if (originalHistory is null || originalHistory.StockPostingId != (priorWasPrimary ? priorRoot.Id : priorRoot.ReversesPostingId)
-            || originalHistory.CompanyCode != company || originalHistory.BranchCode != branch
-            || undoHistory.CompanyCode != company || undoHistory.BranchCode != branch
-            || undoHistory.TrxType != IvTrxTypes.MiscellaneousReceipt
-            || undoHistory.EntryRole != (priorWasPrimary ? "REVERSAL" : "ORIGINAL")
-            || (priorWasPrimary ? undoHistory.ReversesHistoryId != originalHistory.Id : undoHistory.ReversesHistoryId is not null)
-            || undoHistory.BatchNo != originalHistory.BatchNo || undoHistory.TrxLineNo != originalHistory.TrxLineNo
-            || undoHistory.TrxDtTime != originalHistory.TrxDtTime || undoHistory.ICode != originalHistory.ICode
-            || (priorWasPrimary
-                ? undoHistory.FromBalLocId != originalHistory.ToBalLocId || undoHistory.FrStdQty != originalHistory.ToStdQty
-                    || undoHistory.FrStdUom != originalHistory.ToStdUom || undoHistory.FromLotId != originalHistory.ToLotId
-                    || undoHistory.FrLotNo != originalHistory.ToLotNo
-                : undoHistory.ToBalLocId != originalHistory.ToBalLocId || undoHistory.ToStdQty != originalHistory.ToStdQty
-                    || undoHistory.ToStdUom != originalHistory.ToStdUom || undoHistory.ToLotId != originalHistory.ToLotId
-                    || undoHistory.ToLotNo != originalHistory.ToLotNo)
-            || undoHistory.IStatus != originalHistory.IStatus
-            || oldFacts.Length != 1 || receiptFacts.Length != 1
-            || receiptFacts[0].SignedQty != (priorWasPrimary ? -oldFacts[0].SignedQty : oldFacts[0].SignedQty)
-            || receiptFacts[0].SignedValue != (priorWasPrimary ? -oldFacts[0].SignedValue : oldFacts[0].SignedValue)
-            || receiptFacts[0].UnitCost != oldFacts[0].UnitCost
-            || receiptFacts[0].ItemCode != oldFacts[0].ItemCode || receiptFacts[0].BaseUom != oldFacts[0].BaseUom
-            || (priorWasPrimary ? receiptFacts[0].FromBalLocId : receiptFacts[0].ToBalLocId) != oldFacts[0].ToBalLocId
-            || receiptFacts[0].CostMethod != oldFacts[0].CostMethod
-            || receiptFacts[0].BaseCurrency != oldFacts[0].BaseCurrency)
-            return false;
-        var saleSource = sources.Single(s => s.MovementCode == "SALE_OUT");
-        var reverseSource = sources.Single(s => s.MovementCode == "SALE_OUT_REVERSAL");
-        if (!await ValidateReversedSaleRootIssueAsync(db, company, branch, undoRoot, undoHistory,
-                saleSource, reverseSource, runs[0], ct))
-            return false;
+        if (purchaseUndo)
+        {
+            if (!await ValidatePurchaseCanceledSaleUndoRootAsync(db, company, branch, priorRoot, undoRoot,
+                    runs[0], sources, ct))
+                return false;
+        }
+        else
+        {
+            var priorHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.StockPostingId == priorRoot.Id, ct);
+            var undoHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.StockPostingId == undoId, ct);
+            if (priorHistory is null || undoHistory is null)
+                return false;
+            var originalId = priorWasPrimary ? priorHistory.Id : priorHistory.ReversesHistoryId;
+            if (originalId is not int originalReceiptId)
+                return false;
+            var originalHistory = await db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h => h.Id == originalReceiptId, ct);
+            var oldFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.InventoryHistoryId == originalReceiptId).ToArrayAsync(ct);
+            var rootFacts = await db.StockValuationFacts.AsNoTracking().Where(f => f.StockPostingId == undoId).ToArrayAsync(ct);
+            var receiptFacts = rootFacts.Where(f => f.InventoryHistoryId == undoHistory.Id).ToArray();
+            if (originalHistory is null || originalHistory.StockPostingId != (priorWasPrimary ? priorRoot.Id : priorRoot.ReversesPostingId)
+                || originalHistory.CompanyCode != company || originalHistory.BranchCode != branch
+                || undoHistory.CompanyCode != company || undoHistory.BranchCode != branch
+                || undoHistory.TrxType != IvTrxTypes.MiscellaneousReceipt
+                || undoHistory.EntryRole != (priorWasPrimary ? "REVERSAL" : "ORIGINAL")
+                || (priorWasPrimary ? undoHistory.ReversesHistoryId != originalHistory.Id : undoHistory.ReversesHistoryId is not null)
+                || undoHistory.BatchNo != originalHistory.BatchNo || undoHistory.TrxLineNo != originalHistory.TrxLineNo
+                || undoHistory.TrxDtTime != originalHistory.TrxDtTime || undoHistory.ICode != originalHistory.ICode
+                || (priorWasPrimary
+                    ? undoHistory.FromBalLocId != originalHistory.ToBalLocId || undoHistory.FrStdQty != originalHistory.ToStdQty
+                        || undoHistory.FrStdUom != originalHistory.ToStdUom || undoHistory.FromLotId != originalHistory.ToLotId
+                        || undoHistory.FrLotNo != originalHistory.ToLotNo
+                    : undoHistory.ToBalLocId != originalHistory.ToBalLocId || undoHistory.ToStdQty != originalHistory.ToStdQty
+                        || undoHistory.ToStdUom != originalHistory.ToStdUom || undoHistory.ToLotId != originalHistory.ToLotId
+                        || undoHistory.ToLotNo != originalHistory.ToLotNo)
+                || undoHistory.IStatus != originalHistory.IStatus
+                || oldFacts.Length != 1 || receiptFacts.Length != 1
+                || receiptFacts[0].SignedQty != (priorWasPrimary ? -oldFacts[0].SignedQty : oldFacts[0].SignedQty)
+                || receiptFacts[0].SignedValue != (priorWasPrimary ? -oldFacts[0].SignedValue : oldFacts[0].SignedValue)
+                || receiptFacts[0].UnitCost != oldFacts[0].UnitCost
+                || receiptFacts[0].ItemCode != oldFacts[0].ItemCode || receiptFacts[0].BaseUom != oldFacts[0].BaseUom
+                || (priorWasPrimary ? receiptFacts[0].FromBalLocId : receiptFacts[0].ToBalLocId) != oldFacts[0].ToBalLocId
+                || receiptFacts[0].CostMethod != oldFacts[0].CostMethod
+                || receiptFacts[0].BaseCurrency != oldFacts[0].BaseCurrency)
+                return false;
+            var saleSource = sources.Single(s => s.MovementCode == "SALE_OUT");
+            var reverseSource = sources.Single(s => s.MovementCode == "SALE_OUT_REVERSAL");
+            if (!await ValidateReversedSaleRootIssueAsync(db, company, branch, undoRoot, undoHistory,
+                    saleSource, reverseSource, runs[0], ct))
+                return false;
+        }
 
         var undoIds = undoValues.Select(v => v.Id).ToArray();
         var effects = await db.StockReplayEffects.AsNoTracking().Where(e =>

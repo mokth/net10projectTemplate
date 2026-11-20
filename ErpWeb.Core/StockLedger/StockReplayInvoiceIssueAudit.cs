@@ -31,7 +31,22 @@ internal static class StockReplayInvoiceIssueAudit
             && db.StockPostings.Any(p => p.Id == e.RootStockPostingId && p.CompanyCode == company
                 && p.BranchCode == branch && p.EffectiveAt < exclusiveEnd && p.SealedAtUtc != null
                 && p.PostingSequence <= watermark)).Select(e => e.RootStockPostingId).ToArrayAsync(ct);
-        return await ValidateRootsAsync(db, company, branch, facts.Concat(runs).Concat(effects).Distinct().ToArray(), null, ct);
+        var roots = facts.Concat(runs).Concat(effects).Distinct().ToArray();
+        // Canceled-sale roots have value-only sale correction pairs rather than
+        // active issue replacements. The snapshot's reversed-sale audit checks
+        // those roots and their complete correction/undo lineage separately.
+        var saleFactRoots = await db.StockValuationFacts.AsNoTracking().Where(f =>
+            f.CompanyCode == company && f.BranchCode == branch && roots.Contains(f.StockPostingId)
+            && (f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValue
+                || f.MovementCode == StockValuationMovementClassifier.ReversedSaleReplayValueUndo))
+            .Select(f => f.StockPostingId).Distinct().ToArrayAsync(ct);
+        var saleEffectRoots = await db.StockReplayEffects.AsNoTracking().Where(e =>
+            e.CompanyCode == company && e.BranchCode == branch && roots.Contains(e.RootStockPostingId)
+            && (e.EffectKind == StockReplayEffectTypes.SalesReversalValue
+                || e.EffectKind == StockReplayEffectTypes.SalesReversalValueUndo))
+            .Select(e => e.RootStockPostingId).Distinct().ToArrayAsync(ct);
+        var saleRoots = saleFactRoots.Concat(saleEffectRoots).ToHashSet();
+        return await ValidateRootsAsync(db, company, branch, roots.Where(id => !saleRoots.Contains(id)).ToArray(), null, ct);
     }
 
     internal static async Task<bool> ValidateForHistoriesAsync(AppDbContext db, string company,

@@ -64,36 +64,7 @@ public sealed partial class PoInvoiceService
                 || active[(int)c.Issue.EventId][0].Id != c.PriorFactId))
             throw InvoiceReplayInvalid("The later issue cost changed after invoice replay planning.");
 
-        var fact = new StockValuationFact
-        {
-            CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, LedgerEpochId = context.Epoch.Id,
-            StockPostingId = context.Posting.Id, PostingLineNo = value.PostingLineNo, SplitOrdinal = value.SplitOrdinal,
-            SourceLineId = $"{context.Posting.SourceDocumentType}:{context.Posting.SourceDocumentId}:{value.PostingLineNo}:{value.SplitOrdinal}",
-            SourceDocumentType = context.Posting.SourceDocumentType, SourceDocumentId = context.Posting.SourceDocumentId,
-            SourceDocumentNo = context.Posting.SourceDocumentNo, SourceDocumentLine = value.SourceDocumentLine,
-            EffectiveAt = context.Posting.EffectiveAt, BusinessDate = context.Posting.BusinessDate,
-            PeriodKey = context.Posting.PeriodKey, ItemCode = value.ItemCode, BaseUom = value.BaseUom,
-            MovementCode = value.MovementCode, Direction = value.Direction, BaseQty = 0m,
-            CostMethod = StockCostMethods.MovingAverage, UnitCost = 0m, CostAmount = value.Amount,
-            BaseCostAmount = value.Amount, ValuationSource = value.ValuationSource,
-            ValuationStatus = value.ReversesValuationFactId is null ? StockValuationStatuses.Valued : StockValuationStatuses.Reversed,
-            ValuationVersion = 1, OriginalValuationFactId = value.OriginalValuationFactId,
-            ReversesValuationFactId = value.ReversesValuationFactId, CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
-        };
-        db.StockValuationFacts.Add(fact);
-        db.PurchaseCostAdjustments.Add(new PurchaseCostAdjustment
-        {
-            CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, AdjustmentType = request.AdjustmentType,
-            SourceDocumentType = request.SourceDocumentType, SourceDocumentNo = request.SourceDocumentNo,
-            SourceDocumentLine = request.SourceDocumentLine, SourceCostingRevision = request.SourceCostingRevision,
-            PoNo = request.PoNo, PoRelNo = request.PoRelNo, PoLineNo = request.PoLineNo, ItemCode = request.ItemCode,
-            CostMethod = request.CostMethod, BaseQty = request.BaseQty, ActualBaseAmount = request.ActualBaseAmount,
-            ReferenceBaseAmount = request.ReferenceBaseAmount, CommercialReferenceAmount = request.CommercialReferenceAmount,
-            TotalAdjustmentAmount = request.TotalAdjustmentAmount, InventoryAdjustmentAmount = request.InventoryAdjustmentAmount,
-            ConsumedVarianceAmount = request.ConsumedVarianceAmount, StockPostingId = context.Posting.Id,
-            InventoryAdjustmentFact = fact, ReversesAdjustmentId = request.ReversesAdjustmentId,
-            CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
-        });
+        AppendInvoiceReplayAdjustment(context, request, value);
         var requests = changes.Select((change, i) => new StockReplayWacIssueRepricingRequest(
             (int)change.Issue.EventId, change.Issue, change.IssueStep, 2 + i * 2, 3 + i * 2)).ToArray();
         var results = await StockReplayWacIssueRepricingWriter.AppendManyAsync(context, requests, ct);
@@ -132,6 +103,42 @@ public sealed partial class PoInvoiceService
             replay.BalanceId, replay.BalanceQty);
         await StockReplayWacCostStateWriter.ApplyAsync(context, permit, ct);
         return issueIds;
+    }
+
+    private static StockValuationFact AppendInvoiceReplayAdjustment(
+        StockPostingContext context, PurchaseCostAdjustmentRequest request, StockValueAdjustmentRequest value)
+    {
+        var fact = new StockValuationFact
+        {
+            CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, LedgerEpochId = context.Epoch.Id,
+            StockPostingId = context.Posting.Id, PostingLineNo = value.PostingLineNo, SplitOrdinal = value.SplitOrdinal,
+            SourceLineId = $"{context.Posting.SourceDocumentType}:{context.Posting.SourceDocumentId}:{value.PostingLineNo}:{value.SplitOrdinal}",
+            SourceDocumentType = context.Posting.SourceDocumentType, SourceDocumentId = context.Posting.SourceDocumentId,
+            SourceDocumentNo = context.Posting.SourceDocumentNo, SourceDocumentLine = value.SourceDocumentLine,
+            EffectiveAt = context.Posting.EffectiveAt, BusinessDate = context.Posting.BusinessDate,
+            PeriodKey = context.Posting.PeriodKey, ItemCode = value.ItemCode, BaseUom = value.BaseUom,
+            MovementCode = value.MovementCode, Direction = value.Direction, BaseQty = 0m,
+            CostMethod = StockCostMethods.MovingAverage, UnitCost = 0m, CostAmount = value.Amount,
+            BaseCostAmount = value.Amount, ValuationSource = value.ValuationSource,
+            ValuationStatus = value.ReversesValuationFactId is null ? StockValuationStatuses.Valued : StockValuationStatuses.Reversed,
+            ValuationVersion = 1, OriginalValuationFactId = value.OriginalValuationFactId,
+            ReversesValuationFactId = value.ReversesValuationFactId, CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
+        };
+        context.Db.StockValuationFacts.Add(fact);
+        context.Db.PurchaseCostAdjustments.Add(new PurchaseCostAdjustment
+        {
+            CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, AdjustmentType = request.AdjustmentType,
+            SourceDocumentType = request.SourceDocumentType, SourceDocumentNo = request.SourceDocumentNo,
+            SourceDocumentLine = request.SourceDocumentLine, SourceCostingRevision = request.SourceCostingRevision,
+            PoNo = request.PoNo, PoRelNo = request.PoRelNo, PoLineNo = request.PoLineNo, ItemCode = request.ItemCode,
+            CostMethod = request.CostMethod, BaseQty = request.BaseQty, ActualBaseAmount = request.ActualBaseAmount,
+            ReferenceBaseAmount = request.ReferenceBaseAmount, CommercialReferenceAmount = request.CommercialReferenceAmount,
+            TotalAdjustmentAmount = request.TotalAdjustmentAmount, InventoryAdjustmentAmount = request.InventoryAdjustmentAmount,
+            ConsumedVarianceAmount = request.ConsumedVarianceAmount, StockPostingId = context.Posting.Id,
+            InventoryAdjustmentFact = fact, ReversesAdjustmentId = request.ReversesAdjustmentId,
+            CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
+        });
+        return fact;
     }
 
     private static StockLedgerException InvoiceReplayInvalid(string message) =>
