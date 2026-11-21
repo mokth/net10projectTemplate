@@ -79,11 +79,13 @@ param(
     [switch]$PurchaseCdnIssueReplay,
     [switch]$PurchaseCdnMultiIssueReplay,
     [switch]$PurchaseCdnCanceledIssueReplay,
-    [switch]$PurchaseCdnSameDayReplay
+    [switch]$PurchaseCdnSameDayReplay,
+    [switch]$PurchaseCdnLaterSameDayReplay,
+    [switch]$PurchaseCdnConsumedGuard
 )
 
 $ErrorActionPreference = 'Stop'
-if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods -or $InvoiceCanceledSaleCycle -or $BackdatedInvoiceCanceledSaleCycle -or $InvoiceRollbackCanceledSale -or $InvoicePostCanceledSale -or $InvoiceDuringCanceledSale -or $PurchaseCdnLaterIssuePost -or $PurchaseCdnLaterIssueRollback -or $PurchaseCdnIssueReplay -or $PurchaseCdnMultiIssueReplay -or $PurchaseCdnCanceledIssueReplay -or $PurchaseCdnSameDayReplay) {
+if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods -or $InvoiceCanceledSaleCycle -or $BackdatedInvoiceCanceledSaleCycle -or $InvoiceRollbackCanceledSale -or $InvoicePostCanceledSale -or $InvoiceDuringCanceledSale -or $PurchaseCdnLaterIssuePost -or $PurchaseCdnLaterIssueRollback -or $PurchaseCdnIssueReplay -or $PurchaseCdnMultiIssueReplay -or $PurchaseCdnCanceledIssueReplay -or $PurchaseCdnSameDayReplay -or $PurchaseCdnLaterSameDayReplay -or $PurchaseCdnConsumedGuard) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose this replay case on its own.' }
 }
@@ -131,6 +133,8 @@ try {
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($PurchaseCdnConsumedGuard) { 'SqlServer_issue_rollback_rejects_fully_consumed_later_note' }
+        elseif ($PurchaseCdnLaterSameDayReplay) { 'SqlServer_issue_rollback_replays_later_same_day_credit_note' }
         elseif ($PurchaseCdnSameDayReplay) { 'SqlServer_purchase_cdn_and_issue_rollback_share_business_date' }
         elseif ($PurchaseCdnCanceledIssueReplay) { 'SqlServer_purchase_cdn_and_issues_replay_after_a_canceled_issue' }
         elseif ($PurchaseCdnMultiIssueReplay) { 'SqlServer_purchase_cdn_replays_multiple_later_issues_and_repeats_rollback' }

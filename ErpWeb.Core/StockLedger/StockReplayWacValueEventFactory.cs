@@ -87,6 +87,23 @@ public static class StockReplayWacValueEventFactory
         return CreateCore(fact, invoiceOwner, true);
     }
 
+    // The caller proves the complete active note and receipt settlement before
+    // treating this value as an event at the note's own posting position.
+    internal static StockReplayWacEvent CreatePurchaseNoteAdjustment(StockValuationFact fact, StockPosting owner)
+    {
+        if (owner.SourceModule != "PROCUREMENT" || owner.SourceDocumentType != "PO_CDN"
+            || owner.PostingRole != "PRIMARY" || owner.CommandType != "PROCUREMENT_PO_CDN_PRIMARY"
+            || owner.ReversesPostingId is not null || fact.SourceDocumentType != owner.SourceDocumentType
+            || fact.SourceDocumentId != owner.SourceDocumentId || fact.SourceDocumentNo != owner.SourceDocumentNo
+            || fact.OriginalValuationFactId is not > 0 || string.IsNullOrWhiteSpace(fact.SourceDocumentLine)
+            || fact.ValuationSource != StockValuationSources.PurchasePriceVariance
+            || fact.MovementCode != (fact.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
+            || fact.ValuationVersion != 1 || fact.BaseCostAmount != fact.CostAmount
+            || fact.FromBalLocId is not null || fact.ToBalLocId is not null)
+            throw Corrupt($"Purchase note value fact {fact.Id} has no exact note authority.");
+        return CreateCore(fact, owner, true);
+    }
+
     /// <summary>
     /// A corrected zero-quantity adjustment stays at its original business
     /// owner's key. The replay root that wrote it supplies audit ownership,

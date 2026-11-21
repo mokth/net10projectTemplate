@@ -131,7 +131,8 @@ $required = @(
     'Purchase_credit_note_replays_multiple_later_issues_and_repeats_rollback',
     'Purchase_credit_note_and_later_issues_replay_after_a_canceled_issue',
     'Purchase_credit_note_and_issue_rollback_share_business_date',
-    'Purchase_issue_rollback_rejects_later_same_day_credit_note',
+    'Purchase_issue_rollback_replays_later_same_day_note',
+    'Purchase_issue_rollback_rejects_unproven_later_note',
     'Purchase_credit_note_issue_rollback_rejects_damaged_earlier_note',
     'Purchase_credit_note_replay_rejects_unproven_evidence',
     'Purchase_credit_note_replay_preserves_qa_hold',
@@ -363,6 +364,8 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnMultiIssueReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnCanceledIssueReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnSameDayReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterSameDayReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnConsumedGuard
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts

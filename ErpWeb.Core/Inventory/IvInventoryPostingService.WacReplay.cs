@@ -707,6 +707,9 @@ public sealed partial class IvInventoryPostingService
             && saleCycle is null && reversedIssuePlan is null
             ? await FindLaterPurchaseVarianceFactAsync(read, companyCode, branchCode, original.ICode, physical.LaterEvents, cancellationToken)
             : null;
+        var purchaseNoteFactId = trxType == IvTrxTypes.MiscellaneousIssue
+            ? await FindLaterPurchaseNoteFactAsync(read, companyCode, branchCode, original.ICode, physical, cancellationToken)
+            : null;
         var financial = saleCycle is not null && canReplaySaleCycle
             ? await StockReplayWacRemovalPlanner.BuildForReversedSaleAsync(
                 read, companyCode, branchCode, original.ICode, physical, saleCycle, cancellationToken)
@@ -717,8 +720,18 @@ public sealed partial class IvInventoryPostingService
             : purchaseVarianceFactId is long purchaseFactId
             ? await StockReplayWacRemovalPlanner.BuildForPurchaseVarianceAsync(
                 read, companyCode, branchCode, original.ICode, physical, purchaseFactId, cancellationToken)
+            : purchaseNoteFactId is long noteFactId
+            ? await StockReplayWacRemovalPlanner.BuildForPurchaseNoteAsync(
+                read, companyCode, branchCode, original.ICode, physical, noteFactId, cancellationToken)
             : await StockReplayWacRemovalPlanner.BuildAsync(
                 read, companyCode, branchCode, original.ICode, physical, cancellationToken);
+        var laterPurchaseNote = purchaseNoteFactId is long laterNoteId
+            ? await PlanUnchangedLaterPurchaseNoteAsync(read, companyCode, branchCode, original.ICode,
+                physical, financial, laterNoteId, cancellationToken)
+            : null;
+        if (purchaseNoteFactId is not null && laterPurchaseNote is null)
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "The later purchase note needs a changed or unproven cost allocation and cannot be replayed yet.");
         var reversedSaleProof = hasReversedSale
             ? await ProveNeutralReversedSaleAsync(read, companyCode, branchCode, batch,
                 NeutralSaleCandidate(financial), cancellationToken,
@@ -773,8 +786,10 @@ public sealed partial class IvInventoryPostingService
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     "This receipt cannot yet replay a purchase invoice together with another dependent correction.");
         }
-        if (financial.Tail.LaterEvents.Count > 0
-            && await CheckSimpleWacTailAsync(read, InventoryTailForProvenInvoice(financial.Tail.LaterEvents, laterInvoicePlan),
+        var inventoryTail = InventoryTailForProvenNote(
+            InventoryTailForProvenInvoice(financial.Tail.LaterEvents, laterInvoicePlan), laterPurchaseNote);
+        if (inventoryTail.Count > 0
+            && await CheckSimpleWacTailAsync(read, inventoryTail,
                 original.TrxDtTime, cancellationToken,
                 replayInvoice ?? laterInvoicePlan?.Invoice, allowBoundedSales: isReceipt,
                 allowBoundedProduction: productionPlan is not null) is string unsupported)
@@ -784,6 +799,15 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (laterPurchaseNote is not null)
+        {
+            if (!await LockLaterPurchaseNoteSourcesAsync(write, companyCode, branchCode, laterPurchaseNote, cancellationToken))
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The later purchase note or invoice is busy. Retry rollback.");
+            var lockedNote = await PlanUnchangedLaterPurchaseNoteAsync(write, companyCode, branchCode, original.ICode,
+                physical, financial, laterPurchaseNote.FactId, cancellationToken);
+            if (lockedNote is null || lockedNote.Fingerprint != laterPurchaseNote.Fingerprint)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The later purchase note changed. Retry rollback.");
+        }
         if (earlierInvoiceProof is not null && write.Database.IsSqlServer())
         {
             try
@@ -869,8 +893,8 @@ public sealed partial class IvInventoryPostingService
             await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
                 financial.Tail.LaterEvents, financial.Projection.LaterSteps, original.TrxDtTime,
                 productionPlan, cancellationToken, owner.Id);
-        if (financial.Tail.LaterEvents.Count > 0
-            && await CheckSimpleWacTailAsync(write, InventoryTailForProvenInvoice(financial.Tail.LaterEvents, laterInvoicePlan),
+        if (inventoryTail.Count > 0
+            && await CheckSimpleWacTailAsync(write, inventoryTail,
                 original.TrxDtTime, cancellationToken, replayInvoice ?? laterInvoicePlan?.Invoice,
                 allowBoundedSales: isReceipt,
                 allowBoundedProduction: productionPlan is not null) is string lockedTailError)
