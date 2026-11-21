@@ -42,6 +42,19 @@ public static class StockReplayWacFinancialTailReader
             [], false, null, cancellationToken, removalKey: removed);
     }
 
+    internal static Task<StockReplayWacFinancialTail> ReadLaterForPurchaseNoteRemovalAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayEventKey after, StockReplayEventKey removed, long noteFactId,
+        CancellationToken cancellationToken = default)
+    {
+        if (removed.EffectiveAt == DateTime.MinValue
+            || after.EffectiveAt != removed.EffectiveAt.AddTicks(-1)
+            || noteFactId <= 0 || noteFactId >= long.MaxValue - int.MaxValue)
+            throw new ArgumentException("The removal or purchase note identity is invalid.");
+        return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
+            [], false, null, cancellationToken, removalKey: removed, permittedCdnTailId: noteFactId);
+    }
+
     // Only receipt replay with an independently verified complete isolated
     // issue/reversal or sale/reversal pair may omit its two zero-net deltas.
     internal static Task<StockReplayWacFinancialTail> ReadLaterForReversedIssueAsync(
@@ -92,7 +105,7 @@ public static class StockReplayWacFinancialTailReader
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
         bool excludeSaleCycle, long? permittedPurchaseFactId, CancellationToken cancellationToken,
-        long? permittedCdnAnchorId = null, StockReplayEventKey? removalKey = null)
+        long? permittedCdnAnchorId = null, StockReplayEventKey? removalKey = null, long? permittedCdnTailId = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (string.IsNullOrWhiteSpace(companyCode)
@@ -403,14 +416,29 @@ public static class StockReplayWacFinancialTailReader
             }
             if (fact.SourceDocumentType == "PO_CDN" && owner.SourceModule == "PROCUREMENT"
                 && owner.SourceDocumentType == "PO_CDN" && fact.Id > 0
-                && fact.Id < long.MaxValue - int.MaxValue
-                && IsEarlierPurchaseKey(new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
-                    owner.PostingSequence, $"V{fact.Id:D20}", 0)))
+                && fact.Id < long.MaxValue - int.MaxValue)
             {
-                if (!await StockReplayInvoiceIssueAudit.ValidateEarlierCdnAsync(db, companyCode, branchCode,
-                        owner, fact, cancellationToken))
-                    throw Corrupt($"Earlier purchase credit/debit note value fact {fact.Id} has invalid evidence.");
-                continue;
+                var noteKey = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                    owner.PostingSequence, $"V{fact.Id:D20}", 0);
+                if (IsEarlierPurchaseKey(noteKey))
+                {
+                    if (!await StockReplayInvoiceIssueAudit.ValidateEarlierCdnAsync(db, companyCode, branchCode,
+                            owner, fact, cancellationToken))
+                        throw Corrupt($"Earlier purchase credit/debit note value fact {fact.Id} has invalid evidence.");
+                    continue;
+                }
+                if (fact.Id == permittedCdnTailId)
+                {
+                    if (removalKey is not StockReplayEventKey target || noteKey.CompareTo(target) <= 0
+                        || noteKey.EffectiveAt.Year != target.EffectiveAt.Year
+                        || noteKey.EffectiveAt.Month != target.EffectiveAt.Month
+                        || await db.StockReplayRuns.AsNoTracking().AnyAsync(r => r.RootStockPostingId == owner.Id, cancellationToken)
+                        || !await StockReplayInvoiceIssueAudit.ValidateEarlierCdnAsync(db, companyCode, branchCode,
+                            owner, fact, cancellationToken))
+                        throw Corrupt($"Later purchase credit/debit note value fact {fact.Id} has invalid evidence.");
+                    events.Add(StockReplayWacValueEventFactory.CreatePurchaseNoteAdjustment(fact, owner));
+                    continue;
+                }
             }
             StockReplayWacEvent valueEvent;
             if (fact.OriginalValuationFactId is long originalId)
@@ -484,6 +512,23 @@ public static class StockReplayWacFinancialTailReader
             {
                 PurchaseVariance = new StockReplayPurchaseVariance(
                     purchase[0].TotalAdjustmentAmount, purchase[0].BaseQty)
+            };
+        }
+        if (permittedCdnTailId is long noteFactId)
+        {
+            var notes = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+                a.CompanyCode == companyCode && a.BranchCode == branchCode && a.ItemCode == itemCode
+                && a.InventoryAdjustmentFactId == noteFactId && a.ReversesAdjustmentId == null
+                && a.SourceDocumentType == "PO_CDN").ToArrayAsync(cancellationToken);
+            var index = Array.FindIndex(ordered, e => e.EventId == long.MaxValue - noteFactId);
+            if (notes.Length != 1 || index < 0 || notes[0].BaseQty <= 0m
+                || notes[0].TotalAdjustmentAmount == 0m
+                || notes[0].InventoryAdjustmentAmount != notes[0].TotalAdjustmentAmount
+                || notes[0].ConsumedVarianceAmount != 0m)
+                throw Corrupt("The later purchase note has no unique fully allocated value evidence.");
+            ordered[index] = ordered[index] with
+            {
+                PurchaseVariance = new StockReplayPurchaseVariance(notes[0].TotalAdjustmentAmount, notes[0].BaseQty)
             };
         }
         if (ordered.Select(e => e.EventId).Distinct().Count() != ordered.Length

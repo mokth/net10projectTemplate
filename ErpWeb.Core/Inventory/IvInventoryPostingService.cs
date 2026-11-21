@@ -2893,6 +2893,10 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, integrityError);
         }
 
+        if (await HasLaterUnreplayedPurchaseNoteCostAsync(db, companyCode, branchCode, history, cancellationToken))
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "A later purchase credit/debit note has consumed cost that requires replay before rollback.");
+
         var qaRestore = await _qaPhysical.RestoreStockOutAsync(
             db, companyCode, branchCode, batchNo, cancellationToken);
         if (qaRestore is not null)
