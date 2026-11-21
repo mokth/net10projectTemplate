@@ -107,13 +107,15 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
     public async Task DisposeAsync() => await _connection.DisposeAsync();
 
     [Theory]
-    [InlineData("WAC", false)]
-    [InlineData("WAC", true)]
-    [InlineData("FIFO", false)]
-    [InlineData("FIFO", true)]
-    [InlineData("STANDARD", false)]
-    [InlineData("STANDARD", true)]
-    public async Task Historical_count_post_and_rollback_respect_qa_stock_holds(string method, bool rollback)
+    [InlineData("WAC", false, false)]
+    [InlineData("WAC", true, false)]
+    [InlineData("FIFO", false, false)]
+    [InlineData("FIFO", true, false)]
+    [InlineData("STANDARD", false, false)]
+    [InlineData("STANDARD", true, false)]
+    [InlineData("WAC", false, true)]
+    [InlineData("WAC", true, true)]
+    public async Task Replay_count_post_and_rollback_respect_qa_stock_holds(string method, bool rollback, bool currentDay)
     {
         if (method == "WAC")
             await SeedWacOpeningEvidenceAsync();
@@ -136,7 +138,7 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
                 await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 2m);
             }
         }
-        var service = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday.AddDays(10),
+        var service = InventoryLedgerTestFixture.CreateStockCount(_factory, currentDay ? FixedToday : FixedToday.AddDays(10),
             enableBackdatedReplay: true, qaPhysical: new QaPhysicalHoldAuthorizationService());
         var saved = await service.SaveAsync(new IvStockCountSaveRequest
         {
@@ -794,6 +796,248 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
                 ToBalLocId = pile.Id
             });
             await db.SaveChangesAsync();
+        }
+    }
+
+    [Theory]
+    [InlineData(90)]
+    [InlineData(100)]
+    [InlineData(110)]
+    public async Task Replay_enabled_current_day_count_anchors_and_reposts(decimal physicalQty)
+    {
+        await SeedWacOpeningEvidenceAsync();
+        var service = InventoryLedgerTestFixture.CreateStockCount(
+            _factory, FixedToday, enableBackdatedReplay: true);
+        var saved = await service.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        var generated = await service.GenerateAsync(saved.Id, discardCounts: false);
+        Assert.True(generated.Succeeded, generated.ErrorMessage);
+        var document = await service.GetAsync(saved.CountNo!);
+        Assert.True(document.Succeeded, document.ErrorMessage);
+        var line = Assert.Single(document.Document!.Lines);
+        Assert.Equal(100m, line.SystemQty);
+        var counted = await service.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = physicalQty }], null);
+        Assert.True(counted.Succeeded, counted.ErrorMessage);
+
+        var preview = await service.PreviewPostAsync(saved.Id);
+        Assert.True(preview.Succeeded, preview.ErrorMessage);
+        Assert.True(preview.Preview!.CanPost);
+        var post = await service.PostAsync(saved.Id);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+        var firstBasisId = await AssertPostedAsync(revision: 0);
+
+        var rollback = await service.RollbackAsync(saved.Id, "recount");
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db,
+                InventoryLedgerTestFixture.CompanyCode, InventoryLedgerTestFixture.BranchCode, [line.Id]))[line.Id];
+            Assert.True(active.IsRemoval);
+            Assert.Equal(100m, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((100m, 200m), (state.OnHandBaseQty, state.InventoryValue));
+        }
+
+        var repost = await service.PostAsync(saved.Id);
+        Assert.True(repost.Succeeded, repost.ErrorMessage);
+        Assert.Equal(firstBasisId, await AssertPostedAsync(revision: 1));
+
+        async Task<long> AssertPostedAsync(int revision)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var header = await db.IvStockCountHdrs.SingleAsync(h => h.Id == saved.Id);
+            Assert.Equal(IvStockCountStatuses.Posted, header.Status);
+            var root = await db.StockPostings.SingleOrDefaultAsync(p =>
+                p.SourceDocumentType == "IV_STOCK_COUNT" && p.SourceDocumentId == saved.Id.ToString()
+                && p.PostingRole == "PRIMARY" && p.DocumentRevision == revision);
+            Assert.NotNull(root);
+            Assert.NotNull(root.SealedAtUtc);
+            Assert.Equal(StockReplayEventKey.CountEndOfDay(FixedToday), root.EffectiveAt);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db,
+                InventoryLedgerTestFixture.CompanyCode, InventoryLedgerTestFixture.BranchCode, [line.Id]))[line.Id];
+            Assert.False(active.IsRemoval);
+            Assert.Equal(root.Id, active.AnchorPostingId);
+            Assert.Equal(physicalQty - 100m, active.SignedAdjustmentQty);
+            Assert.Equal(physicalQty == 100m, active.AdjustmentHistoryId is null);
+            Assert.Equal(physicalQty == 100m, header.PostedBatchNo is null);
+            var basis = await db.StockCountCostBases.SingleAsync(b => b.StockCountLineId == line.Id);
+            Assert.Equal(2m, basis.FrozenFallbackUnitCost);
+            Assert.Equal(physicalQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((physicalQty, physicalQty * 2m), (state.OnHandBaseQty, state.InventoryValue));
+            return basis.Id;
+        }
+    }
+
+    [Theory]
+    [InlineData("FIFO", 90)]
+    [InlineData("FIFO", 100)]
+    [InlineData("FIFO", 110)]
+    [InlineData("STANDARD", 90)]
+    [InlineData("STANDARD", 100)]
+    [InlineData("STANDARD", 110)]
+    public async Task Replay_enabled_current_day_count_anchors_fifo_and_standard(string method, decimal physicalQty)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+            db.StockCostStates.Remove(await db.StockCostStates.SingleAsync());
+            await db.SaveChangesAsync();
+            if (method == "FIFO")
+            {
+                await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+                    [new FifoLayerSeed(100m, 2m, FixedToday.AddDays(-1).AddHours(9))]);
+            }
+            else
+            {
+                await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 100m, 2m, StockCostMethods.Standard);
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 2m);
+            }
+        }
+        var service = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday,
+            enableBackdatedReplay: true);
+        var saved = await service.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        var generated = await service.GenerateAsync(saved.Id, discardCounts: false);
+        Assert.True(generated.Succeeded, generated.ErrorMessage);
+        var document = await service.GetAsync(saved.CountNo!);
+        Assert.True(document.Succeeded, document.ErrorMessage);
+        var line = Assert.Single(document.Document!.Lines);
+        var counted = await service.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = physicalQty }], null);
+        Assert.True(counted.Succeeded, counted.ErrorMessage);
+        StockCountCostApprovalRequest[] approvals = method == "FIFO"
+            ? [new(line.Id, "MANUAL_APPROVED", 2m, "Count manager verified FIFO cost")]
+            : [];
+        var preview = await service.PreviewPostAsync(saved.Id, costApprovals: approvals);
+        Assert.True(preview.Succeeded, preview.ErrorMessage);
+        Assert.True(preview.Preview!.CanPost);
+        var post = await service.PostAsync(saved.Id, costApprovals: approvals);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+        var firstBasisId = await AssertPostedAsync(0);
+        var rollback = await service.RollbackAsync(saved.Id, "recount");
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((100m, 200m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(100m, (await db.IvBalLocs.SingleAsync()).StdQty);
+        }
+        var repost = await service.PostAsync(saved.Id);
+        Assert.True(repost.Succeeded, repost.ErrorMessage);
+        Assert.Equal(firstBasisId, await AssertPostedAsync(1));
+
+        async Task<long> AssertPostedAsync(int revision)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var root = await db.StockPostings.SingleOrDefaultAsync(p =>
+                p.SourceDocumentType == "IV_STOCK_COUNT" && p.SourceDocumentId == saved.Id.ToString()
+                && p.PostingRole == "PRIMARY" && p.DocumentRevision == revision);
+            Assert.NotNull(root);
+            Assert.NotNull(root.SealedAtUtc);
+            Assert.Equal(StockReplayEventKey.CountEndOfDay(FixedToday), root.EffectiveAt);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db,
+                InventoryLedgerTestFixture.CompanyCode, InventoryLedgerTestFixture.BranchCode, [line.Id]))[line.Id];
+            Assert.False(active.IsRemoval);
+            Assert.Equal(root.Id, active.AnchorPostingId);
+            Assert.Equal(physicalQty - 100m, active.SignedAdjustmentQty);
+            var basis = await db.StockCountCostBases.SingleAsync(b => b.StockCountLineId == line.Id);
+            Assert.Equal(2m, basis.FrozenFallbackUnitCost);
+            Assert.Equal(physicalQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((physicalQty, physicalQty * 2m), (state.OnHandBaseQty, state.InventoryValue));
+            return basis.Id;
+        }
+    }
+
+    [Fact]
+    public async Task Replay_enabled_count_requires_coordinator_without_changing_stock()
+    {
+        await SeedWacOpeningEvidenceAsync();
+        var service = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday, enableBackdatedReplay: true);
+        var unavailable = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday,
+            enableBackdatedReplay: true, includeCoordinator: false);
+        var saved = await service.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.False((await unavailable.GenerateAsync(saved.Id, discardCounts: false)).Succeeded);
+        Assert.True((await service.GenerateAsync(saved.Id, discardCounts: false)).Succeeded);
+        var document = await service.GetAsync(saved.CountNo!);
+        var line = Assert.Single(document.Document!.Lines);
+        Assert.True((await service.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = 100m }], null)).Succeeded);
+        Assert.False((await unavailable.PreviewPostAsync(saved.Id)).Succeeded);
+        Assert.False((await unavailable.PostAsync(saved.Id)).Succeeded);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.False(await db.StockCountReplayGenerations.AnyAsync());
+            Assert.Equal(100m, (await db.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(IvStockCountStatuses.Counted, (await db.IvStockCountHdrs.SingleAsync()).Status);
+        }
+        var posted = await service.PostAsync(saved.Id);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        Assert.False((await unavailable.RollbackAsync(saved.Id, "recount")).Succeeded);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(IvStockCountStatuses.Posted, (await db.IvStockCountHdrs.SingleAsync()).Status);
+            Assert.Single(await db.StockCountReplayGenerations.ToArrayAsync());
+            Assert.Equal(100m, (await db.IvBalLocs.SingleAsync()).StdQty);
+        }
+    }
+
+    [Fact]
+    public async Task Same_day_issue_cannot_bypass_an_existing_zero_count_anchor()
+    {
+        await SeedWacOpeningEvidenceAsync();
+        var count = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday, enableBackdatedReplay: true);
+        var saved = await count.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.True((await count.GenerateAsync(saved.Id, discardCounts: false)).Succeeded);
+        var document = await count.GetAsync(saved.CountNo!);
+        var line = Assert.Single(document.Document!.Lines);
+        Assert.True((await count.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = 100m }], null)).Succeeded);
+        var posted = await count.PostAsync(saved.Id);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday, enableBackdatedReplay: true);
+        var draft = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = FixedToday.AddHours(12),
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = line.BalLocId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                Quantity = 10m, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 2m
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var refused = await issue.PostAsync([draft.BatchNo]);
+        Assert.False(refused.Succeeded, "A same-day issue must not bypass the end-of-day count.");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(100m, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((100m, 200m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(IvStockCountStatuses.Posted, (await db.IvStockCountHdrs.SingleAsync()).Status);
+            Assert.Equal("NEW", (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db,
+                InventoryLedgerTestFixture.CompanyCode, InventoryLedgerTestFixture.BranchCode, [line.Id]))[line.Id];
+            Assert.False(active.IsRemoval);
+            Assert.Equal(0m, active.SignedAdjustmentQty);
         }
     }
 

@@ -2881,6 +2881,103 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-later-consumed-disabled");
     }
 
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_current_day_zero_count_anchors_once_and_rolls_back_atomically()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await EnsureActiveStockLedgerAsync();
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday);
+        var opening = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(-1), RefNo = "COUNT-OPENING",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = 100m,
+                UnitPrice = 2m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(opening.Succeeded, opening.ErrorMessage);
+        var opened = await receipt.PostAsync([opening.BatchNo]);
+        Assert.True(opened.Succeeded, opened.ErrorMessage);
+
+        var count = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday,
+            enableBackdatedReplay: true);
+        var saved = await count.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.True((await count.GenerateAsync(saved.Id, discardCounts: false)).Succeeded);
+        var document = await count.GetAsync(saved.CountNo!);
+        var line = Assert.Single(document.Document!.Lines);
+        Assert.True((await count.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = 100m }], null)).Succeeded);
+
+        async Task<(decimal Qty, decimal Value, decimal Balance, int Roots, int Facts, int Generations, int Bases, string Status)> SnapshotAsync()
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var state = await db.StockCostStates.SingleAsync();
+            return (state.OnHandBaseQty, state.InventoryValue, (await db.IvBalLocs.SingleAsync()).StdQty,
+                await db.StockPostings.CountAsync(), await db.StockValuationFacts.CountAsync(),
+                await db.StockCountReplayGenerations.CountAsync(), await db.StockCountCostBases.CountAsync(),
+                (await db.IvStockCountHdrs.SingleAsync(h => h.Id == saved.Id)).Status);
+        }
+        var before = await SnapshotAsync();
+        const string constraint = "TestRejectCurrentDayCountGeneration";
+        await using (var db = await _factory.CreateDbContextAsync())
+            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE [StockCountReplayGeneration] WITH NOCHECK ADD CONSTRAINT [{constraint}] CHECK ([SignedAdjustmentQty] <> 0)");
+        try
+        {
+            IvStockCountOperationResult? result = null;
+            var exception = await Record.ExceptionAsync(async () => { result = await count.PostAsync(saved.Id); });
+            Assert.True(exception is not null || result is { Succeeded: false },
+                "An injected database failure must prevent the count from posting.");
+        }
+        finally
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE [StockCountReplayGeneration] DROP CONSTRAINT [{constraint}]");
+        }
+        Assert.Equal(before, await SnapshotAsync());
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.OpenConnectionAsync();
+            await using var command = db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "SELECT SESSION_CONTEXT(N'STOCK_LEDGER_V2_POSTING_ID')";
+            Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
+        }
+        var attempts = await Task.WhenAll(count.PostAsync(saved.Id), count.PostAsync(saved.Id))
+            .WaitAsync(TimeSpan.FromSeconds(45));
+        Assert.Single(attempts, x => x.Succeeded);
+        Assert.Single(attempts, x => !x.Succeeded);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var root = await db.StockPostings.SingleAsync(p => p.SourceDocumentType == "IV_STOCK_COUNT"
+                && p.SourceDocumentId == saved.Id.ToString() && p.PostingRole == "PRIMARY");
+            Assert.NotNull(root.SealedAtUtc);
+            Assert.Equal(StockReplayEventKey.CountEndOfDay(FixedToday), root.EffectiveAt);
+            var generation = await db.StockCountReplayGenerations.SingleAsync();
+            Assert.Equal(root.Id, generation.AnchorPostingId);
+            Assert.Equal(0m, generation.SignedAdjustmentQty);
+            Assert.Null(generation.AdjustmentHistoryId);
+            Assert.Equal(100m, (await db.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(200m, (await db.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        var rolled = await count.RollbackAsync(saved.Id, "recount");
+        Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+        var reposted = await count.PostAsync(saved.Id);
+        Assert.True(reposted.Succeeded, reposted.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [line.Id]))[line.Id];
+            Assert.False(active.IsRemoval);
+            Assert.Equal(100m, (await db.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(200m, (await db.StockCostStates.SingleAsync()).InventoryValue);
+        }
+    }
+
     private async Task ExerciseHistoricalConsumedInvoiceAsync(bool enabled, bool consumedBeforeInvoice,
         decimal invoicePrice, bool changeAfterPlanning = false, bool changeCostPolicy = false,
         bool changeReceiptTime = false, bool changeReceiptCost = false, bool expectIssueReplay = false,

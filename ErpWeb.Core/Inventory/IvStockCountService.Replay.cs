@@ -67,11 +67,10 @@ public sealed partial class IvStockCountService
         if (header is null || header.Status is not
                 (IvStockCountStatuses.Counted or IvStockCountStatuses.RolledBack))
             return null;
+        if (header.CountDate.Date > _currentDate.Today)
+            return IvStockCountOperationResult.Fail(
+                $"Count date {header.CountDate:yyyy-MM-dd} is in the future.");
         var effectiveAt = StockReplayEventKey.CountEndOfDay(header.CountDate);
-        if (header.CountDate.Date >= _currentDate.Today
-            && !await HasLaterSealedCountValuationAsync(read, company, branch,
-                id, effectiveAt, cancellationToken))
-            return null;
         var lines = await ReadBoundedReplayCountLinesAsync(read, id,
             cancellationToken);
         if (lines is null)
@@ -85,9 +84,6 @@ public sealed partial class IvStockCountService
             && !standardCount)
             return IvStockCountOperationResult.Fail(
                 "This historical count needs a supported event-date cost replay method.");
-        if (header.CountDate.Date > _currentDate.Today)
-            return IvStockCountOperationResult.Fail(
-                $"Count date {header.CountDate:yyyy-MM-dd} is in the future.");
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, company,
                 branch, header.CountDate, cancellationToken) is string closed)
             return IvStockCountOperationResult.Fail(closed);
@@ -187,11 +183,10 @@ public sealed partial class IvStockCountService
         if (header is null || header.Status is not
                 (IvStockCountStatuses.Counted or IvStockCountStatuses.RolledBack))
             return null;
+        if (header.CountDate.Date > _currentDate.Today)
+            return IvStockCountOperationResult.Fail(
+                $"Count date {header.CountDate:yyyy-MM-dd} is in the future.");
         var effectiveAt = StockReplayEventKey.CountEndOfDay(header.CountDate);
-        if (header.CountDate.Date >= _currentDate.Today
-            && !await HasLaterSealedCountValuationAsync(read, company, branch,
-                id, effectiveAt, cancellationToken))
-            return null;
         var lines = await ReadBoundedReplayCountLinesAsync(read, id,
             cancellationToken);
         if (lines is null)
@@ -205,9 +200,6 @@ public sealed partial class IvStockCountService
             && !standardCount)
             return IvStockCountOperationResult.Fail(
                 "This historical count needs a supported event-date cost replay method.");
-        if (header.CountDate.Date > _currentDate.Today)
-            return IvStockCountOperationResult.Fail(
-                $"Count date {header.CountDate:yyyy-MM-dd} is in the future.");
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, company,
                 branch, header.CountDate, cancellationToken) is string closed)
             return IvStockCountOperationResult.Fail(closed);
@@ -644,21 +636,6 @@ public sealed partial class IvStockCountService
             e.ReplaySignedQuantity)).ToArray();
         return await CheckBoundedWacCountTailAsync(db, ordinary,
             countDate, cancellationToken) is null ? null : unsupported;
-    }
-
-    private static async Task<bool> HasLaterSealedCountValuationAsync(
-        AppDbContext db, string company, string branch, int countId,
-        DateTime effectiveAt, CancellationToken cancellationToken)
-    {
-        var itemCodes = await db.IvStockCountLines.AsNoTracking()
-            .Where(l => l.StockCountId == countId && l.PhysicalQty != null)
-            .Select(l => l.ICode).Distinct().ToArrayAsync(cancellationToken);
-        if (itemCodes.Length == 0)
-            return false;
-        return await db.StockValuationFacts.AsNoTracking().AnyAsync(f =>
-            f.CompanyCode == company && f.BranchCode == branch
-            && itemCodes.Contains(f.ItemCode) && f.EffectiveAt > effectiveAt
-            && f.StockPosting!.SealedAtUtc != null, cancellationToken);
     }
 
     private static async Task<string?> CheckBoundedFifoCountTailAsync(

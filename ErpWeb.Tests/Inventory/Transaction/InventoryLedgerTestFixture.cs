@@ -548,7 +548,8 @@ internal static class InventoryLedgerTestFixture
         string company = CompanyCode,
         string branch = BranchCode,
         bool enableBackdatedReplay = false,
-        IQaPhysicalHoldAuthorization? qaPhysical = null)
+        IQaPhysicalHoldAuthorization? qaPhysical = null,
+        bool includeCoordinator = true)
     {
         var tenant = InventoryTenantTestHelper.CreateTenantContext(company: company, branch: branch);
         var access = Allow();
@@ -564,7 +565,7 @@ internal static class InventoryLedgerTestFixture
             postingRepo,
             CreateInventoryPosting(factory, company, branch, access, qaPhysical: qaPhysical),
             NullLogger<IvStockCountService>.Instance,
-            coordinator: enableBackdatedReplay
+            coordinator: enableBackdatedReplay && includeCoordinator
                 ? CreateCoordinator(factory, company, branch) : null,
             configuration: enableBackdatedReplay
                 ? new ConfigurationManager
