@@ -2468,6 +2468,14 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             cdnReplayCase: "canceled-later-note");
 
     [Theory]
+    [InlineData("CN")]
+    [InlineData("DN")]
+    public Task Purchase_issue_rollback_replays_note_on_later_open_period_day(string type) =>
+        ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: type == "CN" ? "cdn-replay" : "cdn-replay-dn",
+            cdnReplayCase: "canceled-later-nextday");
+
+    [Theory]
     [InlineData("partial")]
     [InlineData("damaged")]
     [InlineData("consumed")]
@@ -2853,6 +2861,15 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         await PreparePurchaseReplaySqlFixtureAsync();
         await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-later-note");
+    }
+
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public async Task SqlServer_issue_rollback_replays_credit_note_on_later_open_period_day()
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
+            invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "canceled-later-nextday");
     }
 
     [MultiWacReceiptSqlFact]
@@ -3960,8 +3977,9 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         };
         var hasCanceledIssue = cdnReplayCase is "canceled-post" or "canceled-rollback" or "canceled-damaged"
             or "canceled-sameday" or "canceled-later-note" or "canceled-later-partial" or "canceled-later-damaged"
-            or "canceled-later-consumed" or "canceled-later-consumed-disabled";
+            or "canceled-later-consumed" or "canceled-later-consumed-disabled" or "canceled-later-nextday";
         var laterConsumedNote = cdnReplayCase is "canceled-later-consumed" or "canceled-later-consumed-disabled";
+        var laterSupportedNote = cdnReplayCase is "canceled-later-note" or "canceled-later-nextday";
         var opening = await receipt.SaveNewAsync(MiscRequest(FixedToday.AddDays(-5),
             hasCanceledIssue ? 3m : 15m, hasCanceledIssue ? 1m : 3m));
         Assert.True(opening.Succeeded, opening.ErrorMessage);
@@ -4318,7 +4336,8 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             var saved = await cdn.SaveNewAsync(new PoCdnSaveRequest
             {
                 Type = testBackdatedCreditNote == "cdn-replay-dn" ? "DN" : "CN",
-                DocDate = FixedToday, VendorCode = "SUP01", InvNo = piDocNo,
+                DocDate = cdnReplayCase == "canceled-later-nextday" ? FixedToday.AddDays(1) : FixedToday,
+                VendorCode = "SUP01", InvNo = piDocNo,
                 ReturnStock = false, Currency = "MYR", ReasonCode = "PRICE_ADJUSTMENT",
                 SupplierDocNo = "SUP-CN-REPLAY", SupplierDocDate = FixedToday, TaxGrCode = "SR",
                 Lines = [new PoCdnLineRequest
@@ -4345,7 +4364,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             {
                 var canceledIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
                 {
-                    TrxDate = cdnReplayCase is "canceled-sameday" or "canceled-later-note" or "canceled-later-partial" or "canceled-later-damaged" || laterConsumedNote ? FixedToday : FixedToday.AddDays(1),
+                    TrxDate = cdnReplayCase is "canceled-sameday" or "canceled-later-partial" or "canceled-later-damaged" || laterConsumedNote || laterSupportedNote ? FixedToday : FixedToday.AddDays(1),
                     Lines = [new IvMiscIssueLineRequest
                     {
                         FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
@@ -4359,7 +4378,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             }
             var laterIssue = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
             {
-                TrxDate = cdnReplayCase is "canceled-sameday" or "canceled-later-note" or "canceled-later-partial" or "canceled-later-damaged" || laterConsumedNote ? FixedToday : FixedToday.AddDays(1),
+                TrxDate = cdnReplayCase is "canceled-sameday" or "canceled-later-partial" or "canceled-later-damaged" || laterConsumedNote || laterSupportedNote ? FixedToday : FixedToday.AddDays(1),
                 Lines = [new IvMiscIssueLineRequest
                 {
                     FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
@@ -4393,7 +4412,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                     Assert.Equal(damagedBefore, await IssueSnapshotAsync());
                     return;
                 }
-                if (cdnReplayCase is "canceled-later-note" or "canceled-later-partial" or "canceled-later-damaged" || laterConsumedNote)
+                if (cdnReplayCase is "canceled-later-partial" or "canceled-later-damaged" || laterConsumedNote || laterSupportedNote)
                 {
                     var posted = await cdn.PostAsync([await KeyAsync()]);
                     Assert.True(posted.Succeeded, posted.ErrorMessage);
@@ -4417,7 +4436,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                     await using (var provider = await _factory.CreateDbContextAsync())
                         isSqlServer = provider.Database.IsSqlServer();
                     IvMiscIssueOperationResult laterNoteIssueRollback;
-                    if (cdnReplayCase == "canceled-later-note" && isSqlServer)
+                    if (laterSupportedNote && isSqlServer)
                     {
                         await using (var holding = await _factory.CreateDbContextAsync())
                         await using (var tx = await holding.Database.BeginTransactionAsync())
@@ -4461,7 +4480,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                     {
                         laterNoteIssueRollback = await issue.RollbackAsync([rollbackTarget]);
                     }
-                    if (cdnReplayCase != "canceled-later-note")
+                    if (!laterSupportedNote)
                     {
                         Assert.False(laterNoteIssueRollback.Succeeded, "An unproven later purchase note must block rollback.");
                         Assert.Equal(beforeLaterNote, await IssueSnapshotAsync());
