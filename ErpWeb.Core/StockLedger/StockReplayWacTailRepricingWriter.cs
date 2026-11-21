@@ -287,6 +287,30 @@ public static class StockReplayWacTailRepricingWriter
             null, null, cancellationToken, allowSalesReturn, purchasePermit);
     }
 
+    public static Task<StockReplayWacTailRepricingResult> AppendPreparedRemovalTailAsync(
+        StockPostingContext context, StockReplayWacWritePermit permit,
+        StockReplayWacRemovalPlan plan, StockCountCorrectionWritePermit countPermit,
+        int firstRootPostingLineNo, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(permit);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(countPermit);
+        context.EnsureUnsealed();
+        if (firstRootPostingLineNo <= 0 || permit.RootPostingId != context.Posting.Id
+            || permit.RootPostingSequence != context.Posting.PostingSequence
+            || permit.LedgerEpochId != context.Epoch.Id || permit.CompanyCode != context.CompanyCode
+            || permit.BranchCode != context.BranchCode || permit.ItemCode != plan.ItemCode
+            || permit.PlanHash != plan.PlanHash || permit.ChangedPileId != plan.PhysicalPlan.BalLocId
+            || countPermit.RootPostingId != context.Posting.Id || countPermit.LedgerEpochId != context.Epoch.Id
+            || countPermit.CompanyCode != context.CompanyCode || countPermit.BranchCode != context.BranchCode
+            || countPermit.BalLocId != permit.ChangedPileId || countPermit.PlanHash != plan.PhysicalPlan.PlanHash
+            || countPermit.ReversedCandidateHistoryId != plan.PhysicalPlan.RemovedActiveEvent.EventId)
+            throw Invalid("The prepared WAC removal and count permits differ.");
+        return AppendTailAsync(context, permit, plan.Tail.LaterEvents, plan.Projection.LaterSteps,
+            firstRootPostingLineNo, null, countPermit, cancellationToken, changedCountRemovalPlan: plan);
+    }
+
     private static async Task<StockReplayWacTailRepricingResult> AppendTailAsync(
         StockPostingContext context,
         StockReplayWacWritePermit permit,
@@ -297,7 +321,8 @@ public static class StockReplayWacTailRepricingWriter
         StockCountCorrectionWritePermit? countPermit,
         CancellationToken cancellationToken,
         bool allowSalesReturn = false,
-        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null,
+        StockReplayWacRemovalPlan? changedCountRemovalPlan = null)
     {
         if (allowSalesReturn && (context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType is not
@@ -307,7 +332,7 @@ public static class StockReplayWacTailRepricingWriter
             || purchasePermit.PlanHash != permit.PlanHash))
             throw Invalid("The purchase variance has no matching replay root.");
         var steps = ValidateTail(laterEvents, laterSteps,
-            changedCountPlan, countPermit, allowSalesReturn, purchasePermit);
+            changedCountPlan, countPermit, allowSalesReturn, purchasePermit, changedCountRemovalPlan);
 
         var histories = new List<int>();
         var countLines = new List<int>();
@@ -324,10 +349,14 @@ public static class StockReplayWacTailRepricingWriter
                 var countLineId = ParseCountLine(movement.Key.LineIdentity);
                 if (step.SignedQuantity != movement.OldSignedQuantity)
                 {
-                    await StockReplayWacCountCorrectionValuationWriter.AppendAsync(
-                        context, permit, changedCountPlan!, countPermit!,
-                        countLineId, reversalLine, replacementLine,
-                        cancellationToken);
+                    if (changedCountRemovalPlan is null)
+                        await StockReplayWacCountCorrectionValuationWriter.AppendAsync(
+                            context, permit, changedCountPlan!, countPermit!,
+                            countLineId, reversalLine, replacementLine, cancellationToken);
+                    else
+                        await StockReplayWacCountCorrectionValuationWriter.AppendRemovalAsync(
+                            context, permit, changedCountRemovalPlan, countPermit!,
+                            countLineId, reversalLine, replacementLine, cancellationToken);
                     countLines.Add(countLineId);
                     continue;
                 }
@@ -382,7 +411,8 @@ public static class StockReplayWacTailRepricingWriter
         StockReplayWacInsertionPlan? changedCountPlan,
         StockCountCorrectionWritePermit? countPermit,
         bool allowSalesReturn = false,
-        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null,
+        StockReplayWacRemovalPlan? changedCountRemovalPlan = null)
     {
         var steps = laterSteps.ToDictionary(s => s.EventId);
         if (steps.Count != laterEvents.Count
@@ -400,7 +430,7 @@ public static class StockReplayWacTailRepricingWriter
                 throw Invalid("A reversed Production issue needs its paired valuation correction writer.");
             if (step.SignedQuantity != movement.OldSignedQuantity)
             {
-                if (movement.EventId >= 0 || changedCountPlan is null
+                if (movement.EventId >= 0 || changedCountPlan is null && changedCountRemovalPlan is null
                     || countPermit is null)
                     throw Invalid($"WAC event {movement.EventId} needs a physical count correction generation.");
                 var countLineId = ParseCountLine(movement.Key.LineIdentity);
@@ -436,7 +466,7 @@ public static class StockReplayWacTailRepricingWriter
             }
         }
         if (countPermit is not null
-            && (changedCountPlan is null
+            && (changedCountPlan is null && changedCountRemovalPlan is null
                 || countPermit.Lines.Length != changedCountLines.Count))
             throw Invalid("A physical count correction has no matching WAC descendant.");
         if (purchasePermit is not null && changedPurchaseCount != 1)

@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $patterns = @(
-    'StockReplayPhysicalSimulatorTests', 'StockReplayWacSimulatorTests',
+    'StockLedgerInfrastructureTests', 'StockReplayPhysicalSimulatorTests', 'StockReplayWacSimulatorTests',
     'StockReplayFifoLayerAllocatorTests', 'StockReplayFifoReversedIssueProjectorTests',
     'StockReplayStandardSimulatorTests', 'StockReplayValuationGenerationResolverTests',
     'InventoryValuationServiceTests', 'IvGoodsReceiptServiceTests', 'IvMiscReceiptServiceTests',
@@ -100,7 +100,9 @@ $patterns = @(
     'Replay_enabled_current_day_count_anchors_',
     'Replay_enabled_count_requires_coordinator_without_changing_stock',
     'Replay_count_post_and_rollback_respect_qa_stock_holds',
-    'Same_day_issue_cannot_bypass_an_existing_zero_count_anchor',
+    'Open_month_issue_before_zero_count_replays_and_rolls_back',
+    'Issue_before_zero_count_respects_quality_holds',
+    'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
     'Public_backdated_WAC_count_replays_later_Inventory_transfer',
     'Public_backdated_WAC_count_replays_real_later_Inventory_MI_owner',
     'Public_backdated_WAC_count_preserves_real_later_Inventory_MR_value',
@@ -126,13 +128,15 @@ $patterns = @(
     'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold'
 )
 $required = @(
-    'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
+    'StockLedgerInfrastructureTests', 'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
     'StockReplayStandardSimulatorTests', 'InventoryValuationServiceTests',
     'Replay_enabled_current_day_count_anchors_and_reposts',
     'Replay_enabled_current_day_count_anchors_fifo_and_standard',
     'Replay_enabled_count_requires_coordinator_without_changing_stock',
     'Replay_count_post_and_rollback_respect_qa_stock_holds',
-    'Same_day_issue_cannot_bypass_an_existing_zero_count_anchor',
+    'Open_month_issue_before_zero_count_replays_and_rolls_back',
+    'Issue_before_zero_count_respects_quality_holds',
+    'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
     'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
     'SubconPostBlockedTests', 'SubconModeTests',
     'Purchase_credit_note_refuses_unreplayed_later_issue',
@@ -378,6 +382,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterDayReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnConsumedGuard
         & $sqlRunner -Server $SqlServer -NoBuild -CurrentDayCountReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -IssueBeforeZeroCountReplay
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts
