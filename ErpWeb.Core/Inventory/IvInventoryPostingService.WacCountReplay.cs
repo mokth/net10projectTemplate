@@ -10,8 +10,8 @@ public sealed partial class IvInventoryPostingService
 {
     private sealed record IssueCountProof(int HeaderId, int LineId, long GenerationId, string Fingerprint);
 
-    // This first public route is deliberately bounded to one unchanged zero
-    // count, or the exact count correction made by the issue being removed.
+    // A single issue may alter one later count without changing the final
+    // pool quantity or value. Removal must undo this issue's exact correction.
     private static async Task<IssueCountProof?> PlanSingleIssueCountAsync(
         AppDbContext db, string company, string branch, string item, int pileId,
         decimal issueQty, DateTime issueAt, IReadOnlyList<StockReplayPhysicalEvent> physical,
@@ -26,14 +26,15 @@ public sealed partial class IvInventoryPostingService
         var value = financial[0];
         var step = steps[0];
         var removing = removingIssueOwnerId.HasValue;
+        var expectedAdjustment = IvQty.Round(movement.SignedDelta
+            + (removing ? -issueQty : issueQty));
         if (movement.EventId >= 0 || movement.EventId == long.MinValue
             || movement.AbsoluteCountQty is not > 0m
             || movement.Key.ClassPriority != StockReplayEventKey.CountClass
             || movement.Key.EffectiveAt.Year != issueAt.Year || movement.Key.EffectiveAt.Month != issueAt.Month
-            || movement.SignedDelta != (removing ? issueQty : 0m)
             || value.EventId != movement.EventId || value.Key != movement.Key
             || value.OldSignedQuantity != movement.SignedDelta || step.EventId != value.EventId
-            || step.SignedQuantity != (removing ? 0m : issueQty))
+            || step.SignedQuantity != expectedAdjustment)
             return null;
         var generation = await db.StockCountReplayGenerations.AsNoTracking().SingleOrDefaultAsync(g =>
             g.Id == -movement.EventId && g.CompanyCode == company && g.BranchCode == branch, ct);
@@ -57,10 +58,10 @@ public sealed partial class IvInventoryPostingService
                 : null;
             if (generation.WritePostingId != removingIssueOwnerId || previous is null || previous.IsRemoval
                 || previous.StockCountLineId != line.Id || previous.AnchorPostingId != generation.AnchorPostingId
-                || previous.SignedAdjustmentQty != 0m)
+                || previous.SignedAdjustmentQty != expectedAdjustment)
                 return null;
         }
-        var fingerprint = StockPostingFingerprint.Create(new { Kind = "MI_ZERO_COUNT" }, new
+        var fingerprint = StockPostingFingerprint.Create(new { Kind = "MI_SINGLE_COUNT" }, new
         {
             line.Id, line.StockCountId, line.RowVersion, line.BalLocId, line.ICode, line.PhysicalQty,
             HeaderVersion = line.Header.RowVersion, line.Header.Status, line.Header.CountDate,

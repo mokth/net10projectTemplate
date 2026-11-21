@@ -84,11 +84,12 @@ param(
     [switch]$PurchaseCdnLaterDayReplay,
     [switch]$CurrentDayCountReplay,
     [switch]$IssueBeforeZeroCountReplay,
+    [switch]$IssueBeforeVarianceCountReplay,
     [switch]$PurchaseCdnConsumedGuard
 )
 
 $ErrorActionPreference = 'Stop'
-if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods -or $InvoiceCanceledSaleCycle -or $BackdatedInvoiceCanceledSaleCycle -or $InvoiceRollbackCanceledSale -or $InvoicePostCanceledSale -or $InvoiceDuringCanceledSale -or $PurchaseCdnLaterIssuePost -or $PurchaseCdnLaterIssueRollback -or $PurchaseCdnIssueReplay -or $PurchaseCdnMultiIssueReplay -or $PurchaseCdnCanceledIssueReplay -or $PurchaseCdnSameDayReplay -or $PurchaseCdnLaterSameDayReplay -or $PurchaseCdnLaterDayReplay -or $PurchaseCdnConsumedGuard -or $CurrentDayCountReplay -or $IssueBeforeZeroCountReplay) {
+if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods -or $InvoiceCanceledSaleCycle -or $BackdatedInvoiceCanceledSaleCycle -or $InvoiceRollbackCanceledSale -or $InvoicePostCanceledSale -or $InvoiceDuringCanceledSale -or $PurchaseCdnLaterIssuePost -or $PurchaseCdnLaterIssueRollback -or $PurchaseCdnIssueReplay -or $PurchaseCdnMultiIssueReplay -or $PurchaseCdnCanceledIssueReplay -or $PurchaseCdnSameDayReplay -or $PurchaseCdnLaterSameDayReplay -or $PurchaseCdnLaterDayReplay -or $PurchaseCdnConsumedGuard -or $CurrentDayCountReplay -or $IssueBeforeZeroCountReplay -or $IssueBeforeVarianceCountReplay) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose this replay case on its own.' }
 }
@@ -138,6 +139,7 @@ try {
     $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
         elseif ($CurrentDayCountReplay) { 'SqlServer_current_day_zero_count_anchors_once_and_rolls_back_atomically' }
         elseif ($IssueBeforeZeroCountReplay) { 'SqlServer_issue_before_zero_count_posts_and_rolls_back_atomically' }
+        elseif ($IssueBeforeVarianceCountReplay) { 'SqlServer_issue_before_variance_count_posts_and_rolls_back_atomically' }
         elseif ($PurchaseCdnConsumedGuard) { 'SqlServer_issue_rollback_rejects_fully_consumed_later_note' }
         elseif ($PurchaseCdnLaterDayReplay) { 'SqlServer_issue_rollback_replays_credit_note_on_later_open_period_day' }
         elseif ($PurchaseCdnLaterSameDayReplay) { 'SqlServer_issue_rollback_replays_later_same_day_credit_note' }
