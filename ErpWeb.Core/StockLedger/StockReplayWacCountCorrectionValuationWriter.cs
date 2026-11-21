@@ -16,7 +16,7 @@ public sealed record StockReplayWacCountCorrectionValuationResult(
 /// </summary>
 public static class StockReplayWacCountCorrectionValuationWriter
 {
-    public static async Task<StockReplayWacCountCorrectionValuationResult> AppendAsync(
+    public static Task<StockReplayWacCountCorrectionValuationResult> AppendAsync(
         StockPostingContext context,
         StockReplayWacWritePermit wacPermit,
         StockReplayWacInsertionPlan wacPlan,
@@ -26,9 +26,50 @@ public static class StockReplayWacCountCorrectionValuationWriter
         int replacementPostingLineNo,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(wacPlan);
+        ArgumentNullException.ThrowIfNull(countPermit);
+        if (countPermit.ReversedCandidateHistoryId is not null)
+            throw Invalid("An insertion cannot use a count removal permit.");
+        return AppendCoreAsync(context, wacPermit, countPermit, wacPlan.ItemCode, wacPlan.PlanHash,
+            wacPlan.PhysicalPlan.PlanHash, wacPlan.Tail.LaterEvents, wacPlan.Projection.LaterSteps,
+            countLineId, reversalPostingLineNo, replacementPostingLineNo, cancellationToken);
+    }
+
+    public static Task<StockReplayWacCountCorrectionValuationResult> AppendRemovalAsync(
+        StockPostingContext context,
+        StockReplayWacWritePermit wacPermit,
+        StockReplayWacRemovalPlan wacPlan,
+        StockCountCorrectionWritePermit countPermit,
+        int countLineId,
+        int reversalPostingLineNo,
+        int replacementPostingLineNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(wacPlan);
+        ArgumentNullException.ThrowIfNull(countPermit);
+        if (countPermit.ReversedCandidateHistoryId != wacPlan.PhysicalPlan.RemovedActiveEvent.EventId)
+            throw Invalid("The count correction does not reverse the planned issue.");
+        return AppendCoreAsync(context, wacPermit, countPermit, wacPlan.ItemCode, wacPlan.PlanHash,
+            wacPlan.PhysicalPlan.PlanHash, wacPlan.Tail.LaterEvents, wacPlan.Projection.LaterSteps,
+            countLineId, reversalPostingLineNo, replacementPostingLineNo, cancellationToken);
+    }
+
+    private static async Task<StockReplayWacCountCorrectionValuationResult> AppendCoreAsync(
+        StockPostingContext context,
+        StockReplayWacWritePermit wacPermit,
+        StockCountCorrectionWritePermit countPermit,
+        string itemCode,
+        string wacPlanHash,
+        string physicalPlanHash,
+        IReadOnlyList<StockReplayWacEvent> laterEvents,
+        IReadOnlyList<StockReplayWacStep> laterSteps,
+        int countLineId,
+        int reversalPostingLineNo,
+        int replacementPostingLineNo,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(wacPermit);
-        ArgumentNullException.ThrowIfNull(wacPlan);
         ArgumentNullException.ThrowIfNull(countPermit);
         context.EnsureUnsealed();
         if (context.CostMethod != StockCostMethods.MovingAverage
@@ -43,9 +84,9 @@ public static class StockReplayWacCountCorrectionValuationWriter
             || wacPermit.BranchCode != context.BranchCode
             || countPermit.CompanyCode != context.CompanyCode
             || countPermit.BranchCode != context.BranchCode
-            || wacPermit.ItemCode != wacPlan.ItemCode
-            || wacPermit.PlanHash != wacPlan.PlanHash
-            || countPermit.PlanHash != wacPlan.PhysicalPlan.PlanHash
+            || wacPermit.ItemCode != itemCode
+            || wacPermit.PlanHash != wacPlanHash
+            || countPermit.PlanHash != physicalPlanHash
             || countPermit.BalLocId != wacPermit.ChangedPileId)
             throw Invalid("Changed-count WAC valuation has no matching replay permits.");
 
@@ -54,10 +95,10 @@ public static class StockReplayWacCountCorrectionValuationWriter
         if (correctionLines.Length != 1)
             throw Invalid($"Count line {countLineId} has no unique physical correction.");
         var correction = correctionLines[0];
-        var oldEvents = wacPlan.Tail.LaterEvents
+        var oldEvents = laterEvents
             .Where(e => e.EventId == -correction.PreviousGenerationId
                 && e.Key.LineIdentity == $"C{countLineId:D10}").ToArray();
-        var projected = wacPlan.Projection.LaterSteps
+        var projected = laterSteps
             .Where(s => s.EventId == -correction.PreviousGenerationId).ToArray();
         if (oldEvents.Length != 1 || projected.Length != 1
             || correction.NewSignedAdjustmentQty == correction.OldSignedAdjustmentQty
@@ -237,6 +278,9 @@ public static class StockReplayWacCountCorrectionValuationWriter
             var quantity = Math.Abs(step.SignedQuantity);
             var amount = Math.Abs(step.SignedValue);
             var fallback = direction > 0 && step.QuantityBefore == 0m;
+            var baseCurrency = oldFact?.BaseCurrency ?? await db.Companies.AsNoTracking()
+                .Where(c => c.CompanyCode == context.CompanyCode)
+                .Select(c => c.CurrencyCode).SingleOrDefaultAsync(cancellationToken);
             replacementFact = new StockValuationFact
             {
                 CompanyCode = context.CompanyCode,
@@ -271,7 +315,7 @@ public static class StockReplayWacCountCorrectionValuationWriter
                 CostMethod = StockCostMethods.MovingAverage,
                 UnitCost = StockLedgerPrecision.Money(amount / quantity),
                 CostAmount = amount,
-                BaseCurrency = oldFact?.BaseCurrency,
+                BaseCurrency = baseCurrency,
                 BaseCostAmount = amount,
                 ValuationSource = fallback
                     ? basis!.CostBasisKind == StockCountCostBasisKinds.LedgerWac

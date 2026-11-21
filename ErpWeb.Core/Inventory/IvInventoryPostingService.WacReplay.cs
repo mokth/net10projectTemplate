@@ -1,5 +1,6 @@
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Sales;
 using ErpWeb.Model.Entities.Inventory;
@@ -509,7 +510,13 @@ public sealed partial class IvInventoryPostingService
                 && f.BranchCode == branchCode && f.ItemCode == itemCode
                 && f.EffectiveAt > batch.TrxDtTime
                 && f.StockPosting!.SealedAtUtc != null, cancellationToken);
-        if (!hasLaterValue)
+        var hasLaterCount = !hasLaterValue && expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            && detail.FromBalLocId is > 0 && await read.StockCountReplayGenerations.AsNoTracking()
+                .AnyAsync(g => g.CompanyCode == companyCode && g.BranchCode == branchCode
+                    && g.EffectiveAt > batch.TrxDtTime
+                    && read.IvStockCountLines.Any(l => l.Id == g.StockCountLineId
+                        && l.BalLocId == detail.FromBalLocId), cancellationToken);
+        if (!hasLaterValue && !hasLaterCount)
             return null;
         var method = await read.StockCostStates.AsNoTracking()
             .Where(s => s.CompanyCode == companyCode
@@ -534,13 +541,22 @@ public sealed partial class IvInventoryPostingService
         var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, detail.FromBalLocId.Value,
             batch.TrxDtTime, -detail.FrStdQty.Value, cancellationToken);
+        if (!hasLaterValue && !physical.LaterEvents.Any(e => e.EventId < 0))
+            return null;
         var candidate = physical.Candidate;
         var key = candidate.Key;
         var financial = await StockReplayWacInsertionPlanner.BuildAsync(
             read, companyCode, branchCode, itemCode, physical,
             new StockReplayWacEvent(candidate.EventId, key, 0m, 0m,
                 candidate.SignedDelta), cancellationToken);
-        if (await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
+        var countProof = expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            ? await PlanSingleIssueCountAsync(read, companyCode, branchCode, itemCode,
+                physical.BalLocId, detail.FrStdQty.Value, batch.TrxDtTime, physical.LaterEvents,
+                financial.Tail.LaterEvents, financial.Projection.LaterSteps,
+                financial.Tail.CurrentQuantity, financial.Tail.CurrentValue,
+                financial.Projection.FinalQuantity, financial.Projection.FinalValue, null, cancellationToken)
+            : null;
+        if (countProof is null && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
                 batch.TrxDtTime, cancellationToken) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
@@ -548,6 +564,18 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (countProof is not null)
+        {
+            if (!await LockIssueCountSourceAsync(write, companyCode, branchCode, countProof, cancellationToken))
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The stock count is busy. Retry posting.");
+            var locked = await PlanSingleIssueCountAsync(write, companyCode, branchCode, itemCode,
+                physical.BalLocId, detail.FrStdQty.Value, batch.TrxDtTime, physical.LaterEvents,
+                financial.Tail.LaterEvents, financial.Projection.LaterSteps,
+                financial.Tail.CurrentQuantity, financial.Tail.CurrentValue,
+                financial.Projection.FinalQuantity, financial.Projection.FinalValue, null, cancellationToken);
+            if (locked?.Fingerprint != countProof.Fingerprint)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The stock count changed. Retry posting.");
+        }
         if (await HasUnresolvedReversedSaleValueAsync(write, companyCode, branchCode,
                 [itemCode], batch.TrxDtTime, cancellationToken))
             return IvInventoryPostingBatchResult.Fail(batchNo,
@@ -588,8 +616,10 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
         }
+        var countPermit = countProof is null ? null : await StockReplayPhysicalPlanner
+            .PrepareCountCorrectionsWithinRootAsync(ledger.Context, physical, cancellationToken);
         var required = await StockReplayWacMiRootWriter.InsertAsync(
-            ledger.Context, financial, batchNo, cancellationToken);
+            ledger.Context, financial, batchNo, cancellationToken, countPermit);
         if (expectedTrxType == IvTrxTypes.VendorReturn)
         {
             var postedDetails = await _posting.LoadDetailsForBatchAsync(
@@ -788,7 +818,14 @@ public sealed partial class IvInventoryPostingService
         }
         var inventoryTail = InventoryTailForProvenNote(
             InventoryTailForProvenInvoice(financial.Tail.LaterEvents, laterInvoicePlan), laterPurchaseNote);
-        if (inventoryTail.Count > 0
+        var countProof = trxType == IvTrxTypes.MiscellaneousIssue && purchaseNoteFactId is null
+            ? await PlanSingleIssueCountAsync(read, companyCode, branchCode, original.ICode,
+                physical.BalLocId, quantity.Value, original.TrxDtTime, physical.LaterEvents,
+                financial.Tail.LaterEvents, financial.Projection.LaterSteps,
+                financial.Tail.CurrentQuantity, financial.Tail.CurrentValue,
+                financial.Projection.FinalQuantity, financial.Projection.FinalValue, owner.Id, cancellationToken)
+            : null;
+        if (countProof is null && inventoryTail.Count > 0
             && await CheckSimpleWacTailAsync(read, inventoryTail,
                 original.TrxDtTime, cancellationToken,
                 replayInvoice ?? laterInvoicePlan?.Invoice, allowBoundedSales: isReceipt,
@@ -799,6 +836,18 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (countProof is not null)
+        {
+            if (!await LockIssueCountSourceAsync(write, companyCode, branchCode, countProof, cancellationToken))
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The stock count is busy. Retry rollback.");
+            var locked = await PlanSingleIssueCountAsync(write, companyCode, branchCode, original.ICode,
+                physical.BalLocId, quantity.Value, original.TrxDtTime, physical.LaterEvents,
+                financial.Tail.LaterEvents, financial.Projection.LaterSteps,
+                financial.Tail.CurrentQuantity, financial.Tail.CurrentValue,
+                financial.Projection.FinalQuantity, financial.Projection.FinalValue, owner.Id, cancellationToken);
+            if (locked?.Fingerprint != countProof.Fingerprint)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The stock count changed. Retry rollback.");
+        }
         if (laterPurchaseNote is not null)
         {
             if (!await LockLaterPurchaseNoteSourcesAsync(write, companyCode, branchCode, laterPurchaseNote, cancellationToken))
@@ -893,7 +942,7 @@ public sealed partial class IvInventoryPostingService
             await RecheckWacProductionLeafAsync(write, companyCode, branchCode,
                 financial.Tail.LaterEvents, financial.Projection.LaterSteps, original.TrxDtTime,
                 productionPlan, cancellationToken, owner.Id);
-        if (inventoryTail.Count > 0
+        if (countProof is null && inventoryTail.Count > 0
             && await CheckSimpleWacTailAsync(write, inventoryTail,
                 original.TrxDtTime, cancellationToken, replayInvoice ?? laterInvoicePlan?.Invoice,
                 allowBoundedSales: isReceipt,
@@ -930,6 +979,8 @@ public sealed partial class IvInventoryPostingService
                 "The WAC rollback root does not reverse the posted Inventory owner."));
         var permit = await StockReplayWacRemovalPlanner.PrepareWithinRootAsync(
             context, financial, cancellationToken);
+        var countPermit = countProof is null ? null : await StockReplayPhysicalPlanner
+            .PrepareCountCorrectionsWithinRootAsync(context, physical, cancellationToken);
         var purchasePermit = PreparePurchaseVarianceWrite(context, laterInvoicePlan,
             financial.PlanHash, physical.BranchWatermark, financial.Tail.LaterEvents, financial.Projection.LaterSteps);
         var details = await write.IvTrxBatchDetails.AsNoTracking()
@@ -1132,6 +1183,21 @@ public sealed partial class IvInventoryPostingService
         if (grOrders is not null)
             await ApplyGoodsReceiptPoQtyAsync(write, grOrders, details,
                 -1, batch.TrxDtTime, userId, cancellationToken);
+        if (countPermit is not null)
+        {
+            var qaError = await _qaPhysical.AssertRemainingCoversHoldsAsync(write,
+                companyCode, branchCode, pileId.Value, physical.Projection.FinalQuantity, cancellationToken);
+            if (qaError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+            }
+            var correctedBalance = await write.IvBalLocs.SingleAsync(b => b.Id == pileId.Value
+                && b.CompanyCode == companyCode && b.BranchCode == branchCode, cancellationToken);
+            correctedBalance.StdQty = physical.Projection.FinalQuantity;
+            correctedBalance.TransDate = physical.LaterEvents.Max(e => e.Key.EffectiveAt);
+            correctedBalance.ModifiedDate = DateTime.UtcNow;
+        }
         await write.SaveChangesAsync(cancellationToken);
         var balance = await write.IvBalLocs.AsNoTracking()
             .SingleAsync(b => b.Id == pileId.Value
@@ -1179,9 +1245,16 @@ public sealed partial class IvInventoryPostingService
                 activeFacts[0].Id, 1, 0, reversals[0].Id)],
             cancellationToken);
         reversals[0].ValuationStatus = StockValuationStatuses.Reversed;
-        var tail = await StockReplayWacTailRepricingWriter
-            .AppendPreparedRemovalTailAsync(context, permit, financial, 2,
-                cancellationToken, allowSalesReturn: isReceipt, purchasePermit: purchasePermit);
+        IReadOnlyList<StockCountReplayGeneration> correctedCounts = [];
+        if (countPermit is not null)
+            correctedCounts = await StockCountCorrectionHistoryWriter.AppendAsync(context, countPermit,
+                [new StockCountCorrectionPostingLines(countPermit.Lines[0].LineId, 2, 3)],
+                new RunningNumberService(), cancellationToken);
+        var tail = countPermit is null
+            ? await StockReplayWacTailRepricingWriter.AppendPreparedRemovalTailAsync(context, permit, financial, 2,
+                cancellationToken, allowSalesReturn: isReceipt, purchasePermit: purchasePermit)
+            : await StockReplayWacTailRepricingWriter.AppendPreparedRemovalTailAsync(context, permit, financial,
+                countPermit, 2, cancellationToken);
         if (saleCycle is { RootRole: "PRIMARY", ActiveRootId: not null } && reversedSaleProof is not null)
             await AppendReversedSaleUndoAsync(context, saleCycle, reversedSaleProof, financial, cancellationToken);
         else if (reversedSaleProof is { } saleCorrection
@@ -1209,7 +1282,9 @@ public sealed partial class IvInventoryPostingService
                     remap.Error ?? "The posted invoice could not be remapped."));
         }
         await _coordinator!.CompleteReplayInTransactionAsync(
-            context, tail.RepricedHistoryIds, cancellationToken);
+            context, tail.RepricedHistoryIds.Concat(correctedCounts
+                .Where(g => g.AdjustmentHistoryId.HasValue).Select(g => g.AdjustmentHistoryId!.Value))
+                .Distinct().ToArray(), cancellationToken);
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);
         return result;
