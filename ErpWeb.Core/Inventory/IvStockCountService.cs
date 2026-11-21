@@ -561,6 +561,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail("Not authorized.");
         }
 
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is null)
+            return IvStockCountOperationResult.Fail("Stock count replay is unavailable. Contact your administrator.");
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -937,6 +940,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
             return IvStockCountOperationResult.Fail("Not authorized.");
         }
 
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is null)
+            return IvStockCountOperationResult.Fail("Stock count replay is unavailable. Contact your administrator.");
+
         if (_openPeriodBackdatedReplayEnabled && _coordinator is not null)
         {
             try
@@ -1115,6 +1121,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             return IvStockCountOperationResult.Fail("Not authorized.");
         }
+
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is null)
+            return IvStockCountOperationResult.Fail("Stock count replay is unavailable. Contact your administrator.");
 
         if (_openPeriodBackdatedReplayEnabled && _coordinator is not null)
         {
@@ -1464,6 +1473,9 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             return IvStockCountOperationResult.Fail("A rollback reason is required.");
         }
+
+        if (_openPeriodBackdatedReplayEnabled && _coordinator is null)
+            return IvStockCountOperationResult.Fail("Stock count replay is unavailable. Contact your administrator.");
 
         if (_openPeriodBackdatedReplayEnabled && _coordinator is not null)
         {

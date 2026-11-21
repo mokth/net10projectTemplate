@@ -97,6 +97,10 @@ $patterns = @(
     'Backdated_wac_transfer_preserves_later_issue_or_rejects_shortage',
     'Wac_backdated_lot_issue_posts_and_rolls_back_before_later_issue',
     'Public_historical_WAC_count_posts_rolls_back_and_reposts_before_later_issue',
+    'Replay_enabled_current_day_count_anchors_',
+    'Replay_enabled_count_requires_coordinator_without_changing_stock',
+    'Replay_count_post_and_rollback_respect_qa_stock_holds',
+    'Same_day_issue_cannot_bypass_an_existing_zero_count_anchor',
     'Public_backdated_WAC_count_replays_later_Inventory_transfer',
     'Public_backdated_WAC_count_replays_real_later_Inventory_MI_owner',
     'Public_backdated_WAC_count_preserves_real_later_Inventory_MR_value',
@@ -124,6 +128,11 @@ $patterns = @(
 $required = @(
     'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
     'StockReplayStandardSimulatorTests', 'InventoryValuationServiceTests',
+    'Replay_enabled_current_day_count_anchors_and_reposts',
+    'Replay_enabled_current_day_count_anchors_fifo_and_standard',
+    'Replay_enabled_count_requires_coordinator_without_changing_stock',
+    'Replay_count_post_and_rollback_respect_qa_stock_holds',
+    'Same_day_issue_cannot_bypass_an_existing_zero_count_anchor',
     'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
     'SubconPostBlockedTests', 'SubconModeTests',
     'Purchase_credit_note_refuses_unreplayed_later_issue',
@@ -368,6 +377,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterSameDayReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterDayReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnConsumedGuard
+        & $sqlRunner -Server $SqlServer -NoBuild -CurrentDayCountReplay
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts
