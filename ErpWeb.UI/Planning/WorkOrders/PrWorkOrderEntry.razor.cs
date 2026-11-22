@@ -9,6 +9,7 @@ using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.UI.Components.Pages;
+using ErpWeb.UI.Planning.Masters;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 
@@ -64,6 +65,9 @@ public partial class PrWorkOrderEntry : PageBase
     protected bool CanAddMaterialIssue;
     protected int ActiveTabIndex;
     protected bool InputsExpanded = true;
+    protected bool ShowMaterialDetails;
+    protected bool ShowMachineDetails;
+    protected bool ShowWorkStepDetails;
     protected long? FocusedRouteUid { get; set; }
     protected long? FocusedOperationUid { get; set; }
     protected string? StatusMessage;
@@ -76,13 +80,13 @@ public partial class PrWorkOrderEntry : PageBase
 
     protected IReadOnlyList<Option> DirectionOptions { get; } =
     [
-        new(ProductionSchedulingDirections.Forward, "From start"),
-        new(ProductionSchedulingDirections.Backward, "From end")
+        new(ProductionSchedulingDirections.Forward, "I know the start date"),
+        new(ProductionSchedulingDirections.Backward, "I know the finish date")
     ];
 
     protected IReadOnlyList<Option> SourceOptions { get; } =
     [
-        new(ProductionSourceTypes.Manual, "Manual")
+        new(ProductionSourceTypes.Manual, "Entered directly")
     ];
 
     protected bool IsNewMode => string.Equals(Mode, "new", StringComparison.OrdinalIgnoreCase);
@@ -168,7 +172,7 @@ public partial class PrWorkOrderEntry : PageBase
                 return string.Empty;
             }
 
-            return CurrentBomVersion is int version ? $"{code} · V{version}" : code;
+            return CurrentBomVersion is int version ? $"{code} · version {version}" : code;
         }
     }
     protected string DefinitionDisplayLabel
@@ -181,7 +185,7 @@ public partial class PrWorkOrderEntry : PageBase
                 return "—";
             }
 
-            return string.IsNullOrWhiteSpace(CurrentDefinitionName) ? code : $"{code} — {CurrentDefinitionName}";
+            return string.IsNullOrWhiteSpace(CurrentDefinitionName) ? code : $"{CurrentDefinitionName} ({code})";
         }
     }
     protected bool HasUnsavedInputChanges => !IsViewMode
@@ -205,12 +209,11 @@ public partial class PrWorkOrderEntry : PageBase
         ?? _selectedProductUom
         ?? (RequestMatchesSavedIdentity ? DetailModel?.OutputUom : null)
         ?? string.Empty;
-    protected string SnapshotState => PreviewModel is not null
-        ? IsPreviewCurrent ? "Unsaved processed preview" : "Preview out of date"
-        : NeedsDefinitionUpgrade ? "Refresh required (snapshot/costing contract)"
-        : HasUnsavedInputChanges ? "Changes not processed"
-        : DetailModel is not null ? "Saved server snapshot"
-        : "Not processed";
+    protected string SnapshotState => WorkOrderEntryText.PlanState(
+        DetailModel is not null, NeedsDefinitionUpgrade, HasUnsavedInputChanges, PreviewModel is not null, IsPreviewCurrent);
+    protected string NextStepText => WorkOrderEntryText.NextStep(
+        CurrentStatus, NeedsDefinitionUpgrade, HasUnsavedInputChanges, PreviewModel is not null, IsPreviewCurrent,
+        CanEditInputs, CanOpenEdit, CanReleaseAction);
     protected IReadOnlyList<string> SnapshotWarnings
     {
         get
@@ -219,7 +222,7 @@ public partial class PrWorkOrderEntry : PageBase
             {
                 return
                 [
-                    "Refresh Definition to upgrade the Work Order snapshot/costing contract before editing or re-releasing."
+                    "Update this order from its production setup before editing or sending it to production again."
                 ];
             }
 
@@ -228,14 +231,16 @@ public partial class PrWorkOrderEntry : PageBase
             {
                 return
                 [
-                    "Inputs changed after this preview. Run Calculate Preview again before relying on the displayed requirements.",
+                    "Your details changed after this preview. Check materials and dates again to see the latest requirements.",
                     .. warnings
                 ];
             }
 
             if (PreviewModel is null && HasUnsavedInputChanges)
             {
-                return ["Inputs differ from the saved Work Order. Save Draft to keep the changes as Draft, or Release to apply them and release the Work Order."];
+                return [CanRelease
+                    ? "You have changes to save. Save draft to continue later, or Send to production to save and send this order."
+                    : "You have changes to save. Save draft to keep them for later."];
             }
 
             return warnings;
@@ -361,7 +366,21 @@ public partial class PrWorkOrderEntry : PageBase
         decimal OtherPerOutputUnit,
         decimal TotalPerOutputUnit,
         decimal PlannedConversionCost);
-    protected string DirectionLabel => IsBackwardSchedule ? "From end" : "From start";
+    protected string DirectionLabel => IsBackwardSchedule ? "Plan back from the finish date" : "Plan ahead from the start date";
+
+    protected void DisplayFriendlyText(GridCustomizeCellDisplayTextEventArgs args)
+    {
+        if (args.Value is not string value) return;
+        args.DisplayText = args.FieldName switch
+        {
+            "ProcessType" => ProductionSetupText.ProcessType(value),
+            "IssueMethod" => ProductionSetupText.IssueMethod(value),
+            "SupplySource" => ProductionSetupText.SupplySource(value),
+            "FromStatus" or "ToStatus" => WorkOrderEntryText.Status(value),
+            "RateBasis" or "EventType" or "CycleQuantityMode" => WorkOrderEntryText.ReadableCode(value),
+            _ => args.DisplayText
+        };
+    }
 
     protected void OnRouteFocused(GridFocusedRowChangedEventArgs args)
     {
@@ -410,8 +429,8 @@ public partial class PrWorkOrderEntry : PageBase
         }
     }
     protected string SourceLabel => string.IsNullOrWhiteSpace(Request.SourceReference)
-        ? Request.SourceType
-        : $"{Request.SourceType} · {Request.SourceReference}";
+        ? WorkOrderEntryText.Source(Request.SourceType)
+        : $"{WorkOrderEntryText.Source(Request.SourceType)} · {Request.SourceReference}";
     protected bool IsDeliveryRequestSource =>
         DetailModel?.DeliveryRequestId is not null
         || string.Equals(Request.SourceType, ProductionSourceTypes.DeliveryRequest, StringComparison.OrdinalIgnoreCase);
@@ -667,8 +686,8 @@ public partial class PrWorkOrderEntry : PageBase
                 _previewInputFingerprint = InputFingerprint();
                 _selectedProductDescription = result.Data.ProductDescription;
                 _selectedProductUom = result.Data.OutputUom;
-                StatusMessage = $"Preview calculated from Delivery Request {SelectedDeliveryRequest!.DeliveryRequestNo}; available demand is {result.Data.DeliveryRequestUnplannedQty:N4} {result.Data.OutputUom}.";
-                ActiveTabIndex = 1;
+                StatusMessage = $"Materials and dates checked for delivery request {SelectedDeliveryRequest!.DeliveryRequestNo}. Still to plan: {result.Data.DeliveryRequestUnplannedQty:N4} {result.Data.OutputUom}. This preview is not saved.";
+                ActiveTabIndex = 3;
             }
             finally
             {
@@ -680,7 +699,7 @@ public partial class PrWorkOrderEntry : PageBase
         if (IsDeliveryRequestSource)
         {
             ClearFeedback();
-            StatusMessage = "This Delivery Request Work Order already uses its saved demand snapshot; normal preview is unavailable.";
+            StatusMessage = "This delivery-request order uses its saved plan. Save your draft changes to update its materials and dates.";
             return;
         }
 
@@ -708,8 +727,8 @@ public partial class PrWorkOrderEntry : PageBase
             _previewInputFingerprint = InputFingerprint();
             _selectedProductDescription = result.Data.ProductDescription;
             _selectedProductUom = result.Data.OutputUom;
-            StatusMessage = $"Preview calculated from Product Definition {result.Data.SourceDefinitionCode} V{result.Data.SourceBomVersion} using the current Work Order quantity and scheduling rules.";
-            ActiveTabIndex = 1;
+            StatusMessage = $"Materials and dates checked using setup {result.Data.SourceDefinitionCode}, version {result.Data.SourceBomVersion}. This preview is not saved.";
+            ActiveTabIndex = 3;
         }
         finally
         {
@@ -904,7 +923,7 @@ public partial class PrWorkOrderEntry : PageBase
                 .ToList();
             if (ChangeDefinitionOptions.Count == 0)
             {
-                ErrorMessage = "No other ACTIVE Product Definitions are available for this product.";
+                ErrorMessage = "No other production setups are currently in use for this product.";
                 return;
             }
 
@@ -1033,7 +1052,7 @@ public partial class PrWorkOrderEntry : PageBase
             PreviewModel = null;
             FocusedOperationUid = focusedOperation;
             FocusedRouteUid = focusedRoute;
-            StatusMessage = $"Selected machine {machine.MachineCode} for process {machine.OperationCode}.";
+            StatusMessage = $"Machine {machine.MachineCode} selected for work step {machine.OperationCode}.";
         }
         finally
         {
@@ -1128,18 +1147,18 @@ public partial class PrWorkOrderEntry : PageBase
     }
 
     protected string ReleaseConfirmHeading => IsNewMode
-        ? "Create and release this Work Order for production execution?"
-        : $"Release {CurrentWorkOrderNo} for execution?";
+        ? "Save this work order and send it to production?"
+        : $"Send {CurrentWorkOrderNo} to production?";
 
     protected string ReleaseConfirmDetail => IsNewMode
         ? IsNewDeliveryRequestMode
-            ? $"Delivery Request {SelectedDeliveryRequest!.DeliveryRequestNo} will be allocated {Request.PlannedQty:N4} {SelectedDeliveryRequest.ProductionUom} to the new Work Order and released for execution. No inventory transaction will be posted."
-            : "The Work Order will be created from the selected Product Definition, its route/material/schedule snapshot will be validated, and it will be released for execution. No inventory transaction will be posted."
+            ? $"This plans {Request.PlannedQty:N4} {SelectedDeliveryRequest!.ProductionUom} from delivery request {SelectedDeliveryRequest!.DeliveryRequestNo} on this work order. The system checks the order before sending it. Stock is issued separately."
+            : "The system saves and checks this order using the chosen production setup. Its details become read-only after it is sent. Stock is issued separately."
         : HasUnsavedInputChanges
-            ? "Your current quantity, schedule and header changes will be saved as part of Release. No inventory transaction will be posted."
-            : "The product, Product Definition, schedule and snapshot lines become read-only. This action does not post inventory.";
+            ? "Your quantity, dates and other changes will be saved before the order is sent. Its details become read-only. Stock is issued separately."
+            : "The product, production setup, dates and material plan become read-only. This action does not issue stock.";
 
-    protected string ReleaseConfirmDismissText => IsNewMode ? "Continue Editing" : "Keep Draft";
+    protected string ReleaseConfirmDismissText => IsNewMode ? "Keep editing" : "Keep as draft";
 
     protected async Task ReleaseAsync()
     {
@@ -1189,7 +1208,7 @@ public partial class PrWorkOrderEntry : PageBase
 
             ApplyDetail(result.Data);
             ReleaseConfirmVisible = false;
-            StatusMessage = $"Work Order {result.Data.WorkOrderNo} created and released. No inventory transaction was posted.";
+            StatusMessage = $"Work Order {result.Data.WorkOrderNo} saved and sent to production. Stock has not been issued.";
             SwitchToViewRoute(result.Data.WorkOrderNo);
         }
         finally
@@ -1225,7 +1244,7 @@ public partial class PrWorkOrderEntry : PageBase
 
             ApplyDetail(result.Data);
             ReleaseConfirmVisible = false;
-            StatusMessage = $"Work Order {result.Data.WorkOrderNo} released. No inventory transaction was posted.";
+            StatusMessage = $"Work Order {result.Data.WorkOrderNo} sent to production. Stock has not been issued.";
             SwitchToViewRoute(result.Data.WorkOrderNo);
         }
         finally
@@ -1256,7 +1275,7 @@ public partial class PrWorkOrderEntry : PageBase
 
             ApplyDetail(result.Data);
             ReleaseConfirmVisible = false;
-            StatusMessage = $"Work Order {result.Data.WorkOrderNo} released. No inventory transaction was posted.";
+            StatusMessage = $"Work Order {result.Data.WorkOrderNo} sent to production. Stock has not been issued.";
             SwitchToViewRoute(result.Data.WorkOrderNo);
         }
         finally
@@ -1439,7 +1458,8 @@ public partial class PrWorkOrderEntry : PageBase
 
     protected void DismissStatus() => StatusMessage = null;
     protected void DismissError() => ErrorMessage = null;
-    protected string? FieldError(string field) => ValidationErrors.GetValueOrDefault(field);
+    protected string? FieldError(string field) => ValidationErrors.TryGetValue(field, out var error)
+        ? WorkOrderEntryText.Message(error) : null;
 
     private void SwitchToViewRoute(string workOrderNo)
     {
@@ -1549,10 +1569,10 @@ public partial class PrWorkOrderEntry : PageBase
     {
         var name = string.IsNullOrWhiteSpace(row.DefinitionName)
             ? row.DefinitionCode
-            : $"{row.DefinitionCode} — {row.DefinitionName}";
+            : $"{row.DefinitionName} ({row.DefinitionCode})";
         var revision = row.ActiveVersion ?? row.Version;
-        var suffix = revision > 0 ? $" · V{revision}" : string.Empty;
-        return row.IsDefaultDefinition ? $"{name}{suffix} (default)" : $"{name}{suffix}";
+        var suffix = revision > 0 ? $" · version {revision}" : string.Empty;
+        return row.IsDefaultDefinition ? $"{name}{suffix} · usual setup" : $"{name}{suffix}";
     }
 
     private void ApplyFailure<T>(IvMasterOperationResult<T> result)

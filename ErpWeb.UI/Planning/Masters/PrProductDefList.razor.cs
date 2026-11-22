@@ -55,7 +55,7 @@ public partial class PrProductDefList : PageBase, IDisposable
     protected IReadOnlyList<IvCodeLookupRow> Warehouses { get; set; } = [];
     protected PrProductDefGridDataSource DataSource { get; private set; } = default!;
 
-    protected string TotalCountLabel => TotalCount == 1 ? "1 definition" : $"{TotalCount:N0} definitions";
+    protected string TotalCountLabel => TotalCount == 1 ? "1 setup" : $"{TotalCount:N0} setups";
 
     protected bool HasActiveFilters =>
         !string.IsNullOrWhiteSpace(SearchText)
@@ -79,14 +79,14 @@ public partial class PrProductDefList : PageBase, IDisposable
     [
         new() { Caption = "Product Code", FieldName = nameof(PrProductDefListRow.ProdCode), Width = "140px", SortIndex = 0, VisibleIndex = 1 },
         new() { Caption = "Product Description", FieldName = nameof(PrProductDefListRow.ProdDesc), VisibleIndex = 2 },
-        new() { Caption = "Definition Code", FieldName = nameof(PrProductDefListRow.DefinitionCode), Width = "130px", VisibleIndex = 3 },
-        new() { Caption = "Definition Name", FieldName = nameof(PrProductDefListRow.DefinitionName), Width = "160px", VisibleIndex = 4 },
-        new() { Caption = "Default", FieldName = nameof(PrProductDefListRow.IsDefaultDefinition), DataType = "bool", Width = "90px", VisibleIndex = 5 },
-        new() { Caption = "Active", FieldName = nameof(PrProductDefListRow.ActiveVersion), DataType = "number", Width = "90px", VisibleIndex = 6 },
-        new() { Caption = "Latest", FieldName = nameof(PrProductDefListRow.LatestVersion), DataType = "number", Width = "90px", VisibleIndex = 7 },
+        new() { Caption = "Setup code", FieldName = nameof(PrProductDefListRow.DefinitionCode), Width = "130px", VisibleIndex = 3 },
+        new() { Caption = "Setup name", FieldName = nameof(PrProductDefListRow.DefinitionName), Width = "160px", VisibleIndex = 4 },
+        new() { Caption = "Usual setup", FieldName = nameof(PrProductDefListRow.IsDefaultDefinition), DataType = "bool", Width = "100px", VisibleIndex = 5 },
+        new() { Caption = "Version in use", FieldName = nameof(PrProductDefListRow.ActiveVersion), DataType = "number", Width = "120px", VisibleIndex = 6 },
+        new() { Caption = "Latest version", FieldName = nameof(PrProductDefListRow.LatestVersion), DataType = "number", Width = "115px", VisibleIndex = 7 },
         new() { Caption = "Latest status", FieldName = nameof(PrProductDefListRow.LatestStatus), Width = "120px", VisibleIndex = 8 },
-        new() { Caption = "Mfg Type", FieldName = nameof(PrProductDefListRow.MfgType), Width = "90px", VisibleIndex = 9 },
-        new() { Caption = "BOM Item Count", FieldName = nameof(PrProductDefListRow.BomItemCount), DataType = "number", Width = "120px", VisibleIndex = 10 },
+        new() { Caption = "Item supply", FieldName = nameof(PrProductDefListRow.MfgType), Width = "140px", VisibleIndex = 9 },
+        new() { Caption = "Materials", FieldName = nameof(PrProductDefListRow.BomItemCount), DataType = "number", Width = "100px", VisibleIndex = 10 },
         ..AuditColumns.For(startVisibleIndex: 11)
     ];
 
@@ -103,15 +103,15 @@ public partial class PrProductDefList : PageBase, IDisposable
 
         Buttons =
         [
-            new() { Text = "NEW", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd },
-            new() { Text = "DELETE", IConClass = "far fa-trash-alt", Style = "danger", Enabled = CanDelete }
+            new() { Text = "New setup", IConClass = "fas fa-plus", Style = "primary", Enabled = CanAdd },
+            new() { Text = "Delete", IConClass = "far fa-trash-alt", Style = "danger", Enabled = CanDelete }
         ];
 
         ActionButtons =
         [
-            new() { Text = "VIEW", IConClass = "fa-regular fa-eye", Style = "primary", ToolTip = "View" },
-            new() { Text = "EDIT / REVISE", IConClass = "far fa-edit", Style = "primary", ToolTip = "Edit draft or create a new version", Enabled = CanEdit || CanAdd },
-            new() { Text = "EXPLODE", IConClass = "fa-solid fa-sitemap", Style = "primary", ToolTip = "Explode BOM" }
+            new() { Text = "View", IConClass = "fa-regular fa-eye", Style = "primary", ToolTip = "View production setup" },
+            new() { Text = "Edit / new version", IConClass = "far fa-edit", Style = "primary", ToolTip = "Edit a draft or copy a saved setup into a new version", Enabled = CanEdit || CanAdd },
+            new() { Text = "Materials", IConClass = "fa-solid fa-sitemap", Style = "primary", ToolTip = "View the full material list" }
         ];
 
         var warehouses = await Lookups.ListActiveWarehousesAsync();
@@ -128,6 +128,16 @@ public partial class PrProductDefList : PageBase, IDisposable
 
     protected void OnGridInstance(DxGrid gridInstance) => _grid = gridInstance;
 
+    protected void OnCustomizeCellDisplayText(GridCustomizeCellDisplayTextEventArgs args)
+    {
+        if (args.FieldName == nameof(PrProductDefListRow.LatestStatus) && args.Value is string status)
+            args.DisplayText = ProductionSetupText.Status(status);
+        else if (args.FieldName == nameof(PrProductDefListRow.MfgType) && args.Value is string mfgType)
+            args.DisplayText = ProductionSetupText.ManufacturingType(mfgType);
+        else if (args.FieldName == nameof(PrProductDefListRow.ActiveVersion) && args.Value is null)
+            args.DisplayText = "Not in use";
+    }
+
     protected void OnSelectionsEvent(List<PrProductDefListRow> list)
     {
         _selectedRows.Clear();
@@ -139,7 +149,7 @@ public partial class PrProductDefList : PageBase, IDisposable
         var mode = (info.SelectedButton.Text ?? string.Empty).ToUpperInvariant();
         switch (mode)
         {
-            case "NEW":
+            case "NEW SETUP":
                 if (!CanAdd) { StatusMessage = "Access Denied!!"; return; }
                 Navigation.NavigateTo("/planning/product-definitions/new");
                 break;
@@ -147,13 +157,13 @@ public partial class PrProductDefList : PageBase, IDisposable
                 if (!CanDelete) { StatusMessage = "Access Denied!!"; return; }
                 if (_selectedRows.Count == 0)
                 {
-                    ErrorMessage = "Select at least one product definition.";
+                    ErrorMessage = "Select at least one production setup.";
                     return;
                 }
 
                 ConfirmMessage = _selectedRows.Count == 1
-                    ? $"Delete product definition {_selectedRows[0].ProdCode}[{_selectedRows[0].DefinitionCode}]?"
-                    : $"Delete {_selectedRows.Count} product definitions?";
+                    ? $"Delete production setup {_selectedRows[0].ProdCode} [{_selectedRows[0].DefinitionCode}]?"
+                    : $"Delete {_selectedRows.Count} production setups?";
                 ConfirmVisible = true;
                 break;
         }
@@ -176,10 +186,10 @@ public partial class PrProductDefList : PageBase, IDisposable
             case "VIEW":
                 OpenDefinition("view", row.ProdCode, row.DefinitionCode);
                 break;
-            case "EDIT / REVISE":
+            case "EDIT / NEW VERSION":
                 await OpenCompactEditAsync(row);
                 break;
-            case "EXPLODE":
+            case "MATERIALS":
                 Navigation.NavigateTo(
                     $"/planning/product-definitions/explode/{Uri.EscapeDataString(row.ProdCode)}/{Uri.EscapeDataString(row.DefinitionCode)}");
                 break;

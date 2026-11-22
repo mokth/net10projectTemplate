@@ -111,11 +111,24 @@ public partial class PrProductDefEntry : PageBase
     protected string? LineEditTempId { get; set; }
 
     protected IReadOnlyList<Option> ProcessTypeOptions { get; } =
-        PrProcessTypes.All.Select(x => new Option(x, x)).ToList();
+        PrProcessTypes.All.Select(x => new Option(x, ProductionSetupText.ProcessType(x))).ToList();
     protected IReadOnlyList<Option> IssueMethodOptions { get; } =
-        PrMaterialIssueMethods.All.Select(x => new Option(x, x)).ToList();
+        PrMaterialIssueMethods.All.Select(x => new Option(x, ProductionSetupText.IssueMethod(x))).ToList();
     protected IReadOnlyList<Option> SupplySourceOptions { get; } =
-        PrMaterialSupplySources.All.Select(x => new Option(x, x)).ToList();
+        PrMaterialSupplySources.All.Select(x => new Option(x, ProductionSetupText.SupplySource(x))).ToList();
+
+    protected IEnumerable<Option> WorkCentreOptions => WorkCentres.Select(x =>
+        new Option(x.WrkCtrCd, ProductionSetupText.CodeAndName(x.WrkCtrCd, x.WrkCtrDes)));
+    protected IEnumerable<Option> ProcessOptions => AvailableProcesses.Select(x =>
+        new Option(x.ProcessCd, ProductionSetupText.CodeAndName(x.ProcessCd, x.ProcessDes)));
+    protected IEnumerable<Option> MachineOptions => AvailableMachines.Select(x =>
+        new Option(x.MachineCd, ProductionSetupText.CodeAndName(x.MachineCd, x.MachineDes)));
+    protected IEnumerable<Option> OperatorOptions => Operators.Select(x =>
+        new Option(x.Code, ProductionSetupText.CodeAndName(x.Code, x.Name)));
+
+    protected static readonly string[] SetupSteps = ["Production stages", "Work steps", "Materials", "Machines", "Operators"];
+    protected bool IsAddingOperation => OperationEdit.Uid == 0 && string.IsNullOrWhiteSpace(OperationEdit.TempId);
+    protected string QuantityContext => $"{Model.BaseQty:n4} {Model.BaseUom ?? Model.StdUom} of {Model.ProdDesc ?? Model.ProdCode}";
 
     protected IReadOnlyList<ProducerOption> ProducerOptionsForLine
     {
@@ -191,9 +204,9 @@ public partial class PrProductDefEntry : PageBase
     protected bool IsReadOnlyStatus =>
         Model.Status is PrBomStatuses.Active or PrBomStatuses.Superseded or PrBomStatuses.Inactive;
 
-    protected string PageHeading => IsNewMode ? "New product definition"
-        : IsEditMode ? "Edit product definition"
-        : "View product definition";
+    protected string PageHeading => IsNewMode ? "Set up a product for production"
+        : IsEditMode ? "Edit production setup"
+        : "Production setup";
 
     protected string ModeChip => IsNewMode ? "New" : IsEditMode ? "Edit" : "View";
 
@@ -204,7 +217,11 @@ public partial class PrProductDefEntry : PageBase
 
     protected bool ShowsBuyMakeNotice =>
         !IsViewMode
+        && !string.IsNullOrWhiteSpace(Model.ProdCode)
         && string.Equals(Model.MfgType, PrMfgTypes.Buy, StringComparison.OrdinalIgnoreCase);
+
+    protected bool HasSetupDetailsErrors => ValidationErrors.Keys.Any(x =>
+        x is "DefinitionCode" or "DefinitionName" or "IsDefaultDefinition" or "Prefix" or "Remark");
 
     protected bool IsBomOnlyDefinition =>
         Model.Operations.Count == 0 && Model.Lines.Count > 0;
@@ -761,6 +778,7 @@ public partial class PrProductDefEntry : PageBase
         Model.ProdDesc = row.IDesc;
         Model.StdUom = row.StdUom;
         Model.BaseUom = row.StdUom;
+        Model.MfgType = PrMfgTypes.Normalize(row.MfgType);
         Model.IsActive = true;
         StructureRootProdCode = row.ICode.Trim().ToUpperInvariant();
         CurrentOwnerProdCode = StructureRootProdCode;
@@ -1157,7 +1175,7 @@ public partial class PrProductDefEntry : PageBase
         ErrorMessage = null;
         if (SelectedOperation is null || !Model.Operations.Contains(SelectedOperation))
         {
-            ErrorMessage = "Select the process that consumes these materials first.";
+            ErrorMessage = "Choose the work step that uses this material.";
             return Task.CompletedTask;
         }
         if (string.IsNullOrWhiteSpace(CurrentOwnerProdCode) && string.IsNullOrWhiteSpace(Model.ProdCode))
@@ -1168,19 +1186,19 @@ public partial class PrProductDefEntry : PageBase
 
         if (string.IsNullOrWhiteSpace(LineItem))
         {
-            ErrorMessage = "Component item is required.";
+            ErrorMessage = "Choose a material.";
             return Task.CompletedTask;
         }
 
         if (LineStdQty <= 0m)
         {
-            ErrorMessage = "Standard quantity must be greater than zero.";
+            ErrorMessage = "Enter a material quantity greater than zero.";
             return Task.CompletedTask;
         }
 
         if (LineScrapPercent < 0m)
         {
-            ErrorMessage = "Scrap percent cannot be negative.";
+            ErrorMessage = "Waste allowance cannot be negative.";
             return Task.CompletedTask;
         }
 
@@ -1192,7 +1210,7 @@ public partial class PrProductDefEntry : PageBase
 
         if (string.Equals(LineItem, Model.ProdCode, StringComparison.OrdinalIgnoreCase))
         {
-            ErrorMessage = "Component cannot be the same as the finished product.";
+            ErrorMessage = "Choose a material that is different from the finished product.";
             return Task.CompletedTask;
         }
 
@@ -1211,7 +1229,7 @@ public partial class PrProductDefEntry : PageBase
             var target = FindEditingLine();
             if (target is null || target.OperationKey != SelectedOperation.OperationKey)
             {
-                ErrorMessage = "Select a material belonging to the selected process.";
+                ErrorMessage = "Choose a material from the current work step.";
                 return Task.CompletedTask;
             }
             if (target is not null
@@ -1323,7 +1341,7 @@ public partial class PrProductDefEntry : PageBase
     {
         if (IsReadOnlyStatus)
         {
-            ErrorMessage = $"BOM version {Model.Version} is {Model.Status} and cannot be edited.";
+            ErrorMessage = $"Version {Model.Version} is read-only. Create a new version to make changes.";
             return;
         }
 
@@ -1356,7 +1374,7 @@ public partial class PrProductDefEntry : PageBase
                 return;
             }
 
-            StatusMessage = activate ? "Product definition saved and activated." : "Product definition saved.";
+            StatusMessage = activate ? "Production setup saved and available for new work orders." : "Draft saved. You can continue preparing this setup.";
             if (result.Data is not null)
             {
                 Model = result.Data;
@@ -1407,7 +1425,7 @@ public partial class PrProductDefEntry : PageBase
                 return;
             }
 
-            StatusMessage = $"Created Draft V{result.Data.Version} from V{Model.Version}.";
+            StatusMessage = $"Created draft version {result.Data.Version} from version {Model.Version}.";
             Navigation.NavigateTo(CanonicalEntryUrl("edit", StructureRootProdCode, StructureRootDefinitionCode));
         }
         finally
@@ -1646,7 +1664,7 @@ public partial class PrProductDefEntry : PageBase
         var code = (IsNewMode && IsEditingRoot ? Model.ProdCode : UpdateProdCode)?.Trim().ToUpperInvariant() ?? string.Empty;
         if (code.Length == 0)
         {
-            ErrorMessage = "Product Def Code is required.";
+            ErrorMessage = "Choose a product first.";
             return;
         }
 
@@ -1756,6 +1774,18 @@ public partial class PrProductDefEntry : PageBase
         CaptureCentreEditorClean();
     }
 
+    protected Task StartAnotherStageAsync() => RequestEditorNavigationAsync(() =>
+    {
+        BeginAddCentre();
+        return Task.CompletedTask;
+    });
+
+    protected Task StartAnotherWorkStepAsync() => RequestEditorNavigationAsync(() =>
+    {
+        BeginAddOperation();
+        return Task.CompletedTask;
+    });
+
     protected void EditCentre(PrProductDefCentreProjection.CentreRowVm centre)
     {
         _originalCentreKey = centre.Key;
@@ -1769,7 +1799,7 @@ public partial class PrProductDefEntry : PageBase
         var newKey = PrProductDefCentreProjection.CentreKey.From(CentreEdit.WorkCentreCode, CentreEdit.OutputItemCode);
         if (newKey.IsEmpty)
         {
-            ErrorMessage = "Work centre and center product are required.";
+            ErrorMessage = "Choose a production area and the item made at this stage.";
             return Task.CompletedTask;
         }
 
@@ -1778,13 +1808,13 @@ public partial class PrProductDefEntry : PageBase
             // Pending centre (Add)
             if (CentreRows.Any(r => !r.IsPending && PrProductDefCentreProjection.KeysEqual(r.Key, newKey)))
             {
-                ErrorMessage = $"Centre {newKey.WorkCentreCode} / {newKey.OutputItemCode} already exists.";
+                ErrorMessage = $"A stage for {newKey.WorkCentreCode} making {newKey.OutputItemCode} already exists.";
                 return Task.CompletedTask;
             }
 
             if (CentreEdit.CentralSequence <= 0 || CentreEdit.OutputBaseQty <= 0m)
             {
-                ErrorMessage = "Centre sequence and pack size must be greater than zero.";
+                ErrorMessage = "Stage order and output quantity must be greater than zero.";
                 return Task.CompletedTask;
             }
 
@@ -1797,7 +1827,7 @@ public partial class PrProductDefEntry : PageBase
             BeginAddOperation();
             ActiveTabIndex = 1; // PROCESS
             CaptureCentreEditorClean();
-            StatusMessage = "Centre staged. Add a process to persist it.";
+            StatusMessage = "Stage added to this screen. Add its first work step, then save the setup.";
             return Task.CompletedTask;
         }
 
@@ -1830,7 +1860,7 @@ public partial class PrProductDefEntry : PageBase
             .Select(x => x.OperationKey).ToHashSet();
         if (Model.Lines.Any(x => x.OperationKey is { } key && keys.Contains(key)))
         {
-            ErrorMessage = "Remove the centre's process materials before deleting this centre.";
+            ErrorMessage = "Remove the materials from this stage's work steps before removing the stage.";
             return;
         }
         await RequestEditorNavigationAsync(async () =>
@@ -1866,7 +1896,7 @@ public partial class PrProductDefEntry : PageBase
             SelectedMachine = null;
             ResetMachineEditor();
             LabourEdit = NewLabour();
-            CaptureOperationEditorClean();
+            BeginAddOperation();
             CaptureMachineEditorClean();
             CaptureLabourEditorClean();
             if (!centre.IsPending)
@@ -1915,7 +1945,7 @@ public partial class PrProductDefEntry : PageBase
     {
         if (!SelectedCentreKey.HasValue && PendingCentre is null)
         {
-            ErrorMessage = "Select or add a work centre before adding a process.";
+            ErrorMessage = "Add or choose a production stage before adding a work step.";
             return;
         }
 
@@ -1959,7 +1989,7 @@ public partial class PrProductDefEntry : PageBase
     {
         if (!SelectedCentreKey.HasValue && PendingCentre is null)
         {
-            ErrorMessage = "Select a work centre before saving a process.";
+            ErrorMessage = "Choose the production stage for this work step.";
             return Task.CompletedTask;
         }
 
@@ -1983,14 +2013,14 @@ public partial class PrProductDefEntry : PageBase
             || string.IsNullOrWhiteSpace(OperationEdit.OutputItemCode)
             || string.IsNullOrWhiteSpace(OperationEdit.OperationCode))
         {
-            ErrorMessage = "Work centre, output item and process are required for a route operation.";
+            ErrorMessage = "Choose the production area, the item made, and the work step.";
             return Task.CompletedTask;
         }
 
         if (OperationEdit.CentralSequence <= 0 || OperationEdit.ProcessSequence <= 0
             || OperationEdit.OutputBaseQty <= 0m)
         {
-            ErrorMessage = "Route sequences and output base quantity must be greater than zero.";
+            ErrorMessage = "Stage order, work step order, and output quantity must be greater than zero.";
             return Task.CompletedTask;
         }
 
@@ -2005,7 +2035,7 @@ public partial class PrProductDefEntry : PageBase
                 : x.Uid != OperationEdit.Uid));
         if (duplicate)
         {
-            ErrorMessage = $"Process {OperationEdit.OperationCode} already exists on this centre.";
+            ErrorMessage = $"Work step {OperationEdit.OperationCode} is already in this stage.";
             return Task.CompletedTask;
         }
 
@@ -2067,7 +2097,7 @@ public partial class PrProductDefEntry : PageBase
     {
         if (Model.Lines.Any(x => x.OperationKey == operation.OperationKey))
         {
-            ErrorMessage = "Remove this process's materials before deleting the process.";
+            ErrorMessage = "Remove this work step's materials before removing the work step.";
             return;
         }
         await RequestEditorNavigationAsync(() =>
@@ -2091,7 +2121,7 @@ public partial class PrProductDefEntry : PageBase
     {
         if (SelectedOperation is null)
         {
-            ErrorMessage = "Select a route operation before adding a machine.";
+            ErrorMessage = "Choose a work step before adding a machine.";
             return;
         }
         if (SelectedOperation.Machines.Count > 0)
@@ -2140,12 +2170,12 @@ public partial class PrProductDefEntry : PageBase
     {
         if (SelectedOperation is null)
         {
-            ErrorMessage = "Select a route operation before saving a machine.";
+            ErrorMessage = "Choose the work step that uses this machine.";
             return Task.CompletedTask;
         }
         if (string.IsNullOrWhiteSpace(MachineEdit.MachineCode))
         {
-            ErrorMessage = "Machine code is required.";
+            ErrorMessage = "Choose a machine.";
             return Task.CompletedTask;
         }
         if (MachineEdit.ResourceSequence <= 0 || MachineEdit.ParallelMachineCount <= 0
@@ -2171,7 +2201,7 @@ public partial class PrProductDefEntry : PageBase
             SelectedOperation.Machines.Add(saved);
         else
         {
-            ErrorMessage = "This process already has its machine. Edit or remove it before assigning another.";
+            ErrorMessage = "This work step already has a machine. Update or remove it before adding another.";
             return Task.CompletedTask;
         }
         SelectedMachine = saved;
@@ -2211,12 +2241,12 @@ public partial class PrProductDefEntry : PageBase
     {
         if (SelectedMachine is null)
         {
-            ErrorMessage = "Select and save a machine before adding labour.";
+            ErrorMessage = "Add the machine in step 4 before choosing its operator.";
             return Task.CompletedTask;
         }
         if (string.IsNullOrWhiteSpace(LabourEdit.LabourCode) || LabourEdit.CostPerOutputUnit < 0m)
         {
-            ErrorMessage = "Labour code is required and cost per output unit cannot be negative.";
+            ErrorMessage = "Choose an operator and enter a labour cost of zero or more.";
             return Task.CompletedTask;
         }
 
@@ -2231,7 +2261,7 @@ public partial class PrProductDefEntry : PageBase
             SelectedMachine.Labours.Add(saved);
         else
         {
-            ErrorMessage = "This process-machine already has its labour. Edit or remove it before assigning another.";
+            ErrorMessage = "This machine already has an operator for this work step. Update or remove the assignment first.";
             return Task.CompletedTask;
         }
         LabourEdit = CloneLabour(saved);

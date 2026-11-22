@@ -20,7 +20,7 @@
         @if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
             <div class="iv-toast iv-toast--err" role="alert">
-                <span>@ErrorMessage</span>
+                <span>@ProductionSetupText.ValidationMessage(ErrorMessage)</span>
                 <button type="button" class="iv-toast__close" @onclick="DismissError" aria-label="Dismiss">×</button>
             </div>
         }
@@ -30,9 +30,9 @@
                 <i class="fa-solid fa-diagram-project"></i>
             </div>
             <div class="iv-hero__copy">
-                <p class="iv-eyebrow">Planning · Product Definition</p>
+                <p class="iv-eyebrow">Production · Product setup</p>
                 <h1 class="iv-title">@PageHeading</h1>
-                <p class="iv-subtitle">Define the product, production route, materials, machines, and labour in one controlled revision.</p>
+                <p class="iv-subtitle">Choose what you make, the work involved, and the materials you need.</p>
                 <div class="iv-chips">
                     <span class="iv-chip">@ModeChip</span>
                     @if (!string.IsNullOrWhiteSpace(StructureRootProdCode))
@@ -41,16 +41,16 @@
                     }
                     @if (!IsNewMode && !string.IsNullOrWhiteSpace(Model.ProdCode))
                     {
-                        <span class="iv-chip">Editing V@Model.Version</span>
-                        <span class="iv-chip">@Model.Status</span>
+                        <span class="iv-chip">Version @Model.Version</span>
+                        <span class="iv-chip">@ProductionSetupText.Status(Model.Status)</span>
                         @if (Model.IsDefaultDefinition)
                         {
-                            <span class="iv-chip">Default</span>
+                            <span class="iv-chip">Usual setup</span>
                         }
                     }
                     @if (IsBomOnlyDefinition)
                     {
-                        <span class="iv-chip">BOM-only — cannot create/release a routed Work Order</span>
+                        <span class="iv-chip">Materials only</span>
                     }
                     @if (!IsNewMode)
                     {
@@ -77,15 +77,15 @@
             <section class="iv-card">
                 <header class="pdf-section__head">
                     <div>
-                        <h2 class="iv-card__title mb-0">Choose a Production Definition</h2>
-                        <p>Product <span class="code-style">@ProdCode</span> has more than one definition and no single default.</p>
+                        <h2 class="iv-card__title mb-0">Choose how this product is made</h2>
+                        <p>Product <span class="code-style">@ProdCode</span> has more than one production setup. Choose the one you want to open.</p>
                     </div>
                 </header>
                 <div class="pdf-editor__actions" style="flex-wrap:wrap;gap:.5rem">
                     @foreach (var row in DefinitionChoices)
                     {
                         <DxButton RenderStyle="@(row.IsDefaultDefinition ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
-                                  Text="@(row.IsDefaultDefinition ? $"{row.DefinitionCode} (Default)" : row.DefinitionCode)"
+                                  Text="@(ProductionSetupText.CodeAndName(row.DefinitionCode, row.DefinitionName) + (row.IsDefaultDefinition ? " · Usual setup" : string.Empty))"
                                   Click="@(() => ChooseDefinition(row.DefinitionCode))" />
                     }
                 </div>
@@ -94,13 +94,13 @@
         else
         {
             <div class="pdf-form">
-                <section class="iv-card pdf-overview-card">
+                <section class="iv-card pdf-overview-card" id="production-product-details">
                     <header class="pdf-section__head">
                         <div class="pdf-section-title">
                             <span class="pdf-section-title__icon" aria-hidden="true"><i class="fa-solid fa-cube"></i></span>
                             <div>
-                                <h2 class="iv-card__title mb-0">Product details</h2>
-                                <p>Identity, production definition, and standard output.</p>
+                                <h2 class="iv-card__title mb-0">What are you making?</h2>
+                                <p>Start with the product and the quantity your material list will make.</p>
                             </div>
                         </div>
                         @if (!string.IsNullOrWhiteSpace(OwnerBreadcrumb))
@@ -111,17 +111,28 @@
                     @if (ShowsBuyMakeNotice)
                     {
                         <div class="iv-toast iv-toast--warn pdf-buy-notice" role="status">
-                            Saving this definition will reclassify stock item @Model.ProdCode from BUY to MAKE, including Save Draft.
+                            Saving this setup, including a draft, will mark @Model.ProdCode as made in-house instead of purchased in the stock item record.
                         </div>
                     }
                     @if (IsBomOnlyDefinition)
                     {
-                        <p class="pdf-bom-only-note">BOM-only — cannot create/release a routed Work Order. This is informational and does not block save or activate.</p>
+                        <p class="pdf-bom-only-note">This is a material list only. Add production stages and work steps before creating a production work order. You can still save or activate the material list.</p>
                     }
-                    <div class="pdf-product-info">
-                        <div class="pdf-product-info__col">
+                    @if (IsReadOnlyStatus)
+                    {
+                        <div class="pdf-guidance" role="status">
+                            <i class="fa-solid fa-lock" aria-hidden="true"></i>
+                            <div><strong>This version is read-only.</strong> Choose <strong>Create new version</strong> to change it. Your previous version stays in the production history.
+                                @if (CanAdd)
+                                {
+                                    <div class="pdf-editor__actions"><DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Create new version" Click="@CreateNewVersionAsync" Enabled="@(!IsSubmitting)" /></div>
+                                }
+                            </div>
+                        </div>
+                    }
+                    <div class="pdf-basic-grid">
                             <div class="iv-field pdf-head__code pdf-field-product-code">
-                                <label class="iv-field__label code-style">Product code</label>
+                                <label class="iv-field__label code-style">Product code <span class="pdf-required">Required</span></label>
                                 <div class="pdf-code-row">
                                     @if (IsNewMode && IsEditingRoot && Model.BomHdrId == 0)
                                     {
@@ -137,114 +148,119 @@
                                     @if (IsNewMode && IsEditingRoot && Model.BomHdrId == 0)
                                     {
                                         <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                                  Text="Load product"
+                                                  Text="Find product"
                                                   Click="@UpdateProductAsync"
                                                   Enabled="@(!IsSubmitting)" />
                                     }
                                 </div>
                                 @FieldError("ProdCode")
                             </div>
+                            <div class="iv-field pdf-product-description">
+                                <label class="iv-field__label" for="production-product-name">Product name</label>
+                                <DxTextBox InputId="production-product-name" @bind-Text="@ProductDescText" ReadOnly="true" NullText="Shown after you choose a product" />
+                            </div>
                             <div class="iv-field pdf-field-qty">
-                                <label class="iv-field__label">Standard output quantity</label>
+                                <label class="iv-field__label" for="production-base-quantity">Quantity to make <span class="pdf-required">Required</span></label>
                                 @if (IsViewMode || IsReadOnlyStatus)
                                 {
-                                    <DxTextBox Text="@Model.BaseQty.ToString("n4")" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxTextBox InputId="production-base-quantity" Text="@Model.BaseQty.ToString("n4")" ReadOnly="true" ValidationEnabled="false" />
                                 }
                                 else
                                 {
-                                    <DxSpinEdit @bind-Value="@Model.BaseQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                    <DxSpinEdit InputId="production-base-quantity" @bind-Value="@Model.BaseQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
                                     @FieldError("BaseQty")
                                 }
                             </div>
-                            <div class="iv-field pdf-head__uom pdf-field-uom">
-                                <label class="iv-field__label">Stock UOM</label>
-                                <DxTextBox @bind-Text="@ProductUomText" ReadOnly="true" NullText="From Stock Master" />
+                            <div class="iv-field pdf-field-uom">
+                                <label class="iv-field__label" for="production-base-unit">Production unit</label>
+                                <DxTextBox InputId="production-base-unit" @bind-Text="@Model.BaseUom" ReadOnly="@(IsViewMode || IsReadOnlyStatus)" NullText="From stock item" />
+                                @FieldError("BaseUom")
+                            </div>
+                    </div>
+                    <p class="pdf-quantity-example"><i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Example: to make 100 PCS, enter 100 here, then list the materials needed for all 100 pieces.</p>
+                    <details class="pdf-options" open="@HasSetupDetailsErrors">
+                        <summary>Setup name, work order numbering &amp; notes <span>@Model.DefinitionCode</span></summary>
+                        <p class="pdf-hint">Keep STANDARD for your usual way of making this product. Use a different code for another method, such as LINE-B. A code cannot change after the first save.</p>
+                        <div class="pdf-options-grid">
+                            <div class="iv-field">
+                                <label class="iv-field__label" for="production-setup-code">Setup code</label>
+                                <DxTextBox InputId="production-setup-code" @bind-Text="@Model.DefinitionCode"
+                                           ReadOnly="@(IsViewMode || IsReadOnlyStatus || Model.BomHdrId > 0 || !IsEditingRoot)"
+                                           NullText="STANDARD" />
+                                @FieldError("DefinitionCode")
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label" for="production-setup-name">Setup name</label>
+                                <DxTextBox InputId="production-setup-name" @bind-Text="@Model.DefinitionName" ReadOnly="@(IsViewMode || IsReadOnlyStatus)" NullText="For example, Main production line" />
+                                @FieldError("DefinitionName")
+                            </div>
+                            <div class="iv-field">
+                                <label class="iv-field__label">Usual setup for this product</label>
+                                <DxCheckBox @bind-Checked="@Model.IsDefaultDefinition" Enabled="@(!IsViewMode && !IsReadOnlyStatus)">Use this setup when no other is selected</DxCheckBox>
                             </div>
                             <div class="iv-field pdf-field-prefix">
-                                <label class="iv-field__label">Work Order Prefix</label>
+                                <label class="iv-field__label" for="production-work-prefix">Work order number prefix</label>
                                 @if (IsViewMode || IsReadOnlyStatus)
                                 {
-                                    <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" InputCssClass="code-style" ValidationEnabled="false" />
+                                    <DxTextBox InputId="production-work-prefix" Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" InputCssClass="code-style" ValidationEnabled="false" />
                                 }
                                 else
                                 {
-                                    <DxComboBox Data="@WorkPrefixes"
+                                    <DxComboBox InputId="production-work-prefix" Data="@WorkPrefixes"
                                                 @bind-Value="@Model.Prefix"
                                                 TextFieldName="@nameof(PrWorkPefix.Prefix)"
                                                 ValueFieldName="@nameof(PrWorkPefix.Prefix)"
                                                 SearchMode="ListSearchMode.AutoSearch"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                NullText="Select prefix"
+                                                NullText="Choose if used"
                                                 InputCssClass="code-style" />
                                 }
                             </div>
-                        </div>
-                        <div class="pdf-product-info__col">
-                            <div class="iv-field pdf-product-description">
-                                <label class="iv-field__label">Description</label>
-                                <DxTextBox @bind-Text="@ProductDescText" ReadOnly="true" NullText="From Stock Master" />
+                            <div class="iv-field">
+                                <label class="iv-field__label">Stock unit</label>
+                                <DxTextBox @bind-Text="@ProductUomText" ReadOnly="true" NullText="From stock item" />
+                                <small class="pdf-field-help">A different production unit needs an approved unit conversion.</small>
                             </div>
                             <div class="iv-field pdf-product-remark">
-                                <label class="iv-field__label">Remark</label>
+                                <label class="iv-field__label" for="production-setup-notes">Notes (optional)</label>
                                 @if (IsViewMode || IsReadOnlyStatus)
                                 {
-                                    <DxMemo Text="@(Model.Remark ?? string.Empty)" Rows="3" ReadOnly="true" ValidationEnabled="false" />
+                                    <DxMemo InputId="production-setup-notes" Text="@(Model.Remark ?? string.Empty)" Rows="2" ReadOnly="true" ValidationEnabled="false" />
                                 }
                                 else
                                 {
-                                    <DxMemo @bind-Text="@RemarkText" Rows="3" />
+                                    <DxMemo InputId="production-setup-notes" @bind-Text="@RemarkText" Rows="2" />
                                 }
                             </div>
+                        </div>
+                    </details>
                             <div class="pdf-editor__actions pdf-product-actions">
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                          Text="HOW TO USE"
+                                          Text="Show me an example"
                                           IconCssClass="fa-solid fa-circle-question"
                                           Click="@(() => HelpVisible = true)" />
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                          Text="Preview BOM"
+                                          Text="View material list in use"
+                                          title="Shows the saved version currently in use. Draft changes are not included."
                                           IconCssClass="fa-solid fa-sitemap"
                                           Click="@GoExplodeAsync"
-                                          Enabled="@(!string.IsNullOrWhiteSpace(StructureRootProdCode))" />
+                                          Enabled="@(Model.BomHdrId > 0 && !HasUnsavedWork && !string.IsNullOrWhiteSpace(StructureRootProdCode))" />
                                 @if (!IsEditingRoot && !IsViewMode)
                                 {
                                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                              Text="Back to structure root"
+                                              Text="Back to main product"
                                               IconCssClass="fa-solid fa-turn-up"
                                               Click="@ReturnToStructureRootAsync" />
                                 }
                             </div>
-                        </div>
-                    </div>
-                    <div class="pdf-product-info__meta">
-                        <div class="iv-field">
-                            <label class="iv-field__label">Definition code</label>
-                            <DxTextBox @bind-Text="@Model.DefinitionCode"
-                                       ReadOnly="@(IsViewMode || IsReadOnlyStatus || Model.BomHdrId > 0 || !IsEditingRoot)"
-                                       NullText="STANDARD" />
-                            @FieldError("DefinitionCode")
-                        </div>
-                        <div class="iv-field">
-                            <label class="iv-field__label">Definition name</label>
-                            <DxTextBox @bind-Text="@Model.DefinitionName" ReadOnly="@(IsViewMode || IsReadOnlyStatus)" />
-                            @FieldError("DefinitionName")
-                        </div>
-                        <div class="iv-field">
-                            <label class="iv-field__label">Default definition</label>
-                            <DxCheckBox @bind-Checked="@Model.IsDefaultDefinition" Enabled="@(!IsViewMode && !IsReadOnlyStatus)" />
-                        </div>
-                        <div class="iv-field">
-                            <label class="iv-field__label">Base UOM</label>
-                            <DxTextBox @bind-Text="@Model.BaseUom" ReadOnly="@(IsViewMode || IsReadOnlyStatus)" NullText="From Stock Master" />
-                        </div>
-                    </div>
                     <div class="pdf-definition-summary" aria-label="Definition summary">
                         <div class="pdf-summary-item">
                             <span class="pdf-summary-item__icon"><i class="fa-solid fa-industry"></i></span>
-                            <div><strong>@CentreRows.Count</strong><span>Route steps</span></div>
+                            <div><strong>@CentreRows.Count</strong><span>Production stages</span></div>
                         </div>
                         <div class="pdf-summary-item">
                             <span class="pdf-summary-item__icon"><i class="fa-solid fa-list-ol"></i></span>
-                            <div><strong>@Model.Operations.Count</strong><span>Operations</span></div>
+                            <div><strong>@Model.Operations.Count</strong><span>Work steps</span></div>
                         </div>
                         <div class="pdf-summary-item">
                             <span class="pdf-summary-item__icon"><i class="fa-solid fa-boxes-stacked"></i></span>
@@ -254,9 +270,9 @@
                             <span class="pdf-summary-item__icon"><i class="fa-solid fa-gears"></i></span>
                             <div><strong>@Model.Operations.Sum(x => x.Machines.Count)</strong><span>Machines</span></div>
                         </div>
-                        <div class="pdf-summary-item @(ValidationErrors.Count == 0 ? "is-ready" : "is-attention")">
-                            <span class="pdf-summary-item__icon"><i class="fa-solid @(ValidationErrors.Count == 0 ? "fa-circle-check" : "fa-circle-exclamation")"></i></span>
-                            <div><strong>@(ValidationErrors.Count == 0 ? "No editor issues" : ValidationErrors.Count.ToString())</strong><span>@(ValidationErrors.Count == 0 ? "Not a Work Order release check" : "Issues to review")</span></div>
+                        <div class="pdf-summary-item @(ValidationErrors.Count > 0 ? "is-attention" : null)">
+                            <span class="pdf-summary-item__icon"><i class="fa-solid @(ValidationErrors.Count > 0 ? "fa-circle-exclamation" : "fa-file-pen")"></i></span>
+                            <div><strong>@(ValidationErrors.Count > 0 ? $"{ValidationErrors.Count} to check" : ProductionSetupText.Status(Model.Status))</strong><span>@(HasUnsavedWork ? "Changes to save" : "Save checks the setup")</span></div>
                         </div>
                     </div>
                 </section>
@@ -264,27 +280,32 @@
                 <section class="iv-card pdf-workspace-card">
                     <header class="pdf-workspace-head">
                         <div>
-                            <p class="iv-eyebrow">Manufacturing definition</p>
-                            <h2>Build the production flow</h2>
-                            <p>Work from left to right. Create the route first, then assign operations, materials, and resources.</p>
+                            <p class="iv-eyebrow">How is it made?</p>
+                            <h2>Build your production setup</h2>
+                            <p>Follow the steps below. You can save a draft and finish later.</p>
                         </div>
                         <ol class="pdf-workflow" aria-label="Product definition workflow">
-                            <li class="@(ActiveTabIndex == 0 ? "is-current" : null)"><span>1</span>Route</li>
-                            <li class="@(ActiveTabIndex == 1 ? "is-current" : null)"><span>2</span>Operations</li>
+                            <li class="@(ActiveTabIndex == 0 ? "is-current" : null)"><span>1</span>Stages</li>
+                            <li class="@(ActiveTabIndex == 1 ? "is-current" : null)"><span>2</span>Work steps</li>
                             <li class="@(ActiveTabIndex == 2 ? "is-current" : null)"><span>3</span>Materials</li>
                             <li class="@(ActiveTabIndex == 3 ? "is-current" : null)"><span>4</span>Machines</li>
-                            <li class="@(ActiveTabIndex == 4 ? "is-current" : null)"><span>5</span>Labour</li>
+                            <li class="@(ActiveTabIndex == 4 ? "is-current" : null)"><span>5</span>Operators</li>
                         </ol>
                     </header>
                     <DxTabs ActiveTabIndex="@ActiveTabIndex"
                             ActiveTabIndexChanged="OnActiveTabIndexChanged"
                             CssClass="pdf-tabs"
                             RenderMode="TabsRenderMode.OnDemand">
-                        <DxTabPage Text="1 · ROUTE">
+                        <DxTabPage Text="1 · Production stages">
                             <div class="pdf-tab-body">
+                                <div class="pdf-step-intro">
+                                    <h3>Where does the work happen?</h3>
+                                    <p>Add a stage for each production area, such as Cutting, Mixing or Packing. A simple product may need only one stage.</p>
+                                    <p><strong>Example:</strong> Cutting → Assembly → Packing. Choose the item made at each stage; the last stage normally makes your finished product.</p>
+                                </div>
                                 @if (CentreRows.Count == 0)
                                 {
-                                    <p class="pdf-empty"><i class="fa-solid fa-industry" aria-hidden="true"></i> No work centres yet. Add a centre, then add a process to persist it.</p>
+                                    <p class="pdf-empty"><i class="fa-solid fa-industry" aria-hidden="true"></i> Start by adding your first production stage below.</p>
                                 }
                                 else
                                 {
@@ -293,13 +314,12 @@
                                             <thead>
                                                 <tr>
                                                     <th></th>
-                                                    <th>Work centre</th>
-                                                    <th>Stage</th>
-                                                    <th>Output item</th>
-                                                    <th>Description</th>
-                                                    <th>Class</th>
-                                                    <th>Pack Size</th>
-                                                    <th>Std UOM</th>
+                                                    <th>Production area</th>
+                                                    <th>Order</th>
+                                                    <th>Item made</th>
+                                                    <th>Item name</th>
+                                                    <th>Quantity made</th>
+                                                    <th>Unit</th>
                                                     <th></th>
                                                 </tr>
                                             </thead>
@@ -315,20 +335,19 @@
                                                         }
                                                     </td>
                                                     <td>
-                                                        <button type="button" class="pdf-link-button code-style" @onclick="() => SelectCentreAsync(centre)">@centre.WorkCentreCode</button>
+                                                        <button type="button" class="pdf-link-button" @onclick="() => SelectCentreAsync(centre)">@ProductionSetupText.CodeAndName(centre.WorkCentreCode, centre.WorkCentreDescription)</button>
                                                         @if (centre.IsPending)
                                                         {
-                                                            <span class="pdf-pending-badge">Unsaved — add a process</span>
+                                                            <span class="pdf-pending-badge">Add a work step to keep this stage</span>
                                                         }
                                                         @if (centre.HasSequenceConflict)
                                                         {
-                                                            <span class="pdf-status-badge">Seq conflict</span>
+                                                            <span class="pdf-status-badge">Check stage order</span>
                                                         }
                                                     </td>
                                                     <td>@centre.CentralSequence</td>
                                                     <td class="code-style">@centre.OutputItemCode</td>
-                                                    <td>@(centre.OutputItemDescription ?? centre.WorkCentreDescription)</td>
-                                                    <td class="code-style">@(centre.Class ?? "—")</td>
+                                                    <td>@(centre.OutputItemDescription ?? "—")</td>
                                                     <td>@centre.OutputBaseQty.ToString("n4")</td>
                                                     <td class="code-style">@centre.OutputUom</td>
                                                     <td class="pdf-row-actions">
@@ -347,67 +366,83 @@
                                 @if (!IsViewMode && !IsReadOnlyStatus)
                                 {
                                     <div class="pdf-route-editor pdf-centre-editor">
+                                        <h3 class="pdf-editor-title">@(_originalCentreKey is null ? "Add a production stage" : "Edit production stage")</h3>
                                         <div class="iv-field pdf-field-code">
-                                            <label class="iv-field__label">Work centre</label>
-                                            <DxComboBox Data="@WorkCentres" @bind-Value="@CentreEdit.WorkCentreCode"
-                                                        TextFieldName="@nameof(PrWorkCentre.WrkCtrCd)" ValueFieldName="@nameof(PrWorkCentre.WrkCtrCd)"
-                                                        SearchMode="ListSearchMode.AutoSearch" NullText="Select centre" />
+                                            <label class="iv-field__label" for="production-stage-area">Production area (work centre)</label>
+                                            <DxComboBox InputId="production-stage-area" Data="@WorkCentreOptions" @bind-Value="@CentreEdit.WorkCentreCode"
+                                                        TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)"
+                                                        SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose an area" />
+                                            @if (WorkCentres.Count == 0)
+                                            {
+                                                <small class="pdf-field-help">Create a work centre in Production masters first.</small>
+                                            }
                                         </div>
                                         <div class="iv-field pdf-field-seq">
-                                            <label class="iv-field__label">Stage sequence</label>
-                                            <DxSpinEdit @bind-Value="@CentreEdit.CentralSequence" MinValue="1" ShowSpinButtons="false" />
+                                            <label class="iv-field__label" for="production-stage-order">Stage order</label>
+                                            <DxSpinEdit InputId="production-stage-order" @bind-Value="@CentreEdit.CentralSequence" MinValue="1" ShowSpinButtons="false" />
+                                            <small class="pdf-field-help">Lower numbers run first. The same number allows stages to run together.</small>
                                         </div>
                                         <div class="iv-field pdf-field-product-code">
-                                            <label class="iv-field__label">Output item</label>
+                                            <label class="iv-field__label">Item made at this stage</label>
                                             <IvStockMasterPicker ICode="@CentreEdit.OutputItemCode"
                                                                  ICodeChanged="OnCentreOutputCodeChanged"
                                                                  Selected="OnCentreOutputSelectedAsync"
                                                                  InputCssClass="required-field code-style" />
                                         </div>
                                         <div class="iv-field pdf-field-description">
-                                            <label class="iv-field__label">Description</label>
+                                            <label class="iv-field__label">Item name</label>
                                             <DxTextBox Text="@(CentreEdit.OutputItemDescription ?? string.Empty)" ReadOnly="true" ValidationEnabled="false" />
                                         </div>
-                                        <div class="iv-field pdf-field-short-code">
-                                            <label class="iv-field__label">Class</label>
-                                            <DxTextBox Text="@(CentreEdit.Class ?? string.Empty)" ReadOnly="true" InputCssClass="code-style" ValidationEnabled="false" />
-                                        </div>
                                         <div class="iv-field pdf-field-qty">
-                                            <label class="iv-field__label">Pack Size</label>
+                                            <label class="iv-field__label">Stage output quantity</label>
                                             <DxSpinEdit @bind-Value="@CentreEdit.OutputBaseQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
                                         </div>
                                         <div class="iv-field pdf-field-uom">
-                                            <label class="iv-field__label">Std UOM</label>
+                                            <label class="iv-field__label">Output unit</label>
                                             <DxTextBox @bind-Text="@CentreEdit.OutputUom" InputCssClass="code-style" />
                                         </div>
                                         <div class="pdf-editor__actions pdf-route-editor__actions">
-                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="New route step" IconCssClass="fa-solid fa-plus" Click="@BeginAddCentre" />
-                                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Save route step" IconCssClass="fa-solid fa-check" Click="@SaveCentreAsync" />
+                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Start another stage" IconCssClass="fa-solid fa-plus" Click="@StartAnotherStageAsync" />
+                                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(_originalCentreKey is null ? "Add stage & choose work steps" : "Update stage")" IconCssClass="fa-solid fa-check" Click="@SaveCentreAsync" />
                                         </div>
+                                        <p class="pdf-field-help pdf-editor-note">Adding a stage opens its work steps. Add at least one work step, then use Save draft below to save the setup.</p>
                                     </div>
                                 }
                             </div>
                         </DxTabPage>
 
-                        <DxTabPage Text="2 · OPERATIONS">
+                        <DxTabPage Text="2 · Work steps">
                             <div class="pdf-tab-body">
+                                <div class="pdf-step-intro">
+                                    <h3>What work is done at each stage?</h3>
+                                    <p>Add the jobs in order, such as Cut, Drill or Pack. Mark the last job in each stage so the system knows when that stage is finished.</p>
+                                </div>
+                                <div class="pdf-context-strip" aria-label="Choose a production stage">
+                                    <span class="pdf-context-strip__label">Stage</span>
+                                    @foreach (var stage in CentreRows)
+                                    {
+                                        <button type="button" class="pdf-context-chip @(SelectedCentreKey.HasValue && PrProductDefCentreProjection.KeysEqual(SelectedCentreKey.Value, stage.Key) ? "is-selected" : null)" @onclick="() => SelectCentreAsync(stage)">
+                                            <span>@stage.CentralSequence</span><strong>@ProductionSetupText.CodeAndName(stage.WorkCentreCode, stage.WorkCentreDescription)</strong><small>@stage.OutputItemCode</small>
+                                        </button>
+                                    }
+                                </div>
                                 @if (!SelectedCentreKey.HasValue)
                                 {
-                                    <p class="pdf-hint">Select a work center first.</p>
+                                    <p class="pdf-empty">Add a production stage in step 1, then choose the work done there.</p>
                                 }
                                 else
                                 {
-                                    <p class="pdf-hint">Processes for <strong class="code-style">@SelectedCentreKey.Value.WorkCentreCode</strong> / <strong class="code-style">@SelectedCentreKey.Value.OutputItemCode</strong>@(PendingCentre is not null && PrProductDefCentreProjection.KeysEqual(SelectedCentreKey.Value, PendingCentre.Key) ? " (pending centre — first process will persist it)" : string.Empty)</p>
+                                    <p class="pdf-hint">Work at <strong class="code-style">@SelectedCentreKey.Value.WorkCentreCode</strong> to make <strong class="code-style">@SelectedCentreKey.Value.OutputItemCode</strong>@(PendingCentre is not null && PrProductDefCentreProjection.KeysEqual(SelectedCentreKey.Value, PendingCentre.Key) ? ". Add the first work step below to keep this stage." : string.Empty)</p>
                                     @if (FilteredProcesses.Count == 0)
                                     {
-                                        <p class="pdf-empty"><i class="fa-solid fa-route" aria-hidden="true"></i> No processes for this centre.</p>
+                                        <p class="pdf-empty"><i class="fa-solid fa-route" aria-hidden="true"></i> Add the first work step for this stage below.</p>
                                     }
                                     else
                                     {
                                         <div class="pdf-route-table-wrap">
                                             <table class="pdf-route-table">
                                                 <thead>
-                                                    <tr><th></th><th>Process</th><th>Type</th><th>BOM</th><th>Seq No</th><th>Duration</th><th>Setup Lost</th><th>Op Lost</th><th>Final</th><th>Remark</th><th></th></tr>
+                                                    <tr><th></th><th>Work step</th><th>Type of work</th><th>Materials</th><th>Order</th><th>Time (min)</th><th>Last in stage?</th><th>Notes</th><th></th></tr>
                                                 </thead>
                                                 <tbody>
                                                 @foreach (var operation in FilteredProcesses)
@@ -420,15 +455,12 @@
                                                             }
                                                         </td>
                                                         <td>
-                                                            <button type="button" class="pdf-link-button code-style" @onclick="() => SelectOperationAsync(operation)">@operation.OperationCode</button>
-                                                            <small>@operation.OperationDescription</small>
+                                                            <button type="button" class="pdf-link-button" @onclick="() => SelectOperationAsync(operation)">@ProductionSetupText.CodeAndName(operation.OperationCode, operation.OperationDescription)</button>
                                                         </td>
-                                                        <td class="code-style">@operation.ProcessType</td>
-                                                        <td><button type="button" class="pdf-link-button" @onclick="() => OpenProcessBomAsync(operation)">@(Model.Lines.Any(x => x.OperationKey == operation.OperationKey) ? "View BOM" : "No BOM required")</button></td>
+                                                        <td>@ProductionSetupText.ProcessType(operation.ProcessType)</td>
+                                                        <td><button type="button" class="pdf-link-button" @onclick="() => OpenProcessBomAsync(operation)">@(Model.Lines.Any(x => x.OperationKey == operation.OperationKey) ? "View materials" : "Add materials")</button></td>
                                                         <td>@operation.ProcessSequence</td>
                                                         <td>@(PrProcessTypes.IsDurationBased(operation.ProcessType) || (operation.ProcessType == PrProcessTypes.Packing && operation.Machines.Count == 0) ? operation.StandardDurationMinutes.ToString("n4") : "—")</td>
-                                                        <td>@operation.SetupLossQty.ToString("n4")</td>
-                                                        <td>@operation.OperationLossQty.ToString("n4")</td>
                                                         <td>@(operation.IsFinalOperation ? "Yes" : "No")</td>
                                                         <td>@operation.Remark</td>
                                                         <td class="pdf-row-actions">
@@ -447,64 +479,76 @@
                                     @if (!IsViewMode && !IsReadOnlyStatus)
                                     {
                                         <div class="pdf-route-editor pdf-process-editor">
+                                            <h3 class="pdf-editor-title">@(IsAddingOperation ? "Add a work step" : "Edit work step")</h3>
                                             <div class="iv-field pdf-field-code">
-                                                <label class="iv-field__label">Process</label>
-                                                <DxComboBox Data="@AvailableProcesses" @bind-Value="@OperationEdit.OperationCode"
-                                                            TextFieldName="@nameof(PrProcess.ProcessCd)" ValueFieldName="@nameof(PrProcess.ProcessCd)"
-                                                            SearchMode="ListSearchMode.AutoSearch" NullText="Select process" />
+                                                <label class="iv-field__label" for="production-work-step">Work step (process)</label>
+                                                <DxComboBox InputId="production-work-step" Data="@ProcessOptions" @bind-Value="@OperationEdit.OperationCode"
+                                                            TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)"
+                                                            SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose the work to do" />
+                                                @if (AvailableProcesses.Count == 0)
+                                                {
+                                                    <small class="pdf-field-help">Create a process for this work centre in Production masters first.</small>
+                                                }
                                             </div>
                                             <div class="iv-field pdf-field-seq">
-                                                <label class="iv-field__label">Seq No</label>
+                                                <label class="iv-field__label">Work step order</label>
                                                 <DxSpinEdit @bind-Value="@OperationEdit.ProcessSequence" MinValue="1" ShowSpinButtons="false" />
                                             </div>
                                             <div class="iv-field pdf-field-code">
-                                                <label class="iv-field__label">Process type</label>
+                                                <label class="iv-field__label">Type of work</label>
                                                 <DxComboBox Data="@ProcessTypeOptions"
                                                             @bind-Value="@OperationEdit.ProcessType"
                                                             TextFieldName="@nameof(Option.Text)"
                                                             ValueFieldName="@nameof(Option.Value)"
                                                             SearchMode="ListSearchMode.AutoSearch" />
+                                                <small class="pdf-field-help">Choose manual work or a quality check when no machine is used.</small>
                                             </div>
                                             @if (ShowsStandardDuration(OperationEdit))
                                             {
                                                 <div class="iv-field pdf-field-qty">
-                                                    <label class="iv-field__label">Duration (min)</label>
+                                                    <label class="iv-field__label">Time needed (minutes)</label>
                                                     <DxSpinEdit @bind-Value="@OperationEdit.StandardDurationMinutes" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                                    <small class="pdf-field-help">Used to plan this work step. Enter a time greater than zero before using the setup.</small>
                                                 </div>
                                             }
+                                            <div class="iv-field pdf-field-check">
+                                                <label class="iv-field__label">Last work step in this stage</label>
+                                                <DxCheckBox @bind-Checked="@OperationEdit.IsFinalOperation" AllowIndeterminateState="false">Completing this work finishes the stage</DxCheckBox>
+                                            </div>
+                                            <div class="iv-field pdf-field-remark">
+                                                <label class="iv-field__label">Work instructions (optional)</label>
+                                                <DxTextBox @bind-Text="@OperationEdit.Remark" />
+                                            </div>
+                                            <details class="pdf-options">
+                                                <summary>Expected losses &amp; extra costs (optional)</summary>
+                                                <div class="pdf-options-grid">
                                             <div class="iv-field pdf-field-qty">
-                                                <label class="iv-field__label">Setup loss</label>
+                                                <label class="iv-field__label">Quantity lost during setup</label>
                                                 <DxSpinEdit @bind-Value="@OperationEdit.SetupLossQty" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />
                                             </div>
                                             <div class="iv-field pdf-field-qty">
-                                                <label class="iv-field__label">Operation loss</label>
+                                                <label class="iv-field__label">Quantity lost during work</label>
                                                 <DxSpinEdit @bind-Value="@OperationEdit.OperationLossQty" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />
                                             </div>
                                             <div class="pdf-inline-costing">
-                                                <span class="pdf-inline-costing__label">Optional standard conversion cost / good output</span>
+                                                <span class="pdf-inline-costing__label">Extra cost per good unit made</span>
                                                 <div class="pdf-inline-costing__fields">
                                                     <div class="iv-field pdf-field-qty">
-                                                        <label class="iv-field__label">Utilities / OH</label>
+                                                        <label class="iv-field__label">Utilities &amp; overhead</label>
                                                         <DxSpinEdit @bind-Value="@OperationEdit.UtilitiesOverheadCostPerOutputUnit" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" />
                                                     </div>
                                                     <div class="iv-field pdf-field-qty">
-                                                        <label class="iv-field__label">Other</label>
+                                                        <label class="iv-field__label">Other cost</label>
                                                         <DxSpinEdit @bind-Value="@OperationEdit.OtherCostPerOutputUnit" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" />
                                                     </div>
                                                 </div>
-                                                <small>Optional standard conversion cost in company base currency. Applied per good output unit. Leave 0 when not used.</small>
+                                                <small>Enter costs in your company's base currency for each good unit made. Leave 0 if not used. Loss quantities use the stage's output unit.</small>
                                             </div>
-                                            <div class="iv-field pdf-field-check">
-                                                <label class="iv-field__label">Final process</label>
-                                                <DxCheckBox @bind-Checked="@OperationEdit.IsFinalOperation" AllowIndeterminateState="false" />
-                                            </div>
-                                            <div class="iv-field pdf-field-remark">
-                                                <label class="iv-field__label">Remark</label>
-                                                <DxTextBox @bind-Text="@OperationEdit.Remark" />
-                                            </div>
+                                                </div>
+                                            </details>
                                             <div class="pdf-editor__actions pdf-route-editor__actions">
-                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="New process" Click="@BeginAddOperation" />
-                                                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Save process" Click="@SaveOperationAsync" />
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Start another work step" Click="@StartAnotherWorkStepAsync" />
+                                                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(IsAddingOperation ? "Add work step" : "Update work step")" Click="@SaveOperationAsync" />
                                             </div>
                                         </div>
                                     }
@@ -512,17 +556,22 @@
                             </div>
                         </DxTabPage>
 
-                        <DxTabPage Text="3 · MATERIALS">
+                        <DxTabPage Text="3 · Materials">
                             <div class="pdf-tab-body">
+                                <div class="pdf-step-intro">
+                                    <h3>What materials does each work step need?</h3>
+                                    <p>Choose a work step on the left, then add the materials used there. Leave the list empty if that work uses no extra materials.</p>
+                                    <p class="pdf-quantity-context"><strong>Enter material quantities to make @QuantityContext.</strong> Waste allowance is added separately.</p>
+                                </div>
                                 <div class="pdf-bom-workspace">
                                     <aside class="pdf-bom-processes">
                                         <div class="pdf-bom-processes__head">
-                                            <span>Processes</span>
+                                            <span>Work steps</span>
                                             <span class="pdf-count">@Model.Operations.Count</span>
                                         </div>
                                         @if (Model.Operations.Count == 0)
                                         {
-                                            <p class="pdf-bom-processes__empty">Add a process before defining materials.</p>
+                                            <p class="pdf-bom-processes__empty">Add a work step in step 2 before adding materials.</p>
                                         }
                                         else
                                         {
@@ -534,12 +583,12 @@
                                                         @onclick="() => SelectBomOperationAsync(process)">
                                                     <span class="pdf-bom-process__seq">@process.ProcessSequence</span>
                                                     <span class="pdf-bom-process__content">
-                                                        <strong class="code-style">@process.OperationCode</strong>
-                                                        <small>@process.OperationDescription</small>
+                                                        <strong>@(process.OperationDescription ?? process.OperationCode)</strong>
+                                                        <small>@process.OperationCode</small>
                                                         <small>@process.WorkCentreCode · @process.OutputItemCode</small>
                                                     </span>
                                                     <span class="pdf-bom-process__state @(materialCount == 0 ? "is-empty" : null)">
-                                                        @(materialCount == 0 ? "No BOM" : $"{materialCount} item{(materialCount == 1 ? "" : "s")}")
+                                                        @(materialCount == 0 ? "No materials" : $"{materialCount} item{(materialCount == 1 ? "" : "s")}")
                                                     </span>
                                                 </button>
                                             }
@@ -551,18 +600,18 @@
                                         {
                                             <div class="pdf-empty pdf-bom-empty">
                                                 <i class="fa-solid fa-diagram-project" aria-hidden="true"></i>
-                                                <span>Select a process to define the materials it consumes.</span>
+                                                <span>Choose a work step to add or review its materials.</span>
                                             </div>
                                         }
                                         else
                                         {
                                             <header class="pdf-bom-main__head">
                                                 <div>
-                                                    <span class="pdf-bom-eyebrow">@SelectedOperation.WorkCentreCode · Process @SelectedOperation.ProcessSequence</span>
+                                                    <span class="pdf-bom-eyebrow">@SelectedOperation.WorkCentreCode · Work step @SelectedOperation.ProcessSequence</span>
                                                     <h3>@SelectedOperation.OperationCode <small>@SelectedOperation.OperationDescription</small></h3>
                                                 </div>
                                                 <span class="pdf-bom-state @(CurrentOwnerLineCount == 0 ? "is-empty" : null)">
-                                                    @(CurrentOwnerLineCount == 0 ? "No BOM required" : $"{CurrentOwnerLineCount} material{(CurrentOwnerLineCount == 1 ? "" : "s")}")
+                                                    @(CurrentOwnerLineCount == 0 ? "No materials added" : $"{CurrentOwnerLineCount} material{(CurrentOwnerLineCount == 1 ? "" : "s")}")
                                                 </span>
                                             </header>
 
@@ -570,8 +619,8 @@
                                             {
                                                 <div class="pdf-bom-assignment">
                                                     <div>
-                                                        <strong>Assign existing materials</strong>
-                                                        <span>Choose which process consumes each migrated material.</span>
+                                                        <strong>Choose a work step for these materials</strong>
+                                                        <span>These materials have no work step yet. Assign each one to the work that uses it.</span>
                                                     </div>
                                                     @foreach (var material in Model.Lines.Where(x => x.OperationKey is null))
                                                     {
@@ -591,8 +640,8 @@
                                             @if (CurrentOwnerLineCount == 0)
                                             {
                                                 <div class="pdf-empty pdf-bom-empty">
-                                                    <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
-                                                    <span>This process uses the previous process output and consumes no additional material.</span>
+                                                    <i class="fa-solid fa-box-open" aria-hidden="true"></i>
+                                                    <span>No extra materials have been added to this work step. Add them below if needed.</span>
                                                 </div>
                                             }
                                             else
@@ -601,18 +650,18 @@
                                                     <DxTreeList Data="@ProcessBomNodes"
                                                                 KeyFieldName="@nameof(PrBomStructureNode.Key)"
                                                                 ParentKeyFieldName="@nameof(PrBomStructureNode.ParentKey)"
+                                                                AutoExpandAllNodes="true"
                                                                 FocusedRowEnabled="true"
                                                                 FocusedRowChanged="OnTreeFocusedRowChanged"
                                                                 TextWrapEnabled="false"
                                                                 CssClass="w-100">
                                                         <Columns>
-                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.ItemCode)" Caption="Item" Width="130px" />
-                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.ItemDesc)" Caption="Description" />
-                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.StdQty)" Caption="Std Qty" DisplayFormat="n4" Width="90px" />
-                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.StdUom)" Caption="UOM" Width="75px" />
+                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.ItemCode)" Caption="Material code" Width="130px" />
+                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.ItemDesc)" Caption="Material name" />
+                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.StdQty)" Caption="Quantity needed" DisplayFormat="n4" Width="130px" />
+                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.StdUom)" Caption="Unit" Width="75px" />
                                                             <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.Warehouse)" Caption="Warehouse" Width="100px" />
-                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.MfgType)" Caption="Type" Width="75px" />
-                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.ScrapPercent)" Caption="Scrap %" DisplayFormat="n4" Width="85px" />
+                                                            <DxTreeListDataColumn FieldName="@nameof(PrBomStructureNode.ScrapPercent)" Caption="Waste %" DisplayFormat="n4" Width="85px" />
                                                         </Columns>
                                                     </DxTreeList>
                                                 </div>
@@ -621,60 +670,36 @@
                                             @if (!IsViewMode && !IsReadOnlyStatus)
                                             {
                                                 <div class="pdf-editor pdf-bom-editor">
+                                        <h3 class="pdf-editor-title">@(LineEditUid is null && LineEditTempId is null ? "Add a material" : "Edit material")</h3>
                                         <div class="iv-field pdf-editor__item pdf-field-product-code">
-                                            <label class="iv-field__label code-style">Item</label>
+                                            <label class="iv-field__label">Material code</label>
                                             <IvStockMasterPicker ICode="@LineItem"
                                                                  ICodeChanged="OnLineItemCodeChanged"
                                                                  Selected="OnLineItemSelectedAsync"
                                                                  InputCssClass="required-field code-style" />
                                         </div>
                                         <div class="iv-field pdf-field-description">
-                                            <label class="iv-field__label">Description</label>
-                                            <DxTextBox @bind-Text="@LineItemDescText" ReadOnly="true" NullText="From Stock Master" />
+                                            <label class="iv-field__label">Material name</label>
+                                            <DxTextBox @bind-Text="@LineItemDescText" ReadOnly="true" NullText="From stock item" />
                                         </div>
                                         <div class="iv-field pdf-field-qty">
-                                            <label class="iv-field__label">Std Qty</label>
+                                            <label class="iv-field__label">Quantity needed</label>
                                             <DxSpinEdit @bind-Value="@LineStdQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
                                         </div>
                                         <div class="iv-field pdf-field-uom">
-                                            <label class="iv-field__label code-style">UOM</label>
-                                            <DxTextBox @bind-Text="@LineUomText" ReadOnly="true" NullText="From Stock Master" InputCssClass="code-style" />
+                                            <label class="iv-field__label">Unit</label>
+                                            <DxTextBox @bind-Text="@LineUomText" ReadOnly="true" NullText="From stock item" InputCssClass="code-style" />
                                         </div>
                                         <div class="iv-field pdf-field-warehouse">
-                                            <label class="iv-field__label">Preferred issue warehouse</label>
+                                            <label class="iv-field__label">Take material from</label>
                                             <IvCodeComboBox Data="@Warehouses"
                                                             @bind-Value="@LineWarehouse"
                                                             NullText="Select warehouse"
                                                             InputCssClass="required-field" />
-                                        </div>
-                                        <div class="iv-field pdf-editor__default pdf-field-check">
-                                            <label class="iv-field__label">Default</label>
-                                            <DxCheckBox @bind-Checked="@LineBomDefault" AllowIndeterminateState="false" />
+                                            <small class="pdf-field-help">Preferred warehouse; stock is not reserved here.</small>
                                         </div>
                                         <div class="iv-field pdf-field-code">
-                                            <label class="iv-field__label code-style">Alternate group</label>
-                                            <DxTextBox @bind-Text="@LineAlternateGroupCode"
-                                                       NullText="Defaults to item code"
-                                                       InputCssClass="code-style" />
-                                        </div>
-                                        <div class="iv-field pdf-field-qty">
-                                            <label class="iv-field__label">Tolerance</label>
-                                            <DxSpinEdit @bind-Value="@LineTolerance" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />
-                                        </div>
-                                        <div class="iv-field pdf-field-qty">
-                                            <label class="iv-field__label">Scrap %</label>
-                                            <DxSpinEdit @bind-Value="@LineScrapPercent" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />
-                                        </div>
-                                        <div class="iv-field pdf-field-code">
-                                            <label class="iv-field__label">Issue method</label>
-                                            <DxComboBox Data="@IssueMethodOptions"
-                                                        @bind-Value="@LineIssueMethod"
-                                                        TextFieldName="@nameof(Option.Text)"
-                                                        ValueFieldName="@nameof(Option.Value)"
-                                                        SearchMode="ListSearchMode.AutoSearch" />
-                                        </div>
-                                        <div class="iv-field pdf-field-code">
-                                            <label class="iv-field__label">Supply source</label>
+                                            <label class="iv-field__label">Where does this material come from?</label>
                                             <DxComboBox Data="@SupplySourceOptions"
                                                         Value="@LineSupplySource"
                                                         ValueChanged="@((string? v) => OnLineSupplySourceChanged(v))"
@@ -685,52 +710,84 @@
                                         @if (string.Equals(LineSupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.Ordinal))
                                         {
                                             <div class="iv-field pdf-field-code">
-                                                <label class="iv-field__label">Producing route step</label>
+                                                <label class="iv-field__label">Stage that makes this material</label>
                                                 <DxComboBox Data="@ProducerOptionsForLine"
                                                             @bind-Value="@LineProducingRouteStepKey"
                                                             TextFieldName="@nameof(ProducerOption.Text)"
                                                             ValueFieldName="@nameof(ProducerOption.Value)"
                                                             SearchMode="ListSearchMode.AutoSearch"
-                                                            NullText="@(ProducerOptionsForLine.Count == 0 ? "Save draft first" : "Select producer")" />
+                                                            NullText="@(ProducerOptionsForLine.Count == 0 ? "Save stages as a draft first" : "Choose a stage")" />
+                                                <small class="pdf-field-help">Choose the stage that makes this item before the current work uses it.</small>
                                             </div>
                                         }
                                         @if (string.Equals(LineSupplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.Ordinal))
                                         {
                                             <div class="iv-field pdf-field-code">
-                                                <label class="iv-field__label">Component Production Definition</label>
+                                                <label class="iv-field__label">Production setup for this material</label>
                                                 <DxComboBox Data="@ComponentDefinitionOptions"
                                                             Value="@LineComponentDefinitionCode"
                                                             ValueChanged="@((string? v) => LineComponentDefinitionCode = v)"
                                                             TextFieldName="@nameof(DefinitionOption.Text)"
                                                             ValueFieldName="@nameof(DefinitionOption.Value)"
                                                             SearchMode="ListSearchMode.AutoSearch"
-                                                            NullText="@(ComponentDefinitionOptions.Count == 0 ? "No definitions for item" : "Select definition")"
+                                                            NullText="@(ComponentDefinitionOptions.Count == 0 ? "No setup found for this item" : "Choose its production setup")"
                                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" ValueExpression="@(() => LineComponentDefinitionCode)" />
                                             </div>
                                         }
+                                        <details class="pdf-options">
+                                            <summary>Waste, substitutes &amp; material issue options</summary>
+                                            <div class="pdf-options-grid">
+                                                <div class="iv-field">
+                                                    <label class="iv-field__label">Waste allowance (%)</label>
+                                                    <DxSpinEdit @bind-Value="@LineScrapPercent" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                                    <small class="pdf-field-help">Extra material for expected waste. Leave 0 if not needed.</small>
+                                                </div>
+                                                <div class="iv-field">
+                                                    <label class="iv-field__label">Substitute group</label>
+                                                    <DxTextBox @bind-Text="@LineAlternateGroupCode" NullText="Uses the material code if blank" InputCssClass="code-style" />
+                                                    <small class="pdf-field-help">Give interchangeable materials the same group code.</small>
+                                                </div>
+                                                <div class="iv-field">
+                                                    <label class="iv-field__label">Usual material</label>
+                                                    <DxCheckBox @bind-Checked="@LineBomDefault" AllowIndeterminateState="false">Use this item by default</DxCheckBox>
+                                                    <small class="pdf-field-help">Each substitute group needs one usual material.</small>
+                                                </div>
+                                                <div class="iv-field">
+                                                    <label class="iv-field__label">Material tolerance</label>
+                                                    <DxSpinEdit @bind-Value="@LineTolerance" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                                </div>
+                                                <div class="iv-field">
+                                                    <label class="iv-field__label">How materials are issued</label>
+                                                    <DxComboBox Data="@IssueMethodOptions" @bind-Value="@LineIssueMethod" TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)" SearchMode="ListSearchMode.AutoSearch" />
+                                                    <small class="pdf-field-help">Controls the material issue method on the work order.</small>
+                                                </div>
+                                            </div>
+                                        </details>
                                         <div class="pdf-editor__actions">
-                                            <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                                      Text="Add under selection"
-                                                      Click="@BeginAddUnderSelectionAsync"
-                                                      Enabled="@CanAddUnderSelection" />
+                                            @if (SelectedNode?.ParentKey is not null && CanAddUnderSelection)
+                                            {
+                                                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                                                          Text="Edit selected item's materials"
+                                                          Click="@BeginAddUnderSelectionAsync" />
+                                            }
                                             <DxButton RenderStyle="@(LineEditUid is null && LineEditTempId is null ? ButtonRenderStyle.Primary : ButtonRenderStyle.Secondary)"
-                                                      Text="@(LineEditUid is null && LineEditTempId is null ? "Add line" : "Update line")"
+                                                      Text="@(LineEditUid is null && LineEditTempId is null ? "Add material" : "Update material")"
                                                       Click="@AddOrUpdateLineAsync"
                                                       Enabled="@(!IsSubmitting)" />
                                             @if (LineEditUid is not null || LineEditTempId is not null)
                                             {
                                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                                          Text="Discard"
+                                                          Text="Cancel material edit"
                                                           Click="@ResetLineEditor"
                                                           Enabled="@(!IsSubmitting)" />
                                             }
                                             <DxButton RenderStyle="ButtonRenderStyle.Danger"
-                                                      Text="Delete"
+                                                      Text="Remove selected material"
                                                       Click="@RemoveSelectedLineAsync"
                                                       Enabled="@CanDeleteSelection" />
                                         </div>
                                                 </div>
-                                                <p class="pdf-hint">Select a Make or Phantom material in the tree to maintain its lower-level BOM.</p>
+                                                <p class="pdf-hint">Select a material to edit it. For a material made in-house or a grouped material, you can open its own material list. Save each product's setup separately.</p>
                                             }
                                             else if (SelectedNode is not null && SelectedNode.ParentKey is not null)
                                             {
@@ -738,7 +795,7 @@
                                                     @Detail("Item", SelectedNode.ItemCode)
                                                     @Detail("Description", SelectedNode.ItemDesc)
                                                     @Detail("Qty", SelectedNode.StdQty.ToString("n4"))
-                                                    @Detail("UOM", SelectedNode.StdUom)
+                                                    @Detail("Unit", SelectedNode.StdUom)
                                                     @Detail("Warehouse", SelectedNode.Warehouse)
                                                 </div>
                                             }
@@ -748,23 +805,32 @@
                             </div>
                         </DxTabPage>
 
-                        <DxTabPage Text="4 · MACHINES">
+                        <DxTabPage Text="4 · Machines">
                             <div class="pdf-tab-body">
+                                <div class="pdf-step-intro">
+                                    <h3>Which machine does the work?</h3>
+                                    <p>For machine work, choose the equipment and enter how much it makes in one cycle. Manual work, quality checks, waiting and supplier work use the time entered in step 2 instead.</p>
+                                    <p><strong>Example:</strong> 5 pieces every 30 seconds = quantity per cycle 5, cycle time 30 seconds.</p>
+                                </div>
                                 <div class="pdf-context-strip">
-                                    <span class="pdf-context-strip__label">Process</span>
+                                    <span class="pdf-context-strip__label">Work step</span>
                                     @foreach (var process in Model.Operations.OrderBy(x => x.CentralSequence).ThenBy(x => x.ProcessSequence))
                                     {
                                         <button type="button" class="pdf-context-chip @(SelectedOperation?.OperationKey == process.OperationKey ? "is-selected" : null)" @onclick="() => SelectResourceOperationAsync(process)">
                                             <span>@process.ProcessSequence</span>
-                                            <strong class="code-style">@process.OperationCode</strong>
-                                            <small>@(process.Machines.Count == 0 ? "Machine required" : process.Machines[0].MachineCode)</small>
+                                            <strong>@ProductionSetupText.CodeAndName(process.OperationCode, process.OperationDescription)</strong>
+                                            <small>@process.WorkCentreCode · @ProductionSetupText.MachineSummary(process)</small>
                                         </button>
                                     }
                                 </div>
 
                                 @if (SelectedOperation is null)
                                 {
-                                    <p class="pdf-empty"><i class="fa-solid fa-gears" aria-hidden="true"></i> Add or select a process first.</p>
+                                    <p class="pdf-empty"><i class="fa-solid fa-gears" aria-hidden="true"></i> Add a work step in step 2, then choose it above.</p>
+                                }
+                                else if (!PrProcessTypes.SupportsMachine(SelectedOperation.ProcessType) && SelectedOperation.Machines.Count == 0)
+                                {
+                                    <div class="pdf-guidance"><i class="fa-solid fa-clock" aria-hidden="true"></i><div><strong>No machine is needed for @ProductionSetupText.CodeAndName(SelectedOperation.OperationCode, SelectedOperation.OperationDescription).</strong><p>This is @ProductionSetupText.ProcessType(SelectedOperation.ProcessType). Set its time in Work steps, then continue.</p></div></div>
                                 }
                                 else
                                 {
@@ -772,16 +838,24 @@
                                         <header class="pdf-resource-card__head">
                                             <div>
                                                 <span class="pdf-bom-eyebrow">@SelectedOperation.WorkCentreCode · @SelectedOperation.OutputItemCode</span>
-                                                <h3>Machine for <span class="code-style">@SelectedOperation.OperationCode</span></h3>
+                                                <h3>Machine for @ProductionSetupText.CodeAndName(SelectedOperation.OperationCode, SelectedOperation.OperationDescription)</h3>
                                             </div>
-                                            <span class="pdf-bom-state @(SelectedMachine is null ? "is-empty" : null)">@(SelectedMachine is null ? "Required" : "Assigned")</span>
+                                            <span class="pdf-bom-state @(SelectedMachine is null ? "is-empty" : null)">@ProductionSetupText.MachineSummary(SelectedOperation)</span>
                                         </header>
+                                        @if (SelectedOperation.ProcessType == PrProcessTypes.Packing && SelectedOperation.Machines.Count == 0)
+                                        {
+                                            <p class="pdf-hint">Packing can be done without a machine. Enter its time in Work steps, or assign a packing machine here.</p>
+                                        }
+                                        @if (!PrProcessTypes.SupportsMachine(SelectedOperation.ProcessType))
+                                        {
+                                            <p class="pdf-cardinality-alert">This type of work uses time rather than a machine. Remove the existing machine assignment, or change the type of work in step 2.</p>
+                                        }
 
                                         @if (SelectedOperation.Machines.Count > 1)
                                         {
                                             <div class="pdf-cardinality-alert">
-                                                <strong>Resolve machine assignment</strong>
-                                                <span>This process has @SelectedOperation.Machines.Count legacy machine rows. Keep one and remove the others.</span>
+                                                <strong>Choose one machine</strong>
+                                                <span>This work step has @SelectedOperation.Machines.Count machine assignments. Keep the one you use and remove the others.</span>
                                                 <div class="pdf-cardinality-alert__items">
                                                     @foreach (var machine in SelectedOperation.Machines)
                                                     {
@@ -802,45 +876,55 @@
                                         {
                                             @if (SelectedMachine is null)
                                             {
-                                                <p class="pdf-empty">No machine is assigned to this process.</p>
+                                                <p class="pdf-empty">No machine is assigned to this work step.</p>
                                             }
                                             else
                                             {
                                                 <div class="pdf-resource-summary">
                                                     @Detail("Machine", SelectedMachine.MachineCode)
                                                     @Detail("Description", SelectedMachine.MachineDescription)
-                                                    @Detail("Priority", SelectedMachine.Priority.ToString())
-                                                    @Detail("Primary", SelectedMachine.IsPrimary ? "Yes" : "No")
-                                                    @Detail("Output / cycle", SelectedMachine.OutputPerCycle.ToString("n4"))
-                                                    @Detail("Rate / hour", SelectedMachine.MachineRatePerHour.ToString("n6"))
-                                                    @Detail("Cycle", $"{SelectedMachine.CycleSeconds:n4} s")
-                                                    @Detail("Setup", $"{SelectedMachine.SetupSeconds:n4} s")
-                                                    @Detail("Conversion", $"{SelectedMachine.ConversionSeconds:n4} s")
-                                                    @Detail("Queue", $"{SelectedMachine.QueueSeconds:n4} s")
-                                                    @Detail("Parallel", SelectedMachine.ParallelMachineCount.ToString())
+                                                    @Detail("Selection priority", SelectedMachine.Priority.ToString())
+                                                    @Detail("Usual machine", SelectedMachine.IsPrimary ? "Yes" : "No")
+                                                    @Detail("Quantity per cycle", SelectedMachine.OutputPerCycle.ToString("n4"))
+                                                    @Detail("Cost per hour", SelectedMachine.MachineRatePerHour.ToString("n6"))
+                                                    @Detail("Cycle time (seconds)", SelectedMachine.CycleSeconds.ToString("n4"))
+                                                    @Detail("Setup time (seconds)", SelectedMachine.SetupSeconds.ToString("n4"))
+                                                    @Detail("Additional time (seconds)", SelectedMachine.ConversionSeconds.ToString("n4"))
+                                                    @Detail("Waiting time (seconds)", SelectedMachine.QueueSeconds.ToString("n4"))
+                                                    @Detail("Machines running together", SelectedMachine.ParallelMachineCount.ToString())
                                                 </div>
                                             }
                                         }
                                         else
                                         {
                                             <div class="pdf-machine-editor">
-                                                <div class="iv-field pdf-field-code"><label class="iv-field__label">Machine</label><DxComboBox Data="@AvailableMachines" Value="@MachineEdit.MachineCode" ValueChanged="@((string? value) => OnMachineCodeChanged(value))" TextFieldName="@nameof(PrMachine.MachineCd)" ValueFieldName="@nameof(PrMachine.MachineCd)" SearchMode="ListSearchMode.AutoSearch" NullText="Select machine" InputCssClass="required-field code-style" ValueExpression="@(() => MachineEdit.MachineCode)" /></div>
-                                                <div class="iv-field pdf-field-seq"><label class="iv-field__label">Sequence</label><DxSpinEdit @bind-Value="@MachineEdit.ResourceSequence" MinValue="1" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-seq"><label class="iv-field__label">Priority</label><DxSpinEdit @bind-Value="@MachineEdit.Priority" MinValue="1" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-check"><label class="iv-field__label">Primary</label><DxCheckBox @bind-Checked="@MachineEdit.IsPrimary" AllowIndeterminateState="false" /></div>
-                                                <div class="iv-field pdf-field-qty"><label class="iv-field__label">Output / cycle</label><DxSpinEdit @bind-Value="@MachineEdit.OutputPerCycle" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-qty"><label class="iv-field__label">Rate / hour</label><DxSpinEdit @bind-Value="@MachineEdit.MachineRatePerHour" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-time"><label class="iv-field__label">Cycle (sec)</label><DxSpinEdit @bind-Value="@MachineEdit.CycleSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-time"><label class="iv-field__label">Setup (sec)</label><DxSpinEdit @bind-Value="@MachineEdit.SetupSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-time"><label class="iv-field__label">Conversion (sec)</label><DxSpinEdit @bind-Value="@MachineEdit.ConversionSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-time"><label class="iv-field__label">Queue (sec)</label><DxSpinEdit @bind-Value="@MachineEdit.QueueSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
-                                                <div class="iv-field pdf-field-count"><label class="iv-field__label">Parallel machines</label><DxSpinEdit @bind-Value="@MachineEdit.ParallelMachineCount" MinValue="1" ShowSpinButtons="false" /></div>
+                                                <div class="iv-field pdf-field-code"><label class="iv-field__label" for="production-machine">Machine</label><DxComboBox InputId="production-machine" Data="@MachineOptions" Value="@MachineEdit.MachineCode" ValueChanged="@((string? value) => OnMachineCodeChanged(value))" TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)" SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose a machine" InputCssClass="required-field" ValueExpression="@(() => MachineEdit.MachineCode)" />
+                                                    @if (AvailableMachines.Count == 0)
+                                                    {
+                                                        <small class="pdf-field-help">Create a machine for this process in Production masters first.</small>
+                                                    }
+                                                </div>
+                                                <div class="iv-field pdf-field-qty"><label class="iv-field__label" for="production-machine-output">Quantity per machine cycle</label><DxSpinEdit InputId="production-machine-output" @bind-Value="@MachineEdit.OutputPerCycle" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" /><small class="pdf-field-help">Quantity in @SelectedOperation.OutputUom made in one cycle.</small></div>
+                                                <div class="iv-field pdf-field-time"><label class="iv-field__label" for="production-machine-cycle">Cycle time (seconds)</label><DxSpinEdit InputId="production-machine-cycle" @bind-Value="@MachineEdit.CycleSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
+                                                <details class="pdf-options">
+                                                    <summary>Extra time, capacity &amp; machine cost</summary>
+                                                    <div class="pdf-options-grid">
+                                                        <div class="iv-field"><label class="iv-field__label">Setup time (seconds)</label><DxSpinEdit @bind-Value="@MachineEdit.SetupSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
+                                                        <div class="iv-field"><label class="iv-field__label">Additional time (seconds)</label><DxSpinEdit @bind-Value="@MachineEdit.ConversionSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
+                                                        <div class="iv-field"><label class="iv-field__label">Waiting time (seconds)</label><DxSpinEdit @bind-Value="@MachineEdit.QueueSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
+                                                        <div class="iv-field"><label class="iv-field__label">Machines running together</label><DxSpinEdit @bind-Value="@MachineEdit.ParallelMachineCount" MinValue="1" ShowSpinButtons="false" /></div>
+                                                        <div class="iv-field"><label class="iv-field__label">Machine cost per hour</label><DxSpinEdit @bind-Value="@MachineEdit.MachineRatePerHour" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" /><small class="pdf-field-help">In company base currency. Filled from the machine record when selected.</small></div>
+                                                        <div class="iv-field"><label class="iv-field__label">Machine order</label><DxSpinEdit @bind-Value="@MachineEdit.ResourceSequence" MinValue="1" ShowSpinButtons="false" /></div>
+                                                        <div class="iv-field"><label class="iv-field__label">Selection priority</label><DxSpinEdit @bind-Value="@MachineEdit.Priority" MinValue="1" ShowSpinButtons="false" /></div>
+                                                        <div class="iv-field"><label class="iv-field__label">Usual machine</label><DxCheckBox @bind-Checked="@MachineEdit.IsPrimary" AllowIndeterminateState="false" /></div>
+                                                    </div>
+                                                </details>
                                                 <div class="pdf-editor__actions pdf-resource-actions">
                                                     @if (SelectedMachine is not null)
                                                     {
                                                         <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Remove" Click="@(() => RemoveMachineAsync(SelectedMachine))" />
                                                     }
-                                                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(SelectedMachine is null ? "Assign machine" : "Save machine")" Click="@SaveMachineAsync" />
+                                                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(SelectedMachine is null ? "Add machine" : "Update machine")" Click="@SaveMachineAsync" />
                                                 </div>
                                             </div>
                                         }
@@ -849,27 +933,35 @@
                             </div>
                         </DxTabPage>
 
-                        <DxTabPage Text="5 · LABOUR">
+                        <DxTabPage Text="5 · Operators">
                             <div class="pdf-tab-body">
+                                <div class="pdf-step-intro">
+                                    <h3>Who operates the machine?</h3>
+                                    <p>Choose the operator or labour category for each machine. Labour cost is entered per unit made, in your company's base currency.</p>
+                                </div>
                                 <div class="pdf-context-strip">
-                                    <span class="pdf-context-strip__label">Process</span>
+                                    <span class="pdf-context-strip__label">Work step</span>
                                     @foreach (var process in Model.Operations.OrderBy(x => x.CentralSequence).ThenBy(x => x.ProcessSequence))
                                     {
                                         <button type="button" class="pdf-context-chip @(SelectedOperation?.OperationKey == process.OperationKey ? "is-selected" : null)" @onclick="() => SelectResourceOperationAsync(process)">
                                             <span>@process.ProcessSequence</span>
-                                            <strong class="code-style">@process.OperationCode</strong>
-                                            <small>@(process.Machines.FirstOrDefault()?.Labours.Count == 1 ? "Labour assigned" : "Labour required")</small>
+                                            <strong>@ProductionSetupText.CodeAndName(process.OperationCode, process.OperationDescription)</strong>
+                                            <small>@process.WorkCentreCode · @ProductionSetupText.OperatorSummary(process)</small>
                                         </button>
                                     }
                                 </div>
 
                                 @if (SelectedOperation is null)
                                 {
-                                    <p class="pdf-empty"><i class="fa-solid fa-user-gear" aria-hidden="true"></i> Add or select a process first.</p>
+                                    <p class="pdf-empty"><i class="fa-solid fa-user-gear" aria-hidden="true"></i> Add a work step in step 2, then choose it above.</p>
+                                }
+                                else if (SelectedMachine is null && !ProductionSetupText.RequiresMachineToActivate(SelectedOperation))
+                                {
+                                    <div class="pdf-guidance"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><div><strong>No operator assignment is needed here.</strong><p>This work step has no machine. Its time is entered in Work steps. Operator assignments on this screen belong to a machine.</p></div></div>
                                 }
                                 else if (SelectedMachine is null)
                                 {
-                                    <p class="pdf-empty"><i class="fa-solid fa-gears" aria-hidden="true"></i> Assign the process machine before assigning labour.</p>
+                                    <p class="pdf-empty"><i class="fa-solid fa-gears" aria-hidden="true"></i> Add the machine in step 4 before choosing its operator.</p>
                                 }
                                 else
                                 {
@@ -878,16 +970,16 @@
                                         <header class="pdf-resource-card__head">
                                             <div>
                                                 <span class="pdf-bom-eyebrow">@SelectedOperation.OperationCode · Machine @SelectedMachine.MachineCode</span>
-                                                <h3>Labour assignment</h3>
+                                                <h3>Operator for this machine</h3>
                                             </div>
-                                            <span class="pdf-bom-state @(savedLabour is null ? "is-empty" : null)">@(savedLabour is null ? "Required" : "Assigned")</span>
+                                            <span class="pdf-bom-state @(savedLabour is null ? "is-empty" : null)">@(savedLabour is null ? "Choose an operator" : "Assigned")</span>
                                         </header>
 
                                         @if (SelectedMachine.Labours.Count > 1)
                                         {
                                             <div class="pdf-cardinality-alert">
-                                                <strong>Resolve labour assignment</strong>
-                                                <span>This process-machine has @SelectedMachine.Labours.Count legacy labour rows. Keep one and remove the others.</span>
+                                                <strong>Choose one operator assignment</strong>
+                                                <span>This machine has @SelectedMachine.Labours.Count operator assignments for this work step. Keep the one you use and remove the others.</span>
                                                 <div class="pdf-cardinality-alert__items">
                                                     @foreach (var labour in SelectedMachine.Labours)
                                                     {
@@ -908,28 +1000,33 @@
                                         {
                                             @if (savedLabour is null)
                                             {
-                                                <p class="pdf-empty">No labour is assigned to this process-machine.</p>
+                                                <p class="pdf-empty">No operator is assigned to this machine for this work step.</p>
                                             }
                                             else
                                             {
                                                 <div class="pdf-resource-summary">
-                                                    @Detail("Labour", savedLabour.LabourCode)
+                                                    @Detail("Operator", savedLabour.LabourCode)
                                                     @Detail("Description", savedLabour.LabourDescription)
-                                                    @Detail("Cost / output", savedLabour.CostPerOutputUnit.ToString("n6"))
+                                                    @Detail("Labour cost per unit made", savedLabour.CostPerOutputUnit.ToString("n6"))
                                                 </div>
                                             }
                                         }
                                         else
                                         {
                                             <div class="pdf-labour-editor">
-                                                <div class="iv-field pdf-field-code"><label class="iv-field__label">Labour / operator</label><DxComboBox Data="@Operators" @bind-Value="@LabourEdit.LabourCode" TextFieldName="@nameof(PrOperator.Code)" ValueFieldName="@nameof(PrOperator.Code)" SearchMode="ListSearchMode.AutoSearch" NullText="Select labour" InputCssClass="required-field code-style" /></div>
-                                                <div class="iv-field pdf-field-cost"><label class="iv-field__label">Cost per output unit</label><DxSpinEdit @bind-Value="@LabourEdit.CostPerOutputUnit" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" /></div>
+                                                <div class="iv-field pdf-field-code"><label class="iv-field__label" for="production-operator">Operator / labour category</label><DxComboBox InputId="production-operator" Data="@OperatorOptions" @bind-Value="@LabourEdit.LabourCode" TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)" SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose an operator" InputCssClass="required-field" />
+                                                    @if (Operators.Count == 0)
+                                                    {
+                                                        <small class="pdf-field-help">Create an operator in Production masters first.</small>
+                                                    }
+                                                </div>
+                                                <div class="iv-field pdf-field-cost"><label class="iv-field__label" for="production-labour-cost">Labour cost per unit made</label><DxSpinEdit InputId="production-labour-cost" @bind-Value="@LabourEdit.CostPerOutputUnit" MinValue="0m" DisplayFormat="n6" ShowSpinButtons="false" /><small class="pdf-field-help">For example, 0.50 per piece. Leave 0 when no labour cost is used.</small></div>
                                                 <div class="pdf-editor__actions pdf-resource-actions">
                                                     @if (savedLabour is not null)
                                                     {
                                                         <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Remove" Click="@(() => RemoveLabour(savedLabour))" />
                                                     }
-                                                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(savedLabour is null ? "Assign labour" : "Save labour")" Click="@SaveLabourAsync" />
+                                                    <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@(savedLabour is null ? "Add operator" : "Update operator")" Click="@SaveLabourAsync" />
                                                 </div>
                                             </div>
                                         }
@@ -939,6 +1036,25 @@
                         </DxTabPage>
                     </DxTabs>
                     @FieldError("Operations")
+                    <nav class="pdf-step-navigation" aria-label="Production setup steps">
+                        <div>
+                            @if (ActiveTabIndex > 0)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="@($"Back: {SetupSteps[ActiveTabIndex - 1]}")" Click="@(() => OnActiveTabIndexChanged(ActiveTabIndex - 1))" Enabled="@(!IsSubmitting)" />
+                            }
+                        </div>
+                        <span>Step @(ActiveTabIndex + 1) of @SetupSteps.Length</span>
+                        <div>
+                            @if (ActiveTabIndex < SetupSteps.Length - 1)
+                            {
+                                <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="@($"Next: {SetupSteps[ActiveTabIndex + 1]}")" Click="@(() => OnActiveTabIndexChanged(ActiveTabIndex + 1))" Enabled="@(!IsSubmitting)" />
+                            }
+                            else
+                            {
+                                <span class="pdf-hint">Review your setup, then save below.</span>
+                            }
+                        </div>
+                    </nav>
                 </section>
 
                 @if (ValidationErrors.Count > 0)
@@ -947,14 +1063,14 @@
                         <div class="pdf-section-title">
                             <span class="pdf-section-title__icon is-danger" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
                             <div>
-                                <h2 class="iv-card__title mb-0">Review required</h2>
-                                <p>Resolve these issues before saving or activating the definition.</p>
+                                <h2 class="iv-card__title mb-0">A few things need checking</h2>
+                                <p>Check the entries below, then save again.</p>
                             </div>
                         </div>
                         <ul class="iv-validation-list">
                             @foreach (var pair in ValidationErrors)
                             {
-                                <li><strong>@pair.Key</strong>: @pair.Value</li>
+                                <li><strong>@ProductionSetupText.ValidationLabel(pair.Key, Model)</strong>: @ProductionSetupText.ValidationMessage(pair.Value)</li>
                             }
                         </ul>
                     </section>
@@ -964,35 +1080,35 @@
                     <p class="iv-footer__hint">
                         @if (IsViewMode)
                         {
-                            <text>Structure tree · Warehouse is preferred source only</text>
+                            <text>View your production setup. Create a new version when the way you make this product changes.</text>
                         }
                         else
                         {
-                            <text>@(HasUnsavedWork ? "Unsaved changes" : "No editor issues") · Save applies to @CurrentOwnerProdCode only@(IsBomOnlyDefinition ? " · BOM-only" : "")</text>
+                            <text>@(HasUnsavedWork ? "Changes to save" : "Save a draft to continue later") · Saving updates @CurrentOwnerProdCode only.</text>
                         }
                     </p>
                     <div class="iv-footer__actions">
                         @if (IsViewMode)
                         {
                             <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                      Text="CLOSE"
+                                      Text="Close"
                                       IconCssClass="fa-solid fa-xmark"
                                       Click="@CancelAsync" />
                             <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                      Text="EXPLODE BOM"
+                                      Text="View material list in use"
                                       IconCssClass="fa-solid fa-sitemap"
                                       Click="@GoExplodeAsync" />
                             @if (CanAdd)
                             {
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                          Text="NEW VERSION"
+                                          Text="Create new version"
                                           IconCssClass="fa-solid fa-copy"
                                           Click="@CreateNewVersionAsync" />
                             }
                             @if (CanEdit && !IsReadOnlyStatus)
                             {
                                 <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                          Text="EDIT"
+                                          Text="Edit setup"
                                           IconCssClass="far fa-edit"
                                           Click="@GoEditAsync" />
                             }
@@ -1000,7 +1116,7 @@
                         else
                         {
                             <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                      Text="CANCEL"
+                                      Text="Cancel"
                                       IconCssClass="fa-solid fa-xmark"
                                       Click="@CancelAsync"
                                       Enabled="@(!IsSubmitting)" />
@@ -1008,11 +1124,11 @@
                             {
                                 <PermissionAuthorize MenuCode="@MenuCodes.PlanningProductDef" Permission="@(IsNewMode || Model.BomHdrId == 0 ? PermissionCodes.Add : PermissionCodes.Edit)">
                                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
-                                              Text="@(IsSubmitting ? "Saving…" : "SAVE DRAFT")"
+                                              Text="@(IsSubmitting ? "Saving…" : "Save draft")"
                                               Click="@(() => SaveAsync(false))"
                                               Enabled="@(!IsSubmitting)" />
                                     <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                              Text="@(IsSubmitting ? "Saving…" : "SAVE & ACTIVATE")"
+                                              Text="@(IsSubmitting ? "Saving…" : "Save & use this setup")"
                                               IconCssClass="fa-solid fa-floppy-disk"
                                               Click="@(() => SaveAsync(true))"
                                               Enabled="@(!IsSubmitting)" />
@@ -1024,187 +1140,56 @@
             </div>
         }
 
-        <DxPopup HeaderText="How to use Product Definition"
+        <DxPopup HeaderText="A simple production setup example"
                  @bind-Visible="@HelpVisible"
                  CloseOnOutsideClick="true"
                  Width="760px"
                  CssClass="common-popup">
             <Content>
                 <div class="pdf-help">
-                    <p>
-                        Product Definition is the manufacturing recipe for a product.
-                        It tells the system where the product is made, which processes are performed,
-                        which materials are consumed, which machine is used, and which labour is required.
-                    </p>
-                    <p>
-                        Recommended order:
-                        Product → Route / Work Center → Process → Materials → Machine → Labour → Activate
-                    </p>
-
-                    <section>
-                        <h3>1. Simple example</h3>
-                        <pre class="pdf-help__example">FG001
-  Cutting
-    Cut
-      RM001
-      Machine CUT01
-      Labour OP01
-  Assembly
-    Assemble
-      WIP001
-      RM002
-      Machine ASSY01
-      Labour OP02</pre>
-                        <p>
-                            Think of each Work Center as a production area, each Process as the job performed in that area,
-                            and the BOM as the materials needed by that job.
-                        </p>
+                    <p>A production setup is your product's recipe and work instructions. The material list is also called a bill of materials (BOM).</p>
+                    <section class="pdf-help-example">
+                        <h3>Example: make 100 packed gift boxes</h3>
+                        <ol>
+                            <li><strong>Product:</strong> choose Packed Gift Box. Quantity to make: <strong>100 PCS</strong>.</li>
+                            <li><strong>Production stage:</strong> choose the Packing area. The item made is Packed Gift Box, with a stage output of <strong>100 PCS</strong>.</li>
+                            <li><strong>Work step:</strong> choose Pack, select Manual work, enter the time needed, and tick Last work step in this stage.</li>
+                            <li><strong>Materials:</strong> add <strong>100 empty boxes</strong> and <strong>50 metres of ribbon</strong> to the Pack work step.</li>
+                            <li><strong>Machines and operators:</strong> this example is manual work, so no machine or machine operator is assigned here.</li>
+                            <li><strong>Save draft</strong> while preparing. Choose <strong>Save &amp; use this setup</strong> after checking the details.</li>
+                        </ol>
                     </section>
-
                     <section>
-                        <h3>2. Production Definition vs revision vs default</h3>
+                        <h3>Understand the quantities</h3>
+                        <p>All material quantities are for the Quantity to make at the top. For 100 boxes, enter the materials needed for all 100, before waste allowance. Stage output is the quantity that a particular area makes. Quantity per machine cycle is how much the machine makes in one run.</p>
+                    </section>
+                    <section>
+                        <h3>When there is more than one stage</h3>
+                        <p>Use lower stage numbers for earlier work, for example 10 for Cutting and 20 for Assembly. Areas with the same number can work at the same time. Work step numbers set the order within an area. Mark the last work step in each stage.</p>
+                        <p>If Assembly uses an item made by Cutting, choose Made at another stage in this setup on that material, then select the stage that makes it. Save a draft first so the stages are available to choose.</p>
+                    </section>
+                    <section>
+                        <h3>Save, use, or change a setup</h3>
                         <dl class="pdf-help__actions">
-                            <dt>Production Definition</dt>
-                            <dd>A named manufacturing method for the same product (for example STANDARD, LINE-B, SUBCON). Identity is Product Code + Definition Code.</dd>
-                            <dt>Revision</dt>
-                            <dd>A numbered Draft/Active/Superseded copy of that definition. Create a New Version when an Active recipe must change.</dd>
-                            <dt>Default definition</dt>
-                            <dd>The ACTIVE definition Work Orders and BOM Explorer pick when the user does not choose one explicitly. Only one ACTIVE default is allowed per product.</dd>
+                            <dt>Save draft</dt><dd>Save your preparation and return later. A draft is not available for new production work orders.</dd>
+                            <dt>Save &amp; use this setup</dt><dd>Check the details and make this version active. New work orders can select it and will run their own production checks.</dd>
+                            <dt>Create new version</dt><dd>Copy a saved setup into a new draft when it needs changes. Previous versions remain in the history.</dd>
+                            <dt>Usual setup</dt><dd>Use this method when no other setup is selected. Only one active setup can be the usual method for a product.</dd>
                         </dl>
                     </section>
-
-                    <section>
-                        <h3>3. Product Definition status</h3>
-                        <dl class="pdf-help__actions">
-                            <dt>Draft</dt>
-                            <dd>Editable working definition. Save and continue preparing the recipe.</dd>
-                            <dt>Active</dt>
-                            <dd>Approved production definition used for normal production. An Active revision is read-only.</dd>
-                            <dt>New Version</dt>
-                            <dd>Create a new Draft when an Active recipe must change. This preserves the previous revision for production history.</dd>
-                        </dl>
-                        <p>Older revisions may become Superseded when a new revision is activated.</p>
-                    </section>
-
-                    <section>
-                        <h3>4. Route / Work Center</h3>
-                        <p>Work Center = where the work happens (Cutting, Mixing, Assembly, Packing).</p>
+                    <details class="pdf-options">
+                        <summary>Other useful settings</summary>
                         <ul>
-                            <li>Stage Sequence = order of manufacturing stages. Lower numbers happen earlier.</li>
-                            <li>Output Item = WIP or finished item produced by the stage.</li>
-                            <li>Pack Size = normal quantity produced by this route stage.</li>
+                            <li><strong>Substitute group:</strong> use the same group code for interchangeable materials. Tick Usual material on one item in each group.</li>
+                            <li><strong>Waste allowance:</strong> extra material for expected waste. Leave it at 0 if not needed.</li>
+                            <li><strong>Production unit:</strong> if it differs from the stock unit, an approved unit conversion must exist.</li>
+                            <li><strong>Machine timing:</strong> machine cycle, setup and waiting times use seconds. Work step time uses minutes.</li>
+                            <li><strong>Costs:</strong> enter costs in company base currency. Machine cost is per hour; labour and other work step costs are per good unit made.</li>
+                            <li><strong>Material warehouse:</strong> the preferred source, not a stock reservation.</li>
+                            <li><strong>Another production method:</strong> expand Setup name, work order numbering &amp; notes and give it a different setup code.</li>
                         </ul>
-                    </section>
-
-                    <section>
-                        <h3>5. Process</h3>
-                        <p>Process = what work is done inside the Work Center.</p>
-                        <ul>
-                            <li>Process Sequence = order inside the selected Work Center.</li>
-                            <li>Final Process = last Process for that route stage.</li>
-                            <li>Duration (min) = process time entered directly. Unit is minutes.</li>
-                            <li>Setup Lost / Op Lost = expected quantity lost during setup or operation.</li>
-                        </ul>
-                        <p>Some Processes may not consume extra material (for example, inspection).</p>
-                    </section>
-
-                    <section>
-                        <h3>6. Materials / BOM</h3>
-                        <p>BOM = materials consumed by the selected Process.</p>
-                        <ul>
-                            <li>Std Qty = material required for the Product Definition Standard Output Quantity.</li>
-                            <li>Example: Standard Output = 5 PCS and RM001 Std Qty = 1 KG means 1 KG is required to produce 5 PCS.</li>
-                            <li>Warehouse = preferred material source (not a guaranteed reservation warehouse).</li>
-                            <li>Scrap % = extra material allowance for expected waste.</li>
-                            <li>Supply Source = where the material comes from (Purchased, Internal Route WIP, Separate Product Definition, or External).</li>
-                            <li>Component Production Definition = required when Supply Source is Separate Product Definition; selects the child product's definition to explode.</li>
-                        </ul>
-                    </section>
-
-                    <section>
-                        <h3>7. Alternate Materials</h3>
-                        <p>
-                            Materials with the same Alternate Group are interchangeable.
-                            One item is marked Default. The Default material is the normal material copied into the Work Order.
-                            Other materials in the same group remain available as substitutes when Work Order material substitution is allowed.
-                        </p>
-                        <pre class="pdf-help__example">ALT-STEEL
-  RM001 — Default
-  RM002 — Alternate
-  RM003 — Alternate</pre>
-                        <p>If Alternate Group is left blank, the page defaults it from the item code.</p>
-                    </section>
-
-                    <section>
-                        <h3>8. WIP from earlier route</h3>
-                        <p>
-                            Use Internal Route WIP when this Process consumes an item produced by an earlier route step.
-                            Then select Producing route step for the earlier Work Center that produces that WIP.
-                        </p>
-                        <p>Example: CUTTING produces WIP001, then ASSEMBLY consumes WIP001.</p>
-                    </section>
-
-                    <section>
-                        <h3>9. Machine</h3>
-                        <p>Machine = equipment used by the Process.</p>
-                        <ul>
-                            <li>Output / Cycle = units produced each machine cycle.</li>
-                            <li>Cycle (sec) = running time for one cycle. Unit is seconds.</li>
-                            <li>Setup (sec) = preparation time before production starts.</li>
-                            <li>Conversion (sec) = additional conversion time included in scheduling.</li>
-                            <li>Queue (sec) = expected waiting time before the machine can start.</li>
-                            <li>Parallel Machines = equivalent machine capacity that can run at the same time.</li>
-                            <li>Rate / Hour = machine cost/rate per hour where costing applies.</li>
-                        </ul>
-                        <p>Example: Output / Cycle = 5 and Cycle = 30 sec means the machine produces 5 pieces every 30 seconds.</p>
-                    </section>
-
-                    <section>
-                        <h3>10. Machine alternatives</h3>
-                        <p>
-                            Current Product Definition supports one assigned Machine per Process.
-                            To change the normal Machine, edit or replace the assigned Machine.
-                            Multiple legacy machine rows should be reduced to one Machine.
-                        </p>
-                    </section>
-
-                    <section>
-                        <h3>11. Labour</h3>
-                        <p>
-                            Labour = operator / labour category assigned to the Process Machine.
-                            Cost / Output = labour cost applied to each output unit.
-                            The current page supports one labour assignment per process-machine.
-                        </p>
-                    </section>
-
-                    <section>
-                        <h3>12. Save actions</h3>
-                        <dl class="pdf-help__actions">
-                            <dt>Preview BOM / Explode BOM</dt>
-                            <dd>Inspect the full material structure, including lower-level Make or Phantom items, before activating.</dd>
-                            <dt>SAVE DRAFT</dt>
-                            <dd>Save and continue editing while Route, Processes, Materials, Machine, or Labour setup is still being prepared.</dd>
-                            <dt>SAVE &amp; ACTIVATE</dt>
-                            <dd>Save and make the revision ready for normal production use. Activate only after Route, BOM, Machine, and Labour have been checked.</dd>
-                            <dt>NEW VERSION</dt>
-                            <dd>Create a new Draft revision when the manufacturing method changes and the previous definition must be preserved.</dd>
-                        </dl>
-                    </section>
-
-                    <section>
-                        <h3>13. Tips</h3>
-                        <ul>
-                            <li>Define Route before Processes.</li>
-                            <li>Define Processes before Materials / Machines.</li>
-                            <li>Materials belong to a Process.</li>
-                            <li>Machine belongs to a Process.</li>
-                            <li>Labour belongs to the Process Machine.</li>
-                            <li>Use Preview BOM to check the full material structure.</li>
-                            <li>Process direct Duration uses minutes.</li>
-                            <li>Machine timing uses seconds.</li>
-                            <li>Activate only after checking the full Route and BOM.</li>
-                        </ul>
-                    </section>
+                    </details>
+                    <p>Add or update each entry, then save the full setup using the buttons at the bottom. If you open a material's own setup, save each product separately.</p>
                 </div>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
@@ -1214,7 +1199,7 @@
             </Content>
         </DxPopup>
 
-        <DxPopup HeaderText="Unsaved editor changes"
+        <DxPopup HeaderText="Keep the details you just entered?"
                  CloseOnOutsideClick="false"
                  Width="480px"
                  CssClass="common-popup"
@@ -1223,41 +1208,41 @@
                 <p class="iv-confirm__copy">
                     @if (!string.IsNullOrWhiteSpace(PendingOwnerProdCode))
                     {
-                        <text>You have unsaved changes on @CurrentOwnerProdCode [@CurrentOwnerDefinitionCode]. Apply the current editor, discard it, or stay here.</text>
+                        <text>You have changes for @CurrentOwnerProdCode [@CurrentOwnerDefinitionCode]. Add the details you entered, discard them, or stay here. Save the full setup before changing products.</text>
                     }
                     else if (_pendingSelectionAction is not null || _pendingTabIndex is not null || _pendingSaveActivate is not null)
                     {
-                        <text>The current nested editor or material line has unsaved values. Apply it, discard it, or stay here. Invalid rows are not saved.</text>
+                        <text>You entered details that have not been added to the setup yet. Add them and continue, discard them, or stay here to finish.</text>
                     }
                     else if (_pendingUpdateAfterDiscard)
                     {
-                        <text>You have unsaved changes. Apply the current editor, discard them, or stay here before loading another product.</text>
+                        <text>You have changes to save before loading another product. Stay here to save your setup, or discard the changes and continue.</text>
                     }
                     else
                     {
-                        <text>You have unsaved changes. Apply the current editor, discard them, or stay here.</text>
+                        <text>You have changes to save. Stay here to save your setup, or discard the changes and leave.</text>
                     }
                 </p>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Stay here" Click="@CancelDiscardAsync" />
-                        <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard current editor" Click="@ConfirmDiscardAsync" />
+                        <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard & continue" Click="@ConfirmDiscardAsync" />
                         @if (HasUnsavedChildEditor)
                         {
-                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Apply current editor" Click="@ApplyCurrentEditorAsync" />
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Add details & continue" Click="@ApplyCurrentEditorAsync" />
                         }
                     </div>
                 </div>
             </Content>
         </DxPopup>
 
-        <DxPopup HeaderText="Concurrency"
+        <DxPopup HeaderText="Someone else updated this setup"
                  CloseOnOutsideClick="false"
                  Width="420px"
                  CssClass="common-popup"
                  @bind-Visible="@ConcurrencyVisible">
             <Content>
-                <p class="iv-confirm__copy">This product definition was changed by another user. Reload and try again.</p>
+                <p class="iv-confirm__copy">Another user saved changes while you were working. Reload the latest setup before editing again.</p>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Primary" Text="Reload" Click="@ReloadAfterConcurrencyAsync" />
@@ -1281,7 +1266,7 @@
     {
         if (ValidationErrors.TryGetValue(field, out var message) && !string.IsNullOrWhiteSpace(message))
         {
-            <p class="iv-field__error">@message</p>
+            <p class="iv-field__error">@ProductionSetupText.ValidationMessage(message)</p>
         }
     };
 }

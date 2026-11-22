@@ -1,4 +1,5 @@
 using ErpWeb.Core.Menus;
+using DevExpress.Blazor;
 using ErpWeb.Core.Planning;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.UI.Components.Pages;
@@ -26,13 +27,19 @@ public partial class PrBomExplorer : PageBase
 
     protected IReadOnlyList<ModeOption> ModeOptions { get; } =
     [
-        new(nameof(BomExplosionMode.StructuralTree), "Structural Tree"),
-        new(nameof(BomExplosionMode.MaterialRequirement), "Material Requirement"),
-        new(nameof(BomExplosionMode.ProductionIssueRequirement), "Production Issue Requirement")
+        new(nameof(BomExplosionMode.StructuralTree), "Material structure"),
+        new(nameof(BomExplosionMode.MaterialRequirement), "Materials needed"),
+        new(nameof(BomExplosionMode.ProductionIssueRequirement), "Materials to issue")
     ];
 
     protected string ModeTitle => ModeOptions.FirstOrDefault(x => x.Value == SelectedMode)?.Text
-        ?? "Explosion";
+        ?? "Materials";
+
+    protected void OnCustomizeCellDisplayText(GridCustomizeCellDisplayTextEventArgs args)
+    {
+        if (args.FieldName == nameof(BomExplosionNode.MfgType) && args.Value is string mfgType)
+            args.DisplayText = ProductionSetupText.ManufacturingType(mfgType);
+    }
 
     protected override async Task OnParametersSetAsync()
     {

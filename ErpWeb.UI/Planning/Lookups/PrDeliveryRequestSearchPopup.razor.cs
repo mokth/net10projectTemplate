@@ -18,6 +18,7 @@ public partial class PrDeliveryRequestSearchPopup
     private int _totalCount;
     private bool _loaded;
     private bool _loading;
+    private bool _showDetails;
     private string? _appliedInitialSearch;
     private CancellationTokenSource? _loadCts;
     private long _loadSequence;
@@ -143,6 +144,9 @@ public partial class PrDeliveryRequestSearchPopup
 
     private void OnSelectedItemChanged(object? item) =>
         _focused = item as ProductionWorkOrderDeliveryRequestLookupRow;
+
+    private void OnFocusedRowChanged(GridFocusedRowChangedEventArgs args) =>
+        _focused = args.DataItem as ProductionWorkOrderDeliveryRequestLookupRow;
 
     private async Task OnRowDoubleClick(GridRowClickEventArgs args)
     {
