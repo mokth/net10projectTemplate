@@ -105,7 +105,8 @@ $patterns = @(
     'Open_month_issue_before_count_replays_and_rolls_back',
     'Open_month_receipt_before_count_replays_and_rolls_back',
     'Receipt_before_count_rollback_respects_quality_holds',
-    'Receipt_before_count_rejects_changed_value_or_an_unhandled_later_movement',
+    'Receipt_before_count_reprices_changed_cost_and_restores_on_rollback',
+    'Receipt_before_count_rejects_an_unhandled_later_movement',
     'Issue_before_count_respects_quality_holds',
     'Issue_before_count_rejects_historical_shortage_even_when_current_stock_is_sufficient',
     'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
@@ -156,7 +157,8 @@ $required = @(
     'Open_month_issue_before_count_replays_and_rolls_back',
     'Open_month_receipt_before_count_replays_and_rolls_back',
     'Receipt_before_count_rollback_respects_quality_holds',
-    'Receipt_before_count_rejects_changed_value_or_an_unhandled_later_movement',
+    'Receipt_before_count_reprices_changed_cost_and_restores_on_rollback',
+    'Receipt_before_count_rejects_an_unhandled_later_movement',
     'Issue_before_count_respects_quality_holds',
     'Issue_before_count_rejects_historical_shortage_even_when_current_stock_is_sufficient',
     'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
@@ -427,6 +429,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -IssueBeforeZeroCountReplay
         & $sqlRunner -Server $SqlServer -NoBuild -IssueBeforeVarianceCountReplay
         & $sqlRunner -Server $SqlServer -NoBuild -ReceiptBeforeVarianceCountReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -CostChangingReceiptBeforeCountReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PartlyConsumedNoteReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PartlyConsumedNoteIssueRollback
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate

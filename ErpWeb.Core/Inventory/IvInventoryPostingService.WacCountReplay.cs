@@ -10,7 +10,7 @@ public sealed partial class IvInventoryPostingService
 {
     private sealed record CountReplayProof(int HeaderId, int LineId, long GenerationId, string Fingerprint);
 
-    // One movement may alter one later count without changing the final pool.
+    // One movement may alter one later count without changing the final quantity.
     // Removal must undo the exact correction made by that movement.
     private static async Task<CountReplayProof?> PlanSingleCountReplayAsync(
         AppDbContext db, string company, string branch, string item, int pileId,
@@ -20,7 +20,7 @@ public sealed partial class IvInventoryPostingService
         long? removingOwnerId, bool receipt, CancellationToken ct)
     {
         if (quantity <= 0m || physical.Count != 1 || financial.Count != 1 || steps.Count != 1
-            || currentQty != finalQty || currentValue != finalValue)
+            || currentQty != finalQty || !receipt && currentValue != finalValue)
             return null;
         var movement = physical[0];
         var value = financial[0];

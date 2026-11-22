@@ -3160,7 +3160,12 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
     public Task SqlServer_receipt_before_variance_count_posts_and_rolls_back_atomically() =>
         ExerciseReceiptBeforeCountSqlAsync(110m, 20m);
 
-    private async Task ExerciseReceiptBeforeCountSqlAsync(decimal countedQty, decimal receiptQty)
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public Task SqlServer_cost_changing_receipt_before_count_posts_and_rolls_back_atomically() =>
+        ExerciseReceiptBeforeCountSqlAsync(110m, 20m, 3m, 238.333330m);
+
+    private async Task ExerciseReceiptBeforeCountSqlAsync(decimal countedQty, decimal receiptQty, decimal receiptUnitCost = 2m, decimal? postValue = null)
     {
         await PreparePurchaseReplaySqlFixtureAsync();
         await EnsureActiveStockLedgerAsync();
@@ -3197,7 +3202,7 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             Lines = [new IvMiscReceiptLineRequest
             {
                 ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = receiptQty,
-                UnitPrice = 2m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                UnitPrice = receiptUnitCost, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
                 IStatus = "ACTIVE", Reason = "ADJ"
             }]
         });
@@ -3212,14 +3217,14 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 await db.StockValuationFacts.CountAsync(), await db.StockCountReplayGenerations.CountAsync(),
                 (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
         }
-        async Task AssertCountAsync(decimal adjustment)
+        async Task AssertCountAsync(decimal adjustment, decimal expectedValue)
         {
             await using var db = await _factory.CreateDbContextAsync();
             var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [line.Id]))[line.Id];
             Assert.Equal(adjustment, active.SignedAdjustmentQty);
             Assert.Equal(countedQty, (await db.IvStockCountLines.SingleAsync(l => l.Id == line.Id)).PhysicalQty);
             var state = await db.StockCostStates.SingleAsync();
-            Assert.Equal((countedQty, countedQty * 2m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal((countedQty, expectedValue), (state.OnHandBaseQty, state.InventoryValue));
             Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
         }
         async Task AssertBusyAsync(bool rollback)
@@ -3275,19 +3280,19 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
             .WaitAsync(TimeSpan.FromSeconds(45));
         Assert.Single(posts, x => x.Succeeded);
         Assert.Single(posts, x => !x.Succeeded);
-        await AssertCountAsync(countedQty - 100m - receiptQty);
+        await AssertCountAsync(countedQty - 100m - receiptQty, postValue ?? countedQty * 2m);
         await AssertBusyAsync(rollback: true);
         await AssertFailureAtomicAsync(rollback: true);
         var rollbacks = await Task.WhenAll(receipt.RollbackAsync([draft.BatchNo]), receipt.RollbackAsync([draft.BatchNo]))
             .WaitAsync(TimeSpan.FromSeconds(45));
         Assert.Single(rollbacks, x => x.Succeeded);
         Assert.Single(rollbacks, x => !x.Succeeded);
-        await AssertCountAsync(countedQty - 100m);
+        await AssertCountAsync(countedQty - 100m, countedQty * 2m);
         var repost = await receipt.PostAsync([draft.BatchNo]);
         Assert.True(repost.Succeeded, repost.ErrorMessage);
         var rerollback = await receipt.RollbackAsync([draft.BatchNo]);
         Assert.True(rerollback.Succeeded, rerollback.ErrorMessage);
-        await AssertCountAsync(countedQty - 100m);
+        await AssertCountAsync(countedQty - 100m, countedQty * 2m);
     }
 
     private async Task ExerciseHistoricalConsumedInvoiceAsync(bool enabled, bool consumedBeforeInvoice,

@@ -1182,6 +1182,47 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         }
     }
 
+    [Theory]
+    [InlineData(110, 10, 230, 0, 0)]
+    [InlineData(110, 20, 238.333330, -10, 21.666670)]
+    [InlineData(110, 5, 225.238095, 5, 10.238095)]
+    [InlineData(90, 10, 188.181820, -20, 41.818180)]
+    public async Task Receipt_before_count_reprices_changed_cost_and_restores_on_rollback(
+        decimal countedQty, decimal receiptQty, decimal expectedValue, decimal expectedAdjustment, decimal expectedCountCost)
+    {
+        var (lineId, _) = await PostCountForIssueAsync(countedQty);
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday, enableBackdatedReplay: true);
+        var draft = await SaveReceiptBeforeCountAsync(receipt, receiptQty, 3m);
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var posted = await receipt.PostAsync([draft]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertStateAsync(expectedValue, expectedAdjustment, expectedCountCost);
+            var rolled = await receipt.RollbackAsync([draft]);
+            Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+            await AssertStateAsync(countedQty * 2m, countedQty - 100m, Math.Abs(countedQty - 100m) * 2m);
+        }
+
+        async Task AssertStateAsync(decimal value, decimal adjustment, decimal countCost)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((countedQty, value), (state.OnHandBaseQty, state.InventoryValue));
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
+            Assert.Equal(countedQty, (await db.IvStockCountLines.SingleAsync(l => l.Id == lineId)).PhysicalQty);
+            if (adjustment == 0m)
+                Assert.Null(active.AdjustmentHistoryId);
+            else
+            {
+                var history = await db.IvTrxHistories.SingleAsync(h => h.Id == active.AdjustmentHistoryId);
+                var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                Assert.Equal(countCost, Assert.Single(facts[history.Id]).CostAmount);
+            }
+        }
+    }
+
     [Fact]
     public async Task Receipt_before_count_rollback_respects_quality_holds()
     {
@@ -1225,20 +1266,17 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Receipt_before_count_rejects_changed_value_or_an_unhandled_later_movement(bool laterMovement)
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task Receipt_before_count_rejects_an_unhandled_later_movement(decimal unitPrice)
     {
         var (lineId, pileId) = await PostCountForIssueAsync(110m);
-        if (laterMovement)
-        {
-            var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday.AddDays(1), enableBackdatedReplay: true);
-            var later = await SaveIssueBeforeCountAsync(issue, pileId, 10m, FixedToday.AddDays(1));
-            var posted = await issue.PostAsync([later]);
-            Assert.True(posted.Succeeded, posted.ErrorMessage);
-        }
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday.AddDays(1), enableBackdatedReplay: true);
+        var later = await SaveIssueBeforeCountAsync(issue, pileId, 10m, FixedToday.AddDays(1));
+        var posted = await issue.PostAsync([later]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
         var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday.AddDays(1), enableBackdatedReplay: true);
-        var draft = await SaveReceiptBeforeCountAsync(receipt, 10m, laterMovement ? 2m : 3m);
+        var draft = await SaveReceiptBeforeCountAsync(receipt, 10m, unitPrice);
         int roots, facts, generations;
         decimal balance, value;
         await using (var db = await _factory.CreateDbContextAsync())
