@@ -1555,9 +1555,13 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 continue;
             }
 
-            if (basis.CostBasisKind == StockCountCostBasisKinds.LedgerWac)
+            if (basis.CostBasisKind is StockCountCostBasisKinds.LedgerWac
+                or StockCountCostBasisKinds.LedgerFifo)
             {
-                if (context.CostMethod != StockCostMethods.MovingAverage
+                var expectedMethod = basis.CostBasisKind == StockCountCostBasisKinds.LedgerWac
+                    ? StockCostMethods.MovingAverage
+                    : StockCostMethods.Fifo;
+                if (context.CostMethod != expectedMethod
                     || history.CostEvidenceType != InventoryCostEvidenceTypes.CountFrozenV2
                     || detail.CostEvidenceType != InventoryCostEvidenceTypes.CountFrozenV2
                     || basis.CostBasisWatermark is not > 0
@@ -1569,11 +1573,16 @@ public sealed class InventoryValuationService : IInventoryValuationService
                     || basis.CostApprovedBy is not null
                     || basis.CostApprovedAtUtc is not null)
                     throw LedgerError(StockLedgerErrorCodes.ValuationRequired,
-                        $"Inventory history {history.Id} has incomplete original WAC evidence.");
-                var captured = await StockCountLedgerCostEvidence.CaptureWacAsync(
-                    context.Db, context.CompanyCode, context.BranchCode,
-                    line.Id, line.ICode, generation.EffectiveAt,
-                    basis.CostBasisWatermark.Value, cancellationToken);
+                        $"Inventory history {history.Id} has incomplete original {expectedMethod} evidence.");
+                var captured = basis.CostBasisKind == StockCountCostBasisKinds.LedgerWac
+                    ? await StockCountLedgerCostEvidence.CaptureWacAsync(
+                        context.Db, context.CompanyCode, context.BranchCode,
+                        line.Id, line.ICode, generation.EffectiveAt,
+                        basis.CostBasisWatermark.Value, cancellationToken)
+                    : await StockCountLedgerCostEvidence.CaptureFifoAsync(
+                        context.Db, context.CompanyCode, context.BranchCode,
+                        line.Id, line.ICode, generation.EffectiveAt,
+                        basis.CostBasisWatermark.Value, cancellationToken);
                 if (captured.UnitCost != basis.FrozenFallbackUnitCost
                     || !StringComparer.Ordinal.Equals(captured.Hash, basis.CostBasisHash))
                     throw LedgerError(StockLedgerErrorCodes.ValuationRequired,

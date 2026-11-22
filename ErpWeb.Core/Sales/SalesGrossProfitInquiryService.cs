@@ -120,6 +120,7 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
                     x.SourceDocumentNo,
                     x.SourceDocumentLine,
                     x.ItemCode,
+                    x.BaseQty,
                     x.CostAmount))
                 .ToListAsync(cancellationToken);
 
@@ -131,9 +132,31 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
                             && ownerNos.Contains(x.OriginalOwnerDocumentNo))
                 .OrderBy(x => x.Id)
                 .ToListAsync(cancellationToken);
-        var returnedCostByFact = CollapseReturnAllocationChains(allocations)
+        var collapsedReturns = CollapseReturnAllocationChains(allocations);
+        var returnDocNos = collapsedReturns
+            .Where(x => string.Equals(x.ReturnDocumentType, "SA_CN", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(x.ReturnDocumentNo))
+            .Select(x => x.ReturnDocumentNo)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var returnInvoiceByDocNo = returnDocNos.Length == 0
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : await db.SaCdns.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                            && x.BranchCode == scope.BranchCode
+                            && returnDocNos.Contains(x.DocNo)
+                            && x.InvNo != null && x.InvNo != string.Empty)
+                .ToDictionaryAsync(
+                    x => x.DocNo,
+                    x => x.InvNo!,
+                    StringComparer.OrdinalIgnoreCase,
+                    cancellationToken);
+        var returnedCostByFact = collapsedReturns
             .GroupBy(x => x.OriginalValuationFactId)
             .ToDictionary(x => x.Key, x => Money(x.Sum(y => y.ReturnedCostAmount)));
+        var collapsedByFact = collapsedReturns
+            .GroupBy(x => x.OriginalValuationFactId)
+            .ToDictionary(x => x.Key, x => x.ToArray());
         var rows = new List<SalesGrossProfitInquiryRow>(lines.Count);
         foreach (var line in lines.OrderBy(x => x.InvoiceNo).ThenBy(x => x.Line))
         {
@@ -170,8 +193,40 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
             decimal? margin = null;
             if (resolved)
             {
-                cogs = Money(matches.Sum(x => x.CostAmount)
-                              - matches.Sum(x => returnedCostByFact.GetValueOrDefault(x.Id)));
+                var totalFactCost = matches.Sum(x => x.CostAmount);
+                var shippedQty = matches.Sum(x => x.BaseQty);
+                var isPartialLinkedDo = line.StockControl && line.LinkDo
+                    && shippedQty > Epsilon
+                    && line.StdQty < shippedQty - Epsilon;
+                if (isPartialLinkedDo)
+                {
+                    var share = line.StdQty / shippedQty;
+                    var outboundCost = Money(totalFactCost * share);
+                    var returnedCost = 0m;
+                    foreach (var fact in matches)
+                    {
+                        if (!collapsedByFact.TryGetValue(fact.Id, out var factReturns))
+                            continue;
+                        foreach (var ret in factReturns)
+                        {
+                            if (returnInvoiceByDocNo.TryGetValue(ret.ReturnDocumentNo, out var returnInvNo))
+                            {
+                                if (string.Equals(returnInvNo, invoice.InvoiceNo, StringComparison.OrdinalIgnoreCase))
+                                    returnedCost += ret.ReturnedCostAmount;
+                            }
+                            else
+                            {
+                                returnedCost += Money(ret.ReturnedCostAmount * share);
+                            }
+                        }
+                    }
+                    cogs = Money(outboundCost - Money(returnedCost));
+                }
+                else
+                {
+                    cogs = Money(totalFactCost
+                                  - matches.Sum(x => returnedCostByFact.GetValueOrDefault(x.Id)));
+                }
                 grossProfit = Money(netSales - cogs.Value);
                 margin = Math.Abs(netSales) <= Epsilon
                     ? null
@@ -274,6 +329,8 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
                 continue;
             result.Add(new ReturnAllocationAggregate(
                 root.OriginalValuationFactId,
+                root.ReturnDocumentType,
+                root.ReturnDocumentNo,
                 Qty(qty),
                 Money(amount)));
         }
@@ -334,10 +391,13 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
         string SourceDocumentNo,
         string? SourceDocumentLine,
         string ItemCode,
+        decimal BaseQty,
         decimal CostAmount);
 
     private sealed record ReturnAllocationAggregate(
         long OriginalValuationFactId,
+        string ReturnDocumentType,
+        string ReturnDocumentNo,
         decimal ReturnedBaseQty,
         decimal ReturnedCostAmount);
 }

@@ -345,12 +345,52 @@ internal static class StockReplayInvoiceIssueAudit
                 || !line.TryGetProperty("isStockReturn", out var stockReturn) || stockReturn.GetBoolean()
                 || adjustment.SourceDocumentLine != sourceLine || adjustment.BaseQty != quantity)
                 return false;
-            var primaryAdjustment = root.PostingRole == "PRIMARY" ? adjustment
-                : await db.PurchaseCostAdjustments.AsNoTracking().SingleOrDefaultAsync(a =>
+            ErpWeb.Model.Entities.Purchase.PurchaseCostAdjustment? primaryAdjustment;
+            StockValuationFact? primaryValue;
+            ErpWeb.Model.Entities.Purchase.PurchaseCostAdjustment? reversedPriorAdjustment = null;
+            StockValuationFact? reversedPriorValue = null;
+            if (root.PostingRole == "PRIMARY")
+            {
+                primaryAdjustment = adjustment;
+                primaryValue = value;
+            }
+            else
+            {
+                reversedPriorAdjustment = await db.PurchaseCostAdjustments.AsNoTracking().SingleOrDefaultAsync(a =>
                     a.Id == adjustment.ReversesAdjustmentId, ct);
-            var primaryValue = root.PostingRole == "PRIMARY" ? value
-                : await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f =>
+                reversedPriorValue = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f =>
                     f.Id == value.ReversesValuationFactId, ct);
+                if (reversedPriorAdjustment is null || reversedPriorValue is null)
+                    return false;
+                if (reversedPriorAdjustment.StockPostingId == primary.Id)
+                {
+                    primaryAdjustment = reversedPriorAdjustment;
+                    primaryValue = reversedPriorValue;
+                }
+                else
+                {
+                    var chainReverse = new List<ErpWeb.Model.Entities.Purchase.PurchaseCostAdjustment> { reversedPriorAdjustment };
+                    var seenIds = new HashSet<long> { reversedPriorAdjustment.Id };
+                    while (chainReverse[^1].ReversesAdjustmentId is long parentId)
+                    {
+                        if (chainReverse.Count >= 101 || !seenIds.Add(parentId))
+                            return false;
+                        var parent = await db.PurchaseCostAdjustments.AsNoTracking()
+                            .SingleOrDefaultAsync(a => a.Id == parentId, ct);
+                        if (parent is null)
+                            return false;
+                        chainReverse.Add(parent);
+                    }
+                    chainReverse.Reverse();
+                    var generation = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(db, chainReverse, ct);
+                    if (generation is null || generation.Original.StockPostingId != primary.Id
+                        || generation.Active.Id != reversedPriorAdjustment.Id
+                        || generation.ActiveFact.Id != reversedPriorValue.Id)
+                        return false;
+                    primaryAdjustment = generation.Original;
+                    primaryValue = generation.OriginalFact;
+                }
+            }
             if (primaryAdjustment is null || primaryValue is null || primaryAdjustment.StockPostingId != primary.Id
                 || primaryValue.StockPostingId != primary.Id || primaryAdjustment.InventoryAdjustmentFactId != primaryValue.Id
                 || primaryAdjustment.CompanyCode != company || primaryAdjustment.BranchCode != branch
@@ -372,8 +412,12 @@ internal static class StockReplayInvoiceIssueAudit
                 || primaryValue.TransactionCostAmount is not null || primaryValue.ExchangeRate is not null
                 || primaryValue.SourceDocumentLine != sourceLine.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 || primaryValue.MovementCode != (primaryValue.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
-                || primaryAdjustment.InventoryAdjustmentAmount != primaryAdjustment.TotalAdjustmentAmount
-                || primaryAdjustment.ConsumedVarianceAmount != 0m || primaryAdjustment.TotalAdjustmentAmount == 0m
+                || primaryAdjustment.TotalAdjustmentAmount == 0m
+                || primaryAdjustment.InventoryAdjustmentAmount == 0m
+                || Costing.StockLedgerPrecision.Money(primaryAdjustment.InventoryAdjustmentAmount + primaryAdjustment.ConsumedVarianceAmount)
+                    != primaryAdjustment.TotalAdjustmentAmount
+                || primaryAdjustment.InventoryAdjustmentAmount * Math.Sign(primaryAdjustment.TotalAdjustmentAmount) < 0m
+                || Math.Abs(primaryAdjustment.InventoryAdjustmentAmount) > Math.Abs(primaryAdjustment.TotalAdjustmentAmount)
                 || primaryValue.SignedValue != primaryAdjustment.InventoryAdjustmentAmount)
                 return false;
             var referencedInvoiceNo = invoiceNo.GetString()!;
@@ -460,22 +504,26 @@ internal static class StockReplayInvoiceIssueAudit
                 || primaryAdjustment.PoNo != settlements[0].PoNo || primaryAdjustment.PoRelNo != settlements[0].PoRelNo
                 || primaryAdjustment.PoLineNo != settlements[0].PoLineNo || primaryValue.OriginalValuationFactId != receiptId)
                 return false;
-            return root.PostingRole == "PRIMARY" || adjustment.ReversesAdjustmentId == primaryAdjustment.Id
-                && value.ReversesValuationFactId == primaryValue.Id && value.OriginalValuationFactId == primaryValue.Id
-                && adjustment.AdjustmentType == primaryAdjustment.AdjustmentType
-                && adjustment.SourceDocumentLine == primaryAdjustment.SourceDocumentLine
-                && adjustment.CostMethod == primaryAdjustment.CostMethod
-                && adjustment.PoNo == primaryAdjustment.PoNo && adjustment.PoRelNo == primaryAdjustment.PoRelNo
-                && adjustment.PoLineNo == primaryAdjustment.PoLineNo
-                && adjustment.ActualBaseAmount == primaryAdjustment.ActualBaseAmount
-                && adjustment.ReferenceBaseAmount == primaryAdjustment.ReferenceBaseAmount
-                && adjustment.CommercialReferenceAmount == primaryAdjustment.CommercialReferenceAmount
-                && adjustment.TotalAdjustmentAmount == -primaryAdjustment.TotalAdjustmentAmount
-                && adjustment.InventoryAdjustmentAmount == -primaryAdjustment.InventoryAdjustmentAmount
-                && adjustment.ConsumedVarianceAmount == -primaryAdjustment.ConsumedVarianceAmount
-                && adjustment.BaseQty == primaryAdjustment.BaseQty && value.Direction == -primaryValue.Direction
-                && value.CostAmount == primaryValue.CostAmount && value.BaseUom == primaryValue.BaseUom
-                && value.ValuationVersion == primaryValue.ValuationVersion;
+            if (root.PostingRole == "PRIMARY")
+                return true;
+            var targetAdjustment = reversedPriorAdjustment!;
+            var targetValue = reversedPriorValue!;
+            return adjustment.ReversesAdjustmentId == targetAdjustment.Id
+                && value.ReversesValuationFactId == targetValue.Id && value.OriginalValuationFactId == targetValue.Id
+                && adjustment.AdjustmentType == targetAdjustment.AdjustmentType
+                && adjustment.SourceDocumentLine == targetAdjustment.SourceDocumentLine
+                && adjustment.CostMethod == targetAdjustment.CostMethod
+                && adjustment.PoNo == targetAdjustment.PoNo && adjustment.PoRelNo == targetAdjustment.PoRelNo
+                && adjustment.PoLineNo == targetAdjustment.PoLineNo
+                && adjustment.ActualBaseAmount == targetAdjustment.ActualBaseAmount
+                && adjustment.ReferenceBaseAmount == targetAdjustment.ReferenceBaseAmount
+                && adjustment.CommercialReferenceAmount == targetAdjustment.CommercialReferenceAmount
+                && adjustment.TotalAdjustmentAmount == -targetAdjustment.TotalAdjustmentAmount
+                && adjustment.InventoryAdjustmentAmount == -targetAdjustment.InventoryAdjustmentAmount
+                && adjustment.ConsumedVarianceAmount == -targetAdjustment.ConsumedVarianceAmount
+                && adjustment.BaseQty == targetAdjustment.BaseQty && value.Direction == -targetValue.Direction
+                && value.CostAmount == targetValue.CostAmount && value.BaseUom == targetValue.BaseUom
+                && value.ValuationVersion == targetValue.ValuationVersion;
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException or OverflowException)
         {

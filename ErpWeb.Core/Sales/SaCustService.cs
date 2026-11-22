@@ -677,14 +677,17 @@ public sealed class SaCustService : ISaCustService
             errors["GlCode"] = "GL code is required when payment/credit fields change.";
         }
 
-        AddRegistrationTypeError(errors, model.RegType, snapshot?.RegType);
-        AddPhoneError(errors, nameof(model.Tel), model.Tel, snapshot?.Tel);
-
-        // The ship-to number is only captured separately when shipment is NOT the main address, so it is
-        // only validated in that case (mirroring how ShipCountry is handled above).
-        if (!UsesMainShip(model))
+        if (isNew || snapshot is not null)
         {
-            AddPhoneError(errors, nameof(model.ShipTel), model.ShipTel, snapshot?.ShipTel);
+            AddRegistrationTypeError(errors, model.RegType, snapshot?.RegType);
+            AddPhoneError(errors, nameof(model.Tel), model.Tel, snapshot?.Tel);
+
+            // The ship-to number is only captured separately when shipment is NOT the main address, so it is
+            // only validated in that case (mirroring how ShipCountry is handled above).
+            if (!UsesMainShip(model))
+            {
+                AddPhoneError(errors, nameof(model.ShipTel), model.ShipTel, snapshot?.ShipTel);
+            }
         }
 
         return errors;

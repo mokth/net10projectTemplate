@@ -163,6 +163,85 @@ internal static class InventoryLedgerTestFixture
         await db.SaveChangesAsync();
     }
 
+    public static async Task SeedOpeningValuationFactAsync(
+        AppDbContext db,
+        string itemCode,
+        decimal qty,
+        decimal unitCost,
+        DateTime effectiveAt,
+        string costMethod = StockCostMethods.MovingAverage,
+        string company = CompanyCode,
+        string branch = BranchCode)
+    {
+        var epochId = await db.StockLedgerEpochs
+            .Where(x => x.CompanyCode == company && x.BranchCode == branch
+                && x.Status == StockLedgerEpochStatuses.Active)
+            .Select(x => x.Id)
+            .SingleAsync();
+        var sequence = await ReserveSequenceAsync(db, company, branch);
+        var documentNo = $"OPEN-{itemCode}-{sequence}";
+        var posting = new StockPosting
+        {
+            CompanyCode = company,
+            BranchCode = branch,
+            LedgerEpochId = epochId,
+            PostingSequence = sequence,
+            RequestId = Guid.NewGuid(),
+            CommandType = "OPENING_SEED",
+            RequestFingerprint = new string('O', 64),
+            SourceModule = "INVENTORY",
+            SourceDocumentType = "OPENING",
+            SourceDocumentId = documentNo,
+            SourceDocumentNo = documentNo,
+            DocumentRevision = 1,
+            PostingRole = "PRIMARY",
+            SourceSnapshotJson = "{}",
+            SourceSnapshotHash = new string('C', 64),
+            EffectiveAt = effectiveAt,
+            BusinessDate = effectiveAt.Date,
+            PeriodKey = effectiveAt.ToString("yyyy-MM"),
+            PostedAtUtc = DateTime.UtcNow,
+            PostedBy = "TEST",
+            SealedAtUtc = DateTime.UtcNow
+        };
+        var amount = decimal.Round(qty * unitCost, 6, MidpointRounding.AwayFromZero);
+        db.StockPostings.Add(posting);
+        await db.SaveChangesAsync();
+        db.StockValuationFacts.Add(new StockValuationFact
+        {
+            CompanyCode = company,
+            BranchCode = branch,
+            LedgerEpochId = epochId,
+            StockPostingId = posting.Id,
+            PostingLineNo = 1,
+            SplitOrdinal = 0,
+            SourceLineId = $"{documentNo}:1:0",
+            SourceDocumentType = "OPENING",
+            SourceDocumentId = documentNo,
+            SourceDocumentNo = documentNo,
+            SourceDocumentLine = "1",
+            EffectiveAt = effectiveAt,
+            BusinessDate = effectiveAt.Date,
+            PeriodKey = effectiveAt.ToString("yyyy-MM"),
+            ItemCode = itemCode,
+            BaseUom = "EA",
+            MovementCode = "OPENING_IN",
+            Direction = 1,
+            BaseQty = qty,
+            CostMethod = costMethod,
+            UnitCost = unitCost,
+            CostAmount = amount,
+            BaseCurrency = "MYR",
+            BaseCostAmount = amount,
+            ValuationSource = StockValuationSources.OpeningApproved,
+            ValuationStatus = StockValuationStatuses.Valued,
+            ValuationVersion = 1,
+            CreatedAtUtc = DateTime.UtcNow,
+            CreatedBy = "TEST"
+        });
+        await db.SaveChangesAsync();
+    }
+
     public static async Task SeedStandardCostAsync(
         AppDbContext db,
         string itemCode,

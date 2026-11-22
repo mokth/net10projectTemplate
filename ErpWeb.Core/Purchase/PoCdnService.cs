@@ -2270,7 +2270,8 @@ public sealed partial class PoCdnService : IPoCdnService
                 return (result.Error ?? "Purchase CN/DN costing failed.", null);
             if (!cdn.ReturnStock && context.CostMethod == StockCostMethods.MovingAverage
                 && await HasUnreplayedCdnDependenciesAsync(db, write, context.Epoch.Id,
-                    context.Posting.EffectiveAt, context.Posting.PostingSequence, result.Adjustments, cancellationToken))
+                    context.Posting.EffectiveAt, context.Posting.PostingSequence, cdn.DocNo, cdn.CostingRevision,
+                    result.Adjustments, cancellationToken))
                 return ("Cannot post this purchase credit/debit note while later stock costing needs replay.", null);
 
             await _costAdjustments.AppendInTransactionAsync(
@@ -2363,10 +2364,10 @@ public sealed partial class PoCdnService : IPoCdnService
                     begin.Context.CostMethod, cancellationToken);
                 if (!result.Succeeded || begin.Context.CostMethod != StockCostMethods.MovingAverage
                     || begin.Context.Epoch.Id != replay.EpochId || begin.Context.Posting.PostingSequence != replay.Watermark + 1
-                    || result.Adjustments.Count != 1 || result.Adjustments.Single() != replay.Adjustment)
+                    || result.Adjustments.Count != 1 || result.Adjustments.Single() != replay.InitialAdjustment)
                     return ("The historical purchase or stock evidence changed. Retry the document.", null);
                 var required = await PoInvoiceService.WriteInvoiceIssueReplayAsync(begin.Context, replay.Fingerprint,
-                    replay.Watermark, replay.Replay, result.Adjustments.Single(), cancellationToken);
+                    replay.Watermark, replay.Replay, replay.EffectiveAdjustment, cancellationToken);
                 await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, required, cancellationToken);
             }
             completed = true;
@@ -2470,7 +2471,8 @@ public sealed partial class PoCdnService : IPoCdnService
                 return (reversal.Error ?? "Purchase CN/DN costing rollback failed.", null);
             if (replay is null && begin.Context.CostMethod == StockCostMethods.MovingAverage
                 && await HasUnreplayedCdnDependenciesAsync(db, write, original.LedgerEpochId,
-                    original.EffectiveAt, original.PostingSequence, reversal.Adjustments, cancellationToken))
+                    original.EffectiveAt, original.PostingSequence, cdn.DocNo, cdn.CostingRevision,
+                    reversal.Adjustments, cancellationToken))
                 return ("Cannot roll back this purchase credit/debit note while later stock costing needs replay.", null);
             if (replay is null)
             {
@@ -2482,10 +2484,10 @@ public sealed partial class PoCdnService : IPoCdnService
             {
                 if (begin.Context.CostMethod != StockCostMethods.MovingAverage || original.Id != replay.OriginalPostingId
                     || begin.Context.Epoch.Id != replay.EpochId || begin.Context.Posting.PostingSequence != replay.Watermark + 1
-                    || reversal.Adjustments.Count != 1 || reversal.Adjustments.Single() != replay.Adjustment)
+                    || reversal.Adjustments.Count != 1 || reversal.Adjustments.Single() != replay.InitialAdjustment)
                     return ("The historical purchase or stock evidence changed. Retry the document.", null);
                 var required = await PoInvoiceService.WriteInvoiceIssueReplayAsync(begin.Context, replay.Fingerprint,
-                    replay.Watermark, replay.Replay, reversal.Adjustments.Single(), cancellationToken);
+                    replay.Watermark, replay.Replay, replay.EffectiveAdjustment, cancellationToken);
                 await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, required, cancellationToken);
             }
             completed = true;
@@ -2510,15 +2512,19 @@ public sealed partial class PoCdnService : IPoCdnService
 
     private static async Task<bool> HasUnreplayedCdnDependenciesAsync(
         AppDbContext db, UserContext write, long epoch, DateTime effectiveAt, long sequence,
+        string docNo, int costingRevision,
         IReadOnlyCollection<PurchaseCostAdjustmentRequest> adjustments, CancellationToken cancellationToken)
     {
         var items = adjustments.Where(a => a.TotalAdjustmentAmount != 0m || a.InventoryAdjustmentAmount != 0m)
             .Select(a => a.ItemCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        return items.Length > 0
-            && (await PurchaseReplayChronologyGuard.HasLaterCanceledSaleAsync(db, write.CompanyCode!, write.BranchCode!,
-                    epoch, effectiveAt, sequence, items, cancellationToken)
-                || await PurchaseReplayChronologyGuard.HasLaterActiveWacCostAsync(db, write.CompanyCode!, write.BranchCode!,
-                    epoch, effectiveAt, sequence, items, cancellationToken));
+        if (items.Length == 0)
+            return false;
+        var ownReplayFacts = await StockReplayPurchaseVarianceGenerationReader.ValidatedActiveFactIdsAsync(
+            db, write.CompanyCode!, write.BranchCode!, docNo, costingRevision, cancellationToken, "PO_CDN");
+        return await PurchaseReplayChronologyGuard.HasLaterCanceledSaleAsync(db, write.CompanyCode!, write.BranchCode!,
+                epoch, effectiveAt, sequence, items, cancellationToken)
+            || await PurchaseReplayChronologyGuard.HasLaterActiveWacCostAsync(db, write.CompanyCode!, write.BranchCode!,
+                epoch, effectiveAt, sequence, items, cancellationToken, ownReplayFacts);
     }
 
     private async Task<long?> FindVendorReturnPostingIdAsync(

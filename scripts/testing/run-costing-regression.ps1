@@ -1,7 +1,8 @@
 param(
     [switch]$NoBuild,
     [switch]$IncludeSqlServer,
-    [string]$SqlServer = '.\SQLEXPRESS'
+    [string]$SqlServer = '.\SQLEXPRESS',
+    [string]$ResultsDirectory = ''
 )
 
 # This is a repeatable focused gate, not the full suite or production certification.
@@ -14,6 +15,7 @@ $patterns = @(
     'InventoryValuationServiceTests', 'IvGoodsReceiptServiceTests', 'IvMiscReceiptServiceTests',
     'IvStockTransferPostingServiceTests', 'IvPeriodCloseServiceTests', 'IvPeriodCloseGuardTests',
     'CostingDiagnosticCenterTests', 'QaPhysicalHoldTests', 'QaIncomingGrantTests',
+    'QaFgGrantTests', 'QaLogicalHoldTests',
     'SubconPostBlockedTests', 'SubconModeTests',
     'PoInvoiceServiceTests', 'PoCdnServiceTests',
     'Backdated_purchase_invoice_reprices_direct_sale_and_rolls_back',
@@ -129,7 +131,20 @@ $patterns = @(
     'Backdated_receipt_replays_canceled_sale_before_misc_and_goods_receipts',
     'Backdated_receipt_replays_canceled_sale_before_multiple_purchase_orders',
     'Backdated_receipt_before_later_goods_receipt_rejects_invoiced_purchase_order',
-    'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold'
+    'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold',
+    'Public_multi_pile_FIFO_and_Standard_count_posts_rolls_back_and_reposts',
+    'Fifo_replay_with_active_finished_goods_does_not_report_stale_cost_trace',
+    'Backdated_wac_receipt_reprices_active_finished_good_and_restores_it_on_removal',
+    'Backdated_wac_receipt_protects_cost_when_finished_goods_may_be_reversed',
+    'Backdated_fifo_receipt_rejects_cost_change_after_finished_good_reversal',
+    'Future_draft_is_allowed_in_open_period_but_refused_on_post_and_closed_period_draft_is_refused',
+    'Rollback_is_refused_when_original_transfer_period_is_closed_even_in_later_open_period',
+    'Same_day_later_time_transfer_posts_under_date_only_business_date_guard',
+    'Backdated_lot_transfer_creates_new_lot_and_pile_and_rolls_back_cleanly',
+    'Backdated_transfer_creates_new_non_lot_destination_pile_rolls_back_and_reposts',
+    'Backdated_new_destination_transfer_rejects_shortage_without_creating_pile',
+    'Backdated_receipt_reprices_partially_billed_do_across_two_invoices_without_double_counting_cogs',
+    'Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice'
 )
 $required = @(
     'StockLedgerInfrastructureTests', 'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
@@ -145,7 +160,7 @@ $required = @(
     'Issue_before_count_respects_quality_holds',
     'Issue_before_count_rejects_historical_shortage_even_when_current_stock_is_sufficient',
     'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
-    'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
+    'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'QaFgGrantTests', 'QaLogicalHoldTests', 'PoInvoiceServiceTests',
     'SubconPostBlockedTests', 'SubconModeTests',
     'Purchase_credit_note_refuses_unreplayed_later_issue',
     'Purchase_credit_note_replays_later_issue_and_repeats_rollback',
@@ -294,12 +309,31 @@ $required = @(
     'Backdated_receipt_replays_canceled_sale_before_misc_and_goods_receipts',
     'Backdated_receipt_replays_canceled_sale_before_multiple_purchase_orders',
     'Backdated_receipt_before_later_goods_receipt_rejects_invoiced_purchase_order',
-    'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold'
+    'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold',
+    'Public_multi_pile_FIFO_and_Standard_count_posts_rolls_back_and_reposts',
+    'Purchase_credit_note_replays_partly_consumed_and_fully_later_issued_stock',
+    'Purchase_issue_rollback_reprices_partly_consumed_later_note_and_note_rolls_back_active_generation',
+    'Fifo_replay_with_active_finished_goods_does_not_report_stale_cost_trace',
+    'Backdated_wac_receipt_reprices_active_finished_good_and_restores_it_on_removal',
+    'Backdated_wac_receipt_protects_cost_when_finished_goods_may_be_reversed',
+    'Backdated_fifo_receipt_rejects_cost_change_after_finished_good_reversal',
+    'Future_draft_is_allowed_in_open_period_but_refused_on_post_and_closed_period_draft_is_refused',
+    'Rollback_is_refused_when_original_transfer_period_is_closed_even_in_later_open_period',
+    'Same_day_later_time_transfer_posts_under_date_only_business_date_guard',
+    'Backdated_lot_transfer_creates_new_lot_and_pile_and_rolls_back_cleanly',
+    'Backdated_transfer_creates_new_non_lot_destination_pile_rolls_back_and_reposts',
+    'Backdated_new_destination_transfer_rejects_shortage_without_creating_pile',
+    'Backdated_receipt_reprices_partially_billed_do_across_two_invoices_without_double_counting_cogs',
+    'Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice'
 )
 $filter = '(' + (($patterns | ForEach-Object { 'FullyQualifiedName~' + $_ }) -join '|') +
     ')&FullyQualifiedName!~SqlServer&Category!=SqlServer'
 $resultName = 'costing-focused-' + [Guid]::NewGuid().ToString('N') + '.trx'
-$resultDirectory = Join-Path $repo 'ErpWeb.Tests\TestResults\CostingRegression'
+$resultDirectory = if ([string]::IsNullOrWhiteSpace($ResultsDirectory)) {
+    Join-Path $repo 'ErpWeb.Tests\TestResults\CostingRegression'
+} else {
+    $ResultsDirectory
+}
 $environment = @{
     'ConnectionStrings__DefaultConnection' = 'Server=127.0.0.1,1;Database=Codex_Disabled_Test;Connect Timeout=1;TrustServerCertificate=True'
     'ConnectionStrings__SqlServerTestConnection' = $null
@@ -393,6 +427,8 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -IssueBeforeZeroCountReplay
         & $sqlRunner -Server $SqlServer -NoBuild -IssueBeforeVarianceCountReplay
         & $sqlRunner -Server $SqlServer -NoBuild -ReceiptBeforeVarianceCountReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PartlyConsumedNoteReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PartlyConsumedNoteIssueRollback
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts

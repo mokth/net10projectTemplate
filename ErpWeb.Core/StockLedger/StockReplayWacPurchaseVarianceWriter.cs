@@ -42,7 +42,7 @@ internal static class StockReplayWacPurchaseVarianceWriter
         var expected = purchasePermit.Generation;
         if (context.Db.Database.CurrentTransaction is null || context.CostMethod != StockCostMethods.MovingAverage
             || context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            || context.Posting.SourceDocumentType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.MiscellaneousIssue)
             || context.Posting.PostingRole is not ("PRIMARY" or "REVERSAL")
             || (context.Posting.PostingRole == "PRIMARY") != (context.Posting.ReversesPostingId is null)
             || context.Posting.EffectiveAt > expected.OriginalFact.EffectiveAt

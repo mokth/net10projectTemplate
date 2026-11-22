@@ -85,6 +85,22 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 movement, history, evidence, snapshot, reversalPostingId);
             AddAuthorityWarnings(metadata, scope, originalPosting);
 
+            decimal effectiveTargetValue = fact.TotalValue;
+            if (movement is not null && metadata.Warnings.Count == 0)
+            {
+                try
+                {
+                    var effectiveCosts = await ProductionReplayEffectiveCostReader.ReadAsync(
+                        db, scope.CompanyCode, scope.BranchCode, [fact.ProductionMovementId], ct);
+                    effectiveTargetValue = effectiveCosts[fact.ProductionMovementId].TotalCost;
+                    metadata.EffectivePostedValue = effectiveTargetValue;
+                }
+                catch (StockLedgerException ex)
+                {
+                    metadata.Warnings.Add(ex.Error.Message);
+                }
+            }
+
             var originalFacts = await db.ProductionFinishedGoodFactRows.AsNoTracking()
                 .Where(x => x.BatchId == receiptId
                     && x.StockPostingId == originalPostingId
@@ -116,7 +132,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             }
 
             AddReversalWarnings(metadata, await ValidateReversalAsync(
-                db, receipt, fact, movement, history, ct));
+                db, receipt, fact, movement, history, effectiveTargetValue, ct));
 
             if (metadata.Warnings.Count > 0)
             {
@@ -152,15 +168,19 @@ public sealed partial class ProductionFinishedGoodReceiptService
                         throw new TraceFailure($"Original FG fact {lineFact.Id} does not belong to the selected source pool posting.");
                 }
 
+                var effectiveGroupCosts = await ProductionReplayEffectiveCostReader.ReadAsync(
+                    db, scope.CompanyCode, scope.BranchCode,
+                    group.Select(f => f.ProductionMovementId).ToArray(), ct);
                 var expected = FinishedGoodReceiptMath.AllocateValue(
                     prePool.BaseQty,
                     prePool.Value,
                     group.Select(x => (x.SourceId, x.BaseQty)).ToArray());
                 foreach (var lineFact in group)
                 {
+                    var effectiveLineValue = effectiveGroupCosts[lineFact.ProductionMovementId].TotalCost;
                     if (!expected.TryGetValue(lineFact.SourceId, out var expectedValue)
-                        || expectedValue != lineFact.TotalValue)
-                        throw new TraceFailure($"Stored FG value for source {lineFact.SourceId} does not reproduce the original numeric SourceId allocation.");
+                        || expectedValue != effectiveLineValue)
+                        throw new TraceFailure($"Stored FG value for source {lineFact.SourceId} does not reproduce the active numeric SourceId allocation.");
                 }
 
                 var currentQty = prePool.BaseQty;
@@ -169,11 +189,12 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 IReadOnlyList<TraceAtom>? targetAtoms = null;
                 foreach (var lineFact in group)
                 {
+                    var effectiveLineValue = effectiveGroupCosts[lineFact.ProductionMovementId].TotalCost;
                     var allocated = ProductionPooledCostTraceMath.Allocate(
                         currentQty,
                         currentValue,
                         lineFact.BaseQty,
-                        lineFact.TotalValue,
+                        effectiveLineValue,
                         currentAtoms.Select(ToMathAtom).ToArray());
                     var lineAtoms = allocated.Allocations
                         .Where(x => x.Amount > 0m)
@@ -184,15 +205,16 @@ public sealed partial class ProductionFinishedGoodReceiptService
 
                     currentAtoms = SubtractTraceAtoms(currentAtoms, allocated.Allocations);
                     currentQty = IvQty.Round(currentQty - lineFact.BaseQty);
-                    currentValue = StockLedgerPrecision.Money(currentValue - lineFact.TotalValue);
+                    currentValue = StockLedgerPrecision.Money(currentValue - effectiveLineValue);
                 }
 
                 if (targetAtoms is null)
                     throw new TraceFailure("The selected FG source line was not present in the original posting group.");
-                if (StockLedgerPrecision.Money(targetAtoms.Sum(x => x.Amount)) != fact.TotalValue)
-                    throw new TraceFailure("The derived FG component vector does not reconcile to the frozen line value.");
+                if (StockLedgerPrecision.Money(targetAtoms.Sum(x => x.Amount)) != effectiveTargetValue)
+                    throw new TraceFailure("The derived FG component vector does not reconcile to the active line value.");
 
                 metadata.ValuationGeneration = evidence.Generation;
+                metadata.EffectivePostedValue = effectiveTargetValue;
                 var components = BuildComponents(targetAtoms);
                 var details = targetAtoms.Select(x => x.Detail with { Amount = x.Amount }).ToArray();
                 var status = components.Any(x => x.ComponentType == CostTraceComponentTypes.UnclassifiedVerified)
@@ -200,6 +222,14 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     : CostTraceStatuses.Verified;
                 return IvMasterOperationResult<FinishedGoodCostTrace>.Ok(BuildTrace(
                     metadata, status, components, details, []));
+            }
+            catch (StockLedgerException e)
+            {
+                metadata.Warnings.Add(e.Error.Message);
+                return IvMasterOperationResult<FinishedGoodCostTrace>.Ok(BuildInconsistentTrace(
+                    receipt, source, pool, fact, movement, history, evidence, snapshot, metadata.Warnings,
+                    metadata.PoolBaseQtyBeforePosting, metadata.PoolValueBeforePosting,
+                    metadata.DocumentStatus, metadata.ReversalPostingId));
             }
             catch (TraceFailure e)
             {
@@ -277,6 +307,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         ProductionFinishedGoodFact originalFact,
         ProductionBalLotMovement? originalMovement,
         IvTrxHistory? originalHistory,
+        decimal effectiveTotalValue,
         CancellationToken ct)
     {
         var reversalPostingId = await db.StockPostings.AsNoTracking()
@@ -299,9 +330,9 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 && x.StockPostingId == reversalId
                 && x.ReversesFactId == originalFact.Id, ct);
         if (reversalFact is null
-            || reversalFact.TotalValue != originalFact.TotalValue
+            || (reversalFact.TotalValue != originalFact.TotalValue && reversalFact.TotalValue != effectiveTotalValue)
             || IvQty.Round(reversalFact.BaseQty) != IvQty.Round(originalFact.BaseQty))
-            warnings.Add("The reversal FG fact does not conserve the original quantity and value.");
+            warnings.Add("The reversal FG fact does not conserve the active quantity and value.");
 
         if (originalMovement is not null)
         {
@@ -310,9 +341,17 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     && x.StockPostingId == reversalId
                     && x.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal, ct);
             if (reversalMovement is null
-                || reversalMovement.TotalCost != originalMovement.TotalCost
                 || IvQty.Round(reversalMovement.BaseQty) != IvQty.Round(originalMovement.BaseQty))
+            {
                 warnings.Add("The reversal production movement does not link exactly to the original movement.");
+            }
+            else
+            {
+                var reversalEffective = (await ProductionReplayEffectiveCostReader.ReadAsync(
+                    db, receipt.CompanyCode, receipt.BranchCode, [reversalMovement.Uid], ct))[reversalMovement.Uid];
+                if (reversalEffective.TotalCost != effectiveTotalValue)
+                    warnings.Add("The reversal production movement does not link exactly to the original movement.");
+            }
         }
 
         if (originalHistory is not null)
@@ -321,7 +360,8 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 .SingleOrDefaultAsync(x => x.ReversesHistoryId == originalHistory.Id
                     && x.StockPostingId == reversalId, ct);
             if (reversalHistory is null
-                || reversalHistory.ExactTransferredValue != originalHistory.ExactTransferredValue
+                || (reversalHistory.ExactTransferredValue != originalHistory.ExactTransferredValue
+                    && reversalHistory.ExactTransferredValue != effectiveTotalValue)
                 || reversalHistory.EvidenceBaseQty != originalHistory.EvidenceBaseQty)
                 warnings.Add("The reversal inventory history does not link exactly to the original history.");
         }
@@ -401,9 +441,9 @@ public sealed partial class ProductionFinishedGoodReceiptService
             BaseQty = metadata.Fact.BaseQty,
             DestinationQty = metadata.Source.Detail.ToStdQty ?? 0m,
             DestinationUom = metadata.Source.DestinationUom,
-            ExactPostedValue = metadata.Fact.TotalValue,
+            ExactPostedValue = metadata.EffectivePostedValue,
             EffectiveLineUnitCost = metadata.Source.Detail.ToStdQty is > 0m
-                ? StockLedgerPrecision.Money(metadata.Fact.TotalValue / metadata.Source.Detail.ToStdQty.Value)
+                ? StockLedgerPrecision.Money(metadata.EffectivePostedValue / metadata.Source.Detail.ToStdQty.Value)
                 : 0m,
             DestinationPostedUnitPrice = metadata.Snapshot?.PostedUnitPrice,
             ValuationGeneration = metadata.ValuationGeneration,
@@ -472,6 +512,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             Snapshot = snapshot;
             ReversalPostingId = reversalPostingId;
             DocumentStatus = reversalPostingId is null ? "POSTED" : "REVERSED";
+            EffectivePostedValue = fact.TotalValue;
         }
 
         public ProductionFinishedGoodReceipt Receipt { get; }
@@ -486,6 +527,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         public ProductionFinishedGoodPriceSnapshot? Snapshot { get; }
         public long? ReversalPostingId { get; }
         public string DocumentStatus { get; }
+        public decimal EffectivePostedValue { get; set; }
         public int ValuationGeneration { get; set; }
         public decimal PoolBaseQtyBeforePosting { get; set; }
         public decimal PoolValueBeforePosting { get; set; }
@@ -527,6 +569,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         private readonly IStockMovementRegistry _registry = new StockMovementRegistry();
         private readonly Dictionary<long, MovementRow> _movementCache = [];
         private readonly Dictionary<long, ProductionValuationEvidence?> _evidenceCache = [];
+        private readonly Dictionary<long, ProductionEffectiveCost> _effectiveCostCache = [];
         private readonly Dictionary<long, IReadOnlyList<TraceAtom>> _vectorCache = [];
         private readonly HashSet<long> _resolving = [];
         private readonly List<string> _warnings = [];
@@ -546,6 +589,17 @@ public sealed partial class ProductionFinishedGoodReceiptService
                               orderby posting.PostingSequence, movement.PostingLineNo, movement.SplitOrdinal, movement.Uid
                               select new MovementRow(movement, posting.PostingSequence))
                 .ToListAsync(ct);
+
+            var missingCostIds = rows.Select(r => r.Movement.Uid)
+                .Where(id => !_effectiveCostCache.ContainsKey(id))
+                .Distinct().ToArray();
+            if (missingCostIds.Length > 0)
+            {
+                var loadedCosts = await ProductionReplayEffectiveCostReader.ReadAsync(
+                    _db, _scope.CompanyCode, _scope.BranchCode, missingCostIds, ct);
+                foreach (var kv in loadedCosts)
+                    _effectiveCostCache[kv.Key] = kv.Value;
+            }
 
             decimal qty = 0m;
             decimal value = 0m;
@@ -589,23 +643,24 @@ public sealed partial class ProductionFinishedGoodReceiptService
             var evidence = await GetEvidenceAsync(movement.Uid, ct)
                 ?? throw new TraceFailure($"Movement {movement.Uid} has no valuation evidence.");
             ValidateEvidence(movement, evidence);
+            var effectiveCost = await GetEffectiveCostAsync(movement.Uid, ct);
             var direction = _registry.GetRequired(movement.MovementType).Direction;
             if (direction > 0)
             {
-                var inbound = await BuildInboundAtomsAsync(movement, evidence, ct);
-                if (StockLedgerPrecision.Money(inbound.Sum(x => x.Amount)) != movement.TotalCost)
+                var inbound = await BuildInboundAtomsAsync(movement, evidence, effectiveCost, ct);
+                if (StockLedgerPrecision.Money(inbound.Sum(x => x.Amount)) != effectiveCost.TotalCost)
                     throw new TraceFailure($"Inbound movement {movement.Uid} component value does not reconcile.");
                 atoms = atoms.Concat(inbound).ToArray();
             }
             else if (direction < 0)
             {
-                if (atoms.Count == 0 && movement.TotalCost > 0m)
+                if (atoms.Count == 0 && effectiveCost.TotalCost > 0m)
                     throw new TraceFailure($"Outbound movement {movement.Uid} has no component pool evidence.");
                 var allocation = ProductionPooledCostTraceMath.Allocate(
                     qty,
                     value,
                     movement.BaseQty,
-                    movement.TotalCost,
+                    effectiveCost.TotalCost,
                     atoms.Select(ToMathAtom).ToArray());
                 _vectorCache[movement.Uid] = allocation.Allocations
                     .Where(x => x.Amount > 0m)
@@ -619,7 +674,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
             }
 
             qty = IvQty.Round(qty + direction * movement.BaseQty);
-            value = StockLedgerPrecision.Money(value + direction * movement.TotalCost);
+            value = StockLedgerPrecision.Money(value + direction * effectiveCost.TotalCost);
             if (qty < 0m || value < 0m || (qty == 0m && value != 0m))
                 throw new TraceFailure($"Production pool state became invalid at movement {movement.Uid}.");
             EnsureScalarState(qty, value, atoms);
@@ -629,6 +684,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         private async Task<IReadOnlyList<TraceAtom>> BuildInboundAtomsAsync(
             ProductionBalLotMovement movement,
             ProductionValuationEvidence evidence,
+            ProductionEffectiveCost effectiveCost,
             CancellationToken ct)
         {
             if (movement.OriginalMovementId is long originalMovementId)
@@ -638,9 +694,9 @@ public sealed partial class ProductionFinishedGoodReceiptService
             }
 
             if (movement.MovementType == ProductionBalLotMovementTypes.Issue)
-                return await BuildIssueAtomsAsync(movement, evidence, ct);
+                return await BuildIssueAtomsAsync(movement, evidence, effectiveCost, ct);
             if (movement.MovementType == ProductionBalLotMovementTypes.Produce)
-                return await BuildProduceAtomsAsync(movement, evidence, ct);
+                return await BuildProduceAtomsAsync(movement, evidence, effectiveCost, ct);
             if (movement.MovementType == ProductionBalLotMovementTypes.AdjustIn)
             {
                 var adjustment = await _db.ProductionStockAdjustmentFacts.AsNoTracking()
@@ -654,7 +710,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     new TraceAtom(
                         $"adjustment:{adjustment.Id}",
                         CostTraceComponentTypes.ProductionStockAdjustment,
-                        adjustment.TotalValue,
+                        effectiveCost.TotalCost,
                         new FinishedGoodCostTraceDetail
                         {
                             ComponentType = CostTraceComponentTypes.ProductionStockAdjustment,
@@ -667,10 +723,10 @@ public sealed partial class ProductionFinishedGoodReceiptService
                             Lot = movement.PhysicalLotNo ?? movement.LotIdentity,
                             Quantity = movement.BaseQty,
                             Uom = movement.BaseUom,
-                            Rate = movement.UnitCost,
+                            Rate = effectiveCost.UnitCost,
                             CostMethod = "PRODUCTION_ACTUAL",
                             ValuationSource = adjustment.CostBasisCode,
-                            Amount = adjustment.TotalValue
+                            Amount = effectiveCost.TotalCost
                         })
                 ];
             }
@@ -680,7 +736,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 new TraceAtom(
                     $"movement:{movement.Uid}",
                     CostTraceComponentTypes.UnclassifiedVerified,
-                    movement.TotalCost,
+                    effectiveCost.TotalCost,
                     new FinishedGoodCostTraceDetail
                     {
                         ComponentType = CostTraceComponentTypes.UnclassifiedVerified,
@@ -692,10 +748,10 @@ public sealed partial class ProductionFinishedGoodReceiptService
                         Lot = movement.PhysicalLotNo ?? movement.LotIdentity,
                         Quantity = movement.BaseQty,
                         Uom = movement.BaseUom,
-                        Rate = movement.BaseQty > 0m ? StockLedgerPrecision.Money(movement.TotalCost / movement.BaseQty) : 0m,
+                        Rate = movement.BaseQty > 0m ? StockLedgerPrecision.Money(effectiveCost.TotalCost / movement.BaseQty) : 0m,
                         CostMethod = "VERIFIED_EXTERNAL",
                         ValuationSource = evidence.Basis,
-                        Amount = movement.TotalCost
+                        Amount = effectiveCost.TotalCost
                     }
                 )
             ];
@@ -704,6 +760,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         private async Task<IReadOnlyList<TraceAtom>> BuildIssueAtomsAsync(
             ProductionBalLotMovement movement,
             ProductionValuationEvidence evidence,
+            ProductionEffectiveCost effectiveCost,
             CancellationToken ct)
         {
             if (movement.StockPostingId is not long postingId || movement.InventoryHistoryId is not int historyId)
@@ -711,27 +768,26 @@ public sealed partial class ProductionFinishedGoodReceiptService
             if (!evidence.Basis.StartsWith("STOCK_VALUATION:", StringComparison.Ordinal))
                 throw new TraceFailure($"Production ISSUE movement {movement.Uid} has an invalid valuation basis.");
 
-            var facts = await _db.StockValuationFacts.AsNoTracking()
-                .Where(x => x.StockPostingId == postingId
+            var history = await _db.IvTrxHistories.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == historyId
                     && x.CompanyCode == _scope.CompanyCode
                     && x.BranchCode == _scope.BranchCode
-                    && x.InventoryHistoryId == historyId
-                    && x.Direction < 0
+                    && x.StockPostingId == postingId, ct);
+            if (history is null)
+                throw new TraceFailure($"Production ISSUE movement {movement.Uid} has missing inventory history authority.");
+
+            var resolved = await StockReplayValuationGenerationResolver.ResolveAsync(
+                _db, _scope.CompanyCode, _scope.BranchCode, [history], ct);
+            var facts = resolved[history.Id]
+                .Where(x => x.Direction < 0
                     && x.MovementCode == "PRODUCTION_MATERIAL_OUT"
                     && x.ValuationStatus == StockValuationStatuses.Valued)
                 .OrderBy(x => x.PostingLineNo).ThenBy(x => x.SplitOrdinal).ThenBy(x => x.Id)
-                .ToListAsync(ct);
+                .ToList();
             if (facts.Count == 0
                 || IvQty.Round(facts.Sum(x => x.BaseQty)) != IvQty.Round(movement.BaseQty)
-                || StockLedgerPrecision.Money(facts.Sum(x => x.CostAmount)) != movement.TotalCost)
-                throw new TraceFailure($"Production ISSUE movement {movement.Uid} does not reconcile to StockValuationFact evidence.");
-
-            var originalFactIds = facts.Select(x => x.Id).ToArray();
-            if (await _db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
-                    x.OriginalValuationFactId.HasValue
-                    && originalFactIds.Contains(x.OriginalValuationFactId.Value)
-                    && x.ReversesValuationFactId == null, ct))
-                throw new TraceFailure($"Production ISSUE movement {movement.Uid} has replayed cost or FIFO origin; corrected finished-good trace is not yet available.");
+                || StockLedgerPrecision.Money(facts.Sum(x => x.CostAmount)) != effectiveCost.TotalCost)
+                throw new TraceFailure($"Production ISSUE movement {movement.Uid} does not reconcile to active StockValuationFact evidence.");
 
             var result = new List<TraceAtom>(facts.Count);
             foreach (var fact in facts)
@@ -746,6 +802,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                                  && layer.CompanyCode == _scope.CompanyCode
                                  && layer.BranchCode == _scope.BranchCode
                                  && consumption.ReversesConsumptionId == null
+                                 && !_db.StockFifoLayerConsumptions.Any(r => r.ReversesConsumptionId == consumption.Id)
                              orderby consumption.SplitOrdinal, consumption.Id
                              select new FifoTraceRow(consumption, layer)).ToListAsync(ct)
                     : [];
@@ -823,6 +880,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
         private async Task<IReadOnlyList<TraceAtom>> BuildProduceAtomsAsync(
             ProductionBalLotMovement movement,
             ProductionValuationEvidence evidence,
+            ProductionEffectiveCost effectiveCost,
             CancellationToken ct)
         {
             var basis = evidence.Basis;
@@ -834,7 +892,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     new TraceAtom(
                         $"movement:{movement.Uid}",
                         CostTraceComponentTypes.UnclassifiedVerified,
-                        movement.TotalCost,
+                        effectiveCost.TotalCost,
                         new FinishedGoodCostTraceDetail
                         {
                             ComponentType = CostTraceComponentTypes.UnclassifiedVerified,
@@ -846,10 +904,10 @@ public sealed partial class ProductionFinishedGoodReceiptService
                             Lot = movement.PhysicalLotNo ?? movement.LotIdentity,
                             Quantity = movement.BaseQty,
                             Uom = movement.BaseUom,
-                            Rate = movement.BaseQty > 0m ? StockLedgerPrecision.Money(movement.TotalCost / movement.BaseQty) : 0m,
+                            Rate = movement.BaseQty > 0m ? StockLedgerPrecision.Money(effectiveCost.TotalCost / movement.BaseQty) : 0m,
                             CostMethod = "VERIFIED_EXTERNAL",
                             ValuationSource = basis,
-                            Amount = movement.TotalCost
+                            Amount = effectiveCost.TotalCost
                         }
                     )
                 ];
@@ -859,6 +917,15 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 .Where(x => x.ConsumerMovementId == movement.Uid)
                 .OrderBy(x => x.Id)
                 .ToListAsync(ct);
+            if (edges.Count == 0 && movement.StockPostingId is long producePostingId)
+            {
+                edges = await _db.ProductionPoolDependencyRows.AsNoTracking()
+                    .Where(x => x.ConsumerMovementId == movement.Uid
+                        && x.StockPostingId == producePostingId
+                        && x.ReversesDependencyId == null)
+                    .OrderBy(x => x.Id)
+                    .ToListAsync(ct);
+            }
             if (await ProductionDependencyOwnerReader.ValidateForConsumerAsync(
                     _db, _scope.CompanyCode, _scope.BranchCode, movement,
                     edges, ct) is string ownerError)
@@ -931,7 +998,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     }));
             }
 
-            if (StockLedgerPrecision.Money(result.Sum(x => x.Amount)) != movement.TotalCost)
+            if (StockLedgerPrecision.Money(result.Sum(x => x.Amount)) != effectiveCost.TotalCost)
                 throw new TraceFailure($"Verified PRODUCE movement {movement.Uid} does not reconcile consumed inputs plus conversion facts.");
             return result;
         }
@@ -950,11 +1017,12 @@ public sealed partial class ProductionFinishedGoodReceiptService
                 var evidence = await GetEvidenceAsync(movementId, ct)
                     ?? throw new TraceFailure($"Production movement {movementId} has no valuation evidence.");
                 ValidateEvidence(row.Movement, evidence);
+                var effectiveCost = await GetEffectiveCostAsync(movementId, ct);
                 var direction = _registry.GetRequired(row.Movement.MovementType).Direction;
                 if (direction > 0)
                 {
-                    var inbound = await BuildInboundAtomsAsync(row.Movement, evidence, ct);
-                    if (StockLedgerPrecision.Money(inbound.Sum(x => x.Amount)) != row.Movement.TotalCost)
+                    var inbound = await BuildInboundAtomsAsync(row.Movement, evidence, effectiveCost, ct);
+                    if (StockLedgerPrecision.Money(inbound.Sum(x => x.Amount)) != effectiveCost.TotalCost)
                         throw new TraceFailure($"Movement {movementId} component value does not reconcile.");
                     _vectorCache[movementId] = inbound;
                     return inbound;
@@ -965,7 +1033,7 @@ public sealed partial class ProductionFinishedGoodReceiptService
                     replay.BaseQty,
                     replay.Value,
                     row.Movement.BaseQty,
-                    row.Movement.TotalCost,
+                    effectiveCost.TotalCost,
                     replay.Atoms.Select(ToMathAtom).ToArray());
                 var vector = allocation.Allocations
                     .Where(x => x.Amount > 0m)
@@ -978,6 +1046,17 @@ public sealed partial class ProductionFinishedGoodReceiptService
             {
                 _resolving.Remove(movementId);
             }
+        }
+
+        private async Task<ProductionEffectiveCost> GetEffectiveCostAsync(long movementId, CancellationToken ct)
+        {
+            if (_effectiveCostCache.TryGetValue(movementId, out var cached))
+                return cached;
+            var resolved = await ProductionReplayEffectiveCostReader.ReadAsync(
+                _db, _scope.CompanyCode, _scope.BranchCode, [movementId], ct);
+            var cost = resolved[movementId];
+            _effectiveCostCache[movementId] = cost;
+            return cost;
         }
 
         private async Task<MovementRow?> GetMovementAsync(long movementId, CancellationToken ct)

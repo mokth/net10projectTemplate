@@ -89,7 +89,8 @@ public static class StockReplayFifoCountSheetInsertionPlanner
             || bases.Any(b => b.CompanyCode != sheet.CompanyCode
                 || b.BranchCode != sheet.BranchCode
                 || b.CostBasisKind is not
-                    (StockCountCostBasisKinds.ManualApproved
+                    (StockCountCostBasisKinds.LedgerFifo
+                        or StockCountCostBasisKinds.ManualApproved
                         or StockCountCostBasisKinds.ZeroCostApproved)
                 || !StockCountAnchorCommandFactory.ValidBasis(b)))
             throw Invalid("FIFO count sheet has incomplete approved positive-line bases.");
@@ -147,7 +148,8 @@ public static class StockReplayFifoCountSheetInsertionPlanner
                         || basis.CompanyCode != plan.PhysicalSheet.CompanyCode
                         || basis.BranchCode != plan.PhysicalSheet.BranchCode
                         || basis.CostBasisKind is not
-                            (StockCountCostBasisKinds.ManualApproved
+                            (StockCountCostBasisKinds.LedgerFifo
+                                or StockCountCostBasisKinds.ManualApproved
                                 or StockCountCostBasisKinds.ZeroCostApproved)
                         || !StockCountAnchorCommandFactory.ValidBasis(basis)
                         || basis.FrozenFallbackUnitCost

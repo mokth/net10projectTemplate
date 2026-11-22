@@ -13,7 +13,9 @@ public sealed partial class PoCdnService
     private sealed record CdnIssueReplayPlan(
         string Fingerprint, long EpochId, long Watermark, string InvoiceNo,
         string PoNo, short PoRelNo, short PoLineNo, long? OriginalPostingId, long? OriginalFactId,
-        PurchaseCostAdjustmentRequest Adjustment, PoInvoiceService.InvoiceIssueReplay Replay);
+        PurchaseCostAdjustmentRequest InitialAdjustment,
+        PurchaseCostAdjustmentRequest EffectiveAdjustment,
+        PoInvoiceService.InvoiceIssueReplay Replay);
 
     private async Task<CdnIssueReplayPlan?> PreviewCdnIssueReplayAsync(
         UserContext write, string docNo, bool posting, CancellationToken ct)
@@ -119,6 +121,7 @@ public sealed partial class PoCdnService
         };
         StockPosting? original = null;
         PurchaseCostAdjustment? priorAdjustment = null;
+        StockValuationFact? originalFact = null;
         StockValuationFact? priorFact = null;
         PurchaseReceiptSettlementResult result;
         if (posting)
@@ -141,58 +144,72 @@ public sealed partial class PoCdnService
                     != roots[0].SourceSnapshotHash)
                 return null;
             original = roots[0];
-            var adjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a => a.StockPostingId == original.Id)
+            var allAdjustments = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+                a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == "PO_CDN"
+                && a.SourceDocumentNo == cdn.DocNo && a.SourceCostingRevision == cdn.CostingRevision)
                 .ToArrayAsync(ct);
-            if (adjustments.Length != 1 || adjustments[0].SourceDocumentType != "PO_CDN"
-                || adjustments[0].SourceDocumentNo != cdn.DocNo || adjustments[0].SourceCostingRevision != cdn.CostingRevision
-                || adjustments[0].ItemCode != item || adjustments[0].CostMethod != StockCostMethods.MovingAverage
-                || adjustments[0].ReversesAdjustmentId is not null || adjustments[0].InventoryAdjustmentFactId is not long factId
-                || adjustments[0].InventoryAdjustmentAmount == 0m || adjustments[0].ConsumedVarianceAmount != 0m
-                || adjustments[0].InventoryAdjustmentAmount != adjustments[0].TotalAdjustmentAmount
-                || await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(a => a.ReversesAdjustmentId == adjustments[0].Id, ct))
+            var rootAdjustments = allAdjustments.Where(a => a.StockPostingId == original.Id && a.ReversesAdjustmentId == null).ToArray();
+            if (rootAdjustments.Length != 1)
                 return null;
-            priorAdjustment = adjustments[0];
-            priorFact = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f => f.Id == factId, ct);
-            if (priorFact is null || priorFact.StockPostingId != original.Id || priorFact.CompanyCode != company
-                || priorFact.BranchCode != branch || priorFact.LedgerEpochId != epochs[0].Id
-                || priorFact.SourceDocumentType != "PO_CDN" || priorFact.SourceDocumentNo != cdn.DocNo
-                || priorFact.ItemCode != item || priorFact.InventoryHistoryId is not null || priorFact.BaseQty != 0m
-                || priorFact.CostMethod != StockCostMethods.MovingAverage || priorFact.SignedValue != priorAdjustment.InventoryAdjustmentAmount
-                || priorFact.OriginalValuationFactId is not > 0 || priorFact.ReversesValuationFactId is not null
-                || priorFact.ValuationStatus != StockValuationStatuses.Valued
-                || await db.StockValuationFacts.AsNoTracking().AnyAsync(f => f.ReversesValuationFactId == priorFact.Id, ct))
+            var childGroups = allAdjustments.Where(a => a.ReversesAdjustmentId.HasValue)
+                .GroupBy(a => a.ReversesAdjustmentId!.Value).ToArray();
+            if (childGroups.Any(g => g.Count() != 1))
                 return null;
+            var childMap = childGroups.ToDictionary(g => g.Key, g => g.Single());
+            var chain = new List<PurchaseCostAdjustment> { rootAdjustments[0] };
+            while (childMap.TryGetValue(chain[^1].Id, out var child))
+            {
+                if (chain.Count >= 101 || chain.Any(a => a.Id == child.Id))
+                    return null;
+                chain.Add(child);
+            }
+            var chainIds = chain.Select(a => a.Id).ToArray();
+            if (chain.Count != allAdjustments.Length || chain.Count % 2 == 0
+                || await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(a =>
+                    a.ReversesAdjustmentId.HasValue && chainIds.Contains(a.ReversesAdjustmentId.Value)
+                    && !chainIds.Contains(a.Id), ct))
+                return null;
+            var generation = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(db, chain, ct);
+            if (generation is null || generation.Original.ItemCode != item
+                || generation.Active.InventoryAdjustmentAmount == 0m
+                || await db.StockValuationFacts.AsNoTracking().AnyAsync(f => f.ReversesValuationFactId == generation.ActiveFact.Id, ct))
+                return null;
+            priorAdjustment = generation.Active;
+            originalFact = generation.OriginalFact;
+            priorFact = generation.ActiveFact;
             result = await _cdnCostAdjustments.ReverseAsync(db, cdn, original.Id, "REPLAY_PLAN", ct);
         }
         if (!result.Succeeded || result.Adjustments.Count != 1)
             return null;
-        var adjustment = result.Adjustments.Single();
-        var value = adjustment.ValueAdjustment;
-        if (adjustment.SourceDocumentType != "PO_CDN" || adjustment.SourceDocumentNo != cdn.DocNo
-            || adjustment.SourceCostingRevision != cdn.CostingRevision || adjustment.SourceDocumentLine != line.Line
-            || adjustment.ItemCode != item || adjustment.CostMethod != StockCostMethods.MovingAverage
-            || adjustment.BaseQty != line.StdQty || adjustment.TotalAdjustmentAmount == 0m
-            || adjustment.InventoryAdjustmentAmount != adjustment.TotalAdjustmentAmount || adjustment.ConsumedVarianceAmount != 0m
-            || value is null || value.Amount != Math.Abs(adjustment.InventoryAdjustmentAmount)
-            || value.Direction * value.Amount != adjustment.InventoryAdjustmentAmount
-            || adjustment.PoNo != invoiceLine.PoNo || adjustment.PoRelNo != invoiceLine.PoRelNo
-            || adjustment.PoLineNo != invoiceLine.PoLineNo
-            || (posting ? value.OriginalValuationFactId is not > 0 || value.ReversesValuationFactId is not null
-                    || adjustment.ReversesAdjustmentId is not null
-                : value.OriginalValuationFactId != priorFact!.Id || value.ReversesValuationFactId != priorFact.Id
-                    || adjustment.ReversesAdjustmentId != priorAdjustment!.Id))
+        var initialAdjustment = result.Adjustments.Single();
+        var value = initialAdjustment.ValueAdjustment;
+        if (initialAdjustment.SourceDocumentType != "PO_CDN" || initialAdjustment.SourceDocumentNo != cdn.DocNo
+            || initialAdjustment.SourceCostingRevision != cdn.CostingRevision || initialAdjustment.SourceDocumentLine != line.Line
+            || initialAdjustment.ItemCode != item || initialAdjustment.CostMethod != StockCostMethods.MovingAverage
+            || initialAdjustment.BaseQty != line.StdQty || initialAdjustment.TotalAdjustmentAmount == 0m
+            || StockLedgerPrecision.Money(initialAdjustment.InventoryAdjustmentAmount + initialAdjustment.ConsumedVarianceAmount)
+                != initialAdjustment.TotalAdjustmentAmount
+            || initialAdjustment.PoNo != invoiceLine.PoNo || initialAdjustment.PoRelNo != invoiceLine.PoRelNo
+            || initialAdjustment.PoLineNo != invoiceLine.PoLineNo
+            || (value is not null && (value.Amount != Math.Abs(initialAdjustment.InventoryAdjustmentAmount)
+                || value.Direction * value.Amount != initialAdjustment.InventoryAdjustmentAmount
+                || (posting ? value.OriginalValuationFactId is not > 0 || value.ReversesValuationFactId is not null
+                    : value.OriginalValuationFactId != priorFact!.Id || value.ReversesValuationFactId != priorFact.Id)))
+            || (value is null && initialAdjustment.InventoryAdjustmentAmount != 0m)
+            || (posting ? initialAdjustment.ReversesAdjustmentId is not null
+                : initialAdjustment.ReversesAdjustmentId != priorAdjustment!.Id))
             return null;
-        var receiptId = posting ? value.OriginalValuationFactId!.Value : priorFact!.OriginalValuationFactId!.Value;
         var settlements = await db.PurchaseReceiptCostSettlements.AsNoTracking().Where(s =>
             s.CompanyCode == company && s.BranchCode == branch && s.PiDocNo == invoice.DocNo
             && s.PiCostingRevision == invoice.CostingRevision && s.PiLineNo == line.InvLineNo
-            && s.ReceiptValuationFactId == receiptId && s.ReversesSettlementId == null).ToArrayAsync(ct);
+            && s.ReversesSettlementId == null).ToArrayAsync(ct);
         if (settlements.Length != 1 || settlements[0].ItemCode != item || settlements[0].SettledBaseQty < line.StdQty
             || settlements[0].SettledBaseQty != invoiceLine.StdQty
-            || await db.PurchaseReceiptCostSettlements.AsNoTracking().CountAsync(s => s.CompanyCode == company
-                && s.BranchCode == branch && s.PiDocNo == invoice.DocNo && s.PiCostingRevision == invoice.CostingRevision
-                && s.PiLineNo == line.InvLineNo && s.ReversesSettlementId == null, ct) != 1
             || await db.PurchaseReceiptCostSettlements.AsNoTracking().AnyAsync(s => s.ReversesSettlementId == settlements[0].Id, ct))
+            return null;
+        var receiptId = settlements[0].ReceiptValuationFactId;
+        if (posting && value is not null && value.OriginalValuationFactId != receiptId
+            || !posting && originalFact!.OriginalValuationFactId != receiptId)
             return null;
         var receipt = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f => f.Id == receiptId, ct);
         if (receipt is null || receipt.CompanyCode != company || receipt.BranchCode != branch
@@ -256,13 +273,13 @@ public sealed partial class PoCdnService
             return null;
         var key = new StockReplayEventKey(cdn.DocDate, StockReplayEventKey.OrdinaryClass,
             posting ? checked(watermark + 1) : original!.PostingSequence,
-            posting ? "PURCHASE_CDN" : $"V{priorFact!.Id:D20}", 0);
+            posting ? "PURCHASE_CDN" : $"V{originalFact!.Id:D20}", 0);
         if (await PurchaseReplayChronologyGuard.HasLaterCanceledSaleAsync(db, company, branch, epochs[0].Id,
                 key.EffectiveAt, key.OriginalPostingSequence, [item], ct))
             return null;
         var tail = posting
             ? await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch, item, key, ct)
-            : await StockReplayWacFinancialTailReader.ReadLaterForCdnRemovalAsync(db, company, branch, item, key, priorFact!.Id, ct);
+            : await StockReplayWacFinancialTailReader.ReadLaterForCdnRemovalAsync(db, company, branch, item, key, originalFact!.Id, ct);
         if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount
             || tail.CurrentQuantity != states[0].OnHandBaseQty || tail.CurrentValue != states[0].InventoryValue
             || tail.LaterEvents.Any(e => e.EventId is not (> 0 and <= int.MaxValue)
@@ -283,27 +300,78 @@ public sealed partial class PoCdnService
                 && p.BranchCode == branch && p.Status == StockCostPolicyStatuses.Active && p.Id != policies[0].Id
                 && p.EffectiveFrom <= lastDate && (p.EffectiveTo == null || p.EffectiveTo > cdn.DocDate.Date), ct))
             return null;
-        var candidate = new StockReplayWacEvent(posting ? long.MaxValue : long.MaxValue - priorFact!.Id,
+        var candidate = new StockReplayWacEvent(posting ? long.MaxValue : long.MaxValue - originalFact!.Id,
             key, 0m, posting ? 0m : priorFact!.SignedValue, 0m, posting ? 0m : priorFact!.SignedValue);
         var old = StockReplayWacSimulator.SimulateInsertion(tail.CurrentQuantity, tail.CurrentValue,
             candidate with { OldSignedValue = 0m, FixedSignedValue = 0m }, tail.LaterEvents);
         if (old.FinalQuantity != tail.CurrentQuantity || old.FinalValue != tail.CurrentValue
-            || old.HistoricalQuantityBeforeCandidate < adjustment.BaseQty
+            || old.HistoricalQuantityBeforeCandidate <= 0m
             || old.LaterSteps.Any(step => !tail.LaterEvents.Any(e => e.EventId == step.EventId
                 && e.OldSignedQuantity == step.SignedQuantity && e.OldSignedValue == step.SignedValue)))
             return null;
+        PurchaseCostAdjustmentRequest effectiveAdjustment;
         IReadOnlyList<StockReplayWacStep> projectedSteps;
         decimal finalQuantity, finalValue;
         if (posting)
         {
+            var split = StockPurchaseVarianceAllocator.Allocate(
+                initialAdjustment.TotalAdjustmentAmount,
+                initialAdjustment.BaseQty,
+                Math.Min(old.HistoricalQuantityBeforeCandidate, initialAdjustment.BaseQty),
+                old.HistoricalValueBeforeCandidate,
+                StockCostMethods.MovingAverage);
+            if (split.Inventory == 0m)
+                return null;
+            var positive = split.Inventory > 0m;
+            var effectiveValue = new StockValueAdjustmentRequest(
+                initialAdjustment.SourceDocumentLine,
+                0,
+                item,
+                receipt.BaseUom,
+                Math.Abs(split.Inventory),
+                positive ? 1 : -1,
+                positive ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT",
+                StockValuationSources.PurchasePriceVariance,
+                SourceDocumentLine: initialAdjustment.SourceDocumentLine.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                OriginalValuationFactId: receipt.Id);
+            effectiveAdjustment = initialAdjustment with
+            {
+                InventoryAdjustmentAmount = split.Inventory,
+                ConsumedVarianceAmount = split.Consumed,
+                ValueAdjustment = effectiveValue
+            };
             var projected = StockReplayWacSimulator.SimulateInsertion(tail.CurrentQuantity, tail.CurrentValue,
-                candidate with { FixedSignedValue = adjustment.InventoryAdjustmentAmount }, tail.LaterEvents);
+                candidate with { FixedSignedValue = split.Inventory }, tail.LaterEvents);
             projectedSteps = projected.LaterSteps;
             finalQuantity = projected.FinalQuantity;
             finalValue = projected.FinalValue;
         }
         else
         {
+            var reversalInventory = StockLedgerPrecision.Money(-priorAdjustment!.InventoryAdjustmentAmount);
+            var reversalConsumed = StockLedgerPrecision.Money(-priorAdjustment.ConsumedVarianceAmount);
+            var reversalTotal = StockLedgerPrecision.Money(-priorAdjustment.TotalAdjustmentAmount);
+            var positive = reversalInventory > 0m;
+            var effectiveValue = new StockValueAdjustmentRequest(
+                priorAdjustment.SourceDocumentLine,
+                0,
+                item,
+                priorFact!.BaseUom,
+                Math.Abs(reversalInventory),
+                positive ? 1 : -1,
+                positive ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT",
+                StockValuationSources.PurchasePriceVariance,
+                SourceDocumentLine: priorAdjustment.SourceDocumentLine.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                OriginalValuationFactId: priorFact.Id,
+                ReversesValuationFactId: priorFact.Id);
+            effectiveAdjustment = initialAdjustment with
+            {
+                TotalAdjustmentAmount = reversalTotal,
+                InventoryAdjustmentAmount = reversalInventory,
+                ConsumedVarianceAmount = reversalConsumed,
+                ValueAdjustment = effectiveValue,
+                ReversesAdjustmentId = priorAdjustment.Id
+            };
             var projected = StockReplayWacSimulator.SimulateRemoval(tail.CurrentQuantity, tail.CurrentValue, candidate, tail.LaterEvents);
             projectedSteps = projected.LaterSteps;
             finalQuantity = projected.FinalQuantity;
@@ -317,8 +385,8 @@ public sealed partial class PoCdnService
             || proof.Sales.Count != 0 || proof.Deliveries.Count != 0)
             return null;
         var replay = new PoInvoiceService.InvoiceIssueReplay(proof.Changes, proof.EvidenceHash,
-            proof.GoodsReceipts, proof.Sales, proof.Deliveries, adjustment.InventoryAdjustmentAmount,
-            adjustment.ConsumedVarianceAmount, balances[0].Id, balances[0].StdQty,
+            proof.GoodsReceipts, proof.Sales, proof.Deliveries, effectiveAdjustment.InventoryAdjustmentAmount,
+            effectiveAdjustment.ConsumedVarianceAmount, balances[0].Id, balances[0].StdQty,
             tail.CurrentQuantity, tail.CurrentValue, finalQuantity, finalValue);
         var order = await db.PoOrders.AsNoTracking().Where(p => p.CompanyCode == company && p.BranchCode == branch
             && p.PoNo == invoiceLine.PoNo && p.PoRelNo == invoiceLine.PoRelNo)
@@ -341,13 +409,14 @@ public sealed partial class PoCdnService
             InvoiceOwner = new { invoiceOwner.Id, invoiceOwner.SourceSnapshotHash, invoiceOwner.RequestFingerprint },
             Original = original is null ? null : new { original.Id, original.PostingSequence,
                 original.SourceSnapshotHash, original.RequestFingerprint },
-            PriorAdjustment = priorAdjustment?.Id, PriorFact = priorFact?.Id, policies, order, orderLine,
+            OriginalFact = originalFact?.Id, PriorAdjustment = priorAdjustment?.Id, PriorFact = priorFact?.Id, policies, order, orderLine,
             Balance = new { balances[0].Id, balances[0].StdQty, balances[0].RowVersion },
             State = new { states[0].Id, states[0].OnHandBaseQty, states[0].InventoryValue,
                 states[0].LastValuationFactId, states[0].LastPostingSequence, states[0].RowVersion },
-            adjustment, tail.LaterEvents, projectedSteps, finalQuantity, finalValue, replay
+            initialAdjustment, effectiveAdjustment, tail.LaterEvents, projectedSteps, finalQuantity, finalValue, replay
         }).SourceSnapshotHash;
         return new(fingerprint, epochs[0].Id, watermark, invoice.DocNo, invoiceLine.PoNo,
-            invoiceLine.PoRelNo.Value, invoiceLine.PoLineNo.Value, original?.Id, priorFact?.Id, adjustment, replay);
+            invoiceLine.PoRelNo.Value, invoiceLine.PoLineNo.Value, original?.Id, priorFact?.Id,
+            initialAdjustment, effectiveAdjustment, replay);
     }
 }

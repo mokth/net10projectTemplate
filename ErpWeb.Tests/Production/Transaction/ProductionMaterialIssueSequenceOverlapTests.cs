@@ -1175,6 +1175,9 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             return (resultMr.Succeeded, resultMr.ErrorMessage);
         }
 
+        if (consumeAt is 43 or 67)
+            await SeedTraceablePredecessorAsync(graph);
+
         var outputs = CreateOutputService(businessDate);
         var predecessor = await outputs.CreateAsync(OutputRequest(
             graph.Process1Id, 40m, new DateTime(2026, 10, 1, 8, 0, 0)));
@@ -1523,9 +1526,11 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 + "WHEN NEW.ProductionBalLotMovementId = " + movementId.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 + " BEGIN SELECT RAISE(ABORT, 'injected finished-good replay failure'); END;");
         }
+        PostedFinishedGood? reversedFinishedGood = null;
         if (consumeAt is 28 or 30 or 31 or 34 or 67)
         {
             var finished = await PostFinishedGoodAsync(graph.OrderId, consumedOutputId, businessDate);
+            reversedFinishedGood = finished;
             Assert.Equal(6m, finished.Value);
             await RollbackFinishedGoodAsync(finished);
             if (consumeAt is 30 or 31)
@@ -3300,7 +3305,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             if (goodsReceipt) Assert.Equal(0m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
             return;
         }
-        if (consumeAt is 26 or 30 or 31 or 38 or 41 or 42 or 67)
+        if (consumeAt is 26 or 30 or 31 or 38 or 41 or 42)
         {
             Assert.False(posted.Succeeded);
             await using var unchanged = await _factory.CreateDbContextAsync();
@@ -3312,13 +3317,50 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.Empty(await unchanged.ProductionCostRestatementFacts.ToArrayAsync());
             if (goodsReceipt)
                 Assert.Equal(0m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
-            if (consumeAt == 67)
+            return;
+        }
+        if (consumeAt == 67)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            Assert.NotNull(reversedFinishedGood);
+            async Task AssertReversedFgCostAsync(decimal expectedFg, decimal expectedRmQty, decimal expectedRmVal)
             {
-                Assert.Contains("reversed finished-good cost", posted.Error, StringComparison.OrdinalIgnoreCase);
-                Assert.Equal(16m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == 58)).StdQty);
-                Assert.Equal(0m, (await unchanged.StockCostStates.SingleAsync(s => s.ItemCode == "FG001")).InventoryValue);
-                Assert.Empty(await unchanged.StockReplayRuns.ToArrayAsync());
+                await using var check = await _factory.CreateDbContextAsync();
+                var rmState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+                Assert.Equal(expectedRmQty, rmState.OnHandBaseQty);
+                Assert.Equal(expectedRmVal, rmState.InventoryValue);
+                Assert.Equal(expectedRmQty, (await check.IvBalLocs.SingleAsync(b => b.Id == 58)).StdQty);
+                var fgState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
+                Assert.Equal(0m, fgState.OnHandBaseQty);
+                Assert.Equal(0m, fgState.InventoryValue);
+                var fgOut = await check.ProductionBalLotMovements.SingleAsync(m =>
+                    m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut && m.OriginalMovementId == null);
+                var fgRev = await check.ProductionBalLotMovements.SingleAsync(m =>
+                    m.OriginalMovementId == fgOut.Uid && m.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal);
+                var resolved = await ProductionEffectiveCostResolver.ResolveAsync(check, "DEMO", "HQ", [fgOut.Uid, fgRev.Uid]);
+                Assert.Equal(expectedFg, resolved[fgOut.Uid].TotalCost);
+                Assert.Equal(expectedFg, resolved[fgRev.Uid].TotalCost);
+                Assert.Equal(resolved[fgOut.Uid].UnitCost, resolved[fgRev.Uid].UnitCost);
+                var trace = await reversedFinishedGood.Service.GetCostTraceAsync(
+                    reversedFinishedGood.Document.Id, reversedFinishedGood.Document.Lines.Single().SourceId);
+                Assert.True(trace.Succeeded, trace.Message);
+                Assert.True(trace.Data!.TraceStatus is "VERIFIED" or "VERIFIED_WITH_UNCLASSIFIED",
+                    string.Join("; ", trace.Data.Warnings));
+                Assert.Equal("REVERSED", trace.Data.DocumentStatus);
+                Assert.Equal(expectedFg, trace.Data.ExactPostedValue);
+                Assert.Equal(expectedFg, trace.Data.Components.Sum(x => x.Amount));
+                Assert.Empty(trace.Data.Warnings);
             }
+            await AssertReversedFgCostAsync(9.2m, 21m, 75.6m);
+            var removed = await RollbackReceiptAsync();
+            Assert.True(removed.Succeeded, removed.Error);
+            await AssertReversedFgCostAsync(6m, 16m, 32m);
+            var reposted = await PostReceiptAsync();
+            Assert.True(reposted.Succeeded, reposted.Error);
+            await AssertReversedFgCostAsync(9.2m, 21m, 75.6m);
+            var removedAgain = await RollbackReceiptAsync();
+            Assert.True(removedAgain.Succeeded, removedAgain.Error);
+            await AssertReversedFgCostAsync(6m, 16m, 32m);
             return;
         }
         if (consumeAt == 25)
@@ -3498,6 +3540,17 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             var corrected = await unchangedFinishedGood.Service.GetAsync(unchangedFinishedGood.Document.Id);
             Assert.True(corrected.Succeeded, corrected.Message);
             Assert.Equal(correctedValue, Assert.Single(corrected.Data!.Lines).TotalValue);
+            if (consumeAt == 43)
+            {
+                var restatedTrace = await unchangedFinishedGood.Service.GetCostTraceAsync(
+                    unchangedFinishedGood.Document.Id, unchangedFinishedGood.Document.Lines.Single().SourceId);
+                Assert.True(restatedTrace.Succeeded, restatedTrace.Message);
+                Assert.True(restatedTrace.Data!.TraceStatus is "VERIFIED" or "VERIFIED_WITH_UNCLASSIFIED",
+                    string.Join("; ", restatedTrace.Data.Warnings));
+                Assert.Equal(correctedValue, restatedTrace.Data.ExactPostedValue);
+                Assert.Equal(correctedValue, restatedTrace.Data.Components.Sum(x => x.Amount));
+                Assert.Empty(restatedTrace.Data.Warnings);
+            }
             await using (var afterPost = await _factory.CreateDbContextAsync())
             {
                 var finishedState = await afterPost.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
@@ -3538,6 +3591,17 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 var restoredDetail = await unchangedFinishedGood.Service.GetAsync(unchangedFinishedGood.Document.Id);
                 Assert.True(restoredDetail.Succeeded, restoredDetail.Message);
                 Assert.Equal(6m, Assert.Single(restoredDetail.Data!.Lines).TotalValue);
+                if (consumeAt == 43)
+                {
+                    var restoredTrace = await unchangedFinishedGood.Service.GetCostTraceAsync(
+                        unchangedFinishedGood.Document.Id, unchangedFinishedGood.Document.Lines.Single().SourceId);
+                    Assert.True(restoredTrace.Succeeded, restoredTrace.Message);
+                    Assert.True(restoredTrace.Data!.TraceStatus is "VERIFIED" or "VERIFIED_WITH_UNCLASSIFIED",
+                        string.Join("; ", restoredTrace.Data.Warnings));
+                    Assert.Equal(6m, restoredTrace.Data.ExactPostedValue);
+                    Assert.Equal(6m, restoredTrace.Data.Components.Sum(x => x.Amount));
+                    Assert.Empty(restoredTrace.Data.Warnings);
+                }
                 await using (var afterRemoval = await _factory.CreateDbContextAsync())
                     Assert.Equal(6m, (await afterRemoval.StockCostStates.SingleAsync(s => s.ItemCode == "FG001")).InventoryValue);
                 var reversedDuringRepeat = false;
@@ -6170,7 +6234,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             await RollbackIssueAsync(8m);
             return;
         }
-        if (scenario is 11 or 15 or 16 or 24 or 27 or 28 or 29)
+        if (scenario is 11 or 15 or 16 or 24 or 27 or 28)
         {
             Assert.False(posted.Succeeded);
             await using var unchanged = await _factory.CreateDbContextAsync();
@@ -6182,16 +6246,41 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.Empty(await unchanged.ProductionCostRestatementFacts.ToArrayAsync());
             if (goodsReceipt)
                 Assert.Equal(0m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
-            if (scenario == 29)
+            return;
+        }
+        if (scenario == 29)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            async Task AssertFifoReversedFgAsync(decimal expectedFg, decimal expectedRmQty, decimal expectedRmVal)
             {
-                Assert.Contains("reversed finished-good cost", posted.Error, StringComparison.OrdinalIgnoreCase);
-                Assert.Equal(16m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == 59)).StdQty);
-                var layers = await unchanged.StockFifoLayers.Where(l => l.ItemCode == "RM001").ToArrayAsync();
-                Assert.Equal(16m, layers.Sum(l => l.RemainingQty));
-                Assert.Equal(32m, layers.Sum(l => l.RemainingValue));
-                Assert.Equal(0m, (await unchanged.StockCostStates.SingleAsync(s => s.ItemCode == "FG001")).InventoryValue);
-                Assert.Empty(await unchanged.StockReplayRuns.ToArrayAsync());
+                await using var check = await _factory.CreateDbContextAsync();
+                var rmState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+                Assert.Equal(expectedRmQty, rmState.OnHandBaseQty);
+                Assert.Equal(expectedRmVal, rmState.InventoryValue);
+                Assert.Equal(expectedRmQty, (await check.IvBalLocs.SingleAsync(b => b.Id == 59)).StdQty);
+                var layers = await check.StockFifoLayers.Where(l => l.ItemCode == "RM001").ToArrayAsync();
+                Assert.Equal(expectedRmQty, layers.Sum(l => l.RemainingQty));
+                Assert.Equal(expectedRmVal, layers.Sum(l => l.RemainingValue));
+                Assert.Equal(0m, (await check.StockCostStates.SingleAsync(s => s.ItemCode == "FG001")).InventoryValue);
+                var fgOut = await check.ProductionBalLotMovements.SingleAsync(m =>
+                    m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut && m.OriginalMovementId == null);
+                var fgRev = await check.ProductionBalLotMovements.SingleAsync(m =>
+                    m.OriginalMovementId == fgOut.Uid && m.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal);
+                var resolved = await ProductionEffectiveCostResolver.ResolveAsync(check, "DEMO", "HQ", [fgOut.Uid, fgRev.Uid]);
+                Assert.Equal(expectedFg, resolved[fgOut.Uid].TotalCost);
+                Assert.Equal(expectedFg, resolved[fgRev.Uid].TotalCost);
+                Assert.Equal(resolved[fgOut.Uid].UnitCost, resolved[fgRev.Uid].UnitCost);
             }
+            await AssertFifoReversedFgAsync(14m, 21m, 66m);
+            var removed = await RollbackReceiptAsync();
+            Assert.True(removed.Succeeded, removed.Error);
+            await AssertFifoReversedFgAsync(6m, 16m, 32m);
+            var reposted = await PostReceiptAsync();
+            Assert.True(reposted.Succeeded, reposted.Error);
+            await AssertFifoReversedFgAsync(14m, 21m, 66m);
+            var removedAgain = await RollbackReceiptAsync();
+            Assert.True(removedAgain.Succeeded, removedAgain.Error);
+            await AssertFifoReversedFgAsync(6m, 16m, 32m);
             return;
         }
         if (scenario == 10)
@@ -6241,28 +6330,42 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 var outputReversal = await outputs.RollbackAsync(new ProductionOutputRollbackRequest
                 {
                     OutputId = consumedOutputId, PostingRequestId = Guid.NewGuid().ToString("N"),
-                    Reason = "Verify reversed output replay is rejected atomically"
+                    Reason = "Verify reversed output replay restates reversed FG pair"
                 });
                 Assert.True(outputReversal.Succeeded, outputReversal.Message);
             }
-            int runCount;
-            await using (var before = await _factory.CreateDbContextAsync())
-                runCount = await before.StockReplayRuns.CountAsync();
-            var blocked = await RollbackReceiptAsync();
-            Assert.False(blocked.Succeeded);
-            Assert.Contains("reversed finished-good cost", blocked.Error, StringComparison.OrdinalIgnoreCase);
-            await using var unchanged = await _factory.CreateDbContextAsync();
-            var state = await unchanged.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
-            Assert.Equal(21m, state.OnHandBaseQty);
-            Assert.Equal(66m, state.InventoryValue);
-            Assert.Equal(21m, (await unchanged.IvBalLocs.SingleAsync(b => b.Id == 59)).StdQty);
-            var layers = await unchanged.StockFifoLayers.Where(l => l.ItemCode == "RM001").ToArrayAsync();
-            Assert.Equal(21m, layers.Sum(l => l.RemainingQty));
-            Assert.Equal(66m, layers.Sum(l => l.RemainingValue));
-            Assert.Equal(0m, (await unchanged.StockCostStates.SingleAsync(s => s.ItemCode == "FG001")).InventoryValue);
-            Assert.Equal(runCount, await unchanged.StockReplayRuns.CountAsync());
-            Assert.Equal(IvBatchStatuses.Posted, (await unchanged.IvTrxBatches.SingleAsync(b => b.BatchNo == receiptBatch)).BatchStatus);
-            if (goodsReceipt) Assert.Equal(5m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
+            async Task AssertFifoReversedFgAsync(decimal expectedFg, decimal expectedRmQty, decimal expectedRmVal, string expectedBatchStatus)
+            {
+                await using var check = await _factory.CreateDbContextAsync();
+                var rmState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+                Assert.Equal(expectedRmQty, rmState.OnHandBaseQty);
+                Assert.Equal(expectedRmVal, rmState.InventoryValue);
+                Assert.Equal(expectedRmQty, (await check.IvBalLocs.SingleAsync(b => b.Id == 59)).StdQty);
+                var layers = await check.StockFifoLayers.Where(l => l.ItemCode == "RM001").ToArrayAsync();
+                Assert.Equal(expectedRmQty, layers.Sum(l => l.RemainingQty));
+                Assert.Equal(expectedRmVal, layers.Sum(l => l.RemainingValue));
+                Assert.Equal(0m, (await check.StockCostStates.SingleAsync(s => s.ItemCode == "FG001")).InventoryValue);
+                Assert.Equal(expectedBatchStatus, (await check.IvTrxBatches.SingleAsync(b => b.BatchNo == receiptBatch)).BatchStatus);
+                var fgOut = await check.ProductionBalLotMovements.SingleAsync(m =>
+                    m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut && m.OriginalMovementId == null);
+                var fgRev = await check.ProductionBalLotMovements.SingleAsync(m =>
+                    m.OriginalMovementId == fgOut.Uid && m.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal);
+                var resolved = await ProductionEffectiveCostResolver.ResolveAsync(check, "DEMO", "HQ", [fgOut.Uid, fgRev.Uid]);
+                Assert.Equal(expectedFg, resolved[fgOut.Uid].TotalCost);
+                Assert.Equal(expectedFg, resolved[fgRev.Uid].TotalCost);
+                Assert.Equal(resolved[fgOut.Uid].UnitCost, resolved[fgRev.Uid].UnitCost);
+            }
+            var removed = await RollbackReceiptAsync();
+            Assert.True(removed.Succeeded, removed.Error);
+            await AssertFifoReversedFgAsync(6m, 16m, 32m, IvBatchStatuses.New);
+            if (goodsReceipt) Assert.Equal(0m, (await (await _factory.CreateDbContextAsync()).PoOrderDetails.SingleAsync()).RecvQty);
+            var reposted = await PostReceiptAsync();
+            Assert.True(reposted.Succeeded, reposted.Error);
+            await AssertFifoReversedFgAsync(14m, 21m, 66m, IvBatchStatuses.Posted);
+            if (goodsReceipt) Assert.Equal(5m, (await (await _factory.CreateDbContextAsync()).PoOrderDetails.SingleAsync()).RecvQty);
+            var removedAgain = await RollbackReceiptAsync();
+            Assert.True(removedAgain.Succeeded, removedAgain.Error);
+            await AssertFifoReversedFgAsync(6m, 16m, 32m, IvBatchStatuses.New);
             return;
         }
         if (scenario is 21 or 22 or 23 or 25 or 26)
@@ -6277,8 +6380,12 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 var correctedTrace = await unchangedFinishedGood.Service.GetCostTraceAsync(
                     unchangedFinishedGood.Document.Id, unchangedFinishedGood.Document.Lines.Single().SourceId);
                 Assert.True(correctedTrace.Succeeded, correctedTrace.Message);
-                Assert.Equal("INCONSISTENT", correctedTrace.Data!.TraceStatus);
-                Assert.Contains(correctedTrace.Data.Warnings, warning =>
+                Assert.True(correctedTrace.Data!.TraceStatus == "VERIFIED_WITH_UNCLASSIFIED",
+                    string.Join("; ", correctedTrace.Data.Warnings));
+                Assert.Equal(6m, correctedTrace.Data.ExactPostedValue);
+                Assert.Equal(6m, correctedTrace.Data.Components.Sum(x => x.Amount));
+                Assert.Empty(correctedTrace.Data.Warnings);
+                Assert.DoesNotContain(correctedTrace.Data.Warnings, warning =>
                     warning.Contains("replayed cost or FIFO origin", StringComparison.Ordinal));
             }
             if (!receiptFirst)

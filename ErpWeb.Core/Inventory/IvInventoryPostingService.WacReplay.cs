@@ -575,18 +575,33 @@ public sealed partial class IvInventoryPostingService
             return null;
         var candidate = physical.Candidate;
         var key = candidate.Key;
-        var financial = await StockReplayWacInsertionPlanner.BuildAsync(
-            read, companyCode, branchCode, itemCode, physical,
-            new StockReplayWacEvent(candidate.EventId, key, 0m, 0m,
-                candidate.SignedDelta), cancellationToken);
-        var countProof = expectedTrxType == IvTrxTypes.MiscellaneousIssue
+        var purchaseNoteFactId = expectedTrxType == IvTrxTypes.MiscellaneousIssue
+            ? await FindLaterPurchaseNoteFactAsync(read, companyCode, branchCode, itemCode,
+                physical.BalLocId, physical.LedgerEpochId, key, cancellationToken)
+            : null;
+        var candidateEvent = new StockReplayWacEvent(candidate.EventId, key, 0m, 0m,
+            candidate.SignedDelta);
+        var financial = purchaseNoteFactId is long noteFactId
+            ? await StockReplayWacInsertionPlanner.BuildForLaterPurchaseNoteAsync(
+                read, companyCode, branchCode, itemCode, physical, candidateEvent,
+                noteFactId, cancellationToken)
+            : await StockReplayWacInsertionPlanner.BuildAsync(
+                read, companyCode, branchCode, itemCode, physical, candidateEvent,
+                cancellationToken);
+        var laterPurchaseNote = purchaseNoteFactId is long noteId
+            ? await PlanLaterPurchaseNoteForInsertionAsync(read, companyCode, branchCode, itemCode,
+                physical, financial, noteId, cancellationToken)
+            : null;
+        var countProof = expectedTrxType == IvTrxTypes.MiscellaneousIssue && laterPurchaseNote is null
             ? await PlanSingleCountReplayAsync(read, companyCode, branchCode, itemCode,
                 physical.BalLocId, detail.FrStdQty.Value, batch.TrxDtTime, physical.LaterEvents,
                 financial.Tail.LaterEvents, financial.Projection.LaterSteps,
                 financial.Tail.CurrentQuantity, financial.Tail.CurrentValue,
                 financial.Projection.FinalQuantity, financial.Projection.FinalValue, null, false, cancellationToken)
             : null;
-        if (countProof is null && await CheckSimpleWacTailAsync(read, financial.Tail.LaterEvents,
+        var miInventoryTail = InventoryTailForProvenNote(financial.Tail.LaterEvents, laterPurchaseNote);
+        if (countProof is null && (laterPurchaseNote is null || miInventoryTail.Count > 0)
+            && await CheckSimpleWacTailAsync(read, miInventoryTail,
                 batch.TrxDtTime, cancellationToken) is string unsupported)
             return IvInventoryPostingBatchResult.Fail(batchNo, unsupported);
 
@@ -594,6 +609,15 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (laterPurchaseNote is not null)
+        {
+            if (!await LockLaterPurchaseNoteSourcesAsync(write, companyCode, branchCode, laterPurchaseNote, cancellationToken))
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The later purchase note is busy. Retry posting.");
+            var lockedNote = await PlanLaterPurchaseNoteForInsertionAsync(write, companyCode, branchCode, itemCode,
+                physical, financial, laterPurchaseNote.FactId, cancellationToken);
+            if (lockedNote?.Fingerprint != laterPurchaseNote.Fingerprint)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The later purchase note changed. Retry posting.");
+        }
         if (countProof is not null)
         {
             if (!await LockCountReplaySourceAsync(write, companyCode, branchCode, countProof, cancellationToken))
@@ -648,8 +672,11 @@ public sealed partial class IvInventoryPostingService
         }
         var countPermit = countProof is null ? null : await StockReplayPhysicalPlanner
             .PrepareCountCorrectionsWithinRootAsync(ledger.Context, physical, cancellationToken);
+        var purchaseNotePermit = PreparePurchaseNoteVarianceWrite(ledger.Context, laterPurchaseNote,
+            financial.PlanHash, financial.PhysicalPlan.BranchWatermark,
+            financial.Tail.LaterEvents, financial.Projection.LaterSteps);
         var required = await StockReplayWacMiRootWriter.InsertAsync(
-            ledger.Context, financial, batchNo, cancellationToken, countPermit);
+            ledger.Context, financial, batchNo, cancellationToken, countPermit, purchaseNotePermit);
         if (expectedTrxType == IvTrxTypes.VendorReturn)
         {
             var postedDetails = await _posting.LoadDetailsForBatchAsync(
@@ -1017,7 +1044,9 @@ public sealed partial class IvInventoryPostingService
         var countPermit = countProof is null ? null : await StockReplayPhysicalPlanner
             .PrepareCountCorrectionsWithinRootAsync(context, physical, cancellationToken);
         var purchasePermit = PreparePurchaseVarianceWrite(context, laterInvoicePlan,
-            financial.PlanHash, physical.BranchWatermark, financial.Tail.LaterEvents, financial.Projection.LaterSteps);
+                financial.PlanHash, physical.BranchWatermark, financial.Tail.LaterEvents, financial.Projection.LaterSteps)
+            ?? PreparePurchaseNoteVarianceWrite(context, laterPurchaseNote,
+                financial.PlanHash, physical.BranchWatermark, financial.Tail.LaterEvents, financial.Projection.LaterSteps);
         var details = await write.IvTrxBatchDetails.AsNoTracking()
             .Where(d => d.BatchId == batch.Id).ToArrayAsync(cancellationToken);
         var currentHistories = await _posting.LoadHistoryForBatchAsync(write,
@@ -1198,7 +1227,7 @@ public sealed partial class IvInventoryPostingService
                 context)
             : await RollBackInventoryMICoreAsync(write, companyCode,
                 branchCode, userId, batchNo, trxType, cancellationToken,
-                context);
+                context, allowReplayedPurchaseNote: laterPurchaseNote is not null);
         if (!result.Succeeded)
         {
             await tx.RollbackAsync(cancellationToken);
@@ -1669,34 +1698,39 @@ public sealed partial class IvInventoryPostingService
                 .SingleOrDefaultAsync(d => d.CompanyCode == history.CompanyCode
                     && d.BranchCode == history.BranchCode && d.DoNo == doNo,
                     cancellationToken);
+            var shipmentLine = shipmentLines.SingleOrDefault(d =>
+                d.TrxLineNo == history.TrxLineNo);
+            var line = delivery?.Details.SingleOrDefault(d =>
+                d.Line == history.SoLineNo);
             if (batch is null || batch.RefNo != SaDoSpRefs.ToRefNo(doNo)
                 || batch.DeletedAtUtc is not null || batch.ForceCloseDate is not null
                 || batch.TrxDtTime != history.TrxDtTime
-                || shipmentLines.Length != 1
-                || shipmentLines[0].TrxLineNo != history.TrxLineNo
-                || shipmentLines[0].DoNo != doNo
-                || shipmentLines[0].SoLineNo != history.SoLineNo
-                || shipmentLines[0].ICode != history.ICode
-                || shipmentLines[0].FromBalLocId != history.FromBalLocId
-                || shipmentLines[0].FrStdQty != history.FrStdQty
+                || shipmentLine is null
+                || shipmentLine.DoNo != doNo
+                || shipmentLine.SoLineNo != history.SoLineNo
+                || shipmentLine.ICode != history.ICode
+                || shipmentLine.FromBalLocId != history.FromBalLocId
+                || shipmentLine.FrStdQty != history.FrStdQty
                 || delivery is null || delivery.Status != SaDoStatuses.Posted
                 || delivery.DeletedAtUtc is not null
                 || delivery.DoDate.Date != history.TrxDtTime.Date
-                || delivery.Details.Count != 1)
+                || line is null)
                 return unsupported + " Shipment or delivery-order header is inconsistent.";
-            var line = delivery.Details.Single();
             if (!line.StockControl || line.Line != history.SoLineNo
                 || line.ICode != history.ICode || line.StdQty != history.FrStdQty
                 || line.StdUom != history.FrStdUom)
                 return unsupported + " Delivery-order line is inconsistent.";
             var invoiceLines = await db.SaInvoiceDetails.AsNoTracking()
                 .Where(i => i.CompanyCode == history.CompanyCode
-                    && i.BranchCode == history.BranchCode && i.DoNo == doNo)
+                    && i.BranchCode == history.BranchCode
+                    && i.DoNo == doNo && i.DoLine == line.Line)
                 .ToArrayAsync(cancellationToken);
             var allocations = await db.SaDocApplications.AsNoTracking()
                 .Where(a => a.CompanyCode == history.CompanyCode
                     && a.BranchCode == history.BranchCode
-                    && a.SourceDocType == SaDocTypes.Do && a.SourceDocId == doNo)
+                    && a.SourceDocType == SaDocTypes.Do
+                    && a.SourceDocId == doNo
+                    && a.SourceLineId == line.Line)
                 .ToArrayAsync(cancellationToken);
             if (delivery.BillingStatus == SaDualStatuses.None)
             {
@@ -1704,47 +1738,70 @@ public sealed partial class IvInventoryPostingService
                     || invoiceLines.Length != 0 || allocations.Length != 0)
                     return unsupported + " Delivery-order line is billed or inconsistent.";
             }
-            else if (delivery.BillingStatus == SaDualStatuses.Full
-                && invoiceLines.Length == 1 && allocations.Length == 1)
+            else if (delivery.BillingStatus is SaDualStatuses.Partial or SaDualStatuses.Full)
             {
-                var linked = invoiceLines[0];
-                var permittedNoteNo = historyReturn?.NoteNo;
-                var invoice = await db.SaInvoices.AsNoTracking().Include(i => i.Details)
-                    .SingleOrDefaultAsync(i => i.CompanyCode == history.CompanyCode
-                        && i.BranchCode == history.BranchCode
-                        && i.InvNo == linked.InvNo, cancellationToken);
-                var allocation = allocations[0];
-                if (invoice is null || invoice.Status != SaInvoiceStatuses.Posted
-                    || invoice.DeletedAtUtc is not null || invoice.Details.Count != 1
-                    || invoice.CustCode != delivery.CustCode
-                    || invoice.Currency != delivery.Currency
-                    || invoice.InvDate.Date < delivery.DoDate.Date
-                    || invoice.InvDate.Year != delivery.DoDate.Year
-                    || invoice.InvDate.Month != delivery.DoDate.Month
-                    || !linked.LinkDo || !linked.StockControl
-                    || linked.DoLine != line.Line || linked.ICode != line.ICode
-                    || linked.Qty != line.Qty || linked.StdQty != history.FrStdQty
-                    || linked.StdUom != history.FrStdUom
-                    || !string.IsNullOrWhiteSpace(line.InvNo)
-                        && line.InvNo != invoice.InvNo
-                    || allocation.SourceLineId != line.Line
-                    || allocation.TargetDocType != SaDocTypes.Inv
-                    || allocation.TargetDocId != invoice.InvNo
-                    || allocation.TargetLineId != linked.Line
-                    || allocation.AppliedQty != linked.Qty
-                    || await IvPeriodCloseGuard.EnsureOpenAsync(db,
-                        history.CompanyCode, history.BranchCode, invoice.InvDate,
-                        cancellationToken) is not null
-                    || await db.SaCdns.AsNoTracking().AnyAsync(c =>
-                        c.CompanyCode == history.CompanyCode
-                        && c.BranchCode == history.BranchCode
-                        && c.InvNo == invoice.InvNo
-                        && (permittedNoteNo == null || c.DocNo != permittedNoteNo),
-                        cancellationToken))
-                    return unsupported + " Linked invoice or credit/debit note is inconsistent.";
+                if (invoiceLines.Length == 0 && allocations.Length == 0)
+                {
+                    // On a multi-line DO where another line was billed, this specific line
+                    // may legitimately still be unbilled.
+                    if (delivery.Details.Count == 1 || !string.IsNullOrWhiteSpace(line.InvNo))
+                        return unsupported + " Delivery-order billing is inconsistent.";
+                }
+                else
+                {
+                    if (invoiceLines.Length != allocations.Length
+                        || invoiceLines.Length > 20)
+                        return unsupported + " Linked invoice or application count is inconsistent.";
+                    var permittedNoteNo = historyReturn?.NoteNo;
+                    var invNos = invoiceLines.Select(i => i.InvNo).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    var invoices = await db.SaInvoices.AsNoTracking()
+                        .Where(i => i.CompanyCode == history.CompanyCode
+                            && i.BranchCode == history.BranchCode
+                            && invNos.Contains(i.InvNo))
+                        .ToDictionaryAsync(i => i.InvNo, StringComparer.OrdinalIgnoreCase, cancellationToken);
+                    var billedQty = 0m;
+                    var billedStdQty = 0m;
+                    foreach (var linked in invoiceLines)
+                    {
+                        var allocation = allocations.SingleOrDefault(a =>
+                            a.TargetDocType == SaDocTypes.Inv
+                            && string.Equals(a.TargetDocId, linked.InvNo, StringComparison.OrdinalIgnoreCase)
+                            && a.TargetLineId == linked.Line);
+                        if (!invoices.TryGetValue(linked.InvNo, out var invoice)
+                            || allocation is null
+                            || invoice.Status != SaInvoiceStatuses.Posted
+                            || invoice.DeletedAtUtc is not null
+                            || invoice.CustCode != delivery.CustCode
+                            || invoice.Currency != delivery.Currency
+                            || invoice.InvDate.Date < delivery.DoDate.Date
+                            || invoice.InvDate.Year != delivery.DoDate.Year
+                            || invoice.InvDate.Month != delivery.DoDate.Month
+                            || !linked.LinkDo || !linked.StockControl
+                            || linked.DoLine != line.Line || linked.ICode != line.ICode
+                            || linked.Qty <= 0m || linked.StdQty <= 0m
+                            || linked.StdUom != history.FrStdUom
+                            || allocation.AppliedQty != linked.Qty
+                            || await IvPeriodCloseGuard.EnsureOpenAsync(db,
+                                history.CompanyCode, history.BranchCode, invoice.InvDate,
+                                cancellationToken) is not null
+                            || await db.SaCdns.AsNoTracking().AnyAsync(c =>
+                                c.CompanyCode == history.CompanyCode
+                                && c.BranchCode == history.BranchCode
+                                && c.InvNo == invoice.InvNo
+                                && (permittedNoteNo == null || c.DocNo != permittedNoteNo),
+                                cancellationToken))
+                            return unsupported + " Linked invoice or credit/debit note is inconsistent.";
+                        billedQty += linked.Qty;
+                        billedStdQty += linked.StdQty;
+                    }
+                    if (billedQty > line.Qty || billedStdQty > history.FrStdQty
+                        || delivery.BillingStatus == SaDualStatuses.Full
+                            && (billedQty != line.Qty || billedStdQty != history.FrStdQty))
+                        return unsupported + " Linked invoice billed quantities do not match delivery line.";
+                }
             }
             else
-                return unsupported + " Delivery-order billing needs a single full posted invoice.";
+                return unsupported + " Delivery-order billing status is unsupported.";
 
             if (!await HasUnreturnedSaleFactsAsync(db, history,
                     "SA_DO", doNo, costMethod, cancellationToken,
@@ -1792,23 +1849,25 @@ public sealed partial class IvInventoryPostingService
             .SingleOrDefaultAsync(i => i.CompanyCode == history.CompanyCode
                 && i.BranchCode == history.BranchCode && i.InvNo == invoiceNo,
                 cancellationToken);
+        var shipmentLine = shipmentLines.SingleOrDefault(d =>
+            d.TrxLineNo == history.TrxLineNo);
+        var line = invoice?.Details.SingleOrDefault(d =>
+            d.Line == history.SoLineNo);
         if (batch is null || batch.RefNo != invoiceNo
             || batch.DeletedAtUtc is not null || batch.ForceCloseDate is not null
             || batch.TrxDtTime != history.TrxDtTime
-            || shipmentLines.Length != 1
-            || shipmentLines[0].TrxLineNo != history.TrxLineNo
-            || !string.IsNullOrWhiteSpace(shipmentLines[0].DoNo)
-            || shipmentLines[0].InvNo != invoiceNo
-            || shipmentLines[0].SoLineNo != history.SoLineNo
-            || shipmentLines[0].ICode != history.ICode
-            || shipmentLines[0].FromBalLocId != history.FromBalLocId
-            || shipmentLines[0].FrStdQty != history.FrStdQty
+            || shipmentLine is null
+            || !string.IsNullOrWhiteSpace(shipmentLine.DoNo)
+            || shipmentLine.InvNo != invoiceNo
+            || shipmentLine.SoLineNo != history.SoLineNo
+            || shipmentLine.ICode != history.ICode
+            || shipmentLine.FromBalLocId != history.FromBalLocId
+            || shipmentLine.FrStdQty != history.FrStdQty
             || invoice is null || invoice.Status != SaInvoiceStatuses.Posted
             || invoice.DeletedAtUtc is not null
             || invoice.InvDate.Date != history.TrxDtTime.Date
-            || invoice.Details.Count != 1)
+            || line is null)
             return unsupported + " Shipment or invoice header is inconsistent.";
-        var line = invoice.Details.Single();
         var permittedNoteNo = permittedReturn?.NoteNo;
         if (!line.StockControl || line.LinkDo || line.Line != history.SoLineNo
             || line.ICode != history.ICode || line.StdQty != history.FrStdQty
@@ -1872,7 +1931,8 @@ public sealed partial class IvInventoryPostingService
             a.CompanyCode == history.CompanyCode && a.BranchCode == history.BranchCode
             && (factIds.Contains(a.OriginalValuationFactId)
                 || a.OriginalOwnerType == ownerType
-                    && a.OriginalOwnerDocumentNo == ownerNo)).ToArrayAsync(cancellationToken);
+                    && a.OriginalOwnerDocumentNo == ownerNo
+                    && (a.OriginalOwnerDocumentLine == null || a.OriginalOwnerDocumentLine == lineText))).ToArrayAsync(cancellationToken);
         if (allocations.Length == 0)
             return permittedAllocationId is null && !verifiedReversedWacAllocation;
         if (verifiedReversedWacAllocation)

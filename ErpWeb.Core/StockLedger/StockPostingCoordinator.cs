@@ -140,15 +140,17 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
                     "This source document revision and posting role already has a stock posting."));
             }
 
+            DateTime? targetEffectiveAt = null;
             if (command.ReversesPostingId is long reversesId)
             {
-                var validTarget = await db.StockPostings.AsNoTracking().AnyAsync(x =>
-                    x.Id == reversesId
-                    && x.CompanyCode == scope.CompanyCode
-                    && x.BranchCode == scope.BranchCode
-                    && x.SealedAtUtc != null,
-                    cancellationToken);
-                if (!validTarget)
+                targetEffectiveAt = await db.StockPostings.AsNoTracking()
+                    .Where(x => x.Id == reversesId
+                        && x.CompanyCode == scope.CompanyCode
+                        && x.BranchCode == scope.BranchCode
+                        && x.SealedAtUtc != null)
+                    .Select(x => (DateTime?)x.EffectiveAt)
+                    .SingleOrDefaultAsync(cancellationToken);
+                if (targetEffectiveAt is null)
                 {
                     await transaction.RollbackAsync(cancellationToken);
                     return Failure<T>(new(
@@ -159,6 +161,11 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
 
             var periodError = await _periodGuard.ValidateAsync(
                 db, scope.CompanyCode, scope.BranchCode, command.EffectiveAt, cancellationToken);
+            if (periodError is null && targetEffectiveAt is DateTime reversedAt)
+            {
+                periodError = await _periodGuard.ValidateAsync(
+                    db, scope.CompanyCode, scope.BranchCode, reversedAt, cancellationToken);
+            }
             if (periodError is not null)
             {
                 await transaction.RollbackAsync(cancellationToken);
@@ -280,16 +287,27 @@ public sealed class StockPostingCoordinator : IStockPostingCoordinator
                 StockLedgerErrorCodes.DocumentAlreadyPosted,
                 "This source document revision and posting role already has a stock posting."));
 
-        if (command.ReversesPostingId is long reversesId
-            && !await db.StockPostings.AsNoTracking().AnyAsync(x =>
-                x.Id == reversesId && x.CompanyCode == scope.CompanyCode
-                && x.BranchCode == scope.BranchCode && x.SealedAtUtc != null, cancellationToken))
-            return new(true, false, null, new(
-                StockLedgerErrorCodes.InvalidStockIdentity,
-                "The reversal target is not a sealed posting in the current tenant."));
+        DateTime? targetEffectiveAt = null;
+        if (command.ReversesPostingId is long reversesId)
+        {
+            targetEffectiveAt = await db.StockPostings.AsNoTracking()
+                .Where(x => x.Id == reversesId
+                    && x.CompanyCode == scope.CompanyCode
+                    && x.BranchCode == scope.BranchCode
+                    && x.SealedAtUtc != null)
+                .Select(x => (DateTime?)x.EffectiveAt)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (targetEffectiveAt is null)
+                return new(true, false, null, new(
+                    StockLedgerErrorCodes.InvalidStockIdentity,
+                    "The reversal target is not a sealed posting in the current tenant."));
+        }
 
         var periodError = await _periodGuard.ValidateAsync(
             db, scope.CompanyCode, scope.BranchCode, command.EffectiveAt, cancellationToken);
+        if (periodError is null && targetEffectiveAt is DateTime reversedAt)
+            periodError = await _periodGuard.ValidateAsync(
+                db, scope.CompanyCode, scope.BranchCode, reversedAt, cancellationToken);
         if (periodError is not null) return new(true, false, null, periodError);
         var freezeError = await _freezeGuard.ValidateAsync(
             db, scope.CompanyCode, scope.BranchCode, command.FreezeScopes, cancellationToken);

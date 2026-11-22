@@ -17,6 +17,13 @@ public sealed partial class IvInventoryPostingService
         decimal CurrentUnitCost, decimal Quantity, DateTime OriginalAt, DateTime ReversalAt,
         string EvidenceHash);
 
+    private sealed record ReversedFinishedGoodPairPlan(
+        long OriginalMovementId, long ReversalMovementId,
+        long OriginalOwnerId, long ReversalOwnerId,
+        decimal Quantity, decimal CurrentValue, decimal DesiredValue,
+        decimal DesiredUnitCost, DateTime OriginalAt, DateTime ReversalAt,
+        string EvidenceHash);
+
     private static async Task<CorrectedReversedFinishedGoodPlan?> PrepareCorrectedReversedFinishedGoodAsync(
         AppDbContext db, string company, string branch, ProductionBalLotMovement produce,
         ProductionBalLotMovement outbound, ProductionBalLotMovement reversal,
@@ -25,7 +32,7 @@ public sealed partial class IvInventoryPostingService
         var rows = await db.ProductionCostRestatementFacts.AsNoTracking().Where(r =>
             r.ProductionBalLotMovementId == outbound.Uid || r.ProductionBalLotMovementId == reversal.Uid)
             .ToArrayAsync(ct);
-        if (rows.Length == 0) return null;
+        if (rows.Length == 0 || reversal.TotalCost == outbound.TotalCost) return null;
         if (removingReceiptOwnerId is not long sourceRootId
             || rows.Any(r => r.ProductionBalLotMovementId != outbound.Uid)
             || outbound.StockPostingId is not long ownerId || reversal.StockPostingId is not long reversalOwnerId
@@ -244,6 +251,224 @@ public sealed partial class IvInventoryPostingService
             [plan.OriginalMovementId, plan.ReversalMovementId], ct);
         if (final[plan.OriginalMovementId].TotalCost != plan.OriginalValue
             || final[plan.ReversalMovementId].TotalCost != plan.OriginalValue)
+            throw ProductionReplayError("The reversed finished-good costs did not reconcile.");
+    }
+
+    private static async Task<ReversedFinishedGoodPairPlan?> PlanReversedFinishedGoodPairAsync(
+        AppDbContext db, string company, string branch, ProductionLeafReplayPlan plan,
+        decimal projectedIssueValue, CancellationToken ct)
+    {
+        var output = plan.Output!;
+        var issue = await db.ProductionBalLotMovements.AsNoTracking()
+            .SingleAsync(m => m.Uid == plan.MovementId, ct);
+        var produce = await db.ProductionBalLotMovements.AsNoTracking()
+            .SingleAsync(m => m.Uid == output.ProduceMovementId, ct);
+        var finished = await db.ProductionBalLotMovements.AsNoTracking().Where(m =>
+            m.ProductionBalLotId == produce.ProductionBalLotId
+            && m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut
+            && m.OriginalMovementId == null).ToArrayAsync(ct);
+        if (finished.Length == 0 && !output.OutputReversed) return null;
+        if (finished.Length > 1 || produce.BaseQty <= 0m || plan.Quantity <= 0m
+            || projectedIssueValue < 0m || finished.Length == 1
+                && (finished[0].BaseQty <= 0m || finished[0].BaseQty > produce.BaseQty))
+            throw ProductionReplayError("The reversed finished-good value needs a wider replay.");
+        var consume = await db.ProductionBalLotMovements.AsNoTracking()
+            .SingleAsync(m => m.Uid == output.ConsumeMovementId, ct);
+        var projectedConsume = consume.BaseQty == plan.Quantity ? projectedIssueValue
+            : StockLedgerPrecision.Money(projectedIssueValue * consume.BaseQty / plan.Quantity);
+        if (finished.Length == 0)
+        {
+            var outputCosts = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch,
+                [consume.Uid, produce.Uid], ct);
+            var onlyOutput = StockLedgerPrecision.Money(outputCosts[produce.Uid].TotalCost
+                + projectedConsume - outputCosts[consume.Uid].TotalCost);
+            if (onlyOutput < 0m)
+                throw ProductionReplayError("The backdated receipt would make the reversed Production output value negative.");
+            return null;
+        }
+
+        var outbound = finished[0];
+        var reversals = await db.ProductionBalLotMovements.AsNoTracking().Where(m =>
+            m.OriginalMovementId == outbound.Uid
+            && m.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal).ToArrayAsync(ct);
+        if (reversals.Length != 1)
+            throw ProductionReplayError("The reversed finished-good pair is incomplete.");
+        var reversal = reversals[0];
+        var costs = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch,
+            [consume.Uid, produce.Uid, outbound.Uid, reversal.Uid], ct);
+        var projectedOutput = StockLedgerPrecision.Money(costs[produce.Uid].TotalCost
+            + projectedConsume - costs[consume.Uid].TotalCost);
+        decimal Share(decimal value) => outbound.BaseQty == produce.BaseQty ? value
+            : StockLedgerPrecision.Money(value * outbound.BaseQty / produce.BaseQty);
+        var currentFg = Share(costs[produce.Uid].TotalCost);
+        var desiredFg = Share(projectedOutput);
+        if (projectedOutput < 0m || desiredFg < 0m || desiredFg > projectedOutput
+            || costs[outbound.Uid].TotalCost != currentFg
+            || costs[reversal.Uid].TotalCost != currentFg
+            || costs[outbound.Uid].UnitCost != costs[reversal.Uid].UnitCost)
+            throw ProductionReplayError("The reversed finished-good pair costs are inconsistent.");
+
+        if (desiredFg == currentFg)
+        {
+            if (output.OutputReversed && (projectedConsume != costs[consume.Uid].TotalCost
+                || projectedOutput != costs[produce.Uid].TotalCost))
+                throw ProductionReplayError("The reversed Production output value changed without a matching finished-good share.");
+            return null;
+        }
+
+        if (string.Equals(issue.ItemCode, outbound.ItemCode, StringComparison.OrdinalIgnoreCase)
+            || outbound.StockPostingId is not long ownerId || reversal.StockPostingId is not long reversalOwnerId)
+            throw ProductionReplayError("The reversed finished-good pair cannot be restated under this receipt.");
+        var owners = await db.StockPostings.AsNoTracking().Where(p =>
+            p.Id == ownerId || p.Id == reversalOwnerId).ToDictionaryAsync(p => p.Id, ct);
+        if (!owners.TryGetValue(ownerId, out var owner) || !owners.TryGetValue(reversalOwnerId, out var reverseOwner)
+            || owner.SealedAtUtc is null || reverseOwner.SealedAtUtc is null
+            || reverseOwner.ReversesPostingId != owner.Id || reverseOwner.PostingSequence <= owner.PostingSequence)
+            throw ProductionReplayError("The reversed finished-good postings are incomplete.");
+        var closed = await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, owner.EffectiveAt, ct)
+            ?? await IvPeriodCloseGuard.EnsureOpenAsync(db, company, branch, reverseOwner.EffectiveAt, ct);
+        if (closed is not null)
+            throw new StockLedgerException(new(StockLedgerErrorCodes.ClosedPeriod, closed));
+
+        var facts = await db.ProductionFinishedGoodFactRows.AsNoTracking()
+            .Where(f => f.ProductionMovementId == outbound.Uid || f.ProductionMovementId == reversal.Uid)
+            .ToArrayAsync(ct);
+        if (facts.Length != 2)
+            throw ProductionReplayError("Reversed finished-good facts are incomplete.");
+        var fact = facts.Single(f => f.ProductionMovementId == outbound.Uid);
+        var reverseFact = facts.Single(f => f.ProductionMovementId == reversal.Uid);
+        var valuations = await db.StockValuationFacts.AsNoTracking().Where(v =>
+            v.InventoryHistoryId == fact.InventoryHistoryId || v.InventoryHistoryId == reverseFact.InventoryHistoryId)
+            .ToArrayAsync(ct);
+        if (valuations.Length != 2)
+            throw ProductionReplayError("Reversed finished-good valuations are incomplete.");
+        var receipt = valuations.Single(v => v.InventoryHistoryId == fact.InventoryHistoryId);
+        var physicalReverse = valuations.Single(v => v.InventoryHistoryId == reverseFact.InventoryHistoryId);
+        var state = await db.StockCostStates.AsNoTracking().SingleOrDefaultAsync(s =>
+            s.CompanyCode == company && s.BranchCode == branch && s.ItemCode == receipt.ItemCode, ct);
+        var piles = await db.IvBalLocs.AsNoTracking().Where(b => b.CompanyCode == company
+            && b.BranchCode == branch && b.ICode == receipt.ItemCode).ToArrayAsync(ct);
+        var hasOtherLaterValuation = await db.StockValuationFacts.AsNoTracking().AnyAsync(v =>
+            v.CompanyCode == company && v.BranchCode == branch && v.ItemCode == receipt.ItemCode
+            && v.Id != receipt.Id && v.Id != physicalReverse.Id
+            && v.StockPosting!.PostingSequence > owner.PostingSequence, ct);
+        if (state is null || state.OnHandBaseQty != 0m || state.InventoryValue != 0m
+            || state.LastValuationFactId != physicalReverse.Id
+            || state.LastPostingSequence != reverseOwner.PostingSequence
+            || piles.Length != 1 || piles[0].Id != fact.DestinationBalanceId || piles[0].StdQty != 0m
+            || hasOtherLaterValuation)
+            throw ProductionReplayError("Reversed finished goods have later stock activity requiring full replay.");
+        if (receipt.CostMethod == StockCostMethods.Fifo)
+        {
+            var layers = await db.StockFifoLayers.AsNoTracking()
+                .Where(l => l.OriginValuationFactId == receipt.Id).ToArrayAsync(ct);
+            if (layers.Length != 1 || layers[0].RemainingQty != 0m || layers[0].RemainingValue != 0m
+                || layers[0].Status != StockFifoLayerStatuses.Closed
+                || await db.StockFifoLayerConsumptions.AsNoTracking().AnyAsync(c => c.FifoLayerId == layers[0].Id, ct))
+                throw ProductionReplayError("Reversed finished goods have FIFO layer activity requiring full replay.");
+        }
+
+        var desiredUnit = StockLedgerPrecision.Money(desiredFg / outbound.BaseQty);
+        var hash = StockPostingFingerprint.Create(new
+        {
+            outbound.Uid, ReversalId = reversal.Uid, currentFg, desiredFg, desiredUnit
+        }, new
+        {
+            ownerId, reversalOwnerId, OwnerSequence = owner.PostingSequence, ReverseSequence = reverseOwner.PostingSequence,
+            ReceiptId = receipt.Id, ReverseValId = physicalReverse.Id,
+            OutboundRestatementId = costs[outbound.Uid].RestatementFactId,
+            ReversalRestatementId = costs[reversal.Uid].RestatementFactId,
+            state.LastValuationFactId, state.LastPostingSequence,
+            StateVersion = Convert.ToHexString(state.RowVersion ?? []),
+            PileId = piles[0].Id, piles[0].StdQty
+        }).SourceSnapshotHash;
+        return new(outbound.Uid, reversal.Uid, ownerId, reversalOwnerId, outbound.BaseQty,
+            currentFg, desiredFg, desiredUnit, owner.EffectiveAt, reverseOwner.EffectiveAt, hash);
+    }
+
+    private static async Task ApplyReversedFinishedGoodPairAsync(StockPostingContext context,
+        ReversedFinishedGoodPairPlan plan, CancellationToken ct)
+    {
+        context.EnsureUnsealed();
+        var db = context.Db;
+        var run = await db.StockReplayRuns.AsNoTracking().SingleAsync(r => r.RootStockPostingId == context.Posting.Id, ct);
+        if (db.Database.CurrentTransaction is null
+            || context.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
+            || context.Posting.SourceModule != "INVENTORY"
+            || context.Posting.SourceDocumentType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+            || context.Posting.PostingRole is not ("PRIMARY" or "REVERSAL")
+            || run.CompanyCode != context.CompanyCode || run.BranchCode != context.BranchCode
+            || run.RootRequestId != context.Posting.RequestId
+            || run.RootDocumentType != context.Posting.SourceDocumentType
+            || run.RootDocumentId != context.Posting.SourceDocumentId
+            || string.IsNullOrWhiteSpace(run.PlanHash)
+            || run.EarliestEffectiveAt > plan.OriginalAt
+            || run.LatestEffectiveAt < plan.ReversalAt)
+            throw ProductionReplayError("The reversed finished-good pair restatement does not match its replay root.");
+        var closed = await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode, context.BranchCode, plan.OriginalAt, ct)
+            ?? await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode, context.BranchCode, plan.ReversalAt, ct);
+        if (closed is not null) throw new StockLedgerException(new(StockLedgerErrorCodes.ClosedPeriod, closed));
+
+        var movements = await db.ProductionBalLotMovements.AsNoTracking()
+            .Where(m => m.Uid == plan.OriginalMovementId || m.Uid == plan.ReversalMovementId)
+            .ToDictionaryAsync(m => m.Uid, ct);
+        if (movements.Count != 2)
+            throw ProductionReplayError("The reversed finished-good movements are missing.");
+        var original = movements[plan.OriginalMovementId];
+        var reversal = movements[plan.ReversalMovementId];
+        var costs = await ProductionEffectiveCostResolver.ResolveAsync(db, context.CompanyCode, context.BranchCode,
+            [plan.OriginalMovementId, plan.ReversalMovementId], ct);
+        if (costs[plan.OriginalMovementId].TotalCost != plan.CurrentValue
+            || costs[plan.ReversalMovementId].TotalCost != plan.CurrentValue
+            || costs[plan.OriginalMovementId].UnitCost != costs[plan.ReversalMovementId].UnitCost)
+            throw ProductionReplayError("The reversed finished-good cost changed after planning.");
+
+        var now = DateTime.UtcNow;
+        var createdBy = context.UserId.Length > 100 ? context.UserId[..100] : context.UserId;
+        ProductionCostRestatementFact NewFact(long movementId, DateTime effectiveAt,
+            decimal prior, decimal desired, decimal unit, long? reverses) => new()
+        {
+            CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
+            ReplayRequestId = context.Posting.RequestId, ReplayStockPostingId = context.Posting.Id,
+            ProductionBalLotMovementId = movementId, EffectiveAt = effectiveAt,
+            PriorEffectiveTotalCost = prior, CorrectedEffectiveTotalCost = desired,
+            CorrectedUnitCost = unit, DeltaCost = StockLedgerPrecision.Money(desired - prior),
+            ReversesRestatementFactId = reverses, CreatedAtUtc = now, CreatedBy = createdBy
+        };
+
+        var created = new List<(ProductionCostRestatementFact Fact, long OwnerId)>();
+        foreach (var (movement, ownerId, effectiveAt) in new[]
+        {
+            (original, plan.OriginalOwnerId, plan.OriginalAt),
+            (reversal, plan.ReversalOwnerId, plan.ReversalAt)
+        })
+        {
+            var prior = costs[movement.Uid];
+            if (prior.RestatementFactId is long activeId)
+                created.Add((NewFact(movement.Uid, effectiveAt, prior.TotalCost, movement.TotalCost,
+                    movement.UnitCost, activeId), ownerId));
+            if (plan.DesiredValue != movement.TotalCost)
+                created.Add((NewFact(movement.Uid, effectiveAt, movement.TotalCost, plan.DesiredValue,
+                    plan.DesiredUnitCost, null), ownerId));
+        }
+
+        db.ProductionCostRestatementFacts.AddRange(created.Select(x => x.Fact));
+        await db.SaveChangesAsync(ct);
+        db.StockReplayEffects.AddRange(created.Select(x => new StockReplayEffect
+        {
+            CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
+            ReplayRunId = run.Id, RootStockPostingId = context.Posting.Id,
+            BusinessOwnerPostingId = x.OwnerId, EffectKind = "PRODUCTION_COST_RESTATEMENT",
+            AffectedEntityType = "PRODUCTION_COST_RESTATEMENT_FACT", AffectedEntityId = x.Fact.Id,
+            OriginalEntityId = x.Fact.ProductionBalLotMovementId, CreatedAtUtc = now
+        }));
+        await db.SaveChangesAsync(ct);
+        var final = await ProductionEffectiveCostResolver.ResolveAsync(db, context.CompanyCode, context.BranchCode,
+            [plan.OriginalMovementId, plan.ReversalMovementId], ct);
+        if (final[plan.OriginalMovementId].TotalCost != plan.DesiredValue
+            || final[plan.OriginalMovementId].UnitCost != plan.DesiredUnitCost
+            || final[plan.ReversalMovementId].TotalCost != plan.DesiredValue
+            || final[plan.ReversalMovementId].UnitCost != plan.DesiredUnitCost)
             throw ProductionReplayError("The reversed finished-good costs did not reconcile.");
     }
 }

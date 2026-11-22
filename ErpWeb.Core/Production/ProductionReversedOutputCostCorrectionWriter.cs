@@ -15,7 +15,8 @@ internal static class ProductionReversedOutputCostCorrectionWriter
         StockPostingContext context, ProductionBalLotMovement consume,
         ProductionBalLotMovement produce, ProductionEffectiveCost expectedConsume,
         ProductionEffectiveCost expectedProduce, decimal desiredConsume,
-        decimal desiredProduce, CancellationToken ct)
+        decimal desiredProduce, CancellationToken ct,
+        bool allowReversedFinishedGood = false)
     {
         context.EnsureUnsealed();
         var db = context.Db;
@@ -76,12 +77,21 @@ internal static class ProductionReversedOutputCostCorrectionWriter
             || run.RootDocumentType != context.Posting.SourceDocumentType
             || run.RootDocumentId != context.Posting.SourceDocumentId
             || run.EarliestEffectiveAt > owner.EffectiveAt || run.LatestEffectiveAt < owner.EffectiveAt
-            || reversals.Length != 2
-            || await db.ProductionBalLotMovements.AsNoTracking().AnyAsync(m =>
-                m.ProductionBalLotId == produce.ProductionBalLotId
-                && m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut
-                && m.OriginalMovementId == null, ct))
+            || reversals.Length != 2)
             throw Invalid("Reversed Production output has no exact isolated business owner.");
+        var fgOuts = await db.ProductionBalLotMovements.AsNoTracking()
+            .Where(m => m.ProductionBalLotId == produce.ProductionBalLotId
+                && m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut
+                && m.OriginalMovementId == null)
+            .Select(m => m.Uid).ToArrayAsync(ct);
+        if (fgOuts.Length > 0)
+        {
+            if (!allowReversedFinishedGood || fgOuts.Length != 1
+                || await db.ProductionBalLotMovements.AsNoTracking().CountAsync(m =>
+                    m.OriginalMovementId == fgOuts[0]
+                    && m.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal, ct) != 1)
+                throw Invalid("Reversed Production output has an unsupported finished-good dependency.");
+        }
         if ((await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode,
                 context.BranchCode, owner.EffectiveAt, ct)
             ?? await IvPeriodCloseGuard.EnsureOpenAsync(db, context.CompanyCode,

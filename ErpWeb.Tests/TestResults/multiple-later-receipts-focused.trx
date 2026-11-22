@@ -1,0 +1,70 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="258b0640-4075-4066-9e73-8ee46094c6f3" name="Mokth@MOKTH 2026-11-11 10:25:22" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-11T10:25:22.5752245+08:00" queuing="2026-11-11T10:25:22.5752252+08:00" start="2026-11-11T10:24:56.3153378+08:00" finish="2026-11-11T10:25:35.1313580+08:00" />
+  <TestSettings name="default" id="23f96306-bd6d-44db-98c1-8f8706f3c150">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-11_10_25_22" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="8d563aac-f804-4f1d-aa09-805d617f7913" testId="da39b54f-ee9d-2e7a-b62b-d50faa716564" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_before_multiple_later_receipts_respects_qa_hold" computerName="MOKTH" duration="00:00:01.2976669" startTime="2026-11-11T10:25:33.6943152+08:00" endTime="2026-11-11T10:25:35.0036313+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8d563aac-f804-4f1d-aa09-805d617f7913" />
+    <UnitTestResult executionId="e5c542d1-b640-4e49-a660-31108ef14ffe" testId="78e879e1-714c-961c-3e79-e72453344ad0" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_replays_canceled_sale_before_a_later_receipt(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2)" computerName="MOKTH" duration="00:00:16.0120005" startTime="2026-11-11T10:25:04.9385787+08:00" endTime="2026-11-11T10:25:22.5186414+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e5c542d1-b640-4e49-a660-31108ef14ffe" />
+    <UnitTestResult executionId="b35fb540-04ce-4b8f-b068-322a94685db8" testId="f2d844cb-7d86-eb6e-e0a0-06ac9e1f9dc9" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_a_canceled_sale_and_repeats_the_rollback_cycle(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2)" computerName="MOKTH" duration="00:00:01.4322900" startTime="2026-11-11T10:25:31.2221505+08:00" endTime="2026-11-11T10:25:32.6661556+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b35fb540-04ce-4b8f-b068-322a94685db8" />
+    <UnitTestResult executionId="15907d91-f8fe-43fa-a5de-d8692ce3f7b5" testId="c1cca255-97b1-f089-ef14-1dc78e77d177" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_a_canceled_sale_and_repeats_the_rollback_cycle(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7)" computerName="MOKTH" duration="00:00:01.0161863" startTime="2026-11-11T10:25:32.6664539+08:00" endTime="2026-11-11T10:25:33.6939763+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="15907d91-f8fe-43fa-a5de-d8692ce3f7b5" />
+    <UnitTestResult executionId="d4696786-6c55-4c3d-b0cd-ab98623f3bff" testId="5b33c15d-a109-63bb-12a3-d5a595542b12" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7)" computerName="MOKTH" duration="00:00:02.5979466" startTime="2026-11-11T10:25:28.5909299+08:00" endTime="2026-11-11T10:25:31.2210013+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d4696786-6c55-4c3d-b0cd-ab98623f3bff" />
+    <UnitTestResult executionId="8a73aec9-2619-4e0f-8548-52ce05723e70" testId="068d0bf6-3c17-2e18-ef8c-e9594a8fc87b" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_replays_canceled_sale_before_a_later_receipt(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7)" computerName="MOKTH" duration="00:00:02.9929832" startTime="2026-11-11T10:25:22.5517269+08:00" endTime="2026-11-11T10:25:25.5344698+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8a73aec9-2619-4e0f-8548-52ce05723e70" />
+    <UnitTestResult executionId="19c5d183-319f-49f4-b863-164b5d18da1f" testId="04c039d8-9f2b-0b21-b66f-875893fa471d" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2)" computerName="MOKTH" duration="00:00:03.0261736" startTime="2026-11-11T10:25:25.5428830+08:00" endTime="2026-11-11T10:25:28.5897944+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="19c5d183-319f-49f4-b863-164b5d18da1f" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_replays_canceled_sale_before_a_later_receipt(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="068d0bf6-3c17-2e18-ef8c-e9594a8fc87b">
+      <Execution id="8a73aec9-2619-4e0f-8548-52ce05723e70" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_replays_canceled_sale_before_a_later_receipt" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_replays_canceled_sale_before_a_later_receipt(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="78e879e1-714c-961c-3e79-e72453344ad0">
+      <Execution id="e5c542d1-b640-4e49-a660-31108ef14ffe" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_replays_canceled_sale_before_a_later_receipt" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_before_multiple_later_receipts_respects_qa_hold" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="da39b54f-ee9d-2e7a-b62b-d50faa716564">
+      <Execution id="8d563aac-f804-4f1d-aa09-805d617f7913" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_before_multiple_later_receipts_respects_qa_hold" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="04c039d8-9f2b-0b21-b66f-875893fa471d">
+      <Execution id="19c5d183-319f-49f4-b863-164b5d18da1f" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_a_canceled_sale_and_repeats_the_rollback_cycle(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c1cca255-97b1-f089-ef14-1dc78e77d177">
+      <Execution id="15907d91-f8fe-43fa-a5de-d8692ce3f7b5" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_reprices_a_canceled_sale_and_repeats_the_rollback_cycle" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="5b33c15d-a109-63bb-12a3-d5a595542b12">
+      <Execution id="d4696786-6c55-4c3d-b0cd-ab98623f3bff" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_replays_canceled_sale_before_multiple_later_receipts" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_a_canceled_sale_and_repeats_the_rollback_cycle(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="f2d844cb-7d86-eb6e-e0a0-06ac9e1f9dc9">
+      <Execution id="b35fb540-04ce-4b8f-b068-322a94685db8" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_reprices_a_canceled_sale_and_repeats_the_rollback_cycle" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="da39b54f-ee9d-2e7a-b62b-d50faa716564" executionId="8d563aac-f804-4f1d-aa09-805d617f7913" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="78e879e1-714c-961c-3e79-e72453344ad0" executionId="e5c542d1-b640-4e49-a660-31108ef14ffe" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f2d844cb-7d86-eb6e-e0a0-06ac9e1f9dc9" executionId="b35fb540-04ce-4b8f-b068-322a94685db8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c1cca255-97b1-f089-ef14-1dc78e77d177" executionId="15907d91-f8fe-43fa-a5de-d8692ce3f7b5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="5b33c15d-a109-63bb-12a3-d5a595542b12" executionId="d4696786-6c55-4c3d-b0cd-ab98623f3bff" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="068d0bf6-3c17-2e18-ef8c-e9594a8fc87b" executionId="8a73aec9-2619-4e0f-8548-52ce05723e70" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="04c039d8-9f2b-0b21-b66f-875893fa471d" executionId="19c5d183-319f-49f4-b863-164b5d18da1f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="7" executed="7" passed="7" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:07.00]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:08.02]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:08.10]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:38.26]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

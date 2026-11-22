@@ -837,18 +837,25 @@ public sealed class PrProductDefService : IPrProductDefService
             }
         }
 
-        // Circular BOM: SEPARATE edges only, keyed by (Prod, Definition)
+        // Circular BOM: follow SEPARATE edges and legacy STANDARD edges, keyed by (Prod, Definition)
         if (errors.Count == 0 && prodCode.Length > 0 && definitionCode.Length > 0)
         {
             var graph = await BuildActiveComponentGraphAsync(
                 db, company, exclude: null, cancellationToken);
             var componentNodes = normalized
-                .Where(x => string.Equals(
+                .Where(x => !string.Equals(
                     x.SupplySource,
-                    PrMaterialSupplySources.SeparateProductDefinition,
-                    StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(x.ComponentDefinitionCode))
-                .Select(x => CircularBomValidator.NodeKey.Create(x.ICode, x.ComponentDefinitionCode))
+                    PrMaterialSupplySources.InternalRouteWip,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(x => CircularBomValidator.NodeKey.Create(
+                    x.ICode,
+                    string.Equals(
+                        x.SupplySource,
+                        PrMaterialSupplySources.SeparateProductDefinition,
+                        StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(x.ComponentDefinitionCode)
+                        ? x.ComponentDefinitionCode
+                        : PrProductDefinitionCodes.Standard))
                 .ToList();
             var path = CircularBomValidator.FindCyclePath(
                 CircularBomValidator.NodeKey.Create(prodCode, definitionCode),
@@ -1700,12 +1707,19 @@ public sealed class PrProductDefService : IPrProductDefService
             .ToDictionary(
                 g => g.Key,
                 g => (IReadOnlyList<CircularBomValidator.NodeKey>)g
-                    .Where(x => string.Equals(
+                    .Where(x => !string.Equals(
                         x.SupplySource,
-                        PrMaterialSupplySources.SeparateProductDefinition,
-                        StringComparison.OrdinalIgnoreCase)
-                        && !string.IsNullOrWhiteSpace(x.ComponentDefinitionCode))
-                    .Select(x => CircularBomValidator.NodeKey.Create(x.ICode, x.ComponentDefinitionCode))
+                        PrMaterialSupplySources.InternalRouteWip,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(x => CircularBomValidator.NodeKey.Create(
+                        x.ICode,
+                        string.Equals(
+                            x.SupplySource,
+                            PrMaterialSupplySources.SeparateProductDefinition,
+                            StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(x.ComponentDefinitionCode)
+                            ? x.ComponentDefinitionCode
+                            : PrProductDefinitionCodes.Standard))
                     .ToList());
 
         var graph = new Dictionary<CircularBomValidator.NodeKey, IReadOnlyList<CircularBomValidator.NodeKey>>();
@@ -1802,11 +1816,10 @@ public sealed class PrProductDefService : IPrProductDefService
                 StringComparison.OrdinalIgnoreCase);
             var childDefinition = isSeparate
                 ? PrProductDefinitionCodes.Normalize(line.ComponentDefinitionCode)
-                : null;
+                : (mfg is PrMfgTypes.Make or PrMfgTypes.Phantom ? PrProductDefinitionCodes.Standard : null);
 
             var status = PrBomStructureNodeStatus.Normal;
-            var shouldRecurse = isSeparate
-                                && !string.IsNullOrWhiteSpace(childDefinition);
+            var shouldRecurse = !string.IsNullOrWhiteSpace(childDefinition);
 
             if (shouldRecurse
                 && pathStack.Any(p =>
@@ -1891,7 +1904,8 @@ public sealed class PrProductDefService : IPrProductDefService
             return known;
         }
 
-        var header = await ResolveActiveHeaderAsync(db, company, prodCode, def, cancellationToken);
+        var header = await ResolveActiveHeaderAsync(db, company, prodCode, def, cancellationToken)
+            ?? await ResolveHeaderForEditAsync(db, company, prodCode, def, version: null, cancellationToken);
         cache.ActiveResolved[(prodCode, def)] = header;
         if (header is not null)
         {

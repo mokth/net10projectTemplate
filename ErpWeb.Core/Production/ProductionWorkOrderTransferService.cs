@@ -4,6 +4,7 @@ using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
@@ -771,6 +772,10 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 && x.Status == ProductionWorkOrderTransferStatuses.New && x.DeletedAtUtc == null, ct))
                 throw new TransferException(DuplicateDraftError);
 
+            var transferDateTime = request.TransferDateTime == default ? clock.Now : request.TransferDateTime;
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, scope.CompanyCode, scope.BranchCode!, transferDateTime, ct) is string periodError)
+                throw new TransferException(periodError);
+
             var requestId = Guid.NewGuid().ToString("N");
             var link = new ProductionPostingLink
             {
@@ -789,7 +794,7 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             {
                 CompanyCode = scope.CompanyCode, BranchCode = scope.BranchCode!,
                 TransferNo = link.ProductionDocumentNo!, Status = ProductionWorkOrderTransferStatuses.New,
-                TransferDateTime = request.TransferDateTime == default ? clock.Now : request.TransferDateTime,
+                TransferDateTime = transferDateTime,
                 Remark = NormalizeRemark(request.Remark),
                 SourceProductionBalLotId = lot.Uid, SourceWorkOrderId = source.Order.Uid,
                 SourceWorkOrderNo = source.Order.WorkOrderNo, SourceProducingRouteStepId = source.Route.Uid,
@@ -847,8 +852,11 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
             var source = await ValidateSourceAsync(db, scope,
                 await LoadSourceLotAsync(db, scope, transfer.SourceProductionBalLotId, false, ct), ct);
             var target = await ValidateTargetAsync(db, scope, source, request.TargetWorkOrderMaterialId, true, ct);
+            var transferDateTime = request.TransferDateTime == default ? clock.Now : request.TransferDateTime;
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, scope.CompanyCode, scope.BranchCode!, transferDateTime, ct) is string periodError)
+                throw new TransferException(periodError);
             ApplyTargetSnapshot(transfer, target);
-            transfer.TransferDateTime = request.TransferDateTime == default ? clock.Now : request.TransferDateTime;
+            transfer.TransferDateTime = transferDateTime;
             transfer.Remark = NormalizeRemark(request.Remark);
             transfer.ModifiedDate = clock.Now;
             transfer.ModifiedBy = User(scope);
@@ -990,8 +998,10 @@ WHERE UID={id} AND CompanyCode={scope.CompanyCode} AND BranchCode={scope.BranchC
                 throw new TransferException(SourceChangedError, IvMasterErrorCode.Concurrency);
             var target = await ValidateTargetAsync(db, scope, source, transfer.TargetWorkOrderMaterialId, false, ct);
             ValidateTargetSnapshot(transfer, target);
-            if (transfer.TransferDateTime > clock.Now)
-                throw new TransferException("Work Order Transfer cannot be posted before its effective date and time.");
+            if (TransactionPostingDateGuard.FutureDateError(transfer.TransferDateTime, clock.Today) is string futureDateError)
+                throw new TransferException(futureDateError);
+            if (await IvPeriodCloseGuard.EnsureOpenAsync(db, scope.CompanyCode, scope.BranchCode!, transfer.TransferDateTime, ct) is string periodError)
+                throw new TransferException(periodError);
             var link = await LoadPostingLinkAsync(db, scope, transfer, true, ct);
             if (link.Status != ProductionPostingLinkStatuses.Draft || link.WorkOrderId != transfer.TargetWorkOrderId
                 || link.SnapshotRevision != transfer.TargetSnapshotRevision || link.SnapshotHash != transfer.TargetSnapshotHash

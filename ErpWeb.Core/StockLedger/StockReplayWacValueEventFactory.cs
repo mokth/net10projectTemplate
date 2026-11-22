@@ -131,6 +131,18 @@ public static class StockReplayWacValueEventFactory
         return CreateCorrectedCore(active, original, invoiceOwner, correctionOwner, originalEvent);
     }
 
+    internal static StockReplayWacEvent CreateCorrectedPurchaseNoteAdjustment(
+        StockValuationFact active, StockValuationFact original,
+        StockPosting noteOwner, StockPosting correctionOwner)
+    {
+        var originalEvent = CreatePurchaseNoteAdjustment(original, noteOwner);
+        if (active.ValuationSource != StockValuationSources.PurchasePriceVariance
+            || active.BaseCostAmount != active.CostAmount || active.CostAmount < 0m
+            || active.ValuationVersion <= original.ValuationVersion)
+            throw Corrupt($"Purchase note value fact {active.Id} has invalid replacement evidence.");
+        return CreateCorrectedCore(active, original, noteOwner, correctionOwner, originalEvent);
+    }
+
     private static StockReplayWacEvent CreateCorrectedCore(
         StockValuationFact active,
         StockValuationFact original,

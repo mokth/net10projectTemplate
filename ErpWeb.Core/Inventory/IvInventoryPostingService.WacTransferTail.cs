@@ -12,7 +12,7 @@ public sealed partial class IvInventoryPostingService
     private static async Task<string?> CheckWacTransferDescendantTailAsync(
         AppDbContext db, string companyCode, string branchCode,
         string itemCode, DateTime candidateDate,
-        int sourcePileId, int destinationPileId,
+        int sourcePileId, int? destinationPileId,
         IReadOnlyList<StockReplayPhysicalEvent> sourceLater,
         IReadOnlyList<StockReplayPhysicalEvent> destinationLater,
         StockReplayWacFinancialTail tail,
@@ -25,10 +25,12 @@ public sealed partial class IvInventoryPostingService
             || projectedSteps.Count != tail.LaterEvents.Count
             || !tail.PhysicalByPile.TryGetValue(sourcePileId,
                 out var sourceFinancial)
-            || !tail.PhysicalByPile.TryGetValue(destinationPileId,
-                out var destinationFinancial)
             || !sourceLater.SequenceEqual(sourceFinancial)
-            || !destinationLater.SequenceEqual(destinationFinancial)
+            || (destinationPileId is int existingDestId
+                ? (!tail.PhysicalByPile.TryGetValue(existingDestId,
+                        out var destinationFinancial)
+                    || !destinationLater.SequenceEqual(destinationFinancial))
+                : destinationLater.Count != 0)
             || tail.LaterEvents.Any(e => e.EventId is <= 0 or > int.MaxValue
                 || e.Key.EffectiveAt.Year != candidateDate.Year
                 || e.Key.EffectiveAt.Month != candidateDate.Month
@@ -71,8 +73,11 @@ public sealed partial class IvInventoryPostingService
             {
                 case IvTrxTypes.MiscellaneousReceipt:
                     if (history.FromBalLocId is not null
-                        || history.ToBalLocId != sourcePileId
-                            && history.ToBalLocId != destinationPileId
+                        || (destinationPileId is int existingDestMr
+                            ? history.ToBalLocId != sourcePileId
+                                && history.ToBalLocId != existingDestMr
+                            : history.ToBalLocId is not int toMrId
+                                || !tail.CurrentQuantityByPile.ContainsKey(toMrId))
                         || facts.Count != 1 || facts[0].Direction != 1
                         || facts[0].ValuationSource is not
                             (StockValuationSources.ManualApproved
@@ -83,8 +88,11 @@ public sealed partial class IvInventoryPostingService
                     break;
                 case IvTrxTypes.MiscellaneousIssue:
                     if (history.ToBalLocId is not null
-                        || history.FromBalLocId != sourcePileId
-                            && history.FromBalLocId != destinationPileId
+                        || (destinationPileId is int existingDestMi
+                            ? history.FromBalLocId != sourcePileId
+                                && history.FromBalLocId != existingDestMi
+                            : history.FromBalLocId is not int fromMiId
+                                || !tail.CurrentQuantityByPile.ContainsKey(fromMiId))
                         || facts.Count != 1 || facts[0].Direction != -1
                         || facts[0].ValuationSource != StockValuationSources.MovingAverage
                         || movement.OldSignedQuantity >= 0m
@@ -94,10 +102,11 @@ public sealed partial class IvInventoryPostingService
                 case IvTrxTypes.StockTransfer:
                     if (history.FromBalLocId is not > 0
                         || history.ToBalLocId is not > 0
-                        || history.FromBalLocId != sourcePileId
+                        || (destinationPileId is int existingDestTr
+                            && history.FromBalLocId != sourcePileId
                             && history.ToBalLocId != sourcePileId
-                            && history.FromBalLocId != destinationPileId
-                            && history.ToBalLocId != destinationPileId
+                            && history.FromBalLocId != existingDestTr
+                            && history.ToBalLocId != existingDestTr)
                         || !tail.CurrentQuantityByPile.ContainsKey(
                             history.FromBalLocId.Value)
                         || !tail.CurrentQuantityByPile.ContainsKey(

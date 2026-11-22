@@ -7,6 +7,7 @@ using ErpWeb.Core.Settings;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
@@ -756,11 +757,124 @@ public sealed class ProductionWorkOrderTransferServiceTests : IAsyncDisposable
         Assert.Equal(0m, Assert.Single(output.Data!.Materials).AvailableQty);
     }
 
-    private ProductionWorkOrderTransferService CreateService() => new(
+    [Fact]
+    public async Task Future_draft_is_allowed_in_open_period_but_refused_on_post_and_closed_period_draft_is_refused()
+    {
+        var graph = await SeedGraphAsync();
+        var service = CreateService();
+
+        var futureDate = EffectiveAt.AddDays(3);
+        var created = await service.CreateAsync(new ProductionWorkOrderTransferCreateRequest
+        {
+            SourceProductionBalLotId = graph.SourcePoolId,
+            TargetWorkOrderMaterialId = graph.TargetMaterialId,
+            TransferDateTime = futureDate,
+            Remark = "Future-dated draft in open period",
+        });
+        Assert.True(created.Succeeded, created.Message);
+        await SetSqliteRowVersionAsync(created.Data!.Id);
+        var draft = await service.GetAsync(created.Data.Id);
+        Assert.True(draft.Succeeded, draft.Message);
+
+        var futurePost = await service.PostAsync(new ProductionWorkOrderTransferCommand(
+            draft.Data!.Id, draft.Data.RowVersion.ToArray(), Guid.NewGuid()));
+        Assert.False(futurePost.Succeeded);
+        Assert.Contains("business date", futurePost.Message, StringComparison.OrdinalIgnoreCase);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvPeriodCloseHdrs.Add(new IvPeriodCloseHdr
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                PeriodFrom = new DateTime(2026, 9, 1),
+                PeriodTo = new DateTime(2026, 9, 30),
+                Status = IvPeriodCloseStatuses.Closed,
+                ClosedBy = "admin",
+                ClosedOn = new DateTime(2026, 9, 30, 23, 0, 0)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var closedUpdate = await service.UpdateAsync(new ProductionWorkOrderTransferUpdateRequest
+        {
+            Id = draft.Data.Id,
+            ExpectedVersion = draft.Data.RowVersion.ToArray(),
+            TargetWorkOrderMaterialId = graph.TargetMaterialId,
+            TransferDateTime = new DateTime(2026, 9, 15, 8, 0, 0),
+            Remark = "Attempt move into closed period",
+        });
+        Assert.False(closedUpdate.Succeeded);
+        Assert.Contains("closed", closedUpdate.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Same_day_later_time_transfer_posts_under_date_only_business_date_guard()
+    {
+        var graph = await SeedGraphAsync();
+        var service = CreateService(EffectiveAt);
+        var laterSameDay = EffectiveAt.AddHours(3);
+        Assert.Equal(EffectiveAt.Date, laterSameDay.Date);
+
+        var created = await service.CreateAsync(new ProductionWorkOrderTransferCreateRequest
+        {
+            SourceProductionBalLotId = graph.SourcePoolId,
+            TargetWorkOrderMaterialId = graph.TargetMaterialId,
+            TransferDateTime = laterSameDay,
+            Remark = "Same business date, later clock time",
+        });
+        Assert.True(created.Succeeded, created.Message);
+        await SetSqliteRowVersionAsync(created.Data!.Id);
+        var draft = await service.GetAsync(created.Data.Id);
+        Assert.True(draft.Succeeded, draft.Message);
+
+        var posted = await service.PostAsync(new ProductionWorkOrderTransferCommand(
+            draft.Data!.Id, draft.Data.RowVersion.ToArray(), Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+        Assert.Equal(ProductionWorkOrderTransferStatuses.Posted, posted.Data!.Status);
+    }
+
+    [Fact]
+    public async Task Rollback_is_refused_when_original_transfer_period_is_closed_even_in_later_open_period()
+    {
+        var graph = await SeedGraphAsync();
+        var octoberService = CreateService(EffectiveAt);
+        var draft = await CreateDraftAsync(octoberService, graph);
+        var posted = await octoberService.PostAsync(new ProductionWorkOrderTransferCommand(
+            draft.Id, draft.RowVersion.ToArray(), Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvPeriodCloseHdrs.Add(new IvPeriodCloseHdr
+            {
+                CompanyCode = "DEMO",
+                BranchCode = "HQ",
+                PeriodFrom = new DateTime(2026, 10, 1),
+                PeriodTo = new DateTime(2026, 10, 31),
+                Status = IvPeriodCloseStatuses.Closed,
+                ClosedBy = "admin",
+                ClosedOn = new DateTime(2026, 10, 31, 23, 0, 0)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var novemberService = CreateService(new DateTime(2026, 11, 5, 10, 0, 0));
+        await SetSqliteRowVersionAsync(posted.Data!.Id);
+        var current = await novemberService.GetAsync(posted.Data.Id);
+        Assert.True(current.Succeeded, current.Message);
+
+        var rollback = await novemberService.RollbackAsync(new ProductionWorkOrderTransferCommand(
+            current.Data!.Id, current.Data.RowVersion.ToArray(), Guid.NewGuid(), "Attempt rollback into closed October"));
+        Assert.False(rollback.Succeeded);
+        Assert.Contains("closed", rollback.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private ProductionWorkOrderTransferService CreateService(DateTime? clockNow = null) => new(
         _factory,
         InventoryTenantTestHelper.CreateTenantContext(),
         ProductionLedgerTestFixture.Allow(MenuCodes.PlanningWorkOrderTransfer),
-        new FixedCurrentDateService(EffectiveAt, EffectiveAt),
+        new FixedCurrentDateService(clockNow ?? EffectiveAt, clockNow ?? EffectiveAt),
         new TestRunningNumberService(),
         new BranchStockTransactionLock(),
         _coordinator,

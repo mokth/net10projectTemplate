@@ -49,8 +49,9 @@ public sealed partial class IvInventoryPostingService
         if (await read.IvStockMasters.AsNoTracking().AnyAsync(m =>
                 m.CompanyCode == companyCode && m.ICode == itemCode
                 && m.LotControl, cancellationToken))
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Backdated lot transfer requires a new destination lot and pile; historical replay for that creation is not supported yet.");
+            return await TryPostBackdatedNewDestinationTrAsync(
+                companyCode, branchCode, batchNo, StockCostMethods.Fifo,
+                cancellationToken);
         var destinations = await read.IvBalLocs.AsNoTracking()
             .Where(b => b.CompanyCode == companyCode
                 && b.BranchCode == branchCode && b.ICode == itemCode
@@ -59,6 +60,10 @@ public sealed partial class IvInventoryPostingService
                 && b.IStatus == detail.IStatus && b.LotId == null
                 && (b.LotNo == null || b.LotNo == ""))
             .Select(b => b.Id).ToArrayAsync(cancellationToken);
+        if (destinations.Length == 0)
+            return await TryPostBackdatedNewDestinationTrAsync(
+                companyCode, branchCode, batchNo, StockCostMethods.Fifo,
+                cancellationToken);
         if (destinations.Length != 1
             || destinations[0] == detail.FromBalLocId.Value)
             return IvInventoryPostingBatchResult.Fail(batchNo,
@@ -284,14 +289,17 @@ public sealed partial class IvInventoryPostingService
         ErpWeb.Model.Data.AppDbContext db,
         string companyCode, string branchCode, string itemCode,
         StockReplayEventKey candidateKey,
-        int sourcePileId, int destinationPileId,
+        int sourcePileId, int? destinationPileId,
         IReadOnlyList<StockReplayPhysicalEvent> sourceLater,
         IReadOnlyList<StockReplayPhysicalEvent> destinationLater,
         CancellationToken cancellationToken)
     {
+        if (destinationPileId is null && destinationLater.Count != 0)
+            return "Backdated FIFO transfer has unexpected later events on a new destination pile.";
         var grouped = sourceLater.Select(e => (PileId: sourcePileId, Event: e))
-            .Concat(destinationLater.Select(e =>
-                (PileId: destinationPileId, Event: e)))
+            .Concat(destinationPileId is int existingDestId
+                ? destinationLater.Select(e => (PileId: existingDestId, Event: e))
+                : [])
             .GroupBy(x => x.Event.EventId).ToArray();
         if (grouped.Length is 0 or > 100
             || grouped.Any(g => g.Key is <= 0 or > int.MaxValue
@@ -353,11 +361,11 @@ public sealed partial class IvInventoryPostingService
                 (PileId: h.FromBalLocId!.Value, Delta: -h.FrStdQty!.Value,
                     HistoryId: h.Id, Uom: h.FrStdUom,
                     Warehouse: h.FrWarehouse, Location: h.FrLocation,
-                    Status: h.IStatus),
+                    Status: h.IStatus, LotId: h.FromLotId, LotNo: h.FrLotNo),
                 (PileId: h.ToBalLocId!.Value, Delta: h.ToStdQty!.Value,
                     HistoryId: h.Id, Uom: h.ToStdUom,
                     Warehouse: h.ToWarehouse, Location: h.ToLocation,
-                    Status: h.IStatus)
+                    Status: h.IStatus, LotId: h.ToLotId, LotNo: h.ToLotNo)
             })
             .Where(x => x.PileId != sourcePileId
                 && x.PileId != destinationPileId).ToArray();
@@ -371,13 +379,14 @@ public sealed partial class IvInventoryPostingService
                     && b.CompanyCode == companyCode
                     && b.BranchCode == branchCode
                     && b.ICode == itemCode, cancellationToken);
-            if (third is null || third.LotId is not null
-                || !string.IsNullOrWhiteSpace(third.LotNo)
+            if (third is null
                 || thirdLegs.Where(x => x.PileId == thirdId).Any(x =>
                     third.StdUom != x.Uom
                     || third.WhCode != x.Warehouse
                     || third.LocCode != x.Location
-                    || third.IStatus != x.Status))
+                    || third.IStatus != x.Status
+                    || third.LotId != x.LotId
+                    || !SameWacTransferSlicePart(third.LotNo, x.LotNo)))
                 return "A later FIFO transfer has no exact third item pile.";
             var events = await StockReplayPhysicalTimelineReader.ReadLaterAsync(db,
                 companyCode, branchCode, third.Id, candidateKey,

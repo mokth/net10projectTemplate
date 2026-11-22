@@ -562,14 +562,14 @@ public class SaCustServiceTests : IAsyncLifetime
     {
         var sut = CreateSut();
         var loaded = (await sut.GetAsync("CUST01")).Data!;
-        loaded.Tel = "999-0000";
+        loaded.Tel = "+60399990000";
 
         var result = await sut.SaveAsync(loaded, isNew: false);
 
         Assert.True(result.Succeeded, result.Message);
 
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Equal("999-0000", await db.SaCusts
+        Assert.Equal("+60399990000", await db.SaCusts
             .Where(x => x.CompanyCode == "DEMO" && x.CustCode == "CUST01")
             .Select(x => x.Tel)
             .SingleAsync());
@@ -598,7 +598,7 @@ public class SaCustServiceTests : IAsyncLifetime
         model.AppInvoice = true;
         model.Address1 = "Main St";
         model.City = "KL";
-        model.Tel = "555";
+        model.Tel = "+60355550000";
 
         var result = await sut.SaveAsync(model, isNew: true);
         Assert.True(result.Succeeded, result.Message);
@@ -608,7 +608,7 @@ public class SaCustServiceTests : IAsyncLifetime
         Assert.Equal("New customer INV01", row.InvName);
         Assert.Equal("Main St", row.InvAddress1);
         Assert.Equal("KL", row.InvCity);
-        Assert.Equal("555", row.InvTel);
+        Assert.Equal("+60355550000", row.InvTel);
     }
 
     [Fact]
@@ -619,7 +619,7 @@ public class SaCustServiceTests : IAsyncLifetime
         loaded.AppInvoice = false;
         loaded.Address1 = "Changed General";
         loaded.City = "Changed City";
-        loaded.Tel = "Changed Tel";
+        loaded.Tel = "+60377770000";
 
         var result = await sut.SaveAsync(loaded, isNew: false);
         Assert.True(result.Succeeded, result.Message);

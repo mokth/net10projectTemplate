@@ -13,7 +13,8 @@ public static class StockReplayWacMiRootWriter
     public static async Task<IReadOnlyList<int>> InsertAsync(
         StockPostingContext context, StockReplayWacInsertionPlan plan,
         int batchNo, CancellationToken cancellationToken = default,
-        StockCountCorrectionWritePermit? countPermit = null)
+        StockCountCorrectionWritePermit? countPermit = null,
+        StockReplayPurchaseVarianceWritePermit? purchaseVariance = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -193,8 +194,10 @@ public static class StockReplayWacMiRootWriter
                 new RunningNumberService(), cancellationToken);
         }
         var tail = countPermit is null
-            ? await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(context, permit, plan, 2, cancellationToken)
-            : await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(context, permit, plan, countPermit, 2, cancellationToken);
+            ? await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
+                context, permit, plan, 2, cancellationToken, purchasePermit: purchaseVariance)
+            : await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
+                context, permit, plan, countPermit, 2, cancellationToken);
         await StockReplayWacCostStateWriter.ApplyAsync(
             context, permit, cancellationToken);
         return new[] { history.Id }.Concat(tail.RepricedHistoryIds)

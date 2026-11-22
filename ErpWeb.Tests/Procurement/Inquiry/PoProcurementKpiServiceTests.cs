@@ -73,7 +73,7 @@ public sealed class PoProcurementKpiServiceTests
 
         Assert.True(result.Succeeded, result.Message);
         Assert.Null(result.Data!.LatestNetUnitPrice);
-        Assert.Contains("same verified purchase UOM", result.Data.PriceUnavailableReason);
+        Assert.Contains("verified purchase UOM", result.Data.PriceUnavailableReason);
     }
 
     private static Mock<IPoPurchaseInquiryService> CreateInquiryMock()

@@ -300,7 +300,9 @@ public static class StockReplayFifoInitialCountSheetWriter
                     BaseCostAmount = receipt.OriginalValue,
                     ValuationSource = poolBefore > 0m
                         ? StockValuationSources.Fifo
-                        : StockValuationSources.ManualApproved,
+                        : basis.CostBasisKind == StockCountCostBasisKinds.LedgerFifo
+                            ? StockValuationSources.CountFrozenV2
+                            : StockValuationSources.ManualApproved,
                     ValuationStatus = StockValuationStatuses.Valued,
                     ValuationVersion = 1,
                     InventoryHistoryId = adjustment.Id,

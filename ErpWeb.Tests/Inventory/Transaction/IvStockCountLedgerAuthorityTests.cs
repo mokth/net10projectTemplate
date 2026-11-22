@@ -2151,13 +2151,10 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             }], null);
         Assert.True(counted.Succeeded, counted.ErrorMessage);
 
-        var unapprovedPreview = await service.PreviewPostAsync(saved.Id);
-        Assert.False(unapprovedPreview.Succeeded);
-        Assert.Contains("approval", unapprovedPreview.ErrorMessage!,
-            StringComparison.OrdinalIgnoreCase);
-        var unapprovedPost = await service.PostAsync(saved.Id);
-        Assert.False(unapprovedPost.Succeeded);
-        await AssertStateAsync(100m, 200m, IvStockCountStatuses.Counted);
+        var ledgerPreview = await service.PreviewPostAsync(saved.Id);
+        Assert.True(ledgerPreview.Succeeded, ledgerPreview.ErrorMessage);
+        Assert.Equal(110m,
+            Assert.Single(ledgerPreview.Preview!.Lines).ProjectedFinalQty);
 
         StockCountCostApprovalRequest[] approval =
             [new(line.Id, "MANUAL_APPROVED", 3m, "Count manager verified replacement cost")];
@@ -2166,9 +2163,15 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         Assert.True(preview.Succeeded, preview.ErrorMessage);
         Assert.Equal(110m,
             Assert.Single(preview.Preview!.Lines).ProjectedFinalQty);
-        var post = await service.PostAsync(saved.Id, costApprovals: approval);
+        var post = await service.PostAsync(saved.Id);
         Assert.True(post.Succeeded, post.ErrorMessage);
         await AssertStateAsync(110m, 220m, IvStockCountStatuses.Posted);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var basis = await db.StockCountCostBases.SingleAsync(b => b.StockCountLineId == line.Id);
+            Assert.Equal(StockCountCostBasisKinds.LedgerFifo, basis.CostBasisKind);
+            Assert.Equal(2m, basis.FrozenFallbackUnitCost);
+        }
         var rollback = await service.RollbackAsync(saved.Id, "recount");
         Assert.True(rollback.Succeeded, rollback.ErrorMessage);
         await AssertStateAsync(100m, 200m, IvStockCountStatuses.RolledBack);
@@ -2228,6 +2231,13 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
                 BalLocId = line.BalLocId, PhysicalQty = 2m
             }], null);
         Assert.True(counted.Succeeded, counted.ErrorMessage);
+        var unapprovedPreview = await service.PreviewPostAsync(saved.Id);
+        Assert.False(unapprovedPreview.Succeeded);
+        Assert.Contains("approval", unapprovedPreview.ErrorMessage!,
+            StringComparison.OrdinalIgnoreCase);
+        var unapprovedPost = await service.PostAsync(saved.Id);
+        Assert.False(unapprovedPost.Succeeded);
+        await AssertStateAsync(0m, 0m, IvStockCountStatuses.Counted);
         StockCountCostApprovalRequest[] approval =
             [new(line.Id, "MANUAL_APPROVED", 3m, "Count manager verified replacement cost")];
         var post = await service.PostAsync(saved.Id, costApprovals: approval);
@@ -10514,5 +10524,126 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         Assert.Equal(IvStockCountStatuses.RolledBack,
             (await db.IvStockCountHdrs.SingleAsync(h => h.Id == header.Id))
                 .Status);
+    }
+
+    [Theory]
+    [InlineData("STANDARD", 110, 40)]
+    [InlineData("STANDARD", 100, 50)]
+    [InlineData("FIFO", 110, 60)]
+    [InlineData("FIFO", 100, 50)]
+    public async Task Public_multi_pile_FIFO_and_Standard_count_posts_rolls_back_and_reposts(
+        string method, decimal firstPhysicalQty, decimal secondPhysicalQty)
+    {
+        int secondPileId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+            db.StockCostStates.Remove(await db.StockCostStates.SingleAsync());
+            db.IvLocations.Add(new IvLocation
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                WarehouseCode = "MAIN",
+                LocCode = "BIN2",
+                IsActive = true
+            });
+            var secondPile = new IvBalLoc
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                ICode = "A100",
+                WhCode = "MAIN",
+                LocCode = "BIN2",
+                LotNo = string.Empty,
+                IStatus = "ACTIVE",
+                StdQty = 50m,
+                StdUom = "EA",
+                UnitPrice = null,
+                TransDate = FixedToday.AddDays(-1)
+            };
+            db.IvBalLocs.Add(secondPile);
+            await db.SaveChangesAsync();
+            secondPileId = secondPile.Id;
+
+            if (method == "FIFO")
+            {
+                await InventoryLedgerTestFixture.SeedFifoPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+                    [new FifoLayerSeed(150m, 2m, FixedToday.AddDays(-1).AddHours(9))]);
+            }
+            else
+            {
+                await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+                await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 150m, 2m, StockCostMethods.Standard);
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 2m);
+            }
+        }
+
+        var service = InventoryLedgerTestFixture.CreateStockCount(
+            _factory, FixedToday.AddDays(5), enableBackdatedReplay: true);
+        var saved = await service.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        var generated = await service.GenerateAsync(saved.Id, discardCounts: false);
+        Assert.True(generated.Succeeded, generated.ErrorMessage);
+        var document = await service.GetAsync(saved.CountNo!);
+        Assert.True(document.Succeeded, document.ErrorMessage);
+        Assert.Equal(2, document.Document!.Lines.Count);
+        var firstLine = document.Document.Lines.Single(l => l.LocCode == "BIN1");
+        var secondLine = document.Document.Lines.Single(l => l.BalLocId == secondPileId);
+
+        var counted = await service.SaveCountsAsync(saved.Id,
+            [
+                new IvStockCountLineCountRequest { BalLocId = firstLine.BalLocId, PhysicalQty = firstPhysicalQty },
+                new IvStockCountLineCountRequest { BalLocId = secondLine.BalLocId, PhysicalQty = secondPhysicalQty }
+            ], null);
+        Assert.True(counted.Succeeded, counted.ErrorMessage);
+
+        StockCountCostApprovalRequest[] approvals = method == "FIFO"
+            ? [
+                new(firstLine.Id, "MANUAL_APPROVED", 2m, "Approved FIFO fallback pile 1"),
+                new(secondLine.Id, "MANUAL_APPROVED", 2m, "Approved FIFO fallback pile 2")
+              ]
+            : [];
+
+        var preview = await service.PreviewPostAsync(saved.Id, costApprovals: approvals);
+        Assert.True(preview.Succeeded, preview.ErrorMessage);
+        Assert.True(preview.Preview!.CanPost);
+        Assert.Equal(2, preview.Preview.Lines.Count);
+
+        var post = await service.PostAsync(saved.Id, costApprovals: approvals);
+        Assert.True(post.Succeeded, post.ErrorMessage);
+        var totalPostedQty = firstPhysicalQty + secondPhysicalQty;
+        await AssertMultiPileStateAsync(totalPostedQty, totalPostedQty * 2m, IvStockCountStatuses.Posted);
+
+        var rollback = await service.RollbackAsync(saved.Id, "recount two-pile sheet");
+        Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+        await AssertMultiPileStateAsync(150m, 300m, IvStockCountStatuses.RolledBack);
+
+        var repost = await service.PostAsync(saved.Id);
+        Assert.True(repost.Succeeded, repost.ErrorMessage);
+        await AssertMultiPileStateAsync(totalPostedQty, totalPostedQty * 2m, IvStockCountStatuses.Posted);
+
+        async Task AssertMultiPileStateAsync(decimal expectedTotalQty, decimal expectedTotalValue, string expectedStatus)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var header = await db.IvStockCountHdrs.SingleAsync(h => h.Id == saved.Id);
+            Assert.Equal(expectedStatus, header.Status);
+            var piles = await db.IvBalLocs.ToDictionaryAsync(b => b.Id);
+            if (expectedStatus == IvStockCountStatuses.Posted)
+            {
+                Assert.Equal(firstPhysicalQty, piles[firstLine.BalLocId].StdQty);
+                Assert.Equal(secondPhysicalQty, piles[secondLine.BalLocId].StdQty);
+            }
+            else
+            {
+                Assert.Equal(100m, piles[firstLine.BalLocId].StdQty);
+                Assert.Equal(50m, piles[secondLine.BalLocId].StdQty);
+            }
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((expectedTotalQty, expectedTotalValue), (state.OnHandBaseQty, state.InventoryValue));
+        }
     }
 }
