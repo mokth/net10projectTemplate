@@ -3117,6 +3117,141 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         await AssertCountAsync(countedQty - 100m);
     }
 
+    [MultiWacReceiptSqlFact]
+    [Trait(TestCategories.Name, "SqlServer")]
+    public Task SqlServer_receipt_before_variance_count_posts_and_rolls_back_atomically() =>
+        ExerciseReceiptBeforeCountSqlAsync(110m, 20m);
+
+    private async Task ExerciseReceiptBeforeCountSqlAsync(decimal countedQty, decimal receiptQty)
+    {
+        await PreparePurchaseReplaySqlFixtureAsync();
+        await EnsureActiveStockLedgerAsync();
+        var openingReceipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday);
+        var opening = await openingReceipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(-1), RefNo = "COUNT-RECEIPT-OPENING",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = 100m,
+                UnitPrice = 2m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(opening.Succeeded, opening.ErrorMessage);
+        var opened = await openingReceipt.PostAsync([opening.BatchNo]);
+        Assert.True(opened.Succeeded, opened.ErrorMessage);
+        var count = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday, enableBackdatedReplay: true);
+        var saved = await count.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.True((await count.GenerateAsync(saved.Id, discardCounts: false)).Succeeded);
+        var line = Assert.Single((await count.GetAsync(saved.CountNo!)).Document!.Lines);
+        Assert.True((await count.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = countedQty }], null)).Succeeded);
+        var counted = await count.PostAsync(saved.Id);
+        Assert.True(counted.Succeeded, counted.ErrorMessage);
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday, enableBackdatedReplay: true);
+        var draft = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(-1).AddHours(12), RefNo = "COUNT-RECEIPT",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = receiptQty,
+                UnitPrice = 2m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+
+        async Task<(decimal Qty, decimal Value, decimal Balance, int Roots, int Histories, int Facts, int Generations, string Status)> SnapshotAsync()
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var state = await db.StockCostStates.SingleAsync();
+            return (state.OnHandBaseQty, state.InventoryValue, (await db.IvBalLocs.SingleAsync()).StdQty,
+                await db.StockPostings.CountAsync(), await db.IvTrxHistories.CountAsync(),
+                await db.StockValuationFacts.CountAsync(), await db.StockCountReplayGenerations.CountAsync(),
+                (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+        }
+        async Task AssertCountAsync(decimal adjustment)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [line.Id]))[line.Id];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
+            Assert.Equal(countedQty, (await db.IvStockCountLines.SingleAsync(l => l.Id == line.Id)).PhysicalQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((countedQty, countedQty * 2m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+        }
+        async Task AssertBusyAsync(bool rollback)
+        {
+            var before = await SnapshotAsync();
+            await using (var holding = await _factory.CreateDbContextAsync())
+            await using (var transaction = await holding.Database.BeginTransactionAsync())
+            {
+                var rows = await holding.IvStockCountHdrs.FromSqlInterpolated($@"SELECT * FROM dbo.IvStockCountHdr WITH (UPDLOCK, HOLDLOCK) WHERE ID = {saved.Id}").AsNoTracking().ToArrayAsync();
+                Assert.Single(rows);
+                var blocked = await (rollback ? receipt.RollbackAsync([draft.BatchNo]) : receipt.PostAsync([draft.BatchNo]))
+                    .WaitAsync(TimeSpan.FromSeconds(15));
+                Assert.False(blocked.Succeeded);
+                Assert.Contains("busy", blocked.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                await transaction.RollbackAsync();
+            }
+            Assert.Equal(before, await SnapshotAsync());
+        }
+        async Task AssertFailureAtomicAsync(bool rollback)
+        {
+            var before = await SnapshotAsync();
+            const string constraint = "TestRejectReceiptCountCorrection";
+            var oldAdjustment = countedQty - 100m;
+            var rejectedQty = rollback ? oldAdjustment : oldAdjustment - receiptQty;
+            await using (var db = await _factory.CreateDbContextAsync())
+                await db.Database.ExecuteSqlRawAsync($"ALTER TABLE [StockCountReplayGeneration] WITH NOCHECK ADD CONSTRAINT [{constraint}] CHECK ([SignedAdjustmentQty] <> {rejectedQty})");
+            try
+            {
+                var succeeded = false;
+                var error = await Record.ExceptionAsync(async () =>
+                {
+                    var result = rollback ? await receipt.RollbackAsync([draft.BatchNo]) : await receipt.PostAsync([draft.BatchNo]);
+                    succeeded = result.Succeeded;
+                });
+                Assert.True(error is not null || !succeeded, "The injected count correction failure must abort the transaction.");
+            }
+            finally
+            {
+                await using var db = await _factory.CreateDbContextAsync();
+                await db.Database.ExecuteSqlRawAsync($"ALTER TABLE [StockCountReplayGeneration] DROP CONSTRAINT [{constraint}]");
+            }
+            Assert.Equal(before, await SnapshotAsync());
+            await using var check = await _factory.CreateDbContextAsync();
+            await check.Database.OpenConnectionAsync();
+            await using var command = check.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "SELECT SESSION_CONTEXT(N'STOCK_LEDGER_V2_POSTING_ID')";
+            Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
+        }
+
+        await AssertBusyAsync(rollback: false);
+        await AssertFailureAtomicAsync(rollback: false);
+        var posts = await Task.WhenAll(receipt.PostAsync([draft.BatchNo]), receipt.PostAsync([draft.BatchNo]))
+            .WaitAsync(TimeSpan.FromSeconds(45));
+        Assert.Single(posts, x => x.Succeeded);
+        Assert.Single(posts, x => !x.Succeeded);
+        await AssertCountAsync(countedQty - 100m - receiptQty);
+        await AssertBusyAsync(rollback: true);
+        await AssertFailureAtomicAsync(rollback: true);
+        var rollbacks = await Task.WhenAll(receipt.RollbackAsync([draft.BatchNo]), receipt.RollbackAsync([draft.BatchNo]))
+            .WaitAsync(TimeSpan.FromSeconds(45));
+        Assert.Single(rollbacks, x => x.Succeeded);
+        Assert.Single(rollbacks, x => !x.Succeeded);
+        await AssertCountAsync(countedQty - 100m);
+        var repost = await receipt.PostAsync([draft.BatchNo]);
+        Assert.True(repost.Succeeded, repost.ErrorMessage);
+        var rerollback = await receipt.RollbackAsync([draft.BatchNo]);
+        Assert.True(rerollback.Succeeded, rerollback.ErrorMessage);
+        await AssertCountAsync(countedQty - 100m);
+    }
+
     private async Task ExerciseHistoricalConsumedInvoiceAsync(bool enabled, bool consumedBeforeInvoice,
         decimal invoicePrice, bool changeAfterPlanning = false, bool changeCostPolicy = false,
         bool changeReceiptTime = false, bool changeReceiptCost = false, bool expectIssueReplay = false,

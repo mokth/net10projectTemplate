@@ -577,20 +577,24 @@ public static class StockReplayPhysicalPlanner
     {
         await ValidateWithinRootAsync(context, plan, cancellationToken);
         var removed = plan.RemovedActiveEvent;
-        if (removed.EventId is not (> 0 and <= int.MaxValue) || removed.SignedDelta >= 0m
+        var isIssue = context.Posting.SourceDocumentType == IvTrxTypes.MiscellaneousIssue
+            && removed.SignedDelta < 0m;
+        var isReceipt = context.Posting.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+            && removed.SignedDelta > 0m;
+        if (removed.EventId is not (> 0 and <= int.MaxValue) || (!isIssue && !isReceipt)
             || removed.Key.ClassPriority != StockReplayEventKey.OrdinaryClass || removed.AbsoluteCountQty is not null
             || context.Posting.SourceModule != "INVENTORY"
-            || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
             || context.Posting.PostingRole != "REVERSAL" || context.Posting.ReversesPostingId is not > 0)
-            throw Stale("Count correction removal requires an exact Inventory issue reversal.");
+            throw Stale("Count correction removal requires an exact Inventory issue or receipt reversal.");
         var original = await context.Db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
             h.Id == (int)removed.EventId && h.CompanyCode == plan.CompanyCode && h.BranchCode == plan.BranchCode
             && h.LedgerVersion == 2 && h.StockPostingId == context.Posting.ReversesPostingId
-            && h.EntryRole == "ORIGINAL" && h.TrxType == IvTrxTypes.MiscellaneousIssue
-            && h.FromBalLocId == plan.BalLocId && h.FrStdQty == -removed.SignedDelta
+            && h.EntryRole == "ORIGINAL" && h.TrxType == context.Posting.SourceDocumentType
+            && (isIssue ? h.FromBalLocId == plan.BalLocId && h.FrStdQty == -removed.SignedDelta
+                : h.ToBalLocId == plan.BalLocId && h.ToStdQty == removed.SignedDelta)
             && h.TrxDtTime == removed.Key.EffectiveAt, cancellationToken);
         if (original is null)
-            throw Stale("The removed issue no longer matches its original history.");
+            throw Stale("The removed movement no longer matches its original history.");
         var lines = await ReadCountCorrectionLinesAsync(context, plan.CompanyCode, plan.BranchCode,
             plan.LaterEvents, plan.Projection.LaterSteps, cancellationToken);
         return new StockCountCorrectionWritePermit(plan, context.Posting.Id, lines);

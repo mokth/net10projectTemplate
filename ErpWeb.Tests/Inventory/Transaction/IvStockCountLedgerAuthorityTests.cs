@@ -1108,6 +1108,160 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData(0, false, 100, 10)]
+    [InlineData(-1, false, 110, 10)]
+    [InlineData(-1, false, 110, 20)]
+    [InlineData(-1, false, 90, 10)]
+    [InlineData(-1, true, 110, 20)]
+    public async Task Open_month_receipt_before_count_replays_and_rolls_back(
+        int daysBeforeCount, bool lotTracked, decimal countedQty, decimal receiptQty)
+    {
+        if (lotTracked)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            (await db.IvStockMasters.SingleAsync()).LotControl = true;
+            var lot = new IvLot
+            {
+                CompanyCode = "DEMO", ICode = "A100", LotNo = "LOT-1", IsActive = true,
+                ReceiptDate = FixedToday.AddDays(-2), ExpiryDate = FixedToday.AddDays(30)
+            };
+            db.IvLots.Add(lot);
+            await db.SaveChangesAsync();
+            var pile = await db.IvBalLocs.SingleAsync();
+            pile.LotId = lot.Id;
+            pile.LotNo = lot.LotNo;
+            await db.SaveChangesAsync();
+        }
+        var (lineId, _) = await PostCountForIssueAsync(countedQty);
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday, enableBackdatedReplay: true);
+        var draft = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(daysBeforeCount), RefNo = "COUNT-REPLAY",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", ToLotNo = lotTracked ? "LOT-1" : null,
+                Quantity = receiptQty, ExpiryDate = lotTracked ? FixedToday.AddDays(30) : null,
+                UnitPrice = 2m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var posted = await receipt.PostAsync([draft.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await AssertStateAsync(IvBatchStatuses.Posted, countedQty - 100m - receiptQty);
+        var rolled = await receipt.RollbackAsync([draft.BatchNo]);
+        Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+        await AssertStateAsync(IvBatchStatuses.New, countedQty - 100m);
+        var reposted = await receipt.PostAsync([draft.BatchNo]);
+        Assert.True(reposted.Succeeded, reposted.ErrorMessage);
+        await AssertStateAsync(IvBatchStatuses.Posted, countedQty - 100m - receiptQty);
+        var rerolled = await receipt.RollbackAsync([draft.BatchNo]);
+        Assert.True(rerolled.Succeeded, rerolled.ErrorMessage);
+        await AssertStateAsync(IvBatchStatuses.New, countedQty - 100m);
+
+        async Task AssertStateAsync(string status, decimal adjustment)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((countedQty, countedQty * 2m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(status, (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
+            Assert.Equal(countedQty, (await db.IvStockCountLines.SingleAsync(l => l.Id == lineId)).PhysicalQty);
+            var anchor = await db.StockPostings.SingleAsync(p => p.Id == active.AnchorPostingId);
+            Assert.Equal(StockReplayEventKey.CountEndOfDay(FixedToday), anchor.EffectiveAt);
+            if (adjustment == 0m)
+                Assert.Null(active.AdjustmentHistoryId);
+            else
+            {
+                var history = await db.IvTrxHistories.SingleAsync(h => h.Id == active.AdjustmentHistoryId);
+                var values = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                Assert.Equal(Math.Abs(adjustment) * 2m, Assert.Single(values[history.Id]).CostAmount);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Receipt_before_count_rollback_respects_quality_holds()
+    {
+        var (lineId, pileId) = await PostCountForIssueAsync(110m);
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday,
+            enableBackdatedReplay: true, qaPhysical: new QaPhysicalHoldAuthorizationService());
+        var draft = await SaveReceiptBeforeCountAsync(receipt, 20m);
+        var posted = await receipt.PostAsync([draft]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await SeedCountQaHoldAsync(pileId, 100m);
+        int roots, facts, generations;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            roots = await db.StockPostings.CountAsync();
+            facts = await db.StockValuationFacts.CountAsync();
+            generations = await db.StockCountReplayGenerations.CountAsync();
+        }
+        var blocked = await receipt.RollbackAsync([draft]);
+        Assert.False(blocked.Succeeded);
+        Assert.Contains("quality hold", blocked.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(roots, await db.StockPostings.CountAsync());
+            Assert.Equal(facts, await db.StockValuationFacts.CountAsync());
+            Assert.Equal(generations, await db.StockCountReplayGenerations.CountAsync());
+            Assert.Equal(110m, (await db.IvBalLocs.SingleAsync()).StdQty);
+            Assert.Equal(220m, (await db.StockCostStates.SingleAsync()).InventoryValue);
+            Assert.Equal(IvBatchStatuses.Posted, (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft)).BatchStatus);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(-10m, active.SignedAdjustmentQty);
+            var hold = await db.QaPhysicalHolds.SingleAsync();
+            hold.ReservedBaseQty = 90m;
+            await db.SaveChangesAsync();
+        }
+        var rolled = await receipt.RollbackAsync([draft]);
+        Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(110m, (await check.IvBalLocs.SingleAsync()).StdQty);
+        Assert.Equal(220m, (await check.StockCostStates.SingleAsync()).InventoryValue);
+        Assert.Equal(10m, (await StockCountGenerationResolver.ResolveActiveAsync(check, "DEMO", "HQ", [lineId]))[lineId].SignedAdjustmentQty);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Receipt_before_count_rejects_changed_value_or_an_unhandled_later_movement(bool laterMovement)
+    {
+        var (lineId, pileId) = await PostCountForIssueAsync(110m);
+        if (laterMovement)
+        {
+            var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday.AddDays(1), enableBackdatedReplay: true);
+            var later = await SaveIssueBeforeCountAsync(issue, pileId, 10m, FixedToday.AddDays(1));
+            var posted = await issue.PostAsync([later]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+        }
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday.AddDays(1), enableBackdatedReplay: true);
+        var draft = await SaveReceiptBeforeCountAsync(receipt, 10m, laterMovement ? 2m : 3m);
+        int roots, facts, generations;
+        decimal balance, value;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            roots = await db.StockPostings.CountAsync();
+            facts = await db.StockValuationFacts.CountAsync();
+            generations = await db.StockCountReplayGenerations.CountAsync();
+            balance = (await db.IvBalLocs.SingleAsync()).StdQty;
+            value = (await db.StockCostStates.SingleAsync()).InventoryValue;
+        }
+        var blocked = await receipt.PostAsync([draft]);
+        Assert.False(blocked.Succeeded);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(roots, await check.StockPostings.CountAsync());
+        Assert.Equal(facts, await check.StockValuationFacts.CountAsync());
+        Assert.Equal(generations, await check.StockCountReplayGenerations.CountAsync());
+        Assert.Equal(balance, (await check.IvBalLocs.SingleAsync()).StdQty);
+        Assert.Equal(value, (await check.StockCostStates.SingleAsync()).InventoryValue);
+        Assert.Equal(IvBatchStatuses.New, (await check.IvTrxBatches.SingleAsync(b => b.BatchNo == draft)).BatchStatus);
+        Assert.Equal(10m, (await StockCountGenerationResolver.ResolveActiveAsync(check, "DEMO", "HQ", [lineId]))[lineId].SignedAdjustmentQty);
+    }
+
+    [Theory]
     [InlineData(100, 10)]
     [InlineData(90, 20)]
     public async Task Issue_before_count_respects_quality_holds(decimal countedQty, decimal issueQty)
@@ -1231,6 +1385,22 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         var posted = await count.PostAsync(saved.Id);
         Assert.True(posted.Succeeded, posted.ErrorMessage);
         return (line.Id, line.BalLocId);
+    }
+
+    private static async Task<int> SaveReceiptBeforeCountAsync(IvMiscReceiptService receipt, decimal quantity, decimal unitPrice = 2m)
+    {
+        var draft = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(-1), RefNo = "COUNT-REPLAY",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = quantity,
+                UnitPrice = unitPrice, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        return draft.BatchNo;
     }
 
     private static async Task<int> SaveIssueBeforeCountAsync(IvMiscIssueService issue, int pileId,

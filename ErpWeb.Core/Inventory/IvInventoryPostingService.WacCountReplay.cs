@@ -8,30 +8,31 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
-    private sealed record IssueCountProof(int HeaderId, int LineId, long GenerationId, string Fingerprint);
+    private sealed record CountReplayProof(int HeaderId, int LineId, long GenerationId, string Fingerprint);
 
-    // A single issue may alter one later count without changing the final
-    // pool quantity or value. Removal must undo this issue's exact correction.
-    private static async Task<IssueCountProof?> PlanSingleIssueCountAsync(
+    // One movement may alter one later count without changing the final pool.
+    // Removal must undo the exact correction made by that movement.
+    private static async Task<CountReplayProof?> PlanSingleCountReplayAsync(
         AppDbContext db, string company, string branch, string item, int pileId,
-        decimal issueQty, DateTime issueAt, IReadOnlyList<StockReplayPhysicalEvent> physical,
+        decimal quantity, DateTime movementAt, IReadOnlyList<StockReplayPhysicalEvent> physical,
         IReadOnlyList<StockReplayWacEvent> financial, IReadOnlyList<StockReplayWacStep> steps,
         decimal currentQty, decimal currentValue, decimal finalQty, decimal finalValue,
-        long? removingIssueOwnerId, CancellationToken ct)
+        long? removingOwnerId, bool receipt, CancellationToken ct)
     {
-        if (issueQty <= 0m || physical.Count != 1 || financial.Count != 1 || steps.Count != 1
+        if (quantity <= 0m || physical.Count != 1 || financial.Count != 1 || steps.Count != 1
             || currentQty != finalQty || currentValue != finalValue)
             return null;
         var movement = physical[0];
         var value = financial[0];
         var step = steps[0];
-        var removing = removingIssueOwnerId.HasValue;
+        var removing = removingOwnerId.HasValue;
+        var signedQuantity = receipt ? quantity : -quantity;
         var expectedAdjustment = IvQty.Round(movement.SignedDelta
-            + (removing ? -issueQty : issueQty));
+            + (removing ? signedQuantity : -signedQuantity));
         if (movement.EventId >= 0 || movement.EventId == long.MinValue
             || movement.AbsoluteCountQty is not > 0m
             || movement.Key.ClassPriority != StockReplayEventKey.CountClass
-            || movement.Key.EffectiveAt.Year != issueAt.Year || movement.Key.EffectiveAt.Month != issueAt.Month
+            || movement.Key.EffectiveAt.Year != movementAt.Year || movement.Key.EffectiveAt.Month != movementAt.Month
             || value.EventId != movement.EventId || value.Key != movement.Key
             || value.OldSignedQuantity != movement.SignedDelta || step.EventId != value.EventId
             || step.SignedQuantity != expectedAdjustment)
@@ -56,24 +57,24 @@ public sealed partial class IvInventoryPostingService
             var previous = generation.PreviousGenerationId is long previousId
                 ? await db.StockCountReplayGenerations.AsNoTracking().SingleOrDefaultAsync(g => g.Id == previousId, ct)
                 : null;
-            if (generation.WritePostingId != removingIssueOwnerId || previous is null || previous.IsRemoval
+            if (generation.WritePostingId != removingOwnerId || previous is null || previous.IsRemoval
                 || previous.StockCountLineId != line.Id || previous.AnchorPostingId != generation.AnchorPostingId
                 || previous.SignedAdjustmentQty != expectedAdjustment)
                 return null;
         }
-        var fingerprint = StockPostingFingerprint.Create(new { Kind = "MI_SINGLE_COUNT" }, new
+        var fingerprint = StockPostingFingerprint.Create(new { Kind = receipt ? "MR_SINGLE_COUNT" : "MI_SINGLE_COUNT" }, new
         {
             line.Id, line.StockCountId, line.RowVersion, line.BalLocId, line.ICode, line.PhysicalQty,
             HeaderVersion = line.Header.RowVersion, line.Header.Status, line.Header.CountDate,
             GenerationId = generation.Id, generation.PreviousGenerationId, generation.AnchorPostingId,
             generation.AnchorPostingSequence, generation.WritePostingId, generation.SignedAdjustmentQty,
-            issueQty, issueAt, removingIssueOwnerId
+            quantity, movementAt, removingOwnerId
         }).SourceSnapshotHash;
         return new(line.StockCountId, line.Id, generation.Id, fingerprint);
     }
 
-    private static async Task<bool> LockIssueCountSourceAsync(
-        AppDbContext db, string company, string branch, IssueCountProof proof, CancellationToken ct)
+    private static async Task<bool> LockCountReplaySourceAsync(
+        AppDbContext db, string company, string branch, CountReplayProof proof, CancellationToken ct)
     {
         if (!db.Database.IsSqlServer()) return true;
         if (db.Database.CurrentTransaction is null) return false;
