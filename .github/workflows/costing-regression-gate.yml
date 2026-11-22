@@ -1,0 +1,56 @@
+name: Costing Regression Gate
+
+on:
+  pull_request:
+    branches: [ productionv2 ]
+  push:
+    branches: [ productionv2 ]
+  workflow_dispatch:
+
+concurrency:
+  group: costing-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-costing-gate:
+    name: Build & Focused Costing Regression
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Configure DevExpress NuGet feed (if secret provided)
+        shell: pwsh
+        env:
+          DEVEXPRESS_NUGET_FEED: ${{ secrets.DEVEXPRESS_NUGET_FEED }}
+        run: |
+          if (-not [string]::IsNullOrWhiteSpace($env:DEVEXPRESS_NUGET_FEED)) {
+            dotnet nuget add source $env:DEVEXPRESS_NUGET_FEED --name DevExpress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Restore
+        run: dotnet restore ErpWeb.Tests/ErpWeb.Tests.csproj
+
+      - name: Build Test Suite
+        run: dotnet build ErpWeb.Tests/ErpWeb.Tests.csproj --no-restore -m:1 -clp:ErrorsOnly
+
+      - name: Run Focused Costing Regression Gate
+        shell: pwsh
+        run: |
+          $resultsDir = Join-Path $env:RUNNER_TEMP 'costing-regression'
+          New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
+          powershell -NoProfile -File scripts/testing/run-costing-regression.ps1 -NoBuild -ResultsDirectory $resultsDir
+
+      - name: Upload Costing Gate TRX Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: costing-regression-trx
+          path: ${{ runner.temp }}/costing-regression/*.trx
+          if-no-files-found: ignore
