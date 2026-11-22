@@ -1,0 +1,76 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="54d2b91a-beac-421a-b64e-58a65b4f773c" name="Mokth@MOKTH 2026-11-11 08:54:48" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-11T08:54:48.1434703+08:00" queuing="2026-11-11T08:54:48.1434710+08:00" start="2026-11-11T08:54:13.4267281+08:00" finish="2026-11-11T08:54:50.9152951+08:00" />
+  <TestSettings name="default" id="c5970c4b-0921-4742-96da-97fc1c044a11">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-11_08_54_48" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="b8466106-c4d4-4f32-8efb-a6a69855c08e" testId="f93bb2f2-8f88-90f1-28ad-e96a0c87acf7" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction(receiptUnitCost: 10, saleCost: 19, saleCorrection: 7)" computerName="MOKTH" duration="00:00:20.2476394" startTime="2026-11-11T08:54:25.7638294+08:00" endTime="2026-11-11T08:54:48.0343522+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b8466106-c4d4-4f32-8efb-a6a69855c08e">
+      <Output>
+        <ErrorInfo>
+          <Message>A sale crossed the earlier cancellation without historical replay.</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, String tamperEvidence, Boolean repeatReceiptCycle, Nullable`1 changedReceiptQuantity, Nullable`1 changedReceiptUnitCost, Boolean tamperReceiptHistory, Boolean testQaHold, Decimal receiptUnitCost, Decimal expectedSaleCost, Decimal expectedSaleCorrection) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs:line 5768&#xD;
+   at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, String tamperEvidence, Boolean repeatReceiptCycle, Nullable`1 changedReceiptQuantity, Nullable`1 changedReceiptUnitCost, Boolean tamperReceiptHistory, Boolean testQaHold, Decimal receiptUnitCost, Decimal expectedSaleCost, Decimal expectedSaleCorrection) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs:line 5979&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="d1d83ceb-9226-4f8e-8336-a7b1a0362555" testId="0a78875b-08ac-15c8-301c-9f6fc65126cb" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction(receiptUnitCost: 1, saleCost: 10, saleCorrection: -2)" computerName="MOKTH" duration="00:00:02.6541369" startTime="2026-11-11T08:54:48.1135060+08:00" endTime="2026-11-11T08:54:50.7202137+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d1d83ceb-9226-4f8e-8336-a7b1a0362555">
+      <Output>
+        <ErrorInfo>
+          <Message>A sale crossed the earlier cancellation without historical replay.</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, String tamperEvidence, Boolean repeatReceiptCycle, Nullable`1 changedReceiptQuantity, Nullable`1 changedReceiptUnitCost, Boolean tamperReceiptHistory, Boolean testQaHold, Decimal receiptUnitCost, Decimal expectedSaleCost, Decimal expectedSaleCorrection) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs:line 5768&#xD;
+   at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, String tamperEvidence, Boolean repeatReceiptCycle, Nullable`1 changedReceiptQuantity, Nullable`1 changedReceiptUnitCost, Boolean tamperReceiptHistory, Boolean testQaHold, Decimal receiptUnitCost, Decimal expectedSaleCost, Decimal expectedSaleCorrection) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs:line 5979&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction(receiptUnitCost: 1, saleCost: 10, saleCorrection: -2)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="0a78875b-08ac-15c8-301c-9f6fc65126cb">
+      <Execution id="d1d83ceb-9226-4f8e-8336-a7b1a0362555" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction(receiptUnitCost: 10, saleCost: 19, saleCorrection: 7)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="f93bb2f2-8f88-90f1-28ad-e96a0c87acf7">
+      <Execution id="b8466106-c4d4-4f32-8efb-a6a69855c08e" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="f93bb2f2-8f88-90f1-28ad-e96a0c87acf7" executionId="b8466106-c4d4-4f32-8efb-a6a69855c08e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0a78875b-08ac-15c8-301c-9f6fc65126cb" executionId="d1d83ceb-9226-4f8e-8336-a7b1a0362555" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="0" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:09.68]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:11.74]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:11.81]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:34.19]       A sale crossed the earlier cancellation without historical replay.&#xD;
+[xUnit.net 00:00:34.19]       Stack Trace:&#xD;
+[xUnit.net 00:00:34.20]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs(5768,0): at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, String tamperEvidence, Boolean repeatReceiptCycle, Nullable`1 changedReceiptQuantity, Nullable`1 changedReceiptUnitCost, Boolean tamperReceiptHistory, Boolean testQaHold, Decimal receiptUnitCost, Decimal expectedSaleCost, Decimal expectedSaleCorrection)&#xD;
+[xUnit.net 00:00:34.20]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs(5979,0): at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, String tamperEvidence, Boolean repeatReceiptCycle, Nullable`1 changedReceiptQuantity, Nullable`1 changedReceiptUnitCost, Boolean tamperReceiptHistory, Boolean testQaHold, Decimal receiptUnitCost, Decimal expectedSaleCost, Decimal expectedSaleCorrection)&#xD;
+[xUnit.net 00:00:34.20]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:36.87]       A sale crossed the earlier cancellation without historical replay.&#xD;
+[xUnit.net 00:00:36.87]       Stack Trace:&#xD;
+[xUnit.net 00:00:36.87]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs(5768,0): at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, String tamperEvidence, Boolean repeatReceiptCycle, Nullable`1 changedReceiptQuantity, Nullable`1 changedReceiptUnitCost, Boolean tamperReceiptHistory, Boolean testQaHold, Decimal receiptUnitCost, Decimal expectedSaleCost, Decimal expectedSaleCorrection)&#xD;
+[xUnit.net 00:00:36.87]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs(5979,0): at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseReceiptRollbackAfterIsolatedReversedSaleAsync(ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, String tamperEvidence, Boolean repeatReceiptCycle, Nullable`1 changedReceiptQuantity, Nullable`1 changedReceiptUnitCost, Boolean tamperReceiptHistory, Boolean testQaHold, Decimal receiptUnitCost, Decimal expectedSaleCost, Decimal expectedSaleCorrection)&#xD;
+[xUnit.net 00:00:36.87]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:36.89]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-11T08:54:48.0417463+08:00">
+        <Text>[xUnit.net 00:00:34.19]     ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction(receiptUnitCost: 10, saleCost: 19, saleCorrection: 7) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-11T08:54:50.7217151+08:00">
+        <Text>[xUnit.net 00:00:36.87]     ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction(receiptUnitCost: 1, saleCost: 10, saleCorrection: -2) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

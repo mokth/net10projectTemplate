@@ -67,7 +67,7 @@ public static class StockReplayWacValueEventFactory
             || string.IsNullOrWhiteSpace(fact.SourceDocumentLine)
             || fact.ValuationSource != StockValuationSources.PurchasePriceVariance
             || fact.MovementCode != (fact.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
-            || fact.ValuationVersion != 1 || fact.CostAmount <= 0m || fact.BaseCostAmount != fact.CostAmount
+            || fact.ValuationVersion != 1 || fact.CostAmount < 0m || fact.BaseCostAmount != fact.CostAmount
             || fact.InventoryHistoryId is not null || fact.FromBalLocId is not null || fact.ToBalLocId is not null
             || receipt.Id <= 0 || receipt.InventoryHistoryId != history.Id || history.TrxType != IvTrxTypes.GoodsReceive
             || history.EntryRole != "ORIGINAL" || history.BatchStatus != IvBatchStatuses.Posted
@@ -85,6 +85,23 @@ public static class StockReplayWacValueEventFactory
             || history.LedgerEpochId != fact.LedgerEpochId || history.ICode != fact.ItemCode)
             throw Corrupt($"Purchase value fact {fact.Id} has no exact invoice and goods-receipt authority.");
         return CreateCore(fact, invoiceOwner, true);
+    }
+
+    // The caller proves the complete active note and receipt settlement before
+    // treating this value as an event at the note's own posting position.
+    internal static StockReplayWacEvent CreatePurchaseNoteAdjustment(StockValuationFact fact, StockPosting owner)
+    {
+        if (owner.SourceModule != "PROCUREMENT" || owner.SourceDocumentType != "PO_CDN"
+            || owner.PostingRole != "PRIMARY" || owner.CommandType != "PROCUREMENT_PO_CDN_PRIMARY"
+            || owner.ReversesPostingId is not null || fact.SourceDocumentType != owner.SourceDocumentType
+            || fact.SourceDocumentId != owner.SourceDocumentId || fact.SourceDocumentNo != owner.SourceDocumentNo
+            || fact.OriginalValuationFactId is not > 0 || string.IsNullOrWhiteSpace(fact.SourceDocumentLine)
+            || fact.ValuationSource != StockValuationSources.PurchasePriceVariance
+            || fact.MovementCode != (fact.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
+            || fact.ValuationVersion != 1 || fact.BaseCostAmount != fact.CostAmount
+            || fact.FromBalLocId is not null || fact.ToBalLocId is not null)
+            throw Corrupt($"Purchase note value fact {fact.Id} has no exact note authority.");
+        return CreateCore(fact, owner, true);
     }
 
     /// <summary>
@@ -108,10 +125,22 @@ public static class StockReplayWacValueEventFactory
         var originalEvent = CreatePurchaseInvoiceAdjustment(original, receipt,
             history, receiptOwner, invoiceOwner);
         if (active.ValuationSource != StockValuationSources.PurchasePriceVariance
-            || active.BaseCostAmount != active.CostAmount || active.CostAmount <= 0m
+            || active.BaseCostAmount != active.CostAmount || active.CostAmount < 0m
             || active.ValuationVersion <= original.ValuationVersion)
             throw Corrupt($"Purchase value fact {active.Id} has invalid replacement evidence.");
         return CreateCorrectedCore(active, original, invoiceOwner, correctionOwner, originalEvent);
+    }
+
+    internal static StockReplayWacEvent CreateCorrectedPurchaseNoteAdjustment(
+        StockValuationFact active, StockValuationFact original,
+        StockPosting noteOwner, StockPosting correctionOwner)
+    {
+        var originalEvent = CreatePurchaseNoteAdjustment(original, noteOwner);
+        if (active.ValuationSource != StockValuationSources.PurchasePriceVariance
+            || active.BaseCostAmount != active.CostAmount || active.CostAmount < 0m
+            || active.ValuationVersion <= original.ValuationVersion)
+            throw Corrupt($"Purchase note value fact {active.Id} has invalid replacement evidence.");
+        return CreateCorrectedCore(active, original, noteOwner, correctionOwner, originalEvent);
     }
 
     private static StockReplayWacEvent CreateCorrectedCore(

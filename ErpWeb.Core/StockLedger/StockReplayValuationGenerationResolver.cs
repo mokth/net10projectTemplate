@@ -13,12 +13,29 @@ namespace ErpWeb.Core.StockLedger;
 /// </summary>
 public static class StockReplayValuationGenerationResolver
 {
-    public static async Task<IReadOnlyDictionary<int, IReadOnlyList<StockValuationFact>>> ResolveAsync(
+    public static Task<IReadOnlyDictionary<int, IReadOnlyList<StockValuationFact>>> ResolveAsync(
         AppDbContext db,
         string companyCode,
         string branchCode,
         IReadOnlyCollection<IvTrxHistory> activeHistories,
+        CancellationToken cancellationToken = default) =>
+        ResolveCoreAsync(db, companyCode, branchCode, activeHistories, null, cancellationToken);
+
+    internal static Task<IReadOnlyDictionary<int, IReadOnlyList<StockValuationFact>>> ResolveWithinReplayRootAsync(
+        StockPostingContext context, IReadOnlyCollection<IvTrxHistory> activeHistories,
         CancellationToken cancellationToken = default)
+    {
+        context.EnsureUnsealed();
+        if (context.Db.Database.CurrentTransaction is null)
+            throw Corrupt("Replay valuation verification requires the active root transaction.");
+        return ResolveCoreAsync(context.Db, context.CompanyCode, context.BranchCode,
+            activeHistories, context.Posting.Id, cancellationToken);
+    }
+
+    private static async Task<IReadOnlyDictionary<int, IReadOnlyList<StockValuationFact>>> ResolveCoreAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        IReadOnlyCollection<IvTrxHistory> activeHistories, long? unsealedReplayRootId,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(activeHistories);
@@ -44,8 +61,12 @@ public static class StockReplayValuationGenerationResolver
         // A cost-only reversal can stay on the original Inventory history.
         // In that case it appears in both queries; the database fact identity
         // is unique, so pass it to the lineage resolver only once.
-        return ResolveActive(activeHistories, facts.Concat(reversals)
+        var result = ResolveActive(activeHistories, facts.Concat(reversals)
             .DistinctBy(f => f.Id).ToArray());
+        if (!await StockReplayInvoiceIssueAudit.ValidateForHistoriesAsync(db, companyCode, branchCode,
+                ids, unsealedReplayRootId, cancellationToken))
+            throw Corrupt("A purchase-invoice issue correction has incomplete audit evidence.");
+        return result;
     }
 
     public static IReadOnlyDictionary<int, IReadOnlyList<StockValuationFact>> ResolveActive(

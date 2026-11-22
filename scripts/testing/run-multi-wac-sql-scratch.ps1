@@ -19,6 +19,7 @@ param(
     [switch]$ReversedSaleGoods,
     [switch]$ReversedSaleCorrection,
     [switch]$ReversedSaleCycle,
+    [switch]$ReversedSaleSameTime,
     [switch]$ReversedSaleLate,
     [switch]$ReversedSaleLaterReceipt,
     [switch]$ReversedSaleLaterReceipts,
@@ -33,13 +34,69 @@ param(
     [switch]$FullyCapitalizedPurchaseVariance,
     [switch]$PartialPurchaseVariance,
     [switch]$PartialPurchaseVarianceLot,
+    [switch]$FullyConsumedPurchaseVariance,
+    [switch]$BackdatedConsumedInvoice,
+    [switch]$BackdatedInvoiceIssueReplay,
+    [switch]$BackdatedInvoiceIssueFirst,
+    [switch]$InvoiceBeforeIssue,
+    [switch]$BackdatedInvoiceTwoIssues,
+    [switch]$BackdatedInvoiceTenIssues,
+    [switch]$BackdatedInvoiceTenConcurrent,
+    [switch]$BackdatedInvoiceIssueBoundary,
+    [switch]$BackdatedInvoiceMixedReceipt,
+    [switch]$BackdatedInvoiceMixedReceiptFirst,
+    [switch]$BackdatedInvoiceMixedGoods,
+    [switch]$BackdatedInvoiceMixedGoodsFirst,
+    [switch]$BackdatedInvoiceSameOrder,
+    [switch]$BackdatedInvoiceSameOrderGoodsFirst,
+    [switch]$BackdatedInvoiceDirectSale,
+    [switch]$InvoiceBeforeDirectSale,
+    [switch]$BackdatedInvoiceSaleReturn,
+    [switch]$BackdatedInvoiceUnbilledDelivery,
+    [switch]$BackdatedInvoiceBilledDelivery,
+    [switch]$BackdatedInvoiceDeliveryReturn,
+    [switch]$BackdatedInvoiceDirectSaleIssue,
+    [switch]$BackdatedInvoiceDeliveryIssue,
+    [switch]$BackdatedInvoiceDirectSaleTwoIssues,
+    [switch]$BackdatedInvoiceSaleIssueBoundary,
+    [switch]$BackdatedInvoiceSaleIssueReceipt,
+    [switch]$BackdatedInvoiceDeliveryReceipt,
+    [switch]$BackdatedInvoiceSaleGoods,
+    [switch]$BackdatedInvoiceDeliveryGoods,
+    [switch]$InvoiceBeforeSaleGoods,
+    [switch]$InvoiceCanceledSaleCycle,
+    [switch]$BackdatedInvoiceCanceledSaleCycle,
+    [switch]$InvoiceRollbackCanceledSale,
+    [switch]$InvoicePostCanceledSale,
+    [switch]$InvoiceDuringCanceledSale,
+    [switch]$InvoiceBeforeTwoIssues,
+    [switch]$BackdatedInvoiceDepleted,
     [switch]$BackdatedPurchaseInvoice,
     [switch]$BackdatedPurchaseCreditNotePost,
-    [switch]$BackdatedPurchaseCreditNoteRollback
+    [switch]$BackdatedPurchaseCreditNoteRollback,
+    [switch]$PurchaseCdnLaterIssuePost,
+    [switch]$PurchaseCdnLaterIssueRollback,
+    [switch]$PurchaseCdnIssueReplay,
+    [switch]$PurchaseCdnMultiIssueReplay,
+    [switch]$PurchaseCdnCanceledIssueReplay,
+    [switch]$PurchaseCdnSameDayReplay,
+    [switch]$PurchaseCdnLaterSameDayReplay,
+    [switch]$PurchaseCdnLaterDayReplay,
+    [switch]$CurrentDayCountReplay,
+    [switch]$IssueBeforeZeroCountReplay,
+    [switch]$IssueBeforeVarianceCountReplay,
+    [switch]$ReceiptBeforeVarianceCountReplay,
+    [switch]$PartlyConsumedNoteReplay,
+    [switch]$PartlyConsumedNoteIssueRollback,
+    [switch]$PurchaseCdnConsumedGuard
 )
 
 $ErrorActionPreference = 'Stop'
-if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot) {
+if ($ReversedSaleSameTime -or $BackdatedInvoiceSaleGoods -or $BackdatedInvoiceDeliveryGoods -or $InvoiceBeforeSaleGoods -or $InvoiceCanceledSaleCycle -or $BackdatedInvoiceCanceledSaleCycle -or $InvoiceRollbackCanceledSale -or $InvoicePostCanceledSale -or $InvoiceDuringCanceledSale -or $PurchaseCdnLaterIssuePost -or $PurchaseCdnLaterIssueRollback -or $PurchaseCdnIssueReplay -or $PurchaseCdnMultiIssueReplay -or $PurchaseCdnCanceledIssueReplay -or $PurchaseCdnSameDayReplay -or $PurchaseCdnLaterSameDayReplay -or $PurchaseCdnLaterDayReplay -or $PurchaseCdnConsumedGuard -or $CurrentDayCountReplay -or $IssueBeforeZeroCountReplay -or $IssueBeforeVarianceCountReplay -or $ReceiptBeforeVarianceCountReplay -or $PartlyConsumedNoteReplay -or $PartlyConsumedNoteIssueRollback) {
+    $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
+    if ($cases.Count -ne 1) { throw 'Choose this replay case on its own.' }
+}
+if ($BackdatedPurchaseCreditNotePost -or $BackdatedPurchaseCreditNoteRollback -or $PartialPurchaseVarianceLot -or $FullyConsumedPurchaseVariance -or $BackdatedConsumedInvoice -or $BackdatedInvoiceIssueReplay -or $BackdatedInvoiceIssueFirst -or $InvoiceBeforeIssue -or $BackdatedInvoiceTwoIssues -or $BackdatedInvoiceTenIssues -or $BackdatedInvoiceTenConcurrent -or $BackdatedInvoiceIssueBoundary -or $BackdatedInvoiceMixedReceipt -or $BackdatedInvoiceMixedReceiptFirst -or $BackdatedInvoiceMixedGoods -or $BackdatedInvoiceMixedGoodsFirst -or $BackdatedInvoiceSameOrder -or $BackdatedInvoiceSameOrderGoodsFirst -or $BackdatedInvoiceDirectSale -or $InvoiceBeforeDirectSale -or $BackdatedInvoiceSaleReturn -or $BackdatedInvoiceUnbilledDelivery -or $BackdatedInvoiceBilledDelivery -or $BackdatedInvoiceDeliveryReturn -or $BackdatedInvoiceDirectSaleIssue -or $BackdatedInvoiceDeliveryIssue -or $BackdatedInvoiceDirectSaleTwoIssues -or $BackdatedInvoiceSaleIssueBoundary -or $BackdatedInvoiceSaleIssueReceipt -or $BackdatedInvoiceDeliveryReceipt -or $InvoiceBeforeTwoIssues -or $BackdatedInvoiceDepleted) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose one purchase replay case on its own.' }
 }
@@ -82,7 +139,59 @@ try {
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($PartialPurchaseVarianceLot) { 'SqlServer_lot_receipt_replays_changed_purchase_variance_split' }
+    $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+        elseif ($CurrentDayCountReplay) { 'SqlServer_current_day_zero_count_anchors_once_and_rolls_back_atomically' }
+        elseif ($IssueBeforeZeroCountReplay) { 'SqlServer_issue_before_zero_count_posts_and_rolls_back_atomically' }
+        elseif ($IssueBeforeVarianceCountReplay) { 'SqlServer_issue_before_variance_count_posts_and_rolls_back_atomically' }
+        elseif ($ReceiptBeforeVarianceCountReplay) { 'SqlServer_receipt_before_variance_count_posts_and_rolls_back_atomically' }
+        elseif ($PartlyConsumedNoteReplay) { 'SqlServer_partly_consumed_purchase_note_replays_later_issue' }
+        elseif ($PartlyConsumedNoteIssueRollback) { 'SqlServer_issue_rollback_reprices_partly_consumed_purchase_note' }
+        elseif ($PurchaseCdnConsumedGuard) { 'SqlServer_issue_rollback_rejects_fully_consumed_later_note' }
+        elseif ($PurchaseCdnLaterDayReplay) { 'SqlServer_issue_rollback_replays_credit_note_on_later_open_period_day' }
+        elseif ($PurchaseCdnLaterSameDayReplay) { 'SqlServer_issue_rollback_replays_later_same_day_credit_note' }
+        elseif ($PurchaseCdnSameDayReplay) { 'SqlServer_purchase_cdn_and_issue_rollback_share_business_date' }
+        elseif ($PurchaseCdnCanceledIssueReplay) { 'SqlServer_purchase_cdn_and_issues_replay_after_a_canceled_issue' }
+        elseif ($PurchaseCdnMultiIssueReplay) { 'SqlServer_purchase_cdn_replays_multiple_later_issues_and_repeats_rollback' }
+        elseif ($PurchaseCdnIssueReplay) { 'SqlServer_purchase_cdn_replays_later_issue_and_repeats_rollback' }
+        elseif ($PurchaseCdnLaterIssuePost) { 'SqlServer_purchase_cdn_post_rejects_unreplayed_later_issue' }
+        elseif ($PurchaseCdnLaterIssueRollback) { 'SqlServer_purchase_cdn_rollback_rejects_unreplayed_later_issue' }
+        elseif ($BackdatedInvoiceCanceledSaleCycle) { 'SqlServer_backdated_purchase_invoice_after_canceled_sale_posts_and_rolls_back_atomically' }
+        elseif ($InvoiceCanceledSaleCycle) { 'SqlServer_purchase_invoice_before_canceled_sale_rolls_back_and_reposts_atomically' }
+        elseif ($InvoiceDuringCanceledSale) { 'SqlServer_purchase_invoice_during_canceled_sale_is_blocked_atomically' }
+        elseif ($InvoiceRollbackCanceledSale) { 'SqlServer_purchase_invoice_rollback_after_sale_cancellation_is_blocked_atomically' }
+        elseif ($InvoicePostCanceledSale) { 'SqlServer_backdated_purchase_invoice_after_sale_cancellation_is_blocked_atomically' }
+        elseif ($InvoiceBeforeSaleGoods) { 'SqlServer_purchase_invoice_before_sale_and_goods_receipt_rolls_back_atomically' }
+        elseif ($BackdatedInvoiceSaleGoods) { 'SqlServer_backdated_purchase_invoice_reprices_sale_and_goods_receipt_atomically' }
+        elseif ($BackdatedInvoiceDeliveryGoods) { 'SqlServer_backdated_purchase_invoice_reprices_delivery_and_goods_receipt_atomically' }
+        elseif ($BackdatedInvoiceSaleIssueReceipt) { 'SqlServer_backdated_purchase_invoice_reprices_sale_issue_and_receipt_atomically' }
+        elseif ($BackdatedInvoiceDeliveryReceipt) { 'SqlServer_backdated_purchase_invoice_reprices_delivery_and_receipt_atomically' }
+        elseif ($BackdatedInvoiceSaleIssueBoundary) { 'SqlServer_backdated_purchase_invoice_replays_sale_and_ninety_nine_issues_at_boundary' }
+        elseif ($BackdatedInvoiceDirectSaleTwoIssues) { 'SqlServer_backdated_purchase_invoice_reprices_sale_and_two_issues_atomically' }
+        elseif ($BackdatedInvoiceDeliveryIssue) { 'SqlServer_backdated_purchase_invoice_reprices_billed_delivery_and_issue_atomically' }
+        elseif ($BackdatedInvoiceDirectSaleIssue) { 'SqlServer_backdated_purchase_invoice_reprices_direct_sale_and_issue_atomically' }
+        elseif ($BackdatedInvoiceDeliveryReturn) { 'SqlServer_sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost' }
+        elseif ($BackdatedInvoiceBilledDelivery) { 'SqlServer_backdated_purchase_invoice_reprices_billed_delivery_atomically' }
+        elseif ($BackdatedInvoiceUnbilledDelivery) { 'SqlServer_backdated_purchase_invoice_reprices_unbilled_delivery_atomically' }
+        elseif ($BackdatedInvoiceSaleReturn) { 'SqlServer_sales_return_after_backdated_purchase_invoice_uses_corrected_cost' }
+        elseif ($InvoiceBeforeDirectSale) { 'SqlServer_purchase_invoice_before_direct_sale_rolls_back_atomically' }
+        elseif ($BackdatedInvoiceDirectSale) { 'SqlServer_backdated_purchase_invoice_reprices_direct_sale_atomically' }
+        elseif ($BackdatedInvoiceSameOrderGoodsFirst) { 'SqlServer_same_order_goods_receipt_rolls_back_before_invoice_atomically' }
+        elseif ($BackdatedInvoiceSameOrder) { 'SqlServer_backdated_invoice_reprices_later_goods_on_same_order_atomically' }
+        elseif ($BackdatedInvoiceMixedGoodsFirst) { 'SqlServer_backdated_invoice_rolls_back_after_later_goods_receipt' }
+        elseif ($BackdatedInvoiceMixedGoods) { 'SqlServer_backdated_invoice_reprices_issues_around_later_goods_receipt_atomically' }
+        elseif ($BackdatedInvoiceMixedReceiptFirst) { 'SqlServer_backdated_invoice_rolls_back_after_later_receipt' }
+        elseif ($BackdatedInvoiceMixedReceipt) { 'SqlServer_backdated_invoice_reprices_issues_around_later_receipt_atomically' }
+        elseif ($BackdatedInvoiceTenConcurrent) { 'SqlServer_concurrent_backdated_invoice_with_ten_issues_posts_once' }
+        elseif ($BackdatedInvoiceIssueBoundary) { 'SqlServer_backdated_invoice_replays_one_hundred_issues_and_rejects_more' }
+        elseif ($BackdatedInvoiceTenIssues) { 'SqlServer_backdated_invoice_reprices_ten_issues_atomically' }
+        elseif ($InvoiceBeforeTwoIssues) { 'SqlServer_invoice_before_two_issues_reprices_rollback_atomically' }
+        elseif ($BackdatedInvoiceTwoIssues) { 'SqlServer_backdated_invoice_reprices_two_later_issues_atomically' }
+        elseif ($InvoiceBeforeIssue) { 'SqlServer_invoice_posted_before_later_issue_reprices_issue_on_rollback' }
+        elseif ($BackdatedInvoiceIssueFirst) { 'SqlServer_backdated_invoice_rolls_back_after_later_issue' }
+        elseif ($BackdatedInvoiceIssueReplay) { 'SqlServer_backdated_invoice_reprices_later_issue_and_rolls_back' }
+        elseif ($BackdatedConsumedInvoice) { 'SqlServer_backdated_consumed_invoice_posts_and_rolls_back_with_later_issue' }
+        elseif ($FullyConsumedPurchaseVariance) { 'SqlServer_receipt_replays_fully_consumed_purchase_variance' }
+        elseif ($PartialPurchaseVarianceLot) { 'SqlServer_lot_receipt_replays_changed_purchase_variance_split' }
         elseif ($BackdatedPurchaseCreditNotePost) { 'SqlServer_backdated_purchase_credit_note_post_rejects_later_issue_atomically' }
         elseif ($BackdatedPurchaseCreditNoteRollback) { 'SqlServer_backdated_purchase_credit_note_rollback_rejects_later_issue_atomically' }
         elseif ($BackdatedPurchaseInvoice) { 'SqlServer_backdated_purchase_invoice_variance_rejects_later_active_issue' }
@@ -99,6 +208,7 @@ try {
         elseif ($ReversedSaleLaterReceipts) { 'SqlServer_late_receipt_before_multiple_later_receipts_repeats_atomically' }
         elseif ($ReversedSaleLaterReceipt) { 'SqlServer_late_receipt_before_later_receipt_repeats_atomically' }
         elseif ($ReversedSaleLate) { 'SqlServer_late_receipt_reprices_canceled_sale_and_repeats_atomically' }
+        elseif ($ReversedSaleSameTime) { 'SqlServer_same_time_receipt_and_reversed_sale_remain_blocked_atomically' }
         elseif ($ReversedSaleCycle) { 'SqlServer_receipt_repost_reverses_sale_correction_once_and_is_atomic' }
         elseif ($ReversedSaleCorrection) { 'SqlServer_receipt_rollback_reprices_reversed_sale_once_and_is_atomic' }
         elseif ($ReversedSaleGoods) { 'SqlServer_goods_receipt_with_neutral_reversed_sale_posts_and_rolls_back' }

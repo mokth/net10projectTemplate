@@ -50,8 +50,9 @@ public sealed partial class IvInventoryPostingService
         if (await read.IvStockMasters.AsNoTracking().AnyAsync(m =>
                 m.CompanyCode == companyCode && m.ICode == itemCode
                 && m.LotControl, cancellationToken))
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Backdated lot transfer requires a new destination lot and pile; historical replay for that creation is not supported yet.");
+            return await TryPostBackdatedNewDestinationTrAsync(
+                companyCode, branchCode, batchNo, StockCostMethods.MovingAverage,
+                cancellationToken);
         var destinations = await read.IvBalLocs.AsNoTracking()
             .Where(b => b.CompanyCode == companyCode
                 && b.BranchCode == branchCode && b.ICode == itemCode
@@ -60,6 +61,10 @@ public sealed partial class IvInventoryPostingService
                 && b.IStatus == detail.IStatus && b.LotId == null
                 && (b.LotNo == null || b.LotNo == ""))
             .Select(b => b.Id).ToArrayAsync(cancellationToken);
+        if (destinations.Length == 0)
+            return await TryPostBackdatedNewDestinationTrAsync(
+                companyCode, branchCode, batchNo, StockCostMethods.MovingAverage,
+                cancellationToken);
         if (destinations.Length != 1
             || destinations[0] == detail.FromBalLocId.Value)
             return IvInventoryPostingBatchResult.Fail(batchNo,

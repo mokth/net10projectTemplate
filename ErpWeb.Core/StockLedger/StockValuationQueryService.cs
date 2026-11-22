@@ -109,7 +109,7 @@ public sealed class StockValuationQueryService : IStockValuationQueryService
             .OrderBy(x => x.Line)
             .Select(x => new
             {
-                x.Line, x.ICode, x.LinkDo, x.DoNo, x.DoLine
+                x.Line, x.ICode, x.StdQty, x.LinkDo, x.DoNo, x.DoLine
             })
             .ToListAsync(cancellationToken);
 
@@ -131,7 +131,7 @@ public sealed class StockValuationQueryService : IStockValuationQueryService
                 .Select(x => new
                 {
                     x.SourceDocumentType, x.SourceDocumentNo, x.SourceDocumentLine,
-                    x.ItemCode, x.CostAmount
+                    x.ItemCode, x.BaseQty, x.CostAmount
                 })
                 .ToListAsync(cancellationToken);
 
@@ -153,13 +153,19 @@ public sealed class StockValuationQueryService : IStockValuationQueryService
                         && string.Equals(x.ItemCode, line.ICode, StringComparison.OrdinalIgnoreCase))
                     .ToArray();
 
+            var totalCost = matches.Sum(x => x.CostAmount);
+            var shippedQty = matches.Sum(x => x.BaseQty);
+            var lineCogs = line.LinkDo && shippedQty > 0.0000005m && line.StdQty < shippedQty - 0.0000005m
+                ? decimal.Round(totalCost * (line.StdQty / shippedQty), 6, MidpointRounding.AwayFromZero)
+                : totalCost;
+
             result.Add(new SalesInvoiceCogsLine(
                 line.Line,
                 line.ICode ?? string.Empty,
                 line.LinkDo,
                 ownerType,
                 ownerNo,
-                matches.Sum(x => x.CostAmount),
+                lineCogs,
                 matches.Length > 0));
         }
 

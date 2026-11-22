@@ -79,7 +79,7 @@ WHERE b.FrozenFallbackUnitCost < 0
        AND (s.Id IS NULL OR s.CompanyCode <> h.CompanyCode OR s.BranchCode <> h.BranchCode
             OR s.ItemCode <> l.ICode OR s.Status <> N'APPROVED'
             OR s.EffectiveFrom > h.CountDate
-            OR (s.EffectiveTo IS NOT NULL AND s.EffectiveTo < h.CountDate)))
+            OR (s.EffectiveTo IS NOT NULL AND s.EffectiveTo <= h.CountDate)))
    OR (b.CostBasisKind = N'MANUAL_APPROVED'
        AND (ISNULL(b.CostEvidenceType, N'') <> N'MANUAL_APPROVED' OR b.FrozenFallbackUnitCost <= 0
             OR NULLIF(LTRIM(RTRIM(b.CostOverrideReason)), N'') IS NULL

@@ -25,21 +25,25 @@ internal static class StockReplayPurchaseVarianceGenerationReader
         if (chain.Count == 0 || chain.Count > 101 || chain.Count % 2 == 0)
             return null;
         var original = chain[0];
+        var isInvoice = original.SourceDocumentType == "PO_INVOICE"
+            && original.AdjustmentType == "PURCHASE_PRICE_VARIANCE";
+        var isCdn = original.SourceDocumentType == "PO_CDN"
+            && original.AdjustmentType is "PURCHASE_CN_PRICE_ADJUSTMENT" or "PURCHASE_DN_PRICE_ADJUSTMENT";
         if (original.ReversesAdjustmentId is not null
             || original.InventoryAdjustmentFactId is not long originalFactId
             || original.CostMethod != StockCostMethods.MovingAverage
-            || original.SourceDocumentType != "PO_INVOICE"
-            || original.AdjustmentType != "PURCHASE_PRICE_VARIANCE"
+            || (!isInvoice && !isCdn)
             || original.BaseQty <= 0m || original.TotalAdjustmentAmount == 0m
             || StockLedgerPrecision.Quantity(original.BaseQty) != original.BaseQty
             || StockLedgerPrecision.Money(original.TotalAdjustmentAmount) != original.TotalAdjustmentAmount
             || StockLedgerPrecision.Money(original.InventoryAdjustmentAmount) != original.InventoryAdjustmentAmount
             || StockLedgerPrecision.Money(original.ConsumedVarianceAmount) != original.ConsumedVarianceAmount
-            || original.InventoryAdjustmentAmount == 0m
-            || original.InventoryAdjustmentAmount * Math.Sign(original.TotalAdjustmentAmount) <= 0m
+            || original.InventoryAdjustmentAmount * Math.Sign(original.TotalAdjustmentAmount) < 0m
             || Math.Abs(original.InventoryAdjustmentAmount) > Math.Abs(original.TotalAdjustmentAmount)
-            || StockLedgerPrecision.Money(original.ActualBaseAmount - original.ReferenceBaseAmount)
-                != original.TotalAdjustmentAmount
+            || (isInvoice
+                ? StockLedgerPrecision.Money(original.ActualBaseAmount - original.ReferenceBaseAmount)
+                    != original.TotalAdjustmentAmount
+                : Math.Abs(original.TotalAdjustmentAmount) != original.ActualBaseAmount)
             || StockLedgerPrecision.Money(original.InventoryAdjustmentAmount + original.ConsumedVarianceAmount)
                 != original.TotalAdjustmentAmount)
             return null;
@@ -51,7 +55,13 @@ internal static class StockReplayPurchaseVarianceGenerationReader
             .ToDictionaryAsync(f => f.Id, cancellationToken);
         if (facts.Count != factIds.Length || !facts.TryGetValue(originalFactId, out var originalFact)
             || originalFact.StockPostingId != original.StockPostingId
+            || originalFact.CompanyCode != original.CompanyCode || originalFact.BranchCode != original.BranchCode
+            || originalFact.ItemCode != original.ItemCode || originalFact.CostMethod != original.CostMethod
+            || originalFact.SourceDocumentNo != original.SourceDocumentNo
+            || originalFact.SourceDocumentLine != original.SourceDocumentLine.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
             || originalFact.SignedValue != original.InventoryAdjustmentAmount
+            || originalFact.Direction != Math.Sign(original.TotalAdjustmentAmount)
             || originalFact.OriginalValuationFactId is not long receiptFactId)
             return null;
         var invoiceOwner = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p =>
@@ -71,8 +81,12 @@ internal static class StockReplayPurchaseVarianceGenerationReader
             return null;
         try
         {
-            StockReplayWacValueEventFactory.CreatePurchaseInvoiceAdjustment(
-                originalFact, receipt, history, receiptOwner, invoiceOwner);
+            if (isInvoice)
+                StockReplayWacValueEventFactory.CreatePurchaseInvoiceAdjustment(
+                    originalFact, receipt, history, receiptOwner, invoiceOwner);
+            else
+                StockReplayWacValueEventFactory.CreatePurchaseNoteAdjustment(
+                    originalFact, invoiceOwner);
         }
         catch (StockLedgerException) { return null; }
 
@@ -109,12 +123,11 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 || reversal.InventoryAdjustmentAmount != -prior.InventoryAdjustmentAmount
                 || reversal.ConsumedVarianceAmount != -prior.ConsumedVarianceAmount
                 || replacement.TotalAdjustmentAmount != original.TotalAdjustmentAmount
-                || replacement.InventoryAdjustmentAmount == 0m
                 || StockLedgerPrecision.Money(replacement.InventoryAdjustmentAmount) != replacement.InventoryAdjustmentAmount
                 || StockLedgerPrecision.Money(replacement.ConsumedVarianceAmount) != replacement.ConsumedVarianceAmount
                 || StockLedgerPrecision.Money(replacement.InventoryAdjustmentAmount + replacement.ConsumedVarianceAmount)
                     != original.TotalAdjustmentAmount
-                || replacement.InventoryAdjustmentAmount * Math.Sign(original.TotalAdjustmentAmount) <= 0m
+                || replacement.InventoryAdjustmentAmount * Math.Sign(original.TotalAdjustmentAmount) < 0m
                 || Math.Abs(replacement.InventoryAdjustmentAmount) > Math.Abs(original.TotalAdjustmentAmount)
                 || reversal.InventoryAdjustmentFactId is not long reverseFactId
                 || replacement.InventoryAdjustmentFactId is not long replacementFactId
@@ -124,9 +137,10 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 || !runs.TryGetValue(replacement.StockPostingId, out var run)
                 || owner.SealedAtUtc is null || owner.CompanyCode != original.CompanyCode
                 || owner.BranchCode != original.BranchCode || owner.LedgerEpochId != invoiceOwner.LedgerEpochId
-                || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+                || owner.SourceModule != "INVENTORY"
+                || owner.SourceDocumentType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.MiscellaneousIssue)
                 || owner.PostingRole is not ("PRIMARY" or "REVERSAL")
-                || owner.CommandType != $"IV_{(owner.PostingRole == "PRIMARY" ? "POST" : "ROLLBACK")}_{IvTrxTypes.MiscellaneousReceipt}".ToUpperInvariant()
+                || owner.CommandType != $"IV_{(owner.PostingRole == "PRIMARY" ? "POST" : "ROLLBACK")}_{owner.SourceDocumentType}".ToUpperInvariant()
                 || (owner.PostingRole == "PRIMARY") != (owner.ReversesPostingId is null)
                 || owner.EffectiveAt > invoiceOwner.EffectiveAt || owner.PeriodKey != invoiceOwner.PeriodKey
                 || run.CompanyCode != original.CompanyCode || run.BranchCode != original.BranchCode
@@ -136,7 +150,7 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 || run.LatestEffectiveAt.Year != owner.EffectiveAt.Year || run.LatestEffectiveAt.Month != owner.EffectiveAt.Month
                 || run.PlanWatermark < 0 || run.AffectedHistoryCount <= 0
                 || run.AffectedItemCount != 1 || run.AffectedProductionMovementCount != 0
-                || !HasReceiptHistory(owner)
+                || !HasInventoryHistory(owner)
                 || !MatchesFact(reverseFact, originalFact, owner.Id)
                 || reverseFact.ValuationStatus != StockValuationStatuses.Reversed
                 || reverseFact.ValuationSource != StockValuationSources.OriginalReversal
@@ -150,6 +164,7 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 || replacementFact.OriginalValuationFactId != originalFact.Id
                 || replacementFact.ReversesValuationFactId is not null
                 || replacementFact.SignedValue != replacement.InventoryAdjustmentAmount
+                || replacementFact.Direction != originalFact.Direction
                 || replacementFact.ValuationVersion <= priorFact.ValuationVersion
                 || effects.Count(e => e.ReplayRunId == run.Id) != 4
                 || !HasEffect(run, reversal.Id, StockReplayEffectTypes.PurchaseCostAdjustment, prior.Id)
@@ -186,7 +201,7 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 h.ToWarehouse, h.FrWarehouse, h.ToLocation, h.FrLocation, h.ToLotNo, h.FrLotNo }).ToArray(),
             ReversedHistories = reversedHistories.OrderBy(h => h.Id).Select(h => new { h.Id,
                 h.StockPostingId, h.BatchNo, h.ICode, h.LedgerEpochId, h.TrxType, h.EntryRole,
-                h.ToStdQty, h.ToBalLocId }).ToArray(),
+                h.ToStdQty, h.ToBalLocId, h.FrStdQty, h.FromBalLocId }).ToArray(),
             Batches = batches.OrderBy(b => b.Id).Select(b => new { b.Id, b.BatchNo }).ToArray(),
             Runs = runs.Values.OrderBy(r => r.Id).Select(r => new { r.Id, r.RootStockPostingId,
                 r.PlanHash, r.PlanWatermark }).ToArray(),
@@ -201,16 +216,17 @@ internal static class StockReplayPurchaseVarianceGenerationReader
             && e.BusinessOwnerPostingId == invoiceOwner.Id && e.AffectedEntityType == type
             && e.AffectedEntityId == id && e.OriginalEntityId == priorId) == 1;
 
-        bool HasReceiptHistory(StockPosting owner)
+        bool HasInventoryHistory(StockPosting owner)
         {
             var found = correctionHistories.Where(h => h.StockPostingId == owner.Id).ToArray();
             if (found.Length != 1)
                 return false;
             var h = found[0];
             var primary = owner.PostingRole == "PRIMARY";
+            var isReceipt = owner.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt;
             if (h.CompanyCode != original.CompanyCode || h.BranchCode != original.BranchCode
                 || h.LedgerEpochId != invoiceOwner.LedgerEpochId || h.LedgerVersion != 2
-                || h.TrxType != IvTrxTypes.MiscellaneousReceipt || h.ICode != original.ItemCode
+                || h.TrxType != owner.SourceDocumentType || h.ICode != original.ItemCode
                 || h.TrxDtTime != owner.EffectiveAt || h.BatchStatus != IvBatchStatuses.Posted
                 || h.EntryRole != (primary ? "ORIGINAL" : "REVERSAL")
                 || h.ValuationStatus != (primary ? StockValuationStatuses.Valued : StockValuationStatuses.Reversed)
@@ -218,27 +234,77 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 || owner.SourceDocumentNo != h.BatchNo.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 || !batches.Any(b => b.BatchNo == h.BatchNo && owner.SourceDocumentId ==
                     b.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                || !MatchesReceiptSnapshot(owner, h, primary))
+                || (isReceipt ? !MatchesReceiptSnapshot(owner, h, primary) : !MatchesIssueSnapshot(owner, h, primary)))
                 return false;
+            if (isReceipt)
+            {
+                if (primary)
+                    return h.ReversesHistoryId is null && h.ToStdQty is > 0m && h.FrStdQty is not > 0m;
+                if (h.ReversesHistoryId is not int priorId || h.FrStdQty is not > 0m || h.ToStdQty is > 0m)
+                    return false;
+                var prior = reversedHistories.SingleOrDefault(x => x.Id == priorId);
+                return prior is not null && prior.StockPostingId == owner.ReversesPostingId
+                    && prior.CompanyCode == h.CompanyCode && prior.BranchCode == h.BranchCode
+                    && prior.LedgerEpochId == h.LedgerEpochId && prior.TrxType == h.TrxType
+                    && prior.BatchNo == h.BatchNo && prior.ICode == h.ICode && prior.EntryRole == "ORIGINAL"
+                    && prior.ToStdQty == h.FrStdQty && prior.ToBalLocId == h.FromBalLocId;
+            }
             if (primary)
-                return h.ReversesHistoryId is null && h.ToStdQty is > 0m && h.FrStdQty is not > 0m;
-            if (h.ReversesHistoryId is not int priorId || h.FrStdQty is not > 0m || h.ToStdQty is > 0m)
+                return h.ReversesHistoryId is null && h.FrStdQty is > 0m && h.ToStdQty is not > 0m;
+            if (h.ReversesHistoryId is not int priorIssueId || h.ToStdQty is not > 0m || h.FrStdQty is > 0m)
                 return false;
-            var prior = reversedHistories.SingleOrDefault(x => x.Id == priorId);
-            return prior is not null && prior.StockPostingId == owner.ReversesPostingId
-                && prior.CompanyCode == h.CompanyCode && prior.BranchCode == h.BranchCode
-                && prior.LedgerEpochId == h.LedgerEpochId && prior.TrxType == h.TrxType
-                && prior.BatchNo == h.BatchNo && prior.ICode == h.ICode && prior.EntryRole == "ORIGINAL"
-                && prior.ToStdQty == h.FrStdQty && prior.ToBalLocId == h.FromBalLocId;
+            var priorIssue = reversedHistories.SingleOrDefault(x => x.Id == priorIssueId);
+            return priorIssue is not null && priorIssue.StockPostingId == owner.ReversesPostingId
+                && priorIssue.CompanyCode == h.CompanyCode && priorIssue.BranchCode == h.BranchCode
+                && priorIssue.LedgerEpochId == h.LedgerEpochId && priorIssue.TrxType == h.TrxType
+                && priorIssue.BatchNo == h.BatchNo && priorIssue.ICode == h.ICode && priorIssue.EntryRole == "ORIGINAL"
+                && priorIssue.FrStdQty == h.ToStdQty && priorIssue.FromBalLocId == h.ToBalLocId;
         }
     }
 
+    internal static async Task<bool> IsProvenActiveFactAsync(AppDbContext db,
+        string company, string branch, long originalFactId, long activeFactId, CancellationToken ct,
+        string sourceDocumentType = "PO_INVOICE")
+    {
+        var roots = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+            a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == sourceDocumentType
+            && a.InventoryAdjustmentFactId == originalFactId && a.ReversesAdjustmentId == null).ToArrayAsync(ct);
+        if (roots.Length != 1)
+            return false;
+        var root = roots[0];
+        var rows = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
+            a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == sourceDocumentType
+            && a.SourceDocumentNo == root.SourceDocumentNo && a.SourceCostingRevision == root.SourceCostingRevision)
+            .ToArrayAsync(ct);
+        var groups = rows.Where(a => a.ReversesAdjustmentId.HasValue)
+            .GroupBy(a => a.ReversesAdjustmentId!.Value).ToArray();
+        if (groups.Any(g => g.Count() != 1))
+            return false;
+        var children = groups.ToDictionary(g => g.Key, g => g.Single());
+        var chain = new List<PurchaseCostAdjustment> { root };
+        while (children.TryGetValue(chain[^1].Id, out var child))
+        {
+            if (chain.Count >= 101 || chain.Any(a => a.Id == child.Id))
+                return false;
+            chain.Add(child);
+        }
+        var ids = chain.Select(a => a.Id).ToArray();
+        if (await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(a =>
+                a.ReversesAdjustmentId.HasValue && ids.Contains(a.ReversesAdjustmentId.Value)
+                && !ids.Contains(a.Id), ct))
+            return false;
+        var generation = await TryReadAsync(db, chain, ct);
+        return generation is not null && generation.OriginalFact.Id == originalFactId
+            && generation.ActiveFact.Id == activeFactId;
+    }
+
     internal static async Task<long[]> ValidatedActiveFactIdsAsync(AppDbContext db,
-        string company, string branch, string invoiceNo, int revision, CancellationToken ct)
+        string company, string branch, string documentNo, int revision, CancellationToken ct,
+        string sourceDocumentType = "PO_INVOICE")
     {
         var rows = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
-            a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE"
-            && a.SourceDocumentNo == invoiceNo && a.SourceCostingRevision == revision).ToArrayAsync(ct);
+            a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == sourceDocumentType
+            && a.SourceDocumentNo == documentNo && a.SourceCostingRevision == revision).ToArrayAsync(ct);
         var groups = rows.Where(a => a.ReversesAdjustmentId.HasValue)
             .GroupBy(a => a.ReversesAdjustmentId!.Value).ToArray();
         if (groups.Any(g => g.Count() != 1))
@@ -276,16 +342,20 @@ internal static class StockReplayPurchaseVarianceGenerationReader
     {
         var factRoots = await db.StockValuationFacts.AsNoTracking().Where(f =>
             f.CompanyCode == company && f.BranchCode == branch && f.EffectiveAt < exclusiveEnd
-            && f.SourceDocumentType == "PO_INVOICE" && f.InventoryHistoryId == null
+            && (f.SourceDocumentType == "PO_INVOICE" || f.SourceDocumentType == "PO_CDN")
+            && f.InventoryHistoryId == null
             && f.StockPosting!.SealedAtUtc != null && f.StockPosting.PostingSequence <= watermark
             && f.StockPosting.SourceModule == "INVENTORY"
-            && f.StockPosting.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt)
+            && (f.StockPosting.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+                || f.StockPosting.SourceDocumentType == IvTrxTypes.MiscellaneousIssue))
             .Select(f => f.StockPostingId).Distinct().ToArrayAsync(ct);
         var adjustmentRoots = await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
-            a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE"
+            a.CompanyCode == company && a.BranchCode == branch
+            && (a.SourceDocumentType == "PO_INVOICE" || a.SourceDocumentType == "PO_CDN")
             && a.StockPosting!.SealedAtUtc != null && a.StockPosting.PostingSequence <= watermark
             && a.StockPosting.EffectiveAt < exclusiveEnd && a.StockPosting.SourceModule == "INVENTORY"
-            && a.StockPosting.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt)
+            && (a.StockPosting.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+                || a.StockPosting.SourceDocumentType == IvTrxTypes.MiscellaneousIssue))
             .Select(a => a.StockPostingId).Distinct().ToArrayAsync(ct);
         var effectRoots = await db.StockReplayEffects.AsNoTracking().Where(e =>
             e.CompanyCode == company && e.BranchCode == branch && e.EffectKind == ReplacementEffect
@@ -302,10 +372,12 @@ internal static class StockReplayPurchaseVarianceGenerationReader
         foreach (var chunk in rootIds.Chunk(500))
         {
             corrections.AddRange(await db.PurchaseCostAdjustments.AsNoTracking().Where(a =>
-                a.CompanyCode == company && a.BranchCode == branch && a.SourceDocumentType == "PO_INVOICE"
+                a.CompanyCode == company && a.BranchCode == branch
+                && (a.SourceDocumentType == "PO_INVOICE" || a.SourceDocumentType == "PO_CDN")
                 && chunk.Contains(a.StockPostingId)).ToArrayAsync(ct));
             valueFacts.AddRange(await db.StockValuationFacts.AsNoTracking().Where(f =>
-                f.CompanyCode == company && f.BranchCode == branch && f.SourceDocumentType == "PO_INVOICE"
+                f.CompanyCode == company && f.BranchCode == branch
+                && (f.SourceDocumentType == "PO_INVOICE" || f.SourceDocumentType == "PO_CDN")
                 && f.InventoryHistoryId == null && chunk.Contains(f.StockPostingId)).ToArrayAsync(ct));
         }
         var byId = corrections.ToDictionary(a => a.Id);
@@ -357,7 +429,7 @@ internal static class StockReplayPurchaseVarianceGenerationReader
             }
             reverseChain.Reverse();
             var chain = reverseChain.ToArray();
-            if (chain.Length % 2 == 0 || chain[0].SourceDocumentType != "PO_INVOICE")
+            if (chain.Length % 2 == 0 || chain[0].SourceDocumentType is not ("PO_INVOICE" or "PO_CDN"))
                 return false;
             if (longestByInvoiceRoot.TryGetValue(chain[0].Id, out var previous))
             {
@@ -402,7 +474,7 @@ internal static class StockReplayPurchaseVarianceGenerationReader
         && fact.WorkOrderOperationId == root.WorkOrderOperationId
         && fact.ProductionPostingLinkId == root.ProductionPostingLinkId
         && fact.BaseQty == 0m && fact.UnitCost == 0m && fact.Direction is (-1 or 1)
-        && fact.CostAmount > 0m && StockLedgerPrecision.Money(fact.CostAmount) == fact.CostAmount
+        && fact.CostAmount >= 0m && StockLedgerPrecision.Money(fact.CostAmount) == fact.CostAmount
         && fact.BaseCostAmount == fact.CostAmount
         && fact.BaseCurrency == root.BaseCurrency && fact.TransactionCurrency == root.TransactionCurrency
         && fact.TransactionCostAmount == root.TransactionCostAmount && fact.ExchangeRate == root.ExchangeRate;
@@ -431,6 +503,39 @@ internal static class StockReplayPurchaseVarianceGenerationReader
                 && line.GetProperty("toWarehouse").GetString() == (primary ? history.ToWarehouse : history.FrWarehouse)
                 && line.GetProperty("toLocation").GetString() == (primary ? history.ToLocation : history.FrLocation)
                 && line.GetProperty("toLotNo").GetString() == (primary ? history.ToLotNo : history.FrLotNo);
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException
+            or FormatException or OverflowException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static bool MatchesIssueSnapshot(StockPosting owner,
+        ErpWeb.Model.Entities.Inventory.IvTrxHistory history, bool primary)
+    {
+        try
+        {
+            if (StockPostingFingerprint.Hash(StockPostingFingerprint.Canonicalize(owner.SourceSnapshotJson))
+                != owner.SourceSnapshotHash)
+                return false;
+            using var document = JsonDocument.Parse(owner.SourceSnapshotJson);
+            var snapshot = document.RootElement;
+            var lines = snapshot.GetProperty("lines");
+            if (lines.GetArrayLength() != 1 || snapshot.GetProperty("id").GetInt32().ToString(
+                    System.Globalization.CultureInfo.InvariantCulture) != owner.SourceDocumentId
+                || snapshot.GetProperty("trxDtTime").GetDateTime() != owner.EffectiveAt)
+                return false;
+            var line = lines[0];
+            return line.GetProperty("documentRevision").GetInt32() == owner.DocumentRevision
+                && line.GetProperty("trxLineNo").GetInt32() == history.TrxLineNo
+                && line.GetProperty("iCode").GetString() == history.ICode
+                && line.GetProperty("frStdQty").GetDecimal() == (primary ? history.FrStdQty : history.ToStdQty)
+                && line.GetProperty("frStdUom").GetString() == (primary ? history.FrStdUom : history.ToStdUom)
+                && line.GetProperty("frWarehouse").GetString() == (primary ? history.FrWarehouse : history.ToWarehouse)
+                && line.GetProperty("frLocation").GetString() == (primary ? history.FrLocation : history.ToLocation)
+                && (line.GetProperty("frLotNo").GetString() ?? string.Empty)
+                    == ((primary ? history.FrLotNo : history.ToLotNo) ?? string.Empty);
         }
         catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException
             or FormatException or OverflowException or ArgumentException)

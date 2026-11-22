@@ -17,6 +17,7 @@ public sealed record StockReplayWacRemovalPlan(
     internal long[] ExcludedReversedIssueValueFactIds { get; init; } = [];
     internal bool ExcludesReversedSaleCycle { get; init; }
     internal long? PurchaseVarianceFactId { get; init; }
+    internal long? PurchaseNoteFactId { get; init; }
 }
 
 /// <summary>
@@ -53,6 +54,11 @@ public static class StockReplayWacRemovalPlanner
         StockReplayPhysicalRemovalPlan physicalPlan, long factId, CancellationToken cancellationToken = default) =>
         BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, [], false, factId, cancellationToken);
 
+    internal static Task<StockReplayWacRemovalPlan> BuildForPurchaseNoteAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayPhysicalRemovalPlan physicalPlan, long factId, CancellationToken cancellationToken = default) =>
+        BuildCoreAsync(db, companyCode, branchCode, itemCode, physicalPlan, [], false, null, cancellationToken, factId);
+
     internal static Task<StockReplayWacRemovalPlan> BuildForReversedIssueAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayPhysicalRemovalPlan physicalPlan, IvInventoryPostingService.WacReversedIssueProof proof,
@@ -88,10 +94,12 @@ public static class StockReplayWacRemovalPlanner
     private static async Task<StockReplayWacRemovalPlan> BuildCoreAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayPhysicalRemovalPlan physicalPlan, long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, long? noteFactId = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(physicalPlan);
+        if (noteFactId is not null && (purchaseFactId is not null || excludeSaleCycle || excludedValueIds.Length != 0))
+            throw Invalid("A purchase note cannot share a separate removal authority.");
         if (physicalPlan.CompanyCode != companyCode
             || physicalPlan.BranchCode != branchCode)
             throw Invalid("The WAC removal has a different physical tenant.");
@@ -103,17 +111,18 @@ public static class StockReplayWacRemovalPlanner
         if (pileItem != itemCode)
             throw Invalid("The removed pile belongs to another WAC item.");
         var (removed, tail) = await ReadAsync(db, companyCode, branchCode,
-            itemCode, physicalPlan.RemovedActiveEvent, excludedValueIds, excludeSaleCycle, purchaseFactId, cancellationToken);
+            itemCode, physicalPlan.RemovedActiveEvent, excludedValueIds, excludeSaleCycle, purchaseFactId, cancellationToken, noteFactId);
         var projection = StockReplayWacTailProjector.SimulateSinglePileRemoval(
             tail, physicalPlan, removed);
         var hash = Hash(companyCode, branchCode, itemCode, physicalPlan,
-            removed, tail, projection, excludedValueIds, excludeSaleCycle, purchaseFactId);
+            removed, tail, projection, excludedValueIds, excludeSaleCycle, purchaseFactId, noteFactId);
         return new(companyCode, branchCode, itemCode, physicalPlan,
             removed, tail, projection, hash)
         {
             ExcludedReversedIssueValueFactIds = excludedValueIds.ToArray(),
             ExcludesReversedSaleCycle = excludeSaleCycle,
-            PurchaseVarianceFactId = purchaseFactId
+            PurchaseVarianceFactId = purchaseFactId,
+            PurchaseNoteFactId = noteFactId
         };
     }
 
@@ -131,7 +140,7 @@ public static class StockReplayWacRemovalPlanner
             || !StringComparer.Ordinal.Equals(plan.PlanHash,
                 Hash(plan.CompanyCode, plan.BranchCode, plan.ItemCode,
                     plan.PhysicalPlan, plan.RemovedActiveEvent,
-                    plan.Tail, plan.Projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId)))
+                    plan.Tail, plan.Projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId, plan.PurchaseNoteFactId)))
             throw Stale("The WAC removal evidence changed after planning.");
         await StockReplayPhysicalPlanner.ValidateWithinRootAsync(
             context, plan.PhysicalPlan, cancellationToken);
@@ -150,7 +159,7 @@ public static class StockReplayWacRemovalPlanner
         {
             (removed, tail) = await ReadAsync(context.Db, plan.CompanyCode,
                 plan.BranchCode, plan.ItemCode,
-                plan.PhysicalPlan.RemovedActiveEvent, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId, cancellationToken);
+                plan.PhysicalPlan.RemovedActiveEvent, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId, cancellationToken, plan.PurchaseNoteFactId);
             projection = StockReplayWacTailProjector.SimulateSinglePileRemoval(
                 tail, plan.PhysicalPlan, removed);
         }
@@ -160,7 +169,7 @@ public static class StockReplayWacRemovalPlanner
         }
         if (!StringComparer.Ordinal.Equals(plan.PlanHash,
             Hash(plan.CompanyCode, plan.BranchCode, plan.ItemCode,
-                plan.PhysicalPlan, removed, tail, projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId)))
+                plan.PhysicalPlan, removed, tail, projection, plan.ExcludedReversedIssueValueFactIds, plan.ExcludesReversedSaleCycle, plan.PurchaseVarianceFactId, plan.PurchaseNoteFactId)))
             throw Stale("The active WAC removal dependencies changed after planning.");
     }
 
@@ -168,7 +177,8 @@ public static class StockReplayWacRemovalPlanner
         StockReplayWacFinancialTail Later)> ReadAsync(
         AppDbContext db, string companyCode, string branchCode,
         string itemCode, StockReplayPhysicalEvent physical,
-        long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId, CancellationToken cancellationToken)
+        long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId, CancellationToken cancellationToken,
+        long? noteFactId = null)
     {
         if (physical.Key.EffectiveAt == DateTime.MinValue)
             throw Invalid("A WAC removal has no earlier timeline instant.");
@@ -181,9 +191,12 @@ public static class StockReplayWacRemovalPlanner
         var observed = purchaseFactId is long factId
             ? await StockReplayWacFinancialTailReader.ReadLaterForPurchaseVarianceAsync(
                 db, companyCode, branchCode, itemCode, before, factId, cancellationToken)
+            : noteFactId is long noteId
+            ? await StockReplayWacFinancialTailReader.ReadLaterForPurchaseNoteRemovalAsync(
+                db, companyCode, branchCode, itemCode, before, physical.Key, noteId, cancellationToken)
             : excludedValueIds.Length == 0
-            ? await StockReplayWacFinancialTailReader.ReadLaterAsync(
-                db, companyCode, branchCode, itemCode, before, cancellationToken)
+            ? await StockReplayWacFinancialTailReader.ReadLaterForRemovalAsync(
+                db, companyCode, branchCode, itemCode, before, physical.Key, cancellationToken)
             : excludeSaleCycle
                 ? await StockReplayWacFinancialTailReader.ReadLaterForReversedSaleAsync(
                     db, companyCode, branchCode, itemCode, before, excludedValueIds, cancellationToken)
@@ -210,8 +223,10 @@ public static class StockReplayWacRemovalPlanner
         StockReplayPhysicalRemovalPlan physicalPlan,
         StockReplayWacEvent removed,
         StockReplayWacFinancialTail tail,
-        StockReplayWacRemovalResult projection, long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId) =>
-        StockPostingFingerprint.Create(new
+        StockReplayWacRemovalResult projection, long[] excludedValueIds, bool excludeSaleCycle, long? purchaseFactId,
+        long? noteFactId = null)
+    {
+        var evidence = new
         {
             companyCode, branchCode, itemCode,
             physicalPlan.PlanHash,
@@ -227,7 +242,11 @@ public static class StockReplayWacRemovalPlanner
                     Events = tail.PhysicalByPile[p.Key]
                 }).ToArray(),
             projection
-        }, new { }).RequestFingerprint;
+        };
+        return noteFactId is null
+            ? StockPostingFingerprint.Create(evidence, new { }).RequestFingerprint
+            : StockPostingFingerprint.Create(new { evidence, noteFactId }, new { }).RequestFingerprint;
+    }
 
     private static StockLedgerException Invalid(string message) =>
         new(new StockLedgerError(StockLedgerErrorCodes.LedgerMismatch, message));

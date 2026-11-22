@@ -39,11 +39,12 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
         int version,
         DateTime? from,
         DateTime? to,
-        string status = PrBomStatuses.Active) => new()
+        string status = PrBomStatuses.Active,
+        string definitionCode = PrProductDefinitionCodes.Standard) => new()
         {
             CompanyCode = "DEMO",
             ProdCode = "FG001",
-            DefinitionCode = PrProductDefinitionCodes.Standard,
+            DefinitionCode = definitionCode,
             DefinitionName = PrProductDefinitionCodes.StandardName,
             IsDefaultDefinition = true,
             Version = version,
@@ -80,11 +81,11 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
     public async Task Boundary_is_half_open_inclusive_from_exclusive_to()
     {
         await AddAsync(
-            Revision(1, new DateTime(2026, 6, 1), new DateTime(2026, 9, 1)),
-            Revision(2, new DateTime(2026, 9, 1), null));
+            Revision(1, new DateTime(2026, 6, 1), new DateTime(2026, 9, 1), definitionCode: "STANDARD"),
+            Revision(2, new DateTime(2026, 9, 1), null, definitionCode: "ALT"));
 
         var onFrom = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
-        var onTo = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
+        var onTo = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "ALT");
 
         Assert.Equal(1, onFrom.Revision!.Version);
         Assert.Equal(2, onTo.Revision!.Version);
@@ -105,8 +106,8 @@ public sealed class ProductDefinitionSnapshotLoaderTests : IAsyncLifetime
     public async Task No_active_revision_reports_not_found()
     {
         await AddAsync(
-            Revision(1, new DateTime(2026, 1, 1), new DateTime(2026, 2, 1)),
-            Revision(2, new DateTime(2026, 3, 1), new DateTime(2026, 4, 1)));
+            Revision(1, new DateTime(2026, 1, 1), new DateTime(2026, 2, 1), PrBomStatuses.Superseded),
+            Revision(2, new DateTime(2026, 3, 1), new DateTime(2026, 4, 1), PrBomStatuses.Superseded));
 
         var result = await _loader.ResolveActiveRevisionAsync("DEMO", "FG001", "STANDARD");
 

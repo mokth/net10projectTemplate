@@ -959,7 +959,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         string expectedTrxType,
         CancellationToken cancellationToken,
-        StockPostingContext? postingContext = null)
+        StockPostingContext? postingContext = null,
+        bool allowReplayedPurchaseNote = false)
     {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
@@ -2848,7 +2849,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         string expectedTrxType,
         CancellationToken cancellationToken,
-        StockPostingContext? postingContext = null)
+        StockPostingContext? postingContext = null,
+        bool allowReplayedPurchaseNote = false)
     {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
@@ -2892,6 +2894,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, integrityError);
         }
+
+        if (!allowReplayedPurchaseNote
+            && await HasLaterUnreplayedPurchaseNoteCostAsync(db, companyCode, branchCode, history, cancellationToken))
+            return IvInventoryPostingBatchResult.Fail(batchNo,
+                "A later purchase credit/debit note has consumed cost that requires replay before rollback.");
 
         var qaRestore = await _qaPhysical.RestoreStockOutAsync(
             db, companyCode, branchCode, batchNo, cancellationToken);

@@ -13,7 +13,8 @@ internal static class ProductionOutputIssueCostCorrectionWriter
     public static async Task AppendWithinRootAsync(
         StockPostingContext context, long issueId, long consumeId, long produceId,
         bool outputReversed, ProductionEffectiveCost expectedIssue, CancellationToken ct,
-        long? activeFinishedGoodId = null, decimal activeFinishedGoodValue = 0m)
+        long? activeFinishedGoodId = null, decimal activeFinishedGoodValue = 0m,
+        bool allowReversedFinishedGood = false)
     {
         context.EnsureUnsealed();
         var db = context.Db;
@@ -98,7 +99,7 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         {
             await ProductionReversedOutputCostCorrectionWriter.AppendWithinRootAsync(context,
                 consume, produce, costs[consumeId], costs[produceId],
-                correctedConsume, correctedProduce, ct);
+                correctedConsume, correctedProduce, ct, allowReversedFinishedGood);
         }
         else if (!outputReversed)
         {

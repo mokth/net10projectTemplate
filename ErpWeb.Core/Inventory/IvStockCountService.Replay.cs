@@ -67,11 +67,10 @@ public sealed partial class IvStockCountService
         if (header is null || header.Status is not
                 (IvStockCountStatuses.Counted or IvStockCountStatuses.RolledBack))
             return null;
+        if (header.CountDate.Date > _currentDate.Today)
+            return IvStockCountOperationResult.Fail(
+                $"Count date {header.CountDate:yyyy-MM-dd} is in the future.");
         var effectiveAt = StockReplayEventKey.CountEndOfDay(header.CountDate);
-        if (header.CountDate.Date >= _currentDate.Today
-            && !await HasLaterSealedCountValuationAsync(read, company, branch,
-                id, effectiveAt, cancellationToken))
-            return null;
         var lines = await ReadBoundedReplayCountLinesAsync(read, id,
             cancellationToken);
         if (lines is null)
@@ -85,9 +84,6 @@ public sealed partial class IvStockCountService
             && !standardCount)
             return IvStockCountOperationResult.Fail(
                 "This historical count needs a supported event-date cost replay method.");
-        if (header.CountDate.Date > _currentDate.Today)
-            return IvStockCountOperationResult.Fail(
-                $"Count date {header.CountDate:yyyy-MM-dd} is in the future.");
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, company,
                 branch, header.CountDate, cancellationToken) is string closed)
             return IvStockCountOperationResult.Fail(closed);
@@ -96,17 +92,13 @@ public sealed partial class IvStockCountService
             DateTime.UtcNow, cancellationToken);
         if (fifoCount)
         {
-            if (plan.Fifo is not { Items.Count: 1 }
-                || plan.PhysicalSheet.Lines.Count != 1)
+            if (plan.Fifo is not { Items.Count: >= 1 and <= 2 } fifo
+                || plan.PhysicalSheet.Lines.Count is < 1 or > 10)
                 return IvStockCountOperationResult.Fail(
-                    "The FIFO count needs one supported pile.");
-            if (await CheckBoundedFifoCountTailAsync(read,
-                    plan.PhysicalSheet.Lines[0].LaterEvents,
-                    plan.Fifo.Items[0].Projection.LaterIssues,
-                    plan.Fifo.Items[0].Projection.BeforeFirstCount.LaterReceipts,
-                    plan.PhysicalSheet.Lines[0].Candidate.Key,
-                    company, branch, header.CountDate, lines[0].ICode!,
-                    effectiveAt, cancellationToken) is string fifoTailError)
+                    "The FIFO count needs a supported replay sheet.");
+            if (await CheckBoundedFifoCountPlanAsync(read, fifo,
+                    company, branch, header.CountDate, effectiveAt,
+                    cancellationToken) is string fifoTailError)
                 return IvStockCountOperationResult.Fail(fifoTailError);
         }
         else if (standardCount)
@@ -187,11 +179,10 @@ public sealed partial class IvStockCountService
         if (header is null || header.Status is not
                 (IvStockCountStatuses.Counted or IvStockCountStatuses.RolledBack))
             return null;
+        if (header.CountDate.Date > _currentDate.Today)
+            return IvStockCountOperationResult.Fail(
+                $"Count date {header.CountDate:yyyy-MM-dd} is in the future.");
         var effectiveAt = StockReplayEventKey.CountEndOfDay(header.CountDate);
-        if (header.CountDate.Date >= _currentDate.Today
-            && !await HasLaterSealedCountValuationAsync(read, company, branch,
-                id, effectiveAt, cancellationToken))
-            return null;
         var lines = await ReadBoundedReplayCountLinesAsync(read, id,
             cancellationToken);
         if (lines is null)
@@ -205,9 +196,6 @@ public sealed partial class IvStockCountService
             && !standardCount)
             return IvStockCountOperationResult.Fail(
                 "This historical count needs a supported event-date cost replay method.");
-        if (header.CountDate.Date > _currentDate.Today)
-            return IvStockCountOperationResult.Fail(
-                $"Count date {header.CountDate:yyyy-MM-dd} is in the future.");
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, company,
                 branch, header.CountDate, cancellationToken) is string closed)
             return IvStockCountOperationResult.Fail(closed);
@@ -217,17 +205,13 @@ public sealed partial class IvStockCountService
         var wac = plan.Wac;
         if (fifoCount)
         {
-            if (plan.Fifo is not { Items.Count: 1 }
-                || plan.PhysicalSheet.Lines.Count != 1)
+            if (plan.Fifo is not { Items.Count: >= 1 and <= 2 } fifo
+                || plan.PhysicalSheet.Lines.Count is < 1 or > 10)
                 return IvStockCountOperationResult.Fail(
-                    "The FIFO count needs one supported pile.");
-            if (await CheckBoundedFifoCountTailAsync(read,
-                    plan.PhysicalSheet.Lines[0].LaterEvents,
-                    plan.Fifo.Items[0].Projection.LaterIssues,
-                    plan.Fifo.Items[0].Projection.BeforeFirstCount.LaterReceipts,
-                    plan.PhysicalSheet.Lines[0].Candidate.Key,
-                    company, branch, header.CountDate, lines[0].ICode!,
-                    effectiveAt, cancellationToken) is string fifoTailError)
+                    "The FIFO count needs a supported replay sheet.");
+            if (await CheckBoundedFifoCountPlanAsync(read, fifo,
+                    company, branch, header.CountDate, effectiveAt,
+                    cancellationToken) is string fifoTailError)
                 return IvStockCountOperationResult.Fail(fifoTailError);
         }
         else if (standardCount)
@@ -354,88 +338,105 @@ public sealed partial class IvStockCountService
         var plan = await StockReplayCountSheetRemovalRootWriter.BuildAsync(
             read, company, branch, id, cancellationToken);
         var wac = plan.Wac;
-        decimal? zeroStandardQuantity = null;
-        decimal? zeroStandardValue = null;
-        StockReplayFifoActiveLayerSnapshot? zeroFifoSnapshot = null;
+        Dictionary<string, (decimal Quantity, decimal Value)>? zeroStandardStates = null;
+        Dictionary<string, StockReplayFifoActiveLayerSnapshot>? zeroFifoSnapshots = null;
         IReadOnlyList<StockReplayWacEvent> later;
         if (fifoCount)
         {
-            if (plan.Fifo is { Items.Count: 1 } fifo
-                && fifo.Sheet.Lines.Count == 1
-                && fifo.Items[0].Projection is not null)
+            if (plan.Fifo is { Items.Count: >= 1 and <= 2 } fifo
+                && fifo.Sheet.Lines.Count is >= 1 and <= 10)
             {
-                if (await CheckBoundedFifoCountTailAsync(read,
-                        fifo.Sheet.Lines[0].Physical.LaterEvents,
-                        fifo.Items[0].Projection.LaterIssues,
-                        fifo.Items[0].Projection.BeforeFirstCount.LaterReceipts,
-                        fifo.Sheet.Lines[0].Physical.RemovedActiveEvent.Key,
-                        company, branch, header.CountDate, lines[0].ICode!,
-                        effectiveAt, cancellationToken) is string fifoTailError)
-                    return IvStockCountOperationResult.Fail(fifoTailError);
+                var lineById = fifo.Sheet.Lines.ToDictionary(l => l.CountLineId);
+                foreach (var item in fifo.Items)
+                {
+                    var itemLines = item.CountLineIds.Select(lineId => lineById[lineId]).ToArray();
+                    if (item.Projection is not null)
+                    {
+                        if (await CheckBoundedFifoCountTailAsync(read,
+                                itemLines.SelectMany(l => l.Physical.LaterEvents).ToArray(),
+                                item.Projection.LaterIssues,
+                                item.Projection.BeforeFirstCount.LaterReceipts,
+                                itemLines.Select(l => l.Physical.RemovedActiveEvent.Key).ToArray(),
+                                company, branch, header.CountDate, item.ItemCode,
+                                effectiveAt, cancellationToken) is string fifoTailError)
+                            return IvStockCountOperationResult.Fail(fifoTailError);
+                    }
+                    else
+                    {
+                        zeroFifoSnapshots ??= new(StringComparer.Ordinal);
+                        zeroFifoSnapshots[item.ItemCode] = item.Snapshot;
+                        if (await CheckZeroFifoItemCountTailAsync(read,
+                                item.Snapshot, itemLines, company, branch,
+                                header.CountDate, item.ItemCode, effectiveAt,
+                                cancellationToken) is string zeroFifoError)
+                            return IvStockCountOperationResult.Fail(zeroFifoError);
+                    }
+                }
             }
-            else if (plan.Zero is { Removal.Lines.Count: 1 } zero
-                && zero.Removal.Lines[0].Physical.RemovedActiveEvent.SignedDelta == 0m)
+            else if (plan.Zero is { Removal.Lines.Count: >= 1 and <= 10 } zero
+                && zero.Removal.Lines.All(l => l.Physical.RemovedActiveEvent.SignedDelta == 0m))
             {
-                zeroFifoSnapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
-                    read, company, branch, lines[0].ICode!, cancellationToken);
-                var pile = await read.IvBalLocs.AsNoTracking().SingleAsync(b =>
-                    b.Id == lines[0].BalLocId && b.CompanyCode == company
-                    && b.BranchCode == branch, cancellationToken);
-                var physical = zero.Removal.Lines[0].Physical;
-                var projection = StockReplayFifoTailProjector.InsertCountAdjustment(
-                    zeroFifoSnapshot, physical.RemovedActiveEvent.Key,
-                    0m, null, pile.StdUom);
-                if (projection.FinalQuantity != zeroFifoSnapshot.CurrentQuantity
-                    || projection.FinalValue != zeroFifoSnapshot.CurrentValue)
-                    return IvStockCountOperationResult.Fail(
-                        "The zero FIFO count changes its active cost pool.");
-                if (await CheckBoundedFifoCountTailAsync(read,
-                        physical.LaterEvents, projection.Issues,
-                        projection.BeforeCandidate.LaterReceipts,
-                        physical.RemovedActiveEvent.Key, company, branch,
-                        header.CountDate, lines[0].ICode!, effectiveAt,
-                        cancellationToken) is string fifoTailError)
-                    return IvStockCountOperationResult.Fail(fifoTailError);
+                zeroFifoSnapshots = new(StringComparer.Ordinal);
+                var lineById = lines.ToDictionary(l => l.Id);
+                foreach (var group in zero.Removal.Lines.GroupBy(l => lineById[l.CountLineId].ICode!))
+                {
+                    var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+                        read, company, branch, group.Key, cancellationToken);
+                    zeroFifoSnapshots[group.Key] = snapshot;
+                    if (await CheckZeroFifoItemCountTailAsync(read,
+                            snapshot, group.ToArray(), company, branch,
+                            header.CountDate, group.Key, effectiveAt,
+                            cancellationToken) is string zeroFifoError)
+                        return IvStockCountOperationResult.Fail(zeroFifoError);
+                }
             }
             else
                 return IvStockCountOperationResult.Fail(
-                    "The FIFO count rollback needs one supported pile.");
+                    "The FIFO count rollback needs a supported replay sheet.");
             later = [];
         }
         else if (standardCount)
         {
-            if (plan.Standard is { Items.Count: 1 } standard
-                && standard.Sheet.Lines.Count == 1
-                && standard.Items[0].RemovedEvents.Count == 1)
+            if (plan.Standard is { Items.Count: >= 1 and <= 2 } standard
+                && standard.Sheet.Lines.Count is >= 1 and <= 10)
             {
-                var removedId = standard.Items[0].RemovedEvents[0].EventId;
-                var standardLater = standard.Items[0].Tail.LaterEvents
-                    .Where(e => e.EventId != removedId).ToArray();
-                if (await CheckBoundedStandardCountTailAsync(read, standardLater,
-                        standard.Sheet.Lines[0].Physical.LaterEvents,
-                        header.CountDate, cancellationToken) is string standardError)
-                    return IvStockCountOperationResult.Fail(standardError);
+                var lineById = standard.Sheet.Lines.ToDictionary(l => l.CountLineId);
+                foreach (var item in standard.Items)
+                {
+                    var removedIds = item.RemovedEvents.Select(e => e.EventId).ToHashSet();
+                    var standardLater = item.Tail.LaterEvents
+                        .Where(e => !removedIds.Contains(e.EventId)).ToArray();
+                    var physicalLater = item.CountLineIds
+                        .SelectMany(lineId => lineById[lineId].Physical.LaterEvents).ToArray();
+                    if (await CheckBoundedStandardCountTailAsync(read, standardLater,
+                            physicalLater, header.CountDate, cancellationToken) is string standardError)
+                        return IvStockCountOperationResult.Fail(standardError);
+                }
             }
-            else if (plan.Zero is { Removal.Lines.Count: 1 } zero
-                && zero.Removal.Lines[0].Physical.RemovedActiveEvent.SignedDelta == 0m)
+            else if (plan.Zero is { Removal.Lines.Count: >= 1 and <= 10 } zero
+                && zero.Removal.Lines.All(l => l.Physical.RemovedActiveEvent.SignedDelta == 0m))
             {
                 var after = new StockReplayEventKey(effectiveAt,
                     StockReplayEventKey.CountClass, long.MaxValue,
                     "\uffff", int.MaxValue);
-                var tail = await StockReplayStandardFinancialTailReader.ReadLaterAsync(
-                    read, company, branch, lines[0].ICode!, after,
-                    cancellationToken);
-                if (await CheckBoundedStandardCountTailAsync(read,
-                        tail.LaterEvents,
-                        zero.Removal.Lines[0].Physical.LaterEvents,
-                        header.CountDate, cancellationToken) is string standardError)
-                    return IvStockCountOperationResult.Fail(standardError);
-                zeroStandardQuantity = tail.CurrentQuantity;
-                zeroStandardValue = tail.CurrentValue;
+                zeroStandardStates = new(StringComparer.Ordinal);
+                var lineById = lines.ToDictionary(l => l.Id);
+                foreach (var group in zero.Removal.Lines.GroupBy(l => lineById[l.CountLineId].ICode!))
+                {
+                    var tail = await StockReplayStandardFinancialTailReader.ReadLaterAsync(
+                        read, company, branch, group.Key, after,
+                        cancellationToken);
+                    var physicalLater = group.SelectMany(l => l.Physical.LaterEvents).ToArray();
+                    if (await CheckBoundedStandardCountTailAsync(read,
+                            tail.LaterEvents, physicalLater,
+                            header.CountDate, cancellationToken) is string standardError)
+                        return IvStockCountOperationResult.Fail(standardError);
+                    zeroStandardStates[group.Key] = (tail.CurrentQuantity, tail.CurrentValue);
+                }
             }
             else
                 return IvStockCountOperationResult.Fail(
-                    "The Standard count rollback needs one supported pile.");
+                    "The Standard count rollback needs a supported replay sheet.");
             later = [];
         }
         else if (wac is { Items.Count: >= 1 and <= 2 })
@@ -529,55 +530,88 @@ public sealed partial class IvStockCountService
         }
         else if (plan.Standard is { } standardPlan)
         {
-            var item = standardPlan.Items[0];
-            var state = await write.StockCostStates.AsNoTracking()
-                .SingleAsync(s => s.CompanyCode == company
-                    && s.BranchCode == branch && s.ItemCode == item.ItemCode,
-                    cancellationToken);
-            if (state.OnHandBaseQty != item.FinalQuantity
-                || state.InventoryValue != item.FinalValue)
+            var itemCodes = standardPlan.Items.Select(i => i.ItemCode).ToArray();
+            var states = await write.StockCostStates.AsNoTracking()
+                .Where(s => s.CompanyCode == company
+                    && s.BranchCode == branch && itemCodes.Contains(s.ItemCode))
+                .ToDictionaryAsync(s => s.ItemCode, cancellationToken);
+            if (states.Count != standardPlan.Items.Count
+                || standardPlan.Items.Any(i => !states.TryGetValue(i.ItemCode, out var state)
+                    || state.OnHandBaseQty != i.FinalQuantity
+                    || state.InventoryValue != i.FinalValue))
                 throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
                     "The historical Standard count rollback does not reconcile its cost state."));
         }
-        else if (standardCount && zeroStandardQuantity.HasValue
-            && zeroStandardValue.HasValue)
+        else if (standardCount && zeroStandardStates is { Count: > 0 })
         {
-            var state = await write.StockCostStates.AsNoTracking()
-                .SingleAsync(s => s.CompanyCode == company
-                    && s.BranchCode == branch && s.ItemCode == lines[0].ICode,
-                    cancellationToken);
-            if (state.OnHandBaseQty != zeroStandardQuantity.Value
-                || state.InventoryValue != zeroStandardValue.Value)
+            var itemCodes = zeroStandardStates.Keys.ToArray();
+            var states = await write.StockCostStates.AsNoTracking()
+                .Where(s => s.CompanyCode == company
+                    && s.BranchCode == branch && itemCodes.Contains(s.ItemCode))
+                .ToDictionaryAsync(s => s.ItemCode, cancellationToken);
+            if (states.Count != zeroStandardStates.Count
+                || zeroStandardStates.Any(p => !states.TryGetValue(p.Key, out var state)
+                    || state.OnHandBaseQty != p.Value.Quantity
+                    || state.InventoryValue != p.Value.Value))
                 throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
                     "The zero Standard count rollback changed its cost state."));
         }
         else if (plan.Fifo is { } fifoPlan)
         {
-            var item = fifoPlan.Items[0];
-            var state = await write.StockCostStates.AsNoTracking()
-                .SingleAsync(s => s.CompanyCode == company
-                    && s.BranchCode == branch && s.ItemCode == item.ItemCode,
-                    cancellationToken);
-            if (item.Projection is null
-                || state.OnHandBaseQty != item.Projection.FinalQuantity
-                || state.InventoryValue != item.Projection.FinalValue)
+            var itemCodes = fifoPlan.Items.Select(i => i.ItemCode).ToArray();
+            var states = await write.StockCostStates.AsNoTracking()
+                .Where(s => s.CompanyCode == company
+                    && s.BranchCode == branch && itemCodes.Contains(s.ItemCode))
+                .ToDictionaryAsync(s => s.ItemCode, cancellationToken);
+            if (states.Count != fifoPlan.Items.Count)
                 throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
                     "The historical FIFO count rollback does not reconcile its cost state."));
+            foreach (var item in fifoPlan.Items)
+            {
+                var state = states[item.ItemCode];
+                if (item.Projection is not null)
+                {
+                    if (state.OnHandBaseQty != item.Projection.FinalQuantity
+                        || state.InventoryValue != item.Projection.FinalValue)
+                        throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
+                            "The historical FIFO count rollback does not reconcile its cost state."));
+                }
+                else if (zeroFifoSnapshots is not null
+                    && zeroFifoSnapshots.TryGetValue(item.ItemCode, out var expectedZero))
+                {
+                    var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+                        write, company, branch, item.ItemCode, cancellationToken);
+                    if (state.OnHandBaseQty != expectedZero.CurrentQuantity
+                        || state.InventoryValue != expectedZero.CurrentValue
+                        || !StockReplayFifoActiveLayerReader.SameSnapshot(
+                            expectedZero, snapshot))
+                        throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
+                            "The zero FIFO count rollback changed its cost layers."));
+                }
+            }
         }
-        else if (zeroFifoSnapshot is not null)
+        else if (zeroFifoSnapshots is { Count: > 0 })
         {
-            var state = await write.StockCostStates.AsNoTracking()
-                .SingleAsync(s => s.CompanyCode == company
-                    && s.BranchCode == branch && s.ItemCode == lines[0].ICode,
-                    cancellationToken);
-            var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
-                write, company, branch, lines[0].ICode!, cancellationToken);
-            if (state.OnHandBaseQty != zeroFifoSnapshot.CurrentQuantity
-                || state.InventoryValue != zeroFifoSnapshot.CurrentValue
-                || !StockReplayFifoActiveLayerReader.SameSnapshot(
-                    zeroFifoSnapshot, snapshot))
+            var itemCodes = zeroFifoSnapshots.Keys.ToArray();
+            var states = await write.StockCostStates.AsNoTracking()
+                .Where(s => s.CompanyCode == company
+                    && s.BranchCode == branch && itemCodes.Contains(s.ItemCode))
+                .ToDictionaryAsync(s => s.ItemCode, cancellationToken);
+            if (states.Count != zeroFifoSnapshots.Count)
                 throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
                     "The zero FIFO count rollback changed its cost layers."));
+            foreach (var (itemCode, expectedZero) in zeroFifoSnapshots)
+            {
+                var state = states[itemCode];
+                var snapshot = await StockReplayFifoActiveLayerReader.ReadAsync(
+                    write, company, branch, itemCode, cancellationToken);
+                if (state.OnHandBaseQty != expectedZero.CurrentQuantity
+                    || state.InventoryValue != expectedZero.CurrentValue
+                    || !StockReplayFifoActiveLayerReader.SameSnapshot(
+                        expectedZero, snapshot))
+                    throw new StockLedgerException(new(StockLedgerErrorCodes.LedgerMismatch,
+                        "The zero FIFO count rollback changed its cost layers."));
+            }
         }
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);
@@ -603,25 +637,74 @@ public sealed partial class IvStockCountService
 
     private static bool IsBoundedFifoCount(
         string method, IReadOnlyList<IvStockCountLine> lines) =>
-        method == StockCostMethods.Fifo && lines.Count == 1
-        && lines[0].PhysicalQty >= 0m;
+        method == StockCostMethods.Fifo && lines.Count is >= 1 and <= 10
+        && lines.All(l => l.PhysicalQty >= 0m);
 
     private static bool IsBoundedStandardCount(
         string method, IReadOnlyList<IvStockCountLine> lines) =>
-        method == StockCostMethods.Standard && lines.Count == 1
-        && lines[0].PhysicalQty >= 0m;
+        method == StockCostMethods.Standard && lines.Count is >= 1 and <= 10
+        && lines.All(l => l.PhysicalQty >= 0m);
 
     private static async Task<string?> CheckBoundedStandardCountPlanAsync(
         AppDbContext db, StockReplayCountSheetRootPlan plan,
         DateTime countDate, CancellationToken cancellationToken)
     {
-        if (plan.Standard is not { Items.Count: 1 } standard
-            || plan.PhysicalSheet.Lines.Count != 1)
-            return "The Standard count needs one supported pile.";
-        return await CheckBoundedStandardCountTailAsync(db,
-            standard.Items[0].Tail.LaterEvents,
-            plan.PhysicalSheet.Lines[0].LaterEvents,
-            countDate, cancellationToken);
+        if (plan.Standard is not { Items.Count: >= 1 and <= 2 } standard
+            || plan.PhysicalSheet.Lines.Count is < 1 or > 10)
+            return "The Standard count needs a supported replay sheet.";
+        foreach (var item in standard.Items)
+        {
+            var physical = item.CountedPiles.SelectMany(p => p.LaterEvents).ToArray();
+            if (await CheckBoundedStandardCountTailAsync(db,
+                    item.Tail.LaterEvents, physical,
+                    countDate, cancellationToken) is string error)
+                return error;
+        }
+        return null;
+    }
+
+    private static async Task<string?> CheckBoundedFifoCountPlanAsync(
+        AppDbContext db, StockReplayFifoCountSheetPostingPlan fifo,
+        string company, string branch, DateTime countDate,
+        DateTime effectiveAt, CancellationToken cancellationToken)
+    {
+        foreach (var item in fifo.Items)
+        {
+            var events = item.CountedPiles.SelectMany(p => p.LaterEvents).ToArray();
+            var countKeys = item.CountedPiles.Select(p => p.Candidate.Key).ToArray();
+            if (await CheckBoundedFifoCountTailAsync(db, events,
+                    item.Projection.LaterIssues,
+                    item.Projection.BeforeFirstCount.LaterReceipts,
+                    countKeys, company, branch, countDate, item.ItemCode,
+                    effectiveAt, cancellationToken) is string error)
+                return error;
+        }
+        return null;
+    }
+
+    private static async Task<string?> CheckZeroFifoItemCountTailAsync(
+        AppDbContext db, StockReplayFifoActiveLayerSnapshot snapshot,
+        IReadOnlyList<StockReplayCountSheetRemovalLine> itemLines,
+        string company, string branch, DateTime countDate,
+        string itemCode, DateTime effectiveAt,
+        CancellationToken cancellationToken)
+    {
+        var first = itemLines[0];
+        var pile = await db.IvBalLocs.AsNoTracking().SingleAsync(b =>
+            b.Id == first.BalLocId && b.CompanyCode == company
+            && b.BranchCode == branch, cancellationToken);
+        var projection = StockReplayFifoTailProjector.InsertCountAdjustment(
+            snapshot, first.Physical.RemovedActiveEvent.Key,
+            0m, null, pile.StdUom);
+        if (projection.FinalQuantity != snapshot.CurrentQuantity
+            || projection.FinalValue != snapshot.CurrentValue)
+            return "The zero FIFO count changes its active cost pool.";
+        return await CheckBoundedFifoCountTailAsync(db,
+            itemLines.SelectMany(l => l.Physical.LaterEvents).ToArray(),
+            projection.Issues, projection.BeforeCandidate.LaterReceipts,
+            itemLines.Select(l => l.Physical.RemovedActiveEvent.Key).ToArray(),
+            company, branch, countDate, itemCode, effectiveAt,
+            cancellationToken);
     }
 
     private static async Task<string?> CheckBoundedStandardCountTailAsync(
@@ -646,35 +729,21 @@ public sealed partial class IvStockCountService
             countDate, cancellationToken) is null ? null : unsupported;
     }
 
-    private static async Task<bool> HasLaterSealedCountValuationAsync(
-        AppDbContext db, string company, string branch, int countId,
-        DateTime effectiveAt, CancellationToken cancellationToken)
-    {
-        var itemCodes = await db.IvStockCountLines.AsNoTracking()
-            .Where(l => l.StockCountId == countId && l.PhysicalQty != null)
-            .Select(l => l.ICode).Distinct().ToArrayAsync(cancellationToken);
-        if (itemCodes.Length == 0)
-            return false;
-        return await db.StockValuationFacts.AsNoTracking().AnyAsync(f =>
-            f.CompanyCode == company && f.BranchCode == branch
-            && itemCodes.Contains(f.ItemCode) && f.EffectiveAt > effectiveAt
-            && f.StockPosting!.SealedAtUtc != null, cancellationToken);
-    }
-
     private static async Task<string?> CheckBoundedFifoCountTailAsync(
         AppDbContext db,
         IReadOnlyList<StockReplayPhysicalEvent> events,
         IReadOnlyList<StockReplayFifoProjectedIssue> issues,
         IReadOnlyList<StockReplayFifoLayerPosition> receipts,
-        StockReplayEventKey countKey,
+        IReadOnlyCollection<StockReplayEventKey> countKeys,
         string company, string branch, DateTime countDate,
         string itemCode, DateTime effectiveAt,
         CancellationToken cancellationToken)
     {
         const string unsupported = "Historical FIFO count supports at most 100 later Inventory MR/MI movements from the counted pile in the same open month.";
-        var countReceipts = receipts.Where(r => r.ReceiptKey == countKey).ToArray();
-        var laterReceipts = receipts.Where(r => r.ReceiptKey != countKey).ToArray();
-        if (countReceipts.Length > 1
+        var keySet = countKeys.ToHashSet();
+        var countReceipts = receipts.Where(r => r.ReceiptKey is { } key && keySet.Contains(key)).ToArray();
+        var laterReceipts = receipts.Where(r => r.ReceiptKey is null || !keySet.Contains(r.ReceiptKey.Value)).ToArray();
+        if (countReceipts.Length > keySet.Count
             || receipts.Any(r => r.ReceiptKey is null)
             || events.Count > 100
             || events.Count != issues.Count + laterReceipts.Length

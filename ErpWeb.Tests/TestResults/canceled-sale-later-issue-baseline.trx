@@ -1,0 +1,72 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="d65a930a-616c-445f-8f25-5bf5210071e5" name="Mokth@MOKTH 2026-11-11 11:21:50" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-11T11:21:50.4803794+08:00" queuing="2026-11-11T11:21:50.4803801+08:00" start="2026-11-11T11:21:25.6815744+08:00" finish="2026-11-11T11:21:51.6502771+08:00" />
+  <TestSettings name="default" id="449e028a-3215-4220-bf0d-af9278857080">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-11_11_21_50" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="bc30e250-1e72-46ea-8967-5d51c6d18397" testId="c05a2e53-421c-7c2a-0651-1af14b3f5b2c" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_canceled_sale_and_later_issue(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7, issueCost: 4.75, postedValue: 90.25)" computerName="MOKTH" duration="00:00:09.4097823" startTime="2026-11-11T11:21:39.8313296+08:00" endTime="2026-11-11T11:21:50.4245529+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bc30e250-1e72-46ea-8967-5d51c6d18397">
+      <Output>
+        <ErrorInfo>
+          <Message>Batch 3: This receipt has a later reversed sale that needs verified stock and cost replay.</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseLateReceiptAfterCanceledSaleAsync(Decimal receiptUnitCost, Decimal correctedSaleCost, Decimal saleCorrection, ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, Boolean testQaHold, Boolean tamperEvidence, Boolean testChangedReceipt, Boolean addLaterReceipt, Boolean addAnotherLaterReceipt, Boolean addLaterIssue, Boolean addLaterGoodsReceipt, Boolean markLaterGoodsInvoiced, Boolean addSecondLaterGoodsReceipt, Nullable`1 supportedIssueCost, Nullable`1 supportedPostedValue) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs:line 5880&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5d9cd1b8-4ad6-4de9-a0cf-f9c743095987" testId="03927c2f-edde-0e15-4f38-f4021401cde4" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_canceled_sale_and_later_issue(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2, issueCost: 2.5, postedValue: 47.5)" computerName="MOKTH" duration="00:00:01.1051473" startTime="2026-11-11T11:21:50.4615461+08:00" endTime="2026-11-11T11:21:51.5469184+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5d9cd1b8-4ad6-4de9-a0cf-f9c743095987">
+      <Output>
+        <ErrorInfo>
+          <Message>Batch 3: This receipt has a later reversed sale that needs verified stock and cost replay.</Message>
+          <StackTrace>   at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseLateReceiptAfterCanceledSaleAsync(Decimal receiptUnitCost, Decimal correctedSaleCost, Decimal saleCorrection, ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, Boolean testQaHold, Boolean tamperEvidence, Boolean testChangedReceipt, Boolean addLaterReceipt, Boolean addAnotherLaterReceipt, Boolean addLaterIssue, Boolean addLaterGoodsReceipt, Boolean markLaterGoodsInvoiced, Boolean addSecondLaterGoodsReceipt, Nullable`1 supportedIssueCost, Nullable`1 supportedPostedValue) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs:line 5880&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_canceled_sale_and_later_issue(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7, issueCost: 4.75, postedValue: 90.25)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="c05a2e53-421c-7c2a-0651-1af14b3f5b2c">
+      <Execution id="bc30e250-1e72-46ea-8967-5d51c6d18397" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_reprices_canceled_sale_and_later_issue" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_canceled_sale_and_later_issue(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2, issueCost: 2.5, postedValue: 47.5)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="03927c2f-edde-0e15-4f38-f4021401cde4">
+      <Execution id="5d9cd1b8-4ad6-4de9-a0cf-f9c743095987" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Backdated_receipt_reprices_canceled_sale_and_later_issue" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="c05a2e53-421c-7c2a-0651-1af14b3f5b2c" executionId="bc30e250-1e72-46ea-8967-5d51c6d18397" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="03927c2f-edde-0e15-4f38-f4021401cde4" executionId="5d9cd1b8-4ad6-4de9-a0cf-f9c743095987" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="0" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:12.74]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:13.53]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:13.58]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:24.26]       Batch 3: This receipt has a later reversed sale that needs verified stock and cost replay.&#xD;
+[xUnit.net 00:00:24.26]       Stack Trace:&#xD;
+[xUnit.net 00:00:24.26]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs(5880,0): at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseLateReceiptAfterCanceledSaleAsync(Decimal receiptUnitCost, Decimal correctedSaleCost, Decimal saleCorrection, ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, Boolean testQaHold, Boolean tamperEvidence, Boolean testChangedReceipt, Boolean addLaterReceipt, Boolean addAnotherLaterReceipt, Boolean addLaterIssue, Boolean addLaterGoodsReceipt, Boolean markLaterGoodsInvoiced, Boolean addSecondLaterGoodsReceipt, Nullable`1 supportedIssueCost, Nullable`1 supportedPostedValue)&#xD;
+[xUnit.net 00:00:24.26]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:25.38]       Batch 3: This receipt has a later reversed sale that needs verified stock and cost replay.&#xD;
+[xUnit.net 00:00:25.38]       Stack Trace:&#xD;
+[xUnit.net 00:00:25.38]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaInvoiceServiceTests.cs(5880,0): at ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.ExerciseLateReceiptAfterCanceledSaleAsync(Decimal receiptUnitCost, Decimal correctedSaleCost, Decimal saleCorrection, ReceiptBatchLockBarrier barrier, Boolean injectSqlFailure, Boolean testQaHold, Boolean tamperEvidence, Boolean testChangedReceipt, Boolean addLaterReceipt, Boolean addAnotherLaterReceipt, Boolean addLaterIssue, Boolean addLaterGoodsReceipt, Boolean markLaterGoodsInvoiced, Boolean addSecondLaterGoodsReceipt, Nullable`1 supportedIssueCost, Nullable`1 supportedPostedValue)&#xD;
+[xUnit.net 00:00:25.38]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:25.39]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-11T11:21:50.4285458+08:00">
+        <Text>[xUnit.net 00:00:24.26]     ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_canceled_sale_and_later_issue(receiptUnitCost: 10, correctedSaleCost: 19, saleCorrection: -7, issueCost: 4.75, postedValue: 90.25) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-11T11:21:51.5477699+08:00">
+        <Text>[xUnit.net 00:00:25.38]     ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Backdated_receipt_reprices_canceled_sale_and_later_issue(receiptUnitCost: 1, correctedSaleCost: 10, saleCorrection: 2, issueCost: 2.5, postedValue: 47.5) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

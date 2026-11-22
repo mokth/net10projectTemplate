@@ -121,10 +121,10 @@ public class PoPurchaseInquiryWorkbenchTests : IAsyncLifetime
             db.PoOrderDetails.Add(PoLine("DUE0", 1, 1, 5m, 5m, etaDate: asOf.AddHours(23)));
 
             db.PoOrders.Add(Po("DUE7", "2026-09-02", PoOrderStatuses.Open));
-            db.PoOrderDetails.Add(PoLine("DUE7", 1, 1, 5m, 5m, etaDate: asOf.AddDays(7).AddHours(18)));
+            db.PoOrderDetails.Add(PoLine("DUE7", 1, 1, 5m, 5m, etaDate: asOf.AddDays(6).AddHours(18)));
 
             db.PoOrders.Add(Po("AFTER", "2026-09-03", PoOrderStatuses.Open));
-            db.PoOrderDetails.Add(PoLine("AFTER", 1, 1, 5m, 5m, etaDate: asOf.AddDays(8)));
+            db.PoOrderDetails.Add(PoLine("AFTER", 1, 1, 5m, 5m, etaDate: asOf.AddDays(7)));
 
             db.PoOrders.Add(Po("NULL", "2026-09-04", PoOrderStatuses.Open));
             db.PoOrderDetails.Add(PoLine("NULL", 1, 1, 5m, 5m));
@@ -263,7 +263,7 @@ public class PoPurchaseInquiryWorkbenchTests : IAsyncLifetime
         DateTo = DateTime.Parse(to)
     };
 
-    private static PoOrder Po(string poNo, string poDate, string status, short rel = 1, string? vend = "V1") => new()
+    private static PoOrder Po(string poNo, string poDate, string status, short rel = 1, string? vend = "V1", string? curCode = "MYR") => new()
     {
         CompanyCode = Company,
         BranchCode = Branch,
@@ -273,6 +273,7 @@ public class PoPurchaseInquiryWorkbenchTests : IAsyncLifetime
         Status = status,
         VendCode = vend,
         VendName = "Vendor " + vend,
+        CurCode = curCode,
         RowVersion = [1]
     };
 

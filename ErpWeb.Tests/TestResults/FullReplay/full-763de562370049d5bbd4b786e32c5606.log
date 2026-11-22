@@ -1,0 +1,510 @@
+Test run for C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:02:35.32]     ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests.PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom [FAIL]
+  Failed ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests.PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom [136 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "The two latest posted lines do not share "···
+Not found: "same verified purchase UOM"
+  Stack Trace:
+     at ErpWeb.Tests.Procurement.Inquiry.PoProcurementKpiServiceTests.PriceMovement_IsUnavailable_WhenLatestSamplesUseDifferentPurchaseUom() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Procurement\Inquiry\PoProcurementKpiServiceTests.cs:line 76
+--- End of stack trace from previous location ---
+[xUnit.net 00:04:03.00]     ErpWeb.Tests.Production.Transaction.ProductionStockTransactionSqlServerTests.Missing_prerequisite_aborts_atomically_and_does_not_leave_a_disabled_trigger [SKIP]
+[xUnit.net 00:04:03.02]     ErpWeb.Tests.Production.Transaction.ProductionStockTransactionSqlServerTests.Schema_is_rerunnable_and_actual_metadata_passes_release_preflight [SKIP]
+  Skipped ErpWeb.Tests.Production.Transaction.ProductionStockTransactionSqlServerTests.Missing_prerequisite_aborts_atomically_and_does_not_leave_a_disabled_trigger [1 ms]
+  Skipped ErpWeb.Tests.Production.Transaction.ProductionStockTransactionSqlServerTests.Schema_is_rerunnable_and_actual_metadata_passes_release_preflight [1 ms]
+[xUnit.net 00:04:32.89]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_On_CopiesGeneralToInvoice [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_On_CopiesGeneralToInvoice [6 s]
+  Error Message:
+   Validation failed.
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_On_CopiesGeneralToInvoice() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 604
+--- End of stack trace from previous location ---
+[xUnit.net 00:04:46.07]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.Salesman_LegacyValue_ToleratedOnUnrelatedEdit [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.Salesman_LegacyValue_ToleratedOnUnrelatedEdit [6 s]
+  Error Message:
+   Validation failed.
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.Salesman_LegacyValue_ToleratedOnUnrelatedEdit() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 1048
+--- End of stack trace from previous location ---
+[xUnit.net 00:05:19.72]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.Update_PreservesLeftoverBranchCode [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.Update_PreservesLeftoverBranchCode [6 s]
+  Error Message:
+   Assert.True() Failure
+Expected: True
+Actual:   False
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.Update_PreservesLeftoverBranchCode() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 807
+--- End of stack trace from previous location ---
+[xUnit.net 00:06:07.36]     ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Concurrent_transfers_merge_into_one_target_wip_identity [SKIP]
+[xUnit.net 00:06:07.37]     ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Concurrent_new_drafts_for_one_source_have_one_winner [SKIP]
+  Skipped ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Concurrent_transfers_merge_into_one_target_wip_identity [1 ms]
+  Skipped ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Concurrent_new_drafts_for_one_source_have_one_winner [1 ms]
+[xUnit.net 00:06:07.38]     ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Transfer_schema_script_can_run_twice_without_changing_wip_identity_indexes [SKIP]
+[xUnit.net 00:06:07.39]     ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Transfer_racing_daily_production_consumption_keeps_all_pools_nonnegative [SKIP]
+[xUnit.net 00:06:07.40]     ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Transfer_racing_natural_production_keeps_a_single_target_wip_pool [SKIP]
+[xUnit.net 00:06:07.40]     ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Concurrent_double_post_creates_one_sealed_posting_and_one_movement_pair [SKIP]
+  Skipped ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Transfer_schema_script_can_run_twice_without_changing_wip_identity_indexes [1 ms]
+  Skipped ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Transfer_racing_daily_production_consumption_keeps_all_pools_nonnegative [1 ms]
+  Skipped ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Transfer_racing_natural_production_keeps_a_single_target_wip_pool [1 ms]
+  Skipped ErpWeb.Tests.Production.Transaction.ProductionWorkOrderTransferSqlServerTests.Concurrent_double_post_creates_one_sealed_posting_and_one_movement_pair [1 ms]
+[xUnit.net 00:07:05.93]     ErpWeb.Tests.Sales.Transaction.SaEInvoiceSelfBillAndTinTests.Self_billed_types_use_the_note_and_invoice_ubl_roots(code: "12", expectedNamespace: "urn:oasis:names:specification:ubl:schema:xsd:Credi"···) [FAIL]
+[xUnit.net 00:07:05.93]     ErpWeb.Tests.Sales.Transaction.SaEInvoiceSelfBillAndTinTests.Self_billed_types_use_the_note_and_invoice_ubl_roots(code: "13", expectedNamespace: "urn:oasis:names:specification:ubl:schema:xsd:Debit"···) [FAIL]
+  Failed ErpWeb.Tests.Sales.Transaction.SaEInvoiceSelfBillAndTinTests.Self_billed_types_use_the_note_and_invoice_ubl_roots(code: "12", expectedNamespace: "urn:oasis:names:specification:ubl:schema:xsd:Credi"···) [1 ms]
+  Error Message:
+   Assert.Equal() Failure: Strings differ
+                                           ↓ (pos 45)
+Expected: ···"specification:ubl:schema:xsd:CreditNote-2"
+Actual:   ···"es:specification:ubl:schema:xsd:Invoice-2"
+                                              ↑ (pos 45)
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Transaction.SaEInvoiceSelfBillAndTinTests.Self_billed_types_use_the_note_and_invoice_ubl_roots(String code, String expectedNamespace) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaEInvoiceSelfBillAndTinTests.cs:line 52
+   at System.RuntimeMethodHandle.InvokeMethod(ObjectHandleOnStack target, Void** arguments, ObjectHandleOnStack sig, BOOL isConstructor, ObjectHandleOnStack result)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+  Failed ErpWeb.Tests.Sales.Transaction.SaEInvoiceSelfBillAndTinTests.Self_billed_types_use_the_note_and_invoice_ubl_roots(code: "13", expectedNamespace: "urn:oasis:names:specification:ubl:schema:xsd:Debit"···) [1 ms]
+  Error Message:
+   Assert.Equal() Failure: Strings differ
+                                            ↓ (pos 45)
+Expected: ···":specification:ubl:schema:xsd:DebitNote-2"
+Actual:   ···"es:specification:ubl:schema:xsd:Invoice-2"
+                                              ↑ (pos 45)
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Transaction.SaEInvoiceSelfBillAndTinTests.Self_billed_types_use_the_note_and_invoice_ubl_roots(String code, String expectedNamespace) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Transaction\SaEInvoiceSelfBillAndTinTests.cs:line 52
+   at InvokeStub_SaEInvoiceSelfBillAndTinTests.Self_billed_types_use_the_note_and_invoice_ubl_roots(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 00:07:29.29]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.PhoneOnly_EmptyGlCode_OnEdit_Succeeds [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.PhoneOnly_EmptyGlCode_OnEdit_Succeeds [6 s]
+  Error Message:
+   Validation failed.
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.PhoneOnly_EmptyGlCode_OnEdit_Succeeds() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 569
+--- End of stack trace from previous location ---
+[xUnit.net 00:07:38.20]     ErpWeb.Tests.Planning.Master.ProductDefinitionSnapshotLoaderTests.Boundary_is_half_open_inclusive_from_exclusive_to [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.ProductDefinitionSnapshotLoaderTests.Boundary_is_half_open_inclusive_from_exclusive_to [4 s]
+  Error Message:
+   System.NullReferenceException : Object reference not set to an instance of an object.
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.ProductDefinitionSnapshotLoaderTests.Boundary_is_half_open_inclusive_from_exclusive_to() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\ProductDefinitionSnapshotLoaderTests.cs:line 89
+--- End of stack trace from previous location ---
+[xUnit.net 00:08:02.49]     ErpWeb.Tests.Planning.Master.ProductDefinitionSnapshotLoaderTests.No_active_revision_reports_not_found [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.ProductDefinitionSnapshotLoaderTests.No_active_revision_reports_not_found [4 s]
+  Error Message:
+   Assert.Equal() Failure: Strings differ
+                                  ↓ (pos 23)
+Expected: "WO_DEFINITION_REVISION_NOT_FOUND"
+Actual:   "WO_DEFINITION_REVISION_AMBIGUOUS"
+                                  ↑ (pos 23)
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.ProductDefinitionSnapshotLoaderTests.No_active_revision_reports_not_found() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\ProductDefinitionSnapshotLoaderTests.cs:line 114
+--- End of stack trace from previous location ---
+[xUnit.net 00:08:09.09]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.PaymentFieldChange_RequiresGlCode [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.PaymentFieldChange_RequiresGlCode [5 s]
+  Error Message:
+   Assert.True() Failure
+Expected: True
+Actual:   False
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.PaymentFieldChange_RequiresGlCode() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 590
+--- End of stack trace from previous location ---
+[xUnit.net 00:08:10.72]     ErpWeb.Tests.UI.ErpInlineSearchContractTests.Every_Inline_Search_Row_Has_A_Caption_Editor_And_Icon_Only_Magnifier [FAIL]
+  Failed ErpWeb.Tests.UI.ErpInlineSearchContractTests.Every_Inline_Search_Row_Has_A_Caption_Editor_And_Icon_Only_Magnifier [475 ms]
+  Error Message:
+   Assert.Empty() Failure: Collection was not empty
+Collection: ["ErpWeb.UI/Subcon/SubconInquiry.razor: explicit Tex"···, "ErpWeb.UI/Subcon/SubconInquiry.razor: row must con"···, "ErpWeb.UI/Subcon/SubconWorkbench.razor: explicit T"···, "ErpWeb.UI/Subcon/SubconWorkbench.razor: row must c"···]
+  Stack Trace:
+     at ErpWeb.Tests.UI.ErpInlineSearchContractTests.Every_Inline_Search_Row_Has_A_Caption_Editor_And_Icon_Only_Magnifier() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\UI\ErpInlineSearchContractTests.cs:line 146
+   at System.RuntimeMethodHandle.InvokeMethod(ObjectHandleOnStack target, Void** arguments, ObjectHandleOnStack sig, BOOL isConstructor, ObjectHandleOnStack result)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:08:46.06]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_Off_GeneralChange_LeavesInvoiceUnchanged [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_Off_GeneralChange_LeavesInvoiceUnchanged [8 s]
+  Error Message:
+   Validation failed.
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.AppInvoice_Off_GeneralChange_LeavesInvoiceUnchanged() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 625
+--- End of stack trace from previous location ---
+[xUnit.net 00:09:01.84]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.Save_ReplacesChildren_TenantScoped [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.Save_ReplacesChildren_TenantScoped [8 s]
+  Error Message:
+   Validation failed.
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.Save_ReplacesChildren_TenantScoped() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 651
+--- End of stack trace from previous location ---
+[xUnit.net 00:09:10.01]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.SubGroup_LegacyValue_ToleratedOnUnrelatedEdit [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.SubGroup_LegacyValue_ToleratedOnUnrelatedEdit [8 s]
+  Error Message:
+   Validation failed.
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.SubGroup_LegacyValue_ToleratedOnUnrelatedEdit() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 890
+--- End of stack trace from previous location ---
+[xUnit.net 00:09:16.64]     ErpWeb.Tests.Sales.Master.SaCustServiceTests.ConcurrencyFail_NoChildOrHeaderPersist [FAIL]
+  Failed ErpWeb.Tests.Sales.Master.SaCustServiceTests.ConcurrencyFail_NoChildOrHeaderPersist [6 s]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: Concurrency
+Actual:   Validation
+  Stack Trace:
+     at ErpWeb.Tests.Sales.Master.SaCustServiceTests.ConcurrencyFail_NoChildOrHeaderPersist() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Sales\Master\SaCustServiceTests.cs:line 696
+--- End of stack trace from previous location ---
+[xUnit.net 00:09:36.83]     ErpWeb.Tests.Procurement.Inquiry.PoPurchaseInquiryWorkbenchTests.DueSoon_SummaryAndRowsShareInclusiveSevenDayWindowAndLatestRevision [FAIL]
+  Failed ErpWeb.Tests.Procurement.Inquiry.PoPurchaseInquiryWorkbenchTests.DueSoon_SummaryAndRowsShareInclusiveSevenDayWindowAndLatestRevision [5 s]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: 2
+Actual:   1
+  Stack Trace:
+     at ErpWeb.Tests.Procurement.Inquiry.PoPurchaseInquiryWorkbenchTests.DueSoon_SummaryAndRowsShareInclusiveSevenDayWindowAndLatestRevision() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Procurement\Inquiry\PoPurchaseInquiryWorkbenchTests.cs:line 149
+--- End of stack trace from previous location ---
+[xUnit.net 00:09:42.17]     ErpWeb.Tests.Procurement.Inquiry.PoPurchaseInquiryWorkbenchTests.PoSummary_And_Presets_Overdue_Partial_Unbilled_Value [FAIL]
+  Failed ErpWeb.Tests.Procurement.Inquiry.PoPurchaseInquiryWorkbenchTests.PoSummary_And_Presets_Overdue_Partial_Unbilled_Value [5 s]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: 130
+Actual:   0
+  Stack Trace:
+     at ErpWeb.Tests.Procurement.Inquiry.PoPurchaseInquiryWorkbenchTests.PoSummary_And_Presets_Overdue_Partial_Unbilled_Value() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Procurement\Inquiry\PoPurchaseInquiryWorkbenchTests.cs:line 85
+--- End of stack trace from previous location ---
+[xUnit.net 00:11:54.78]     ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_circular_marks_node_and_continues [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_circular_marks_node_and_continues [6 s]
+  Error Message:
+   System.InvalidOperationException : Sequence contains no matching element
+  Stack Trace:
+     at System.Linq.ThrowHelper.ThrowNoMatchException()
+   at System.Linq.Enumerable.Single[TSource](IEnumerable`1 source, Func`2 predicate)
+   at ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_circular_marks_node_and_continues() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\PrBomStructureTreeTests.cs:line 284
+--- End of stack trace from previous location ---
+[xUnit.net 00:12:01.33]     ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_missing_make_and_phantom_bom_status [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_missing_make_and_phantom_bom_status [6 s]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: MissingBom
+Actual:   Normal
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_missing_make_and_phantom_bom_status() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\PrBomStructureTreeTests.cs:line 153
+--- End of stack trace from previous location ---
+[xUnit.net 00:12:08.78]     ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_phantom_recurses [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_phantom_recurses [7 s]
+  Error Message:
+   Assert.Contains() Failure: Filter not matched in collection
+Collection: [PrBomStructureNode { BomHdrId = 2, BomStatus = "ACTIVE", BomVersion = 1, ComponentDefinitionCode = null, ItemCode = "FG001", ··· }, PrBomStructureNode { BomHdrId = 2, BomStatus = "ACTIVE", BomVersion = 1, ComponentDefinitionCode = null, ItemCode = "PH001", ··· }]
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_phantom_recurses() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\PrBomStructureTreeTests.cs:line 138
+--- End of stack trace from previous location ---
+[xUnit.net 00:12:25.29]     ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_same_component_under_different_parents_has_distinct_keys [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_same_component_under_different_parents_has_distinct_keys [6 s]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: 2
+Actual:   0
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_same_component_under_different_parents_has_distinct_keys() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\PrBomStructureTreeTests.cs:line 177
+--- End of stack trace from previous location ---
+[xUnit.net 00:12:30.46]     ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_multi_level_make_make_buy [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_multi_level_make_make_buy [5 s]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: 3
+Actual:   2
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_multi_level_make_make_buy() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\PrBomStructureTreeTests.cs:line 116
+--- End of stack trace from previous location ---
+[xUnit.net 00:12:37.45]     ErpWeb.Tests.Inventory.Transaction.IvReversedProductionReceiptSqlServerTests.Concurrent_receipt_post_and_rollback_refuse_unproven_reversed_issue_atomically [FAIL]
+  Failed ErpWeb.Tests.Inventory.Transaction.IvReversedProductionReceiptSqlServerTests.Concurrent_receipt_post_and_rollback_refuse_unproven_reversed_issue_atomically [17 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Inventory.Transaction.IvReversedProductionReceiptSqlServerTests.Concurrent_receipt_post_and_rollback_refuse_unproven_reversed_issue_atomically() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvReversedProductionReceiptSqlServerTests.cs:line 24
+--- End of stack trace from previous location ---
+[xUnit.net 00:12:44.81]     ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Circular_bom_rejected_on_save [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Circular_bom_rejected_on_save [7 s]
+  Error Message:
+   Assert.False() Failure
+Expected: False
+Actual:   True
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.PrProductDefServiceTests.Circular_bom_rejected_on_save() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\PrProductDefServiceTests.cs:line 349
+--- End of stack trace from previous location ---
+[xUnit.net 00:12:50.58]     ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_max_depth_marks_node [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_max_depth_marks_node [9 s]
+  Error Message:
+   Assert.Contains() Failure: Filter not matched in collection
+Collection: [PrBomStructureNode { BomHdrId = 23, BomStatus = "ACTIVE", BomVersion = 1, ComponentDefinitionCode = null, ItemCode = "M00", ··· }, PrBomStructureNode { BomHdrId = 23, BomStatus = "ACTIVE", BomVersion = 1, ComponentDefinitionCode = null, ItemCode = "M01", ··· }]
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_max_depth_marks_node() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\PrBomStructureTreeTests.cs:line 310
+--- End of stack trace from previous location ---
+[xUnit.net 00:13:09.13]     ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_draft_root_and_draft_child_visible [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_draft_root_and_draft_child_visible [6 s]
+  Error Message:
+   Assert.Contains() Failure: Filter not matched in collection
+Collection: [PrBomStructureNode { BomHdrId = 2, BomStatus = "DRAFT", BomVersion = 1, ComponentDefinitionCode = null, ItemCode = "FG001", ··· }, PrBomStructureNode { BomHdrId = 2, BomStatus = "DRAFT", BomVersion = 1, ComponentDefinitionCode = null, ItemCode = "SA001", ··· }]
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.PrBomStructureTreeTests.Structure_draft_root_and_draft_child_visible() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\PrBomStructureTreeTests.cs:line 221
+--- End of stack trace from previous location ---
+[xUnit.net 00:13:42.49]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_both_item_locations_receipt_posts_and_rolls_back_once [SKIP]
+[xUnit.net 00:13:42.51]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Mixed_item_location_receipt_rolls_back_database_failures_atomically [SKIP]
+[xUnit.net 00:13:42.51]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_item_receipt_rejects_draft_edit_after_planning [SKIP]
+[xUnit.net 00:13:42.51]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Mixed_item_location_receipt_rejects_draft_edit_after_planning [SKIP]
+[xUnit.net 00:13:42.51]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Repeated_and_other_items_reject_draft_edit_after_planning [SKIP]
+[xUnit.net 00:13:42.51]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_mixed_item_location_receipt_posts_and_rolls_back_once [SKIP]
+[xUnit.net 00:13:42.52]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_same_item_post_and_rollback_apply_each_line_once [SKIP]
+[xUnit.net 00:13:42.52]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_multi_item_post_and_rollback_apply_each_line_once [SKIP]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Two_pile_receipt_rolls_back_database_failures_atomically [SKIP]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_both_item_locations_receipt_posts_and_rolls_back_once [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Mixed_item_location_receipt_rolls_back_database_failures_atomically [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_item_receipt_rejects_draft_edit_after_planning [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Mixed_item_location_receipt_rejects_draft_edit_after_planning [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Repeated_and_other_items_reject_draft_edit_after_planning [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_mixed_item_location_receipt_posts_and_rolls_back_once [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_same_item_post_and_rollback_apply_each_line_once [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_multi_item_post_and_rollback_apply_each_line_once [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Two_pile_receipt_rolls_back_database_failures_atomically [1 ms]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_line_multi_pile_receipt_rejects_draft_edit_after_planning [SKIP]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_line_multi_pile_receipt_rolls_back_database_failures_atomically [SKIP]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_multi_line_multi_pile_receipt_posts_and_rolls_back_once [SKIP]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Two_pile_receipt_rejects_draft_edit_after_planning [SKIP]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_two_pile_receipt_posts_and_rolls_back_once [SKIP]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_repeated_and_other_items_post_and_rollback_apply_each_line_once [SKIP]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Repeated_and_other_items_roll_back_database_failures_atomically [SKIP]
+[xUnit.net 00:13:42.54]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Same_item_receipt_rejects_draft_edit_after_planning [SKIP]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_line_multi_pile_receipt_rejects_draft_edit_after_planning [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_line_multi_pile_receipt_rolls_back_database_failures_atomically [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_multi_line_multi_pile_receipt_posts_and_rolls_back_once [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Two_pile_receipt_rejects_draft_edit_after_planning [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_two_pile_receipt_posts_and_rolls_back_once [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Concurrent_repeated_and_other_items_post_and_rollback_apply_each_line_once [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Repeated_and_other_items_roll_back_database_failures_atomically [1 ms]
+  Skipped ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Same_item_receipt_rejects_draft_edit_after_planning [1 ms]
+[xUnit.net 00:14:28.80]     ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_cross_company_pending_is_not_visible_to_demo_inbox [SKIP]
+[xUnit.net 00:14:28.82]     ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_disabling_policy_does_not_unlock_pending_conversion [SKIP]
+[xUnit.net 00:14:28.82]     ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_two_policy_publishers_leave_one_published_row [SKIP]
+[xUnit.net 00:14:28.82]     ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_concurrent_approve_and_reject_exactly_one_wins [SKIP]
+[xUnit.net 00:14:28.82]     ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_concurrent_submit_returns_the_same_pending_instance [SKIP]
+[xUnit.net 00:14:28.82]     ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.Preflight_isolated_catalog_has_filtered_unique_index [SKIP]
+[xUnit.net 00:14:28.82]     ErpWeb.Tests.Procurement.Transaction.GoodsReceiptPoRevisionSqlServerConcurrencyTests.SqlServer_gr_post_after_po_revise_does_not_write_RecvQty_or_stock [SKIP]
+  Skipped ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_cross_company_pending_is_not_visible_to_demo_inbox [1 ms]
+  Skipped ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_disabling_policy_does_not_unlock_pending_conversion [1 ms]
+  Skipped ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_two_policy_publishers_leave_one_published_row [1 ms]
+  Skipped ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_concurrent_approve_and_reject_exactly_one_wins [1 ms]
+  Skipped ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.SqlServer_concurrent_submit_returns_the_same_pending_instance [1 ms]
+  Skipped ErpWeb.Tests.Procurement.Transaction.ProcurementApprovalSqlServerConcurrencyTests.Preflight_isolated_catalog_has_filtered_unique_index [1 ms]
+  Skipped ErpWeb.Tests.Procurement.Transaction.GoodsReceiptPoRevisionSqlServerConcurrencyTests.SqlServer_gr_post_after_po_revise_does_not_write_RecvQty_or_stock [1 ms]
+[xUnit.net 00:14:36.95]     ErpWeb.Tests.Planning.Master.BomExplosionServiceTests.Make_without_bom_is_hard_error [FAIL]
+  Failed ErpWeb.Tests.Planning.Master.BomExplosionServiceTests.Make_without_bom_is_hard_error [5 s]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Cannot explode Product A[STANDARD] becaus"···
+Not found: "no active BOM"
+  Stack Trace:
+     at ErpWeb.Tests.Planning.Master.BomExplosionServiceTests.Make_without_bom_is_hard_error() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Planning\Master\BomExplosionServiceTests.cs:line 191
+--- End of stack trace from previous location ---
+[xUnit.net 00:14:43.41]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_and_exact_search_use_eligible_sources_only [FAIL]
+[xUnit.net 00:14:43.44]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Concurrent_source_competition_and_lost_response_duplicate_requests [FAIL]
+[xUnit.net 00:14:43.45]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Blank_reference_defaults_to_batch_number [FAIL]
+[xUnit.net 00:14:43.49]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned [FAIL]
+[xUnit.net 00:14:43.50]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Failure_after_both_stock_legs_leaves_no_partial_facts_or_lot_ownership [FAIL]
+[xUnit.net 00:14:43.53]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Inactive_saved_destination_is_rejected_until_replaced [FAIL]
+[xUnit.net 00:14:43.56]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal [FAIL]
+[xUnit.net 00:14:43.57]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cross_branch_creation_serializes_company_wide_lot_identity [FAIL]
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_and_exact_search_use_eligible_sources_only [45 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_and_exact_search_use_eligible_sources_only() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 956
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Concurrent_source_competition_and_lost_response_duplicate_requests [22 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Concurrent_source_competition_and_lost_response_duplicate_requests() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 838
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Blank_reference_defaults_to_batch_number [21 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Blank_reference_defaults_to_batch_number() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1166
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned [35 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.List_search_summary_is_document_owned() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1219
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Failure_after_both_stock_legs_leaves_no_partial_facts_or_lot_ownership [16 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Failure_after_both_stock_legs_leaves_no_partial_facts_or_lot_ownership() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 907
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Inactive_saved_destination_is_rejected_until_replaced [21 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Inactive_saved_destination_is_rejected_until_replaced() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1286
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal [26 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cost_trace_replays_frozen_value_and_preserves_original_trace_after_reversal() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 771
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cross_branch_creation_serializes_company_wide_lot_identity [15 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Cross_branch_creation_serializes_company_wide_lot_identity() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 926
+--- End of stack trace from previous location ---
+[xUnit.net 00:14:43.59]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.All_draft_edits_invalidate_stale_clients_and_restrict_costs [FAIL]
+[xUnit.net 00:14:43.60]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_can_scope_to_a_locked_work_order [FAIL]
+[xUnit.net 00:14:43.61]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Manual_reference_is_trimmed_and_preserved [FAIL]
+[xUnit.net 00:14:43.62]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Lot_controlled_source_defaults_and_keeps_destination_lot [FAIL]
+[xUnit.net 00:14:43.63]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Period_close_and_post_share_the_branch_lock [FAIL]
+[xUnit.net 00:14:43.65]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Save_maps_product_codes_grouped_qty_and_non_lot_expiry [FAIL]
+[xUnit.net 00:14:43.67]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price [FAIL]
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.All_draft_edits_invalidate_stale_clients_and_restrict_costs [13 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.All_draft_edits_invalidate_stale_clients_and_restrict_costs() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 804
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_can_scope_to_a_locked_work_order [18 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Source_filter_options_can_scope_to_a_locked_work_order() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 992
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Manual_reference_is_trimmed_and_preserved [2 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Manual_reference_is_trimmed_and_preserved() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1191
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Lot_controlled_source_defaults_and_keeps_destination_lot [12 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Lot_controlled_source_defaults_and_keeps_destination_lot() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1205
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Period_close_and_post_share_the_branch_lock [13 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Period_close_and_post_share_the_branch_lock() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 942
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Save_maps_product_codes_grouped_qty_and_non_lot_expiry [17 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Save_maps_product_codes_grouped_qty_and_non_lot_expiry() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1123
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price [13 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Matching_lot_topups_inherit_expiry_and_ordered_reversals_restore_price() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 854
+--- End of stack trace from previous location ---
+[xUnit.net 00:14:43.71]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation [FAIL]
+[xUnit.net 00:14:43.72]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Unknown_pool_cannot_be_cleansed_by_verified_replenishment [FAIL]
+[xUnit.net 00:14:43.73]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Separate_drafts_do_not_reserve_the_same_source [FAIL]
+[xUnit.net 00:14:43.74]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.SqlServer_rejects_missing_location_for_v2_production_source [FAIL]
+[xUnit.net 00:14:43.76]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Destination_location_is_branch_scoped [FAIL]
+[xUnit.net 00:14:43.76]     ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Whitespace_reference_defaults_to_batch_number [FAIL]
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation [41 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Partial_receipt_reopens_same_document_and_reposts_as_new_generation() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 701
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Unknown_pool_cannot_be_cleansed_by_verified_replenishment [2 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Unknown_pool_cannot_be_cleansed_by_verified_replenishment() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 870
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Separate_drafts_do_not_reserve_the_same_source [2 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Separate_drafts_do_not_reserve_the_same_source() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1326
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.SqlServer_rejects_missing_location_for_v2_production_source [3 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.SqlServer_rejects_missing_location_for_v2_production_source() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 881
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Destination_location_is_branch_scoped [14 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Destination_location_is_branch_scoped() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1259
+--- End of stack trace from previous location ---
+  Failed ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Whitespace_reference_defaults_to_batch_number [1 ms]
+  Error Message:
+   Assert.Contains() Failure: Sub-string not found
+String:    "Disabled"
+Not found: "test"
+  Stack Trace:
+     at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.CreateAsync(Boolean lotControlled, String existingCompany, String branch) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 626
+   at ErpWeb.Tests.Production.Transaction.FinishedGoodReceiptSqlServerTests.Whitespace_reference_defaults_to_batch_number() in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Production\Transaction\FinishedGoodReceiptTests.cs:line 1179
+--- End of stack trace from previous location ---

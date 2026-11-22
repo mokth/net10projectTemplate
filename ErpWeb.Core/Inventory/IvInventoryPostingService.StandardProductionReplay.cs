@@ -286,7 +286,9 @@ public sealed partial class IvInventoryPostingService
         var reversals = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(m => m.OriginalMovementId.HasValue && reversalIds.Contains(m.OriginalMovementId.Value))
             .OrderBy(m => m.Uid).ToArrayAsync(ct);
-        var pairedOutput = reversed && allowRestatements && downstreamMovements.Length == 0;
+        var pairedOutput = reversed && allowRestatements
+            && (downstreamMovements.Length == 0
+                || (reversedFinishedGoodHash is not null && correctedReversedFinishedGood is null));
         IReadOnlyDictionary<long, ProductionEffectiveCost>? reversalCosts = null;
         long? reversalPostingId = null;
         if (reversed)

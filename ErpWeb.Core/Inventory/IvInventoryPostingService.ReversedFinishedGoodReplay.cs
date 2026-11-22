@@ -1,6 +1,7 @@
 using System.Globalization;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
@@ -50,10 +51,19 @@ public sealed partial class IvInventoryPostingService
             || reversal.TotalCost != (corrected?.CurrentValue ?? outbound.TotalCost)
             || reversal.UnitCost != (corrected?.CurrentUnitCost ?? outbound.UnitCost)
             || await db.ProductionBalLotMovements.AsNoTracking().CountAsync(m =>
-                m.OriginalMovementId == outbound.Uid, ct) != 1
-            || corrected is null && await db.ProductionCostRestatementFacts.AsNoTracking().AnyAsync(f =>
-                f.ProductionBalLotMovementId == outbound.Uid || f.ProductionBalLotMovementId == reversal.Uid, ct))
+                m.OriginalMovementId == outbound.Uid, ct) != 1)
             throw ProductionReplayError("Finished-good production movements are not an exact reversal pair.");
+
+        var effectivePairCosts = await ProductionReplayEffectiveCostReader.ReadAsync(
+            db, company, branch, [outbound.Uid, reversal.Uid, produce.Uid], ct);
+        var expectedShare = outbound.BaseQty == produce.BaseQty
+            ? effectivePairCosts[produce.Uid].TotalCost
+            : StockLedgerPrecision.Money(effectivePairCosts[produce.Uid].TotalCost * outbound.BaseQty / produce.BaseQty);
+        if (corrected is null
+            && (effectivePairCosts[outbound.Uid].TotalCost != effectivePairCosts[reversal.Uid].TotalCost
+                || effectivePairCosts[outbound.Uid].UnitCost != effectivePairCosts[reversal.Uid].UnitCost
+                || effectivePairCosts[outbound.Uid].TotalCost != expectedShare))
+            throw ProductionReplayError("Finished-good production movements have inconsistent restated reversal costs.");
 
         var posts = await db.StockPostings.AsNoTracking().Where(p => p.Id == postId || p.Id == reverseId)
             .ToDictionaryAsync(p => p.Id, ct);
@@ -250,6 +260,8 @@ public sealed partial class IvInventoryPostingService
             fact.DestinationBalanceId, AllocationIds = allocations.Select(a => a.Id).Order().ToArray(),
             EdgeIds = edges.Select(e => e.Id).Order().ToArray(),
             ValuationIds = valuations.Select(v => v.Id).Order().ToArray(), closedFifoLayerId, evidence[0].Generation,
+            EffectiveOutbound = effectivePairCosts[outbound.Uid],
+            EffectiveReversal = effectivePairCosts[reversal.Uid],
             CorrectedHash = corrected?.EvidenceHash
         }, new { }).RequestFingerprint;
         return new(hash, corrected);

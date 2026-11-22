@@ -42,7 +42,7 @@ public sealed class ProductionMaterialStockAvailabilityReader : IProductionMater
             return Fail(IvMasterErrorCode.InvalidScope, "A company and branch scope is required.");
         }
 
-        if (issueDate > _clock.Now)
+        if (issueDate.Date > _clock.Today)
         {
             return Fail(IvMasterErrorCode.Validation, "Future issue dates are not allowed.");
         }

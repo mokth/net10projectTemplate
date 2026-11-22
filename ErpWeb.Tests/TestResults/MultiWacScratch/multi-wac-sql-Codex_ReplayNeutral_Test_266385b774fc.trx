@@ -1,0 +1,34 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="486fe693-3675-43b3-97c1-6fa3110bf709" name="Mokth@MOKTH 2026-11-14 21:45:05" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-14T21:45:05.7026278+08:00" queuing="2026-11-14T21:45:05.7026284+08:00" start="2026-11-14T21:44:34.9619346+08:00" finish="2026-11-14T21:45:05.7095715+08:00" />
+  <TestSettings name="default" id="fe6bbd2d-b341-4d03-a4e3-29b0d23c94d8">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-14_21_45_05" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="f7018a8b-3302-451b-be22-a4ac376c35da" testId="b69c5fef-3b29-1448-37fe-8e605dc9aaed" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.SqlServer_sales_return_after_backdated_purchase_invoice_uses_corrected_cost" computerName="MOKTH" duration="00:00:21.2221173" startTime="2026-11-14T21:44:43.1635505+08:00" endTime="2026-11-14T21:45:05.5437347+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f7018a8b-3302-451b-be22-a4ac376c35da" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.SqlServer_sales_return_after_backdated_purchase_invoice_uses_corrected_cost" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="b69c5fef-3b29-1448-37fe-8e605dc9aaed">
+      <Execution id="f7018a8b-3302-451b-be22-a4ac376c35da" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="SqlServer_sales_return_after_backdated_purchase_invoice_uses_corrected_cost" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="b69c5fef-3b29-1448-37fe-8e605dc9aaed" executionId="f7018a8b-3302-451b-be22-a4ac376c35da" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="1" executed="1" passed="1" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.15)&#xD;
+[xUnit.net 00:00:06.93]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:07.75]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:07.80]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:30.27]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

@@ -139,9 +139,7 @@ public sealed partial class IvInventoryPostingService
         var destination = balances.Single(b => b.Id == history.ToBalLocId);
         var quantity = history.FrStdQty.Value;
         if (source.ICode != history.ICode || destination.ICode != history.ICode
-            || source.LotId is not null || destination.LotId is not null
-            || !string.IsNullOrWhiteSpace(source.LotNo)
-            || !string.IsNullOrWhiteSpace(destination.LotNo)
+            || !MatchesTransferRollbackLotConsistency(source, destination, detail, history)
             || source.StdUom != history.FrStdUom
             || destination.StdUom != history.ToStdUom
             || !SameWacTransferSlicePart(source.WhCode, history.FrWarehouse)

@@ -51,8 +51,9 @@ public sealed partial class IvInventoryPostingService
         if (await read.IvStockMasters.AsNoTracking().AnyAsync(m =>
                 m.CompanyCode == companyCode && m.ICode == itemCode
                 && m.LotControl, cancellationToken))
-            return IvInventoryPostingBatchResult.Fail(batchNo,
-                "Backdated lot transfer requires a new destination lot and pile; historical replay for that creation is not supported yet.");
+            return await TryPostBackdatedNewDestinationTrAsync(
+                companyCode, branchCode, batchNo, StockCostMethods.Standard,
+                cancellationToken);
         var destinations = await read.IvBalLocs.AsNoTracking()
             .Where(b => b.CompanyCode == companyCode
                 && b.BranchCode == branchCode && b.ICode == itemCode
@@ -61,6 +62,10 @@ public sealed partial class IvInventoryPostingService
                 && b.IStatus == detail.IStatus && b.LotId == null
                 && (b.LotNo == null || b.LotNo == ""))
             .Select(b => b.Id).ToArrayAsync(cancellationToken);
+        if (destinations.Length == 0)
+            return await TryPostBackdatedNewDestinationTrAsync(
+                companyCode, branchCode, batchNo, StockCostMethods.Standard,
+                cancellationToken);
         if (destinations.Length != 1
             || destinations[0] == detail.FromBalLocId.Value)
             return IvInventoryPostingBatchResult.Fail(batchNo,
@@ -749,9 +754,7 @@ public sealed partial class IvInventoryPostingService
         var destination = balances.Single(b => b.Id == history.ToBalLocId);
         var quantity = history.FrStdQty.Value;
         if (source.ICode != history.ICode || destination.ICode != history.ICode
-            || source.LotId is not null || destination.LotId is not null
-            || !string.IsNullOrWhiteSpace(source.LotNo)
-            || !string.IsNullOrWhiteSpace(destination.LotNo)
+            || !MatchesTransferRollbackLotConsistency(source, destination, detail, history)
             || source.StdUom != history.FrStdUom
             || destination.StdUom != history.ToStdUom
             || !SameWacTransferSlicePart(source.WhCode, history.FrWarehouse)

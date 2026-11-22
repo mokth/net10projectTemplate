@@ -59,9 +59,11 @@ public partial class IvStockCount : PageBase
     protected IvStockCountPostPreview? Preview;
     protected bool StaleAcknowledged;
     protected bool FifoCostApprovalVisible;
+    protected int? PendingCostApprovalLineId;
     protected decimal? FifoApprovedUnitCost;
     protected string FifoApprovalReason = string.Empty;
     protected string? FifoApprovalError;
+    private readonly Dictionary<int, StockCountCostApprovalRequest> _approvedLineCosts = [];
 
     protected bool RollbackVisible;
     protected string RollbackReason = string.Empty;
@@ -145,9 +147,11 @@ public partial class IvStockCount : PageBase
         IsLoading = true;
         ErrorMessage = null;
         FifoCostApprovalVisible = false;
+        PendingCostApprovalLineId = null;
         FifoApprovedUnitCost = null;
         FifoApprovalReason = string.Empty;
         FifoApprovalError = null;
+        _approvedLineCosts.Clear();
         try
         {
             if (NormalizedMode == "new" || string.IsNullOrWhiteSpace(CountNo))
@@ -599,11 +603,11 @@ public partial class IvStockCount : PageBase
                 if (!result.Succeeded || result.Preview is null)
                 {
                     if (Header.Status == IvStockCountStatuses.Counted
-                        && Lines.Count == 1 && Lines[0].PhysicalQty > 0m
-                        && result.ErrorMessage?.Contains(
-                            "requires verified FIFO layer cost evidence or explicit approval",
-                            StringComparison.OrdinalIgnoreCase) == true)
+                        && TryResolveLineNeedingCostApproval(result.ErrorMessage) is { } approvalLine)
                     {
+                        PendingCostApprovalLineId = approvalLine.Id;
+                        FifoApprovedUnitCost = null;
+                        FifoApprovalReason = string.Empty;
                         FifoApprovalError = null;
                         FifoCostApprovalVisible = true;
                         return;
@@ -626,26 +630,81 @@ public partial class IvStockCount : PageBase
 
     protected async Task OnFifoCostApprovedAsync()
     {
+        if (IsSubmitting)
+        {
+            return;
+        }
         if (FifoApprovedUnitCost is null || FifoApprovedUnitCost < 0m
             || string.IsNullOrWhiteSpace(FifoApprovalReason))
         {
             FifoApprovalError = "Enter a non-negative fallback unit cost and a reason.";
             return;
         }
+        var targetLine = Lines.FirstOrDefault(l => l.Id == PendingCostApprovalLineId && l.PhysicalQty > 0m)
+            ?? Lines.FirstOrDefault(l => l.PhysicalQty > 0m && !_approvedLineCosts.ContainsKey(l.Id))
+            ?? Lines.FirstOrDefault(l => l.PhysicalQty > 0m);
+        if (targetLine is not null)
+        {
+            var unitCost = FifoApprovedUnitCost.Value;
+            _approvedLineCosts[targetLine.Id] = new StockCountCostApprovalRequest(
+                targetLine.Id,
+                unitCost == 0m ? "ZERO_COST_APPROVED" : "MANUAL_APPROVED",
+                unitCost,
+                FifoApprovalReason.Trim());
+        }
+        PendingCostApprovalLineId = null;
         FifoApprovalError = null;
         FifoCostApprovalVisible = false;
         await OnPreviewPostAsync();
     }
 
+    private IvStockCountLineVm? TryResolveLineNeedingCostApproval(string? errorMessage)
+    {
+        if (string.IsNullOrWhiteSpace(errorMessage)
+            || !errorMessage.Contains("requires verified FIFO layer cost evidence or explicit approval", StringComparison.OrdinalIgnoreCase)
+            && !errorMessage.Contains("has no consistent original FIFO evidence", StringComparison.OrdinalIgnoreCase)
+            && !errorMessage.Contains("has no approved positive original FIFO state", StringComparison.OrdinalIgnoreCase)
+            && !errorMessage.Contains("has no consistent original WAC evidence", StringComparison.OrdinalIgnoreCase)
+            && !errorMessage.Contains("has no approved positive original WAC state", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        foreach (var line in Lines.Where(l => l.PhysicalQty > 0m))
+        {
+            if (errorMessage.Contains($"Count line {line.Id} ", StringComparison.OrdinalIgnoreCase)
+                || errorMessage.Contains($" line {line.LineNumber} ", StringComparison.OrdinalIgnoreCase))
+            {
+                return line;
+            }
+        }
+
+        return Lines.FirstOrDefault(l => l.PhysicalQty > 0m && !_approvedLineCosts.ContainsKey(l.Id));
+    }
+
     private IReadOnlyCollection<StockCountCostApprovalRequest> CurrentFifoCostApprovals()
     {
-        if (Header.Status != IvStockCountStatuses.Counted
-            || Lines.Count != 1 || Lines[0].PhysicalQty is not > 0m
-            || FifoApprovedUnitCost is not decimal unitCost)
+        if (Header.Status != IvStockCountStatuses.Counted)
             return [];
-        return [new StockCountCostApprovalRequest(Lines[0].Id,
-            unitCost == 0m ? "ZERO_COST_APPROVED" : "MANUAL_APPROVED",
-            unitCost, FifoApprovalReason.Trim())];
+        var approvals = new Dictionary<int, StockCountCostApprovalRequest>(_approvedLineCosts);
+        var positiveLines = Lines.Where(l => l.PhysicalQty > 0m).ToArray();
+        if (FifoApprovedUnitCost is decimal unitCost && !string.IsNullOrWhiteSpace(FifoApprovalReason))
+        {
+            var target = positiveLines.FirstOrDefault(l => l.Id == PendingCostApprovalLineId)
+                ?? (positiveLines.Length == 1 ? positiveLines[0] : null);
+            if (target is not null)
+            {
+                approvals[target.Id] = new StockCountCostApprovalRequest(
+                    target.Id,
+                    unitCost == 0m ? "ZERO_COST_APPROVED" : "MANUAL_APPROVED",
+                    unitCost,
+                    FifoApprovalReason.Trim());
+            }
+        }
+        return approvals.Values
+            .Where(a => positiveLines.Any(l => l.Id == a.StockCountLineId))
+            .OrderBy(a => a.StockCountLineId)
+            .ToArray();
     }
 
     protected async Task OnPostConfirmedAsync()
@@ -675,8 +734,10 @@ public partial class IvStockCount : PageBase
                     : "No variance found. The sheet is POSTED with no batch.";
 
                 await LoadDocumentAsync(_countNo!);
+                PendingCostApprovalLineId = null;
                 FifoApprovedUnitCost = null;
                 FifoApprovalReason = string.Empty;
+                _approvedLineCosts.Clear();
             }
             finally
             {

@@ -1,0 +1,40 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="42d6d571-3e37-4cfc-aa6a-a2809e2f8ce8" name="Mokth@MOKTH 2026-11-11 08:50:30" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-11T08:50:30.1234075+08:00" queuing="2026-11-11T08:50:30.1234080+08:00" start="2026-11-11T08:50:16.7688972+08:00" finish="2026-11-11T08:50:32.5192602+08:00" />
+  <TestSettings name="default" id="6fd7cc3e-59e2-4106-bac5-2143ad12087e">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-11_08_50_30" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="3cb95765-6345-49c5-9465-5ebcea7957ea" testId="2460249b-d048-6718-df15-40940a31149f" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_repost_cycle_respects_active_qa_stock_hold" computerName="MOKTH" duration="00:00:02.3276903" startTime="2026-11-11T08:50:30.1071546+08:00" endTime="2026-11-11T08:50:32.4244437+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3cb95765-6345-49c5-9465-5ebcea7957ea" />
+    <UnitTestResult executionId="dad758b8-3e5e-4317-b68c-ea72d9264735" testId="fe2620aa-f81e-500f-30b8-35a0ddfeee18" testName="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_repost_rejects_damaged_receipt_reversal_history" computerName="MOKTH" duration="00:00:09.2565182" startTime="2026-11-11T08:50:19.9673841+08:00" endTime="2026-11-11T08:50:30.0823543+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="dad758b8-3e5e-4317-b68c-ea72d9264735" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_repost_rejects_damaged_receipt_reversal_history" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="fe2620aa-f81e-500f-30b8-35a0ddfeee18">
+      <Execution id="dad758b8-3e5e-4317-b68c-ea72d9264735" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Receipt_repost_rejects_damaged_receipt_reversal_history" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests.Receipt_repost_cycle_respects_active_qa_stock_hold" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="2460249b-d048-6718-df15-40940a31149f">
+      <Execution id="3cb95765-6345-49c5-9465-5ebcea7957ea" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Sales.Transaction.SaInvoiceServiceTests" name="Receipt_repost_cycle_respects_active_qa_stock_hold" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="2460249b-d048-6718-df15-40940a31149f" executionId="3cb95765-6345-49c5-9465-5ebcea7957ea" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fe2620aa-f81e-500f-30b8-35a0ddfeee18" executionId="dad758b8-3e5e-4317-b68c-ea72d9264735" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="2" executed="2" passed="2" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:02.14]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.69]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:02.73]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:15.25]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

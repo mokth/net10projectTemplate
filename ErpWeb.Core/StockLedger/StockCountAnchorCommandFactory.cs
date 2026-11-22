@@ -148,11 +148,11 @@ public static class StockCountAnchorCommandFactory
             if (bases.Any(b =>
                     (b.CostBasisKind == StockCountCostBasisKinds.LedgerWac
                         && costMethod != StockCostMethods.MovingAverage)
+                    || (b.CostBasisKind == StockCountCostBasisKinds.LedgerFifo
+                        && costMethod != StockCostMethods.Fifo)
                     || (b.CostBasisKind == StockCountCostBasisKinds.StandardRevision
                         && costMethod != StockCostMethods.Standard)))
                 throw Invalid($"Count {countId} has a frozen basis for a different cost method.");
-            if (bases.Any(b => b.CostBasisKind == StockCountCostBasisKinds.LedgerFifo))
-                throw Invalid($"Count {countId} requires a verified historical FIFO layer basis.");
         }
         foreach (var basis in bases.Where(b =>
                      b.CostBasisKind == StockCountCostBasisKinds.LedgerWac))
@@ -165,6 +165,18 @@ public static class StockCountAnchorCommandFactory
             if (captured.UnitCost != basis.FrozenFallbackUnitCost
                 || !StringComparer.Ordinal.Equals(captured.Hash, basis.CostBasisHash))
                 throw Invalid($"Count {countId} line {basis.StockCountLineId} WAC basis differs from its original V2 evidence.");
+        }
+        foreach (var basis in bases.Where(b =>
+                     b.CostBasisKind == StockCountCostBasisKinds.LedgerFifo))
+        {
+            var itemCode = countedById[basis.StockCountLineId].ICode;
+            var captured = await StockCountLedgerCostEvidence.CaptureFifoAsync(
+                db, companyCode, branchCode, basis.StockCountLineId,
+                itemCode, effectiveAt, basis.CostBasisWatermark!.Value,
+                cancellationToken);
+            if (captured.UnitCost != basis.FrozenFallbackUnitCost
+                || !StringComparer.Ordinal.Equals(captured.Hash, basis.CostBasisHash))
+                throw Invalid($"Count {countId} line {basis.StockCountLineId} FIFO basis differs from its original V2 evidence.");
         }
         var standardResolver = new ItemStandardCostResolver();
         foreach (var basis in bases.Where(b =>

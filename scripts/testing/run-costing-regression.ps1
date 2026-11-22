@@ -1,26 +1,71 @@
 param(
     [switch]$NoBuild,
     [switch]$IncludeSqlServer,
-    [string]$SqlServer = '.\SQLEXPRESS'
+    [string]$SqlServer = '.\SQLEXPRESS',
+    [string]$ResultsDirectory = ''
 )
 
 # This is a repeatable focused gate, not the full suite or production certification.
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $patterns = @(
-    'StockReplayPhysicalSimulatorTests', 'StockReplayWacSimulatorTests',
+    'StockLedgerInfrastructureTests', 'StockReplayPhysicalSimulatorTests', 'StockReplayWacSimulatorTests',
     'StockReplayFifoLayerAllocatorTests', 'StockReplayFifoReversedIssueProjectorTests',
     'StockReplayStandardSimulatorTests', 'StockReplayValuationGenerationResolverTests',
     'InventoryValuationServiceTests', 'IvGoodsReceiptServiceTests', 'IvMiscReceiptServiceTests',
     'IvStockTransferPostingServiceTests', 'IvPeriodCloseServiceTests', 'IvPeriodCloseGuardTests',
     'CostingDiagnosticCenterTests', 'QaPhysicalHoldTests', 'QaIncomingGrantTests',
+    'QaFgGrantTests', 'QaLogicalHoldTests',
     'SubconPostBlockedTests', 'SubconModeTests',
     'PoInvoiceServiceTests', 'PoCdnServiceTests',
+    'Backdated_purchase_invoice_reprices_direct_sale_and_rolls_back',
+    'Backdated_purchase_invoice_before_sale_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_changed_direct_sale',
+    'Backdated_purchase_invoice_reprices_sale_and_inventory_issue',
+    'Backdated_purchase_invoice_reprices_sale_and_two_inventory_issues',
+    'Backdated_purchase_invoice_replays_sale_and_ninety_nine_issues_at_boundary',
+    'Purchase_invoice_before_sale_and_issue_reprices_both_on_rollback',
+    'Backdated_purchase_invoice_before_sale_and_issue_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_damaged_sale_issue_cost',
+    'Backdated_purchase_invoice_rejects_mixed_sale_issue_and_return_draft',
+    'Backdated_purchase_invoice_reprices_sale_and_receipt',
+    'Backdated_purchase_invoice_rejects_receipt_before_sale',
+    'Backdated_purchase_invoice_reprices_sale_issue_and_receipt',
+    'Backdated_purchase_invoice_rejects_damaged_sale_receipt',
+    'Backdated_purchase_invoice_before_sale_receipt_respects_disabled_replay',
+    'Backdated_purchase_invoice_reprices_sale_and_later_goods_receipt',
+    'Backdated_purchase_invoice_reprices_sale_issue_and_later_goods_receipt',
+    'Purchase_invoice_before_sale_and_goods_receipt_reprices_on_rollback',
+    'Backdated_purchase_invoice_rejects_goods_receipt_before_sale',
+    'Backdated_purchase_invoice_rejects_damaged_goods_receipt_after_sale',
+    'Backdated_purchase_invoice_rejects_sale_with_return_draft',
+    'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
+    'Purchase_invoice_before_canceled_sale_reprices_both_legs_on_rollback_and_repost',
+    'Backdated_purchase_invoice_after_canceled_sale_',
+    'Purchase_invoice_canceled_sale_replay_',
+    'Purchase_invoice_canceled_sale_repost_rejects_damaged_audit',
+    'Purchase_invoice_rollback_after_sale_cancellation_is_blocked_atomically',
+    'Backdated_purchase_invoice_after_sale_cancellation_is_blocked_atomically',
+    'Purchase_invoice_during_canceled_sale_is_blocked_atomically',
+    'Backdated_purchase_invoice_with_damaged_canceled_sale_is_blocked_atomically',
+    'Zero_variance_purchase_invoice_after_sale_cancellation_can_post_and_rollback',
+    'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
+    'Backdated_purchase_invoice_reprices_delivery_and_rolls_back',
+    'Purchase_invoice_before_delivery_reprices_cost_on_rollback',
+    'Backdated_purchase_invoice_rejects_partially_billed_delivery',
+    'Backdated_purchase_invoice_rejects_damaged_delivery_billing',
+    'Backdated_purchase_invoice_rejects_delivery_billing_changed_after_planning',
+    'Backdated_purchase_invoice_rejects_damaged_delivery_line',
+    'Backdated_purchase_invoice_delivery_replay_blocks_damaged_audit',
+    'Backdated_purchase_invoice_before_delivery_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_return_draft_on_billed_delivery',
+    'Sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost',
     'ProductionIssueEffectiveCostReaderTests', 'ProductionEffectiveCostResolverTests',
     'ProductionDependencyOwnerReaderTests', 'ProductionReplayDependencyPlannerTests',
     'ProductionPooledCostTraceMathTests', 'ProductionMaterialAllocationTests',
     'ProductionOutputConsumeVarianceTests', 'ProductionDailyOutputCoreTests',
     'Receipt_reposts_and_rolls_back_again_after_reversed_sale_correction',
+    'Receipt_and_reversed_sale_at_same_time_remain_blocked_atomically',
     'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
     'Receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues',
     'Receipt_first_rollback_reprices_canceled_sale_and_three_later_issues',
@@ -54,6 +99,16 @@ $patterns = @(
     'Backdated_wac_transfer_preserves_later_issue_or_rejects_shortage',
     'Wac_backdated_lot_issue_posts_and_rolls_back_before_later_issue',
     'Public_historical_WAC_count_posts_rolls_back_and_reposts_before_later_issue',
+    'Replay_enabled_current_day_count_anchors_',
+    'Replay_enabled_count_requires_coordinator_without_changing_stock',
+    'Replay_count_post_and_rollback_respect_qa_stock_holds',
+    'Open_month_issue_before_count_replays_and_rolls_back',
+    'Open_month_receipt_before_count_replays_and_rolls_back',
+    'Receipt_before_count_rollback_respects_quality_holds',
+    'Receipt_before_count_rejects_changed_value_or_an_unhandled_later_movement',
+    'Issue_before_count_respects_quality_holds',
+    'Issue_before_count_rejects_historical_shortage_even_when_current_stock_is_sufficient',
+    'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
     'Public_backdated_WAC_count_replays_later_Inventory_transfer',
     'Public_backdated_WAC_count_replays_real_later_Inventory_MI_owner',
     'Public_backdated_WAC_count_preserves_real_later_Inventory_MR_value',
@@ -76,19 +131,136 @@ $patterns = @(
     'Backdated_receipt_replays_canceled_sale_before_misc_and_goods_receipts',
     'Backdated_receipt_replays_canceled_sale_before_multiple_purchase_orders',
     'Backdated_receipt_before_later_goods_receipt_rejects_invoiced_purchase_order',
-    'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold'
+    'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold',
+    'Public_multi_pile_FIFO_and_Standard_count_posts_rolls_back_and_reposts',
+    'Fifo_replay_with_active_finished_goods_does_not_report_stale_cost_trace',
+    'Backdated_wac_receipt_reprices_active_finished_good_and_restores_it_on_removal',
+    'Backdated_wac_receipt_protects_cost_when_finished_goods_may_be_reversed',
+    'Backdated_fifo_receipt_rejects_cost_change_after_finished_good_reversal',
+    'Future_draft_is_allowed_in_open_period_but_refused_on_post_and_closed_period_draft_is_refused',
+    'Rollback_is_refused_when_original_transfer_period_is_closed_even_in_later_open_period',
+    'Same_day_later_time_transfer_posts_under_date_only_business_date_guard',
+    'Backdated_lot_transfer_creates_new_lot_and_pile_and_rolls_back_cleanly',
+    'Backdated_transfer_creates_new_non_lot_destination_pile_rolls_back_and_reposts',
+    'Backdated_new_destination_transfer_rejects_shortage_without_creating_pile',
+    'Backdated_receipt_reprices_partially_billed_do_across_two_invoices_without_double_counting_cogs',
+    'Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice'
 )
 $required = @(
-    'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
+    'StockLedgerInfrastructureTests', 'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
     'StockReplayStandardSimulatorTests', 'InventoryValuationServiceTests',
-    'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'PoInvoiceServiceTests',
+    'Replay_enabled_current_day_count_anchors_and_reposts',
+    'Replay_enabled_current_day_count_anchors_fifo_and_standard',
+    'Replay_enabled_count_requires_coordinator_without_changing_stock',
+    'Replay_count_post_and_rollback_respect_qa_stock_holds',
+    'Open_month_issue_before_count_replays_and_rolls_back',
+    'Open_month_receipt_before_count_replays_and_rolls_back',
+    'Receipt_before_count_rollback_respects_quality_holds',
+    'Receipt_before_count_rejects_changed_value_or_an_unhandled_later_movement',
+    'Issue_before_count_respects_quality_holds',
+    'Issue_before_count_rejects_historical_shortage_even_when_current_stock_is_sufficient',
+    'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
+    'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'QaFgGrantTests', 'QaLogicalHoldTests', 'PoInvoiceServiceTests',
     'SubconPostBlockedTests', 'SubconModeTests',
+    'Purchase_credit_note_refuses_unreplayed_later_issue',
+    'Purchase_credit_note_replays_later_issue_and_repeats_rollback',
+    'Purchase_credit_note_replays_multiple_later_issues_and_repeats_rollback',
+    'Purchase_credit_note_and_later_issues_replay_after_a_canceled_issue',
+    'Purchase_credit_note_and_issue_rollback_share_business_date',
+    'Purchase_issue_rollback_replays_later_same_day_note',
+    'Purchase_issue_rollback_replays_note_on_later_open_period_day',
+    'Purchase_issue_rollback_rejects_unproven_later_note',
+    'Purchase_credit_note_issue_rollback_rejects_damaged_earlier_note',
+    'Purchase_credit_note_replay_rejects_unproven_evidence',
+    'Purchase_credit_note_replay_preserves_qa_hold',
     'Backdated_wac_misc_receipt_replays_after_value_neutral_purchase_invoice',
     'Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance',
     'Backdated_wac_misc_receipt_replays_partial_purchase_invoice_variance',
     'Backdated_wac_misc_receipt_rejects_damaged_partial_purchase_variance',
     'Backdated_wac_misc_receipt_rejects_damaged_purchase_replay_generation',
     'Backdated_wac_lot_receipt_replays_partial_purchase_variance',
+    'Backdated_wac_receipt_replays_fully_consumed_purchase_variance',
+    'Backdated_purchase_invoice_with_later_issue_uses_historical_consumed_variance',
+    'Backdated_consumed_invoice_rejects_change_after_planning',
+    'Backdated_consumed_invoice_rejects_cost_policy_change_in_later_tail',
+    'Backdated_consumed_invoice_rejects_receipt_with_inconsistent_time',
+    'Backdated_consumed_invoice_rejects_damaged_receipt_cost',
+    'Backdated_purchase_invoice_reprices_later_issue_and_rollback',
+    'Backdated_purchase_invoice_issue_replay_rejects_damaged_audit',
+    'Backdated_purchase_invoice_can_roll_back_after_later_issue_rollback',
+    'Purchase_invoice_posted_before_later_issue_reprices_issue_on_rollback',
+    'Backdated_purchase_invoice_reprices_fully_depleted_later_issue',
+    'Backdated_purchase_invoice_reprices_two_later_issues_and_rollback',
+    'Purchase_invoice_posted_before_two_issues_reprices_both_on_rollback',
+    'Backdated_purchase_invoice_reprices_ten_later_issues_and_rollback',
+    'Purchase_invoice_posted_before_ten_issues_reprices_all_on_rollback',
+    'Backdated_purchase_invoice_ten_issue_replay_rejects_damaged_later_audit',
+    'Backdated_purchase_invoice_replays_one_hundred_issues_and_rejects_more',
+    'Backdated_purchase_invoice_reprices_issues_around_later_receipt',
+    'Purchase_invoice_posted_before_mixed_tail_reprices_issues_on_rollback',
+    'Backdated_purchase_invoice_rejects_damaged_later_receipt_value',
+    'Backdated_purchase_invoice_can_roll_back_after_later_receipt_is_removed',
+    'Backdated_purchase_invoice_reprices_issues_around_later_goods_receipt',
+    'Purchase_invoice_before_goods_receipt_reprices_issues_on_rollback',
+    'Backdated_purchase_invoice_can_roll_back_after_later_goods_receipt_is_removed',
+    'Backdated_purchase_invoice_rejects_invoiced_later_goods_receipt',
+    'Backdated_purchase_invoice_rejects_damaged_later_goods_receipt',
+    'Backdated_purchase_invoice_rejects_changed_later_goods_purchase_evidence',
+    'Backdated_purchase_invoice_replays_later_goods_on_same_order_line',
+    'Backdated_purchase_invoice_rolls_back_after_same_order_goods_receipt',
+    'Purchase_invoice_before_same_order_goods_receipt_reprices_issues_on_rollback',
+    'Purchase_invoice_rejects_another_invoice_on_later_same_order_goods',
+    'Backdated_purchase_invoice_before_later_goods_respects_disabled_replay',
+    'Same_order_goods_rollback_rejects_damaged_earlier_invoice',
+    'Backdated_purchase_invoice_reprices_direct_sale_and_rolls_back',
+    'Backdated_purchase_invoice_before_sale_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_changed_direct_sale',
+    'Backdated_purchase_invoice_reprices_sale_and_inventory_issue',
+    'Backdated_purchase_invoice_reprices_sale_and_two_inventory_issues',
+    'Backdated_purchase_invoice_replays_sale_and_ninety_nine_issues_at_boundary',
+    'Purchase_invoice_before_sale_and_issue_reprices_both_on_rollback',
+    'Backdated_purchase_invoice_before_sale_and_issue_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_damaged_sale_issue_cost',
+    'Backdated_purchase_invoice_rejects_mixed_sale_issue_and_return_draft',
+    'Backdated_purchase_invoice_reprices_sale_and_receipt',
+    'Backdated_purchase_invoice_rejects_receipt_before_sale',
+    'Backdated_purchase_invoice_reprices_sale_issue_and_receipt',
+    'Backdated_purchase_invoice_rejects_damaged_sale_receipt',
+    'Backdated_purchase_invoice_before_sale_receipt_respects_disabled_replay',
+    'Backdated_purchase_invoice_reprices_sale_and_later_goods_receipt',
+    'Backdated_purchase_invoice_reprices_sale_issue_and_later_goods_receipt',
+    'Purchase_invoice_before_sale_and_goods_receipt_reprices_on_rollback',
+    'Backdated_purchase_invoice_rejects_goods_receipt_before_sale',
+    'Backdated_purchase_invoice_rejects_damaged_goods_receipt_after_sale',
+    'Backdated_purchase_invoice_rejects_sale_with_return_draft',
+    'Purchase_invoice_before_direct_sale_reprices_sale_on_rollback',
+    'Purchase_invoice_before_canceled_sale_reprices_both_legs_on_rollback_and_repost',
+    'Backdated_purchase_invoice_after_canceled_sale_posts_and_rolls_back',
+    'Backdated_purchase_invoice_after_canceled_sale_rejects_unproven_evidence',
+    'Backdated_purchase_invoice_after_canceled_sale_respects_qa_hold',
+    'Backdated_purchase_invoice_after_canceled_sale_rejects_damaged_audit',
+    'Purchase_invoice_canceled_sale_replay_respects_disabled_flag',
+    'Purchase_invoice_canceled_sale_replay_rejects_changed_or_closed_evidence',
+    'Purchase_invoice_canceled_sale_replay_rejects_later_receipt',
+    'Purchase_invoice_canceled_sale_replay_preserves_qa_hold',
+    'Purchase_invoice_canceled_sale_repost_rejects_damaged_audit',
+    'Purchase_invoice_rollback_after_sale_cancellation_is_blocked_atomically',
+    'Backdated_purchase_invoice_after_sale_cancellation_is_blocked_atomically',
+    'Purchase_invoice_during_canceled_sale_is_blocked_atomically',
+    'Backdated_purchase_invoice_with_damaged_canceled_sale_is_blocked_atomically',
+    'Zero_variance_purchase_invoice_after_sale_cancellation_can_post_and_rollback',
+    'Sales_return_after_backdated_purchase_invoice_uses_corrected_sale_cost',
+    'Backdated_purchase_invoice_reprices_delivery_and_rolls_back',
+    'Purchase_invoice_before_delivery_reprices_cost_on_rollback',
+    'Backdated_purchase_invoice_rejects_partially_billed_delivery',
+    'Backdated_purchase_invoice_rejects_damaged_delivery_billing',
+    'Backdated_purchase_invoice_rejects_delivery_billing_changed_after_planning',
+    'Backdated_purchase_invoice_rejects_damaged_delivery_line',
+    'Backdated_purchase_invoice_delivery_replay_blocks_damaged_audit',
+    'Backdated_purchase_invoice_before_delivery_respects_disabled_replay',
+    'Backdated_purchase_invoice_rejects_return_draft_on_billed_delivery',
+    'Sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost',
+    'Fully_consumed_wac_invoice_reverses_its_zero_value_anchor',
     'Backdated_wac_receipt_rejects_purchase_variance_without_original_stock_value',
     'Backdated_wac_misc_receipt_replays_issue_before_same_day_invoice_variance',
     'Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence',
@@ -99,6 +271,7 @@ $required = @(
     'Backdated_wac_misc_receipt_before_purchase_invoice_respects_qa_hold',
     'Neutral_purchase_invoice_can_roll_back_before_backdated_receipt',
     'ProductionEffectiveCostResolverTests',
+    'Receipt_and_reversed_sale_at_same_time_remain_blocked_atomically',
     'Receipt_first_rollback_reprices_canceled_sale_and_later_issue',
     'Receipt_first_rollback_reprices_canceled_sale_and_multiple_later_issues',
     'Receipt_first_rollback_reprices_canceled_sale_and_three_later_issues',
@@ -136,12 +309,31 @@ $required = @(
     'Backdated_receipt_replays_canceled_sale_before_misc_and_goods_receipts',
     'Backdated_receipt_replays_canceled_sale_before_multiple_purchase_orders',
     'Backdated_receipt_before_later_goods_receipt_rejects_invoiced_purchase_order',
-    'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold'
+    'Backdated_receipt_before_mixed_later_receipts_respects_qa_hold',
+    'Public_multi_pile_FIFO_and_Standard_count_posts_rolls_back_and_reposts',
+    'Purchase_credit_note_replays_partly_consumed_and_fully_later_issued_stock',
+    'Purchase_issue_rollback_reprices_partly_consumed_later_note_and_note_rolls_back_active_generation',
+    'Fifo_replay_with_active_finished_goods_does_not_report_stale_cost_trace',
+    'Backdated_wac_receipt_reprices_active_finished_good_and_restores_it_on_removal',
+    'Backdated_wac_receipt_protects_cost_when_finished_goods_may_be_reversed',
+    'Backdated_fifo_receipt_rejects_cost_change_after_finished_good_reversal',
+    'Future_draft_is_allowed_in_open_period_but_refused_on_post_and_closed_period_draft_is_refused',
+    'Rollback_is_refused_when_original_transfer_period_is_closed_even_in_later_open_period',
+    'Same_day_later_time_transfer_posts_under_date_only_business_date_guard',
+    'Backdated_lot_transfer_creates_new_lot_and_pile_and_rolls_back_cleanly',
+    'Backdated_transfer_creates_new_non_lot_destination_pile_rolls_back_and_reposts',
+    'Backdated_new_destination_transfer_rejects_shortage_without_creating_pile',
+    'Backdated_receipt_reprices_partially_billed_do_across_two_invoices_without_double_counting_cogs',
+    'Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice'
 )
 $filter = '(' + (($patterns | ForEach-Object { 'FullyQualifiedName~' + $_ }) -join '|') +
     ')&FullyQualifiedName!~SqlServer&Category!=SqlServer'
 $resultName = 'costing-focused-' + [Guid]::NewGuid().ToString('N') + '.trx'
-$resultDirectory = Join-Path $repo 'ErpWeb.Tests\TestResults\CostingRegression'
+$resultDirectory = if ([string]::IsNullOrWhiteSpace($ResultsDirectory)) {
+    Join-Path $repo 'ErpWeb.Tests\TestResults\CostingRegression'
+} else {
+    $ResultsDirectory
+}
 $environment = @{
     'ConnectionStrings__DefaultConnection' = 'Server=127.0.0.1,1;Database=Codex_Disabled_Test;Connect Timeout=1;TrustServerCertificate=True'
     'ConnectionStrings__SqlServerTestConnection' = $null
@@ -182,9 +374,61 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -FullyCapitalizedPurchaseVariance
         & $sqlRunner -Server $SqlServer -NoBuild -PartialPurchaseVariance
         & $sqlRunner -Server $SqlServer -NoBuild -PartialPurchaseVarianceLot
+        & $sqlRunner -Server $SqlServer -NoBuild -FullyConsumedPurchaseVariance
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedConsumedInvoice
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceIssueReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceIssueFirst
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeIssue
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceTwoIssues
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeTwoIssues
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceTenIssues
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceTenConcurrent
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceIssueBoundary
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedReceipt
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedReceiptFirst
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedGoods
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceMixedGoodsFirst
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSameOrder
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSameOrderGoodsFirst
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDirectSale
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeDirectSale
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleReturn
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceUnbilledDelivery
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceBilledDelivery
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryReturn
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDirectSaleIssue
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryIssue
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDirectSaleTwoIssues
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleIssueBoundary
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleIssueReceipt
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryReceipt
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceSaleGoods
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDeliveryGoods
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceBeforeSaleGoods
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceCanceledSaleCycle
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceCanceledSaleCycle
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceRollbackCanceledSale
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoicePostCanceledSale
+        & $sqlRunner -Server $SqlServer -NoBuild -InvoiceDuringCanceledSale
+        & $sqlRunner -Server $SqlServer -NoBuild -BackdatedInvoiceDepleted
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseInvoice
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNotePost
         & $sqlRunner -Server $SqlServer -NoBuild -BackdatedPurchaseCreditNoteRollback
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterIssuePost
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterIssueRollback
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnIssueReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnMultiIssueReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnCanceledIssueReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnSameDayReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterSameDayReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnLaterDayReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PurchaseCdnConsumedGuard
+        & $sqlRunner -Server $SqlServer -NoBuild -CurrentDayCountReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -IssueBeforeZeroCountReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -IssueBeforeVarianceCountReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -ReceiptBeforeVarianceCountReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PartlyConsumedNoteReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -PartlyConsumedNoteIssueRollback
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLaterReceipts
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceipts
@@ -195,6 +439,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleMixedReceiptsAndIssues
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleReceiptFirstInterleaved
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleCycle
+        & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleSameTime
         Write-Output 'The selected SQL Server replay checks passed in disposable databases.'
     }
     else {

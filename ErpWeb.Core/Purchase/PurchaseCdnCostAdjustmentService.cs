@@ -322,7 +322,7 @@ public sealed class PurchaseCdnCostAdjustmentService : IPurchaseCdnCostAdjustmen
         if (primaryStockPostingId <= 0)
             return PurchaseReceiptSettlementResult.Fail("A primary Purchase CN/DN costing posting is required for rollback.");
 
-        var originals = await db.PurchaseCostAdjustments.AsNoTracking()
+        var adjustmentRoots = await db.PurchaseCostAdjustments.AsNoTracking()
             .Where(x => x.CompanyCode == cdn.CompanyCode
                         && x.BranchCode == cdn.BranchCode
                         && x.SourceDocumentType == "PO_CDN"
@@ -332,26 +332,72 @@ public sealed class PurchaseCdnCostAdjustmentService : IPurchaseCdnCostAdjustmen
                         && x.ReversesAdjustmentId == null)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
-        if (originals.Count == 0)
+        if (adjustmentRoots.Count == 0)
             return PurchaseReceiptSettlementResult.Success([], []);
 
-        var ids = originals.Select(x => x.Id).ToArray();
-        if (await db.PurchaseCostAdjustments.AsNoTracking().AnyAsync(
-                x => x.ReversesAdjustmentId != null && ids.Contains(x.ReversesAdjustmentId.Value),
-                cancellationToken))
+        var allAdjustments = adjustmentRoots.ToList();
+        var pendingIds = adjustmentRoots.Select(x => x.Id).ToArray();
+        while (pendingIds.Length > 0)
         {
-            return PurchaseReceiptSettlementResult.Fail("The Purchase CN/DN costing adjustment has already been reversed.");
+            var children = await db.PurchaseCostAdjustments.AsNoTracking()
+                .Where(x => x.ReversesAdjustmentId != null
+                    && pendingIds.Contains(x.ReversesAdjustmentId.Value))
+                .OrderBy(x => x.Id)
+                .ToListAsync(cancellationToken);
+            if (children.Count == 0)
+                break;
+            var fresh = children.Where(x => allAdjustments.All(a => a.Id != x.Id)).ToArray();
+            if (fresh.Length != children.Count)
+                return PurchaseReceiptSettlementResult.Fail(
+                    "The Purchase CN/DN costing adjustment has cyclic reversal lineage.");
+            allAdjustments.AddRange(fresh);
+            pendingIds = fresh.Select(x => x.Id).ToArray();
+        }
+
+        var childRows = allAdjustments.Where(x => x.ReversesAdjustmentId is not null).ToArray();
+        if (childRows.GroupBy(x => x.ReversesAdjustmentId).Any(g => g.Count() != 1))
+            return PurchaseReceiptSettlementResult.Fail(
+                "The Purchase CN/DN costing adjustment has invalid reversal lineage.");
+        var childMap = childRows.ToDictionary(x => x.ReversesAdjustmentId!.Value);
+
+        var originals = new List<PurchaseCostAdjustment>(adjustmentRoots.Count);
+        foreach (var root in adjustmentRoots)
+        {
+            var chain = new List<PurchaseCostAdjustment> { root };
+            while (childMap.TryGetValue(chain[^1].Id, out var child))
+            {
+                if (chain.Count >= 101 || chain.Any(a => a.Id == child.Id))
+                    return PurchaseReceiptSettlementResult.Fail(
+                        "The Purchase CN/DN costing adjustment has invalid reversal lineage.");
+                chain.Add(child);
+            }
+            if (chain.Count % 2 == 0)
+                return PurchaseReceiptSettlementResult.Fail(
+                    "The Purchase CN/DN costing adjustment has already been reversed.");
+            if (chain.Count > 1)
+            {
+                var replayed = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(
+                    db, chain, cancellationToken);
+                if (replayed is null)
+                    return PurchaseReceiptSettlementResult.Fail(
+                        "The Purchase CN/DN costing adjustment has an unverified replay generation.");
+                originals.Add(replayed.Active);
+            }
+            else
+            {
+                originals.Add(root);
+            }
         }
 
         var factIds = originals.Where(x => x.InventoryAdjustmentFactId is not null)
             .Select(x => x.InventoryAdjustmentFactId!.Value)
             .Distinct()
             .ToArray();
-        var baseUoms = factIds.Length == 0
-            ? new Dictionary<long, string>()
+        var factsById = factIds.Length == 0
+            ? new Dictionary<long, StockValuationFact>()
             : await db.StockValuationFacts.AsNoTracking()
                 .Where(x => factIds.Contains(x.Id))
-                .ToDictionaryAsync(x => x.Id, x => x.BaseUom, cancellationToken);
+                .ToDictionaryAsync(x => x.Id, cancellationToken);
         var method = originals.First().CostMethod;
         var itemCodes = originals.Select(x => x.ItemCode)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -381,26 +427,29 @@ public sealed class PurchaseCdnCostAdjustmentService : IPurchaseCdnCostAdjustmen
             var consumedVariance = StockLedgerPrecision.Money(reversalTotal - appliedInventory);
 
             StockValueAdjustmentRequest? valueAdjustment = null;
-            if (appliedInventory != 0m)
+            if (appliedInventory != 0m || (desiredInventory == 0m && original.InventoryAdjustmentFactId is not null))
             {
                 if (original.InventoryAdjustmentFactId is not long factId
-                    || !baseUoms.TryGetValue(factId, out var baseUom)
-                    || string.IsNullOrWhiteSpace(baseUom))
+                    || !factsById.TryGetValue(factId, out var fact)
+                    || string.IsNullOrWhiteSpace(fact.BaseUom))
                 {
                     return PurchaseReceiptSettlementResult.Fail(
                         $"Purchase CN/DN adjustment {original.Id} is missing immutable base-UOM evidence.");
                 }
 
+                var direction = appliedInventory != 0m
+                    ? (appliedInventory > 0m ? 1 : -1)
+                    : -fact.Direction;
                 var split = splitByLine.GetValueOrDefault(original.SourceDocumentLine);
                 splitByLine[original.SourceDocumentLine] = split + 1;
                 valueAdjustment = new StockValueAdjustmentRequest(
                     original.SourceDocumentLine,
                     split,
                     original.ItemCode,
-                    baseUom,
+                    fact.BaseUom,
                     Math.Abs(appliedInventory),
-                    appliedInventory > 0m ? 1 : -1,
-                    appliedInventory > 0m
+                    direction,
+                    direction > 0
                         ? "PURCHASE_PRICE_VARIANCE_IN"
                         : "PURCHASE_PRICE_VARIANCE_OUT",
                     StockValuationSources.PurchasePriceVariance,

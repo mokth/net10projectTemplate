@@ -139,6 +139,8 @@ public static class StockCountCostBasisProposalFactory
             }
             else if (method == StockCostMethods.MovingAverage)
             {
+                if (watermark <= 0)
+                    throw Invalid($"Count line {line.Id} has no consistent original WAC evidence; explicit cost approval is required.");
                 var captured = await StockCountLedgerCostEvidence.CaptureWacAsync(
                     db, company, branch, line.Id, line.ICode, effectiveAt,
                     watermark, cancellationToken);
@@ -154,6 +156,18 @@ public static class StockCountCostBasisProposalFactory
                 basis.CostBasisKind = StockCountCostBasisKinds.StandardRevision;
                 basis.FrozenFallbackUnitCost = revision.TotalStandardCost;
                 basis.StandardCostRevisionId = revision.Id;
+            }
+            else if (method == StockCostMethods.Fifo)
+            {
+                if (watermark <= 0)
+                    throw Invalid($"Count line {line.Id} has no consistent original FIFO evidence; explicit cost approval is required.");
+                var captured = await StockCountLedgerCostEvidence.CaptureFifoAsync(
+                    db, company, branch, line.Id, line.ICode, effectiveAt,
+                    watermark, cancellationToken);
+                basis.CostBasisKind = StockCountCostBasisKinds.LedgerFifo;
+                basis.FrozenFallbackUnitCost = captured.UnitCost;
+                basis.CostBasisWatermark = watermark;
+                basis.CostBasisHash = captured.Hash;
             }
             else
             {

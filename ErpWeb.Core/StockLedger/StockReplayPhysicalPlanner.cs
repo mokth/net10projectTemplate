@@ -134,6 +134,22 @@ public sealed class StockCountCorrectionWritePermit
         Lines = lines;
     }
 
+    internal StockCountCorrectionWritePermit(
+        StockReplayPhysicalRemovalPlan plan, long rootPostingId,
+        ImmutableArray<StockCountCorrectionLine> lines)
+    {
+        CompanyCode = plan.CompanyCode;
+        BranchCode = plan.BranchCode;
+        BalLocId = plan.BalLocId;
+        LedgerEpochId = plan.LedgerEpochId;
+        RootPostingId = rootPostingId;
+        PlanHash = plan.PlanHash;
+        Candidate = plan.RemovedActiveEvent with { SignedDelta = -plan.RemovedActiveEvent.SignedDelta };
+        ReversedCandidateHistoryId = checked((int)plan.RemovedActiveEvent.EventId);
+        FinalQuantity = plan.Projection.FinalQuantity;
+        Lines = lines;
+    }
+
     public string CompanyCode { get; }
     public string BranchCode { get; }
     public int BalLocId { get; }
@@ -141,6 +157,7 @@ public sealed class StockCountCorrectionWritePermit
     public long RootPostingId { get; }
     public string PlanHash { get; }
     public StockReplayPhysicalEvent Candidate { get; }
+    public int? ReversedCandidateHistoryId { get; }
     public decimal FinalQuantity { get; }
     public ImmutableArray<StockCountCorrectionLine> Lines { get; }
 }
@@ -548,15 +565,55 @@ public static class StockReplayPhysicalPlanner
             && plan.Candidate.AbsoluteCountQty is not null;
         if (!ordinary && !initialCount)
             throw Stale("Count correction preparation requires a supported physical insertion.");
-        var steps = plan.Projection.LaterSteps.ToDictionary(s => s.EventId);
-        if (steps.Count != plan.LaterEvents.Count)
+        var lines = await ReadCountCorrectionLinesAsync(context, plan.CompanyCode, plan.BranchCode,
+            plan.LaterEvents, plan.Projection.LaterSteps, cancellationToken);
+        return new StockCountCorrectionWritePermit(plan, context.Posting.Id, lines);
+    }
+
+    public static async Task<StockCountCorrectionWritePermit> PrepareCountCorrectionsWithinRootAsync(
+        StockPostingContext context,
+        StockReplayPhysicalRemovalPlan plan,
+        CancellationToken cancellationToken = default)
+    {
+        await ValidateWithinRootAsync(context, plan, cancellationToken);
+        var removed = plan.RemovedActiveEvent;
+        var isIssue = context.Posting.SourceDocumentType == IvTrxTypes.MiscellaneousIssue
+            && removed.SignedDelta < 0m;
+        var isReceipt = context.Posting.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+            && removed.SignedDelta > 0m;
+        if (removed.EventId is not (> 0 and <= int.MaxValue) || (!isIssue && !isReceipt)
+            || removed.Key.ClassPriority != StockReplayEventKey.OrdinaryClass || removed.AbsoluteCountQty is not null
+            || context.Posting.SourceModule != "INVENTORY"
+            || context.Posting.PostingRole != "REVERSAL" || context.Posting.ReversesPostingId is not > 0)
+            throw Stale("Count correction removal requires an exact Inventory issue or receipt reversal.");
+        var original = await context.Db.IvTrxHistories.AsNoTracking().SingleOrDefaultAsync(h =>
+            h.Id == (int)removed.EventId && h.CompanyCode == plan.CompanyCode && h.BranchCode == plan.BranchCode
+            && h.LedgerVersion == 2 && h.StockPostingId == context.Posting.ReversesPostingId
+            && h.EntryRole == "ORIGINAL" && h.TrxType == context.Posting.SourceDocumentType
+            && (isIssue ? h.FromBalLocId == plan.BalLocId && h.FrStdQty == -removed.SignedDelta
+                : h.ToBalLocId == plan.BalLocId && h.ToStdQty == removed.SignedDelta)
+            && h.TrxDtTime == removed.Key.EffectiveAt, cancellationToken);
+        if (original is null)
+            throw Stale("The removed movement no longer matches its original history.");
+        var lines = await ReadCountCorrectionLinesAsync(context, plan.CompanyCode, plan.BranchCode,
+            plan.LaterEvents, plan.Projection.LaterSteps, cancellationToken);
+        return new StockCountCorrectionWritePermit(plan, context.Posting.Id, lines);
+    }
+
+    private static async Task<ImmutableArray<StockCountCorrectionLine>> ReadCountCorrectionLinesAsync(
+        StockPostingContext context, string companyCode, string branchCode,
+        IReadOnlyList<StockReplayPhysicalEvent> laterEvents,
+        IReadOnlyList<StockReplayPhysicalStep> laterSteps, CancellationToken cancellationToken)
+    {
+        var steps = laterSteps.ToDictionary(s => s.EventId);
+        if (steps.Count != laterEvents.Count)
             throw Stale("The replay projection has ambiguous descendant identities.");
-        var changes = plan.LaterEvents.Where(e =>
+        var changes = laterEvents.Where(e =>
                 e.Key.ClassPriority == StockReplayEventKey.CountClass
                 && steps.TryGetValue(e.EventId, out var step)
                 && step.SignedDelta != e.SignedDelta).ToArray();
         if (changes.Length == 0)
-            return new StockCountCorrectionWritePermit(plan, context.Posting.Id, []);
+            return [];
         if (changes.Any(e => e.EventId >= 0 || e.Key.AttachedSuborder != 0
                 || e.AbsoluteCountQty is null))
             throw Stale("A count descendant has an invalid physical identity.");
@@ -573,7 +630,7 @@ public static class StockReplayPhysicalPlanner
         if (lineIds.Distinct().Count() != lineIds.Length)
             throw Stale("A counted line appears twice in the replay tail.");
         var active = await StockCountGenerationResolver.ResolveActiveAsync(
-            context.Db, plan.CompanyCode, plan.BranchCode, lineIds, cancellationToken);
+            context.Db, companyCode, branchCode, lineIds, cancellationToken);
         var lines = new List<StockCountCorrectionLine>(changes.Length);
         for (var i = 0; i < changes.Length; i++)
         {
@@ -589,8 +646,7 @@ public static class StockReplayPhysicalPlanner
                 prior.EffectiveAt, movement.AbsoluteCountQty!.Value,
                 prior.SignedAdjustmentQty, steps[movement.EventId].SignedDelta));
         }
-        return new StockCountCorrectionWritePermit(plan, context.Posting.Id,
-            lines.ToImmutableArray());
+        return lines.ToImmutableArray();
     }
 
     public static async Task ValidateWithinRootAsync(

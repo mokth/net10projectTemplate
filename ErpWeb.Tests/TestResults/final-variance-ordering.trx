@@ -1,0 +1,76 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="3d137086-f5a8-40f5-b797-3292760eb90f" name="Mokth@MOKTH 2026-11-12 08:40:34" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-12T08:40:34.1408098+08:00" queuing="2026-11-12T08:40:34.1408105+08:00" start="2026-11-12T08:39:37.2010901+08:00" finish="2026-11-12T08:40:44.7269828+08:00" />
+  <TestSettings name="default" id="3995865f-513f-424b-9377-1713ecfb9c11">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-12_08_40_34" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="9ee27c40-b022-4a49-a9d3-5cef73a60639" testId="2abf3c0a-1746-72a4-6e7d-ed1eeeacd017" testName="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance(invoiceUnitPrice: 11, repricedIssueCost: 5.565217, repricedValue: 122.434783)" computerName="MOKTH" duration="00:00:01.3049853" startTime="2026-11-12T08:40:43.2432348+08:00" endTime="2026-11-12T08:40:44.5550321+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9ee27c40-b022-4a49-a9d3-5cef73a60639" />
+    <UnitTestResult executionId="405873be-fb24-4610-bc7b-1efd5cbac119" testId="5247aa84-3181-879f-e090-f958c439686e" testName="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance(invoiceUnitPrice: 9, repricedIssueCost: 5.304348, repricedValue: 116.695652)" computerName="MOKTH" duration="00:00:01.6224002" startTime="2026-11-12T08:40:41.6091673+08:00" endTime="2026-11-12T08:40:43.2424034+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="405873be-fb24-4610-bc7b-1efd5cbac119" />
+    <UnitTestResult executionId="15d2b772-b614-4f96-9cee-c5cd50e22b1d" testId="09611663-4fe3-fa1e-4e28-a7bcddda3db8" testName="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_purchase_invoice_price_variance_rejects_later_active_issue" computerName="MOKTH" duration="00:00:01.4502988" startTime="2026-11-12T08:40:40.1432077+08:00" endTime="2026-11-12T08:40:41.6088239+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="15d2b772-b614-4f96-9cee-c5cd50e22b1d" />
+    <UnitTestResult executionId="96030e7c-250c-44c4-a845-9dc563a65685" testId="b1910823-b427-12fa-f831-fda77756a1a7" testName="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence(damage: &quot;adjustment&quot;)" computerName="MOKTH" duration="00:00:01.4416034" startTime="2026-11-12T08:40:34.1180487+08:00" endTime="2026-11-12T08:40:35.5386205+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="96030e7c-250c-44c4-a845-9dc563a65685" />
+    <UnitTestResult executionId="1e21c5d8-250d-4b9e-ac4c-6cd657f7e3ce" testId="a328df55-f9ce-4e7b-e9b2-d32ea2443b75" testName="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback" computerName="MOKTH" duration="00:00:29.4701918" startTime="2026-11-12T08:40:00.9303765+08:00" endTime="2026-11-12T08:40:34.0864286+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1e21c5d8-250d-4b9e-ac4c-6cd657f7e3ce" />
+    <UnitTestResult executionId="cadc1017-3524-4254-9557-d88057633eb8" testId="0e2e719c-138e-fa54-e198-6b4c0856a605" testName="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence(damage: &quot;invoice&quot;)" computerName="MOKTH" duration="00:00:01.5135880" startTime="2026-11-12T08:40:38.5963398+08:00" endTime="2026-11-12T08:40:40.1424921+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cadc1017-3524-4254-9557-d88057633eb8" />
+    <UnitTestResult executionId="4329211c-bb2e-4e8b-8e4e-7e42dd497880" testId="2f366bb1-2648-1394-f09d-30e21a7a35e7" testName="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence(damage: &quot;settlement&quot;)" computerName="MOKTH" duration="00:00:01.5112131" startTime="2026-11-12T08:40:37.0689552+08:00" endTime="2026-11-12T08:40:38.5960893+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4329211c-bb2e-4e8b-8e4e-7e42dd497880" />
+    <UnitTestResult executionId="69a718a6-596c-4e27-8940-43224d490c20" testId="4efb6ed6-3968-9cf0-a173-7dd45cc4e101" testName="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence(damage: &quot;invoice_order&quot;)" computerName="MOKTH" duration="00:00:01.5193033" startTime="2026-11-12T08:40:35.5401792+08:00" endTime="2026-11-12T08:40:37.0683682+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="69a718a6-596c-4e27-8940-43224d490c20" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_purchase_invoice_price_variance_rejects_later_active_issue" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="09611663-4fe3-fa1e-4e28-a7bcddda3db8">
+      <Execution id="15d2b772-b614-4f96-9cee-c5cd50e22b1d" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests" name="Backdated_purchase_invoice_price_variance_rejects_later_active_issue" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence(damage: &quot;invoice_order&quot;)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="4efb6ed6-3968-9cf0-a173-7dd45cc4e101">
+      <Execution id="69a718a6-596c-4e27-8940-43224d490c20" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests" name="Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance(invoiceUnitPrice: 11, repricedIssueCost: 5.565217, repricedValue: 122.434783)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="2abf3c0a-1746-72a4-6e7d-ed1eeeacd017">
+      <Execution id="9ee27c40-b022-4a49-a9d3-5cef73a60639" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests" name="Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence(damage: &quot;invoice&quot;)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="0e2e719c-138e-fa54-e198-6b4c0856a605">
+      <Execution id="cadc1017-3524-4254-9557-d88057633eb8" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests" name="Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence(damage: &quot;adjustment&quot;)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="b1910823-b427-12fa-f831-fda77756a1a7">
+      <Execution id="96030e7c-250c-44c4-a845-9dc563a65685" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests" name="Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="a328df55-f9ce-4e7b-e9b2-d32ea2443b75">
+      <Execution id="1e21c5d8-250d-4b9e-ac4c-6cd657f7e3ce" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests" name="Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence(damage: &quot;settlement&quot;)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="2f366bb1-2648-1394-f09d-30e21a7a35e7">
+      <Execution id="4329211c-bb2e-4e8b-8e4e-7e42dd497880" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests" name="Backdated_wac_misc_receipt_rejects_damaged_invoice_variance_evidence" />
+    </UnitTest>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests.Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance(invoiceUnitPrice: 9, repricedIssueCost: 5.304348, repricedValue: 116.695652)" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="5247aa84-3181-879f-e090-f958c439686e">
+      <Execution id="405873be-fb24-4610-bc7b-1efd5cbac119" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvGoodsReceiptServiceTests" name="Backdated_wac_misc_receipt_replays_fully_capitalized_invoice_variance" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="2abf3c0a-1746-72a4-6e7d-ed1eeeacd017" executionId="9ee27c40-b022-4a49-a9d3-5cef73a60639" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="5247aa84-3181-879f-e090-f958c439686e" executionId="405873be-fb24-4610-bc7b-1efd5cbac119" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="09611663-4fe3-fa1e-4e28-a7bcddda3db8" executionId="15d2b772-b614-4f96-9cee-c5cd50e22b1d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b1910823-b427-12fa-f831-fda77756a1a7" executionId="96030e7c-250c-44c4-a845-9dc563a65685" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a328df55-f9ce-4e7b-e9b2-d32ea2443b75" executionId="1e21c5d8-250d-4b9e-ac4c-6cd657f7e3ce" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0e2e719c-138e-fa54-e198-6b4c0856a605" executionId="cadc1017-3524-4254-9557-d88057633eb8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2f366bb1-2648-1394-f09d-30e21a7a35e7" executionId="4329211c-bb2e-4e8b-8e4e-7e42dd497880" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4efb6ed6-3968-9cf0-a173-7dd45cc4e101" executionId="69a718a6-596c-4e27-8940-43224d490c20" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="8" executed="8" passed="8" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.15)&#xD;
+[xUnit.net 00:00:20.73]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:22.46]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:22.59]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:01:06.36]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

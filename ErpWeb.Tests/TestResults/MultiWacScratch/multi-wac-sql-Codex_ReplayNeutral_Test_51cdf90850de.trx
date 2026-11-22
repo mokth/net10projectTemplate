@@ -1,0 +1,55 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="1f081f3a-fd0d-4a17-a8d7-a96bd5731d42" name="Mokth@MOKTH 2026-11-10 09:03:28" runUser="MOKTH\Mokth" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-10T09:03:28.0317156+08:00" queuing="2026-11-10T09:03:28.0317161+08:00" start="2026-11-10T09:03:04.8197464+08:00" finish="2026-11-10T09:03:28.0413437+08:00" />
+  <TestSettings name="default" id="77b98d5b-afd2-4367-a314-99e17c9bab56">
+    <Deployment runDeploymentRoot="Mokth_MOKTH_2026-11-10_09_03_28" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="624dbd29-749b-46bf-a98f-d4e343c12918" testId="310b7180-334a-2c07-bd53-171fb08e3ea8" testName="ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_item_receipt_rejects_draft_edit_after_planning" computerName="MOKTH" duration="00:00:09.8049101" startTime="2026-11-10T09:03:18.0719119+08:00" endTime="2026-11-10T09:03:27.8728094+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="624dbd29-749b-46bf-a98f-d4e343c12918">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.RunAsync(Boolean sameItem, Boolean editRace, Boolean repeatFirstItem, Boolean injectFailure) in C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvMultiWacReceiptSqlServerTests.cs:line 217&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_item_receipt_rejects_draft_edit_after_planning" storage="c:\wincom\net10projects\.replay-productionv2-20261104\erpweb.tests\bin\debug\net10.0\erpweb.tests.dll" id="310b7180-334a-2c07-bd53-171fb08e3ea8">
+      <Execution id="624dbd29-749b-46bf-a98f-d4e343c12918" />
+      <TestMethod codeBase="C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\bin\Debug\net10.0\ErpWeb.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests" name="Multi_item_receipt_rejects_draft_edit_after_planning" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="310b7180-334a-2c07-bd53-171fb08e3ea8" executionId="624dbd29-749b-46bf-a98f-d4e343c12918" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="1" executed="1" passed="0" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.14)&#xD;
+[xUnit.net 00:00:11.74]   Discovering: ErpWeb.Tests&#xD;
+[xUnit.net 00:00:12.35]   Discovered:  ErpWeb.Tests&#xD;
+[xUnit.net 00:00:12.39]   Starting:    ErpWeb.Tests&#xD;
+[xUnit.net 00:00:22.24]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:22.24]       Expected: False&#xD;
+[xUnit.net 00:00:22.24]       Actual:   True&#xD;
+[xUnit.net 00:00:22.24]       Stack Trace:&#xD;
+[xUnit.net 00:00:22.24]         C:\wincom\net10projects\.replay-productionv2-20261104\ErpWeb.Tests\Inventory\Transaction\IvMultiWacReceiptSqlServerTests.cs(217,0): at ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.RunAsync(Boolean sameItem, Boolean editRace, Boolean repeatFirstItem, Boolean injectFailure)&#xD;
+[xUnit.net 00:00:22.24]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:22.25]   Finished:    ErpWeb.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="MOKTH" outcome="Error" timestamp="2026-11-10T09:03:27.8754929+08:00">
+        <Text>[xUnit.net 00:00:22.24]     ErpWeb.Tests.Inventory.Transaction.IvMultiWacReceiptSqlServerTests.Multi_item_receipt_rejects_draft_edit_after_planning [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

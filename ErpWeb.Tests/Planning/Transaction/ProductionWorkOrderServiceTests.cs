@@ -1016,6 +1016,8 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
                 StdUom = "BOX",
                 SeqNo = 2,
                 BomDefault = true,
+                SupplySource = PrMaterialSupplySources.SeparateProductDefinition,
+                ComponentDefinitionCode = PrProductDefinitionCodes.Standard,
                 Warehouse = "WH01",
                 BranchCode = "HQ",
                 LocationCode = "SITE",
@@ -1062,16 +1064,17 @@ public sealed class ProductionWorkOrderServiceTests : IAsyncLifetime
         var save = await workOrders.SaveDraftAsync(Request(10m));
         Assert.True(save.Succeeded, save.Message);
 
-        var nested = Assert.Single(save.Data!.Materials, x => x.ComponentCode == "RM002");
-        Assert.Equal(7, nested.SourceBomVersion);
-        Assert.Equal(2m, nested.BomOutputQty);
-        Assert.Equal("BOX", nested.BomOutputUom);
-        Assert.Equal("PH001", nested.ParentProductCode);
-        Assert.Equal("Nested material snapshot", nested.ComponentDescription);
-        Assert.Equal("L", nested.RequiredUom);
-        Assert.Equal("WH02", nested.WarehouseCode);
-        Assert.Equal("BIN-A", nested.LocationCode);
-        Assert.Equal(3.15m, nested.RequiredQty);
+        // Format-3 WorkOrderSnapshotBuilder freezes the SEPARATE child definition identity on the
+        // parent Work Order without merging the child BOM lines into the parent snapshot.
+        var phantomLine = Assert.Single(save.Data!.Materials, x => x.ComponentCode == "PH001");
+        Assert.Equal(PrMaterialSupplySources.SeparateProductDefinition, phantomLine.SupplySource);
+        Assert.Equal(PrProductDefinitionCodes.Standard, phantomLine.ComponentDefinitionCode);
+        Assert.Equal("Phantom snapshot", phantomLine.ComponentDescription);
+        Assert.Equal("BOX", phantomLine.RequiredUom);
+        Assert.Equal("WH01", phantomLine.WarehouseCode);
+        Assert.Equal("SITE", phantomLine.LocationCode);
+        Assert.Equal(0.40m, phantomLine.RequiredQty);
+        Assert.DoesNotContain(save.Data.Materials, x => x.ComponentCode == "RM002");
 
         var productDefinitions = CreateProductDefinitionSut();
         var deleteCheck = await productDefinitions.CanDeleteAsync([new PrProductDefinitionKey { ProdCode = "PH001", DefinitionCode = PrProductDefinitionCodes.Standard }]);

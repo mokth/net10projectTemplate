@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Core.Numbering;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
@@ -11,7 +12,9 @@ public static class StockReplayWacMiRootWriter
 {
     public static async Task<IReadOnlyList<int>> InsertAsync(
         StockPostingContext context, StockReplayWacInsertionPlan plan,
-        int batchNo, CancellationToken cancellationToken = default)
+        int batchNo, CancellationToken cancellationToken = default,
+        StockCountCorrectionWritePermit? countPermit = null,
+        StockReplayPurchaseVarianceWritePermit? purchaseVariance = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -179,12 +182,27 @@ public static class StockReplayWacMiRootWriter
         });
         history.ValuationStatus = StockValuationStatuses.Valued;
         await db.SaveChangesAsync(cancellationToken);
-        var tail = await StockReplayWacTailRepricingWriter
-            .AppendPreparedInsertionTailAsync(context, permit, plan, 2,
-                cancellationToken);
+        IReadOnlyList<StockCountReplayGeneration> correctedCounts = [];
+        if (countPermit is not null)
+        {
+            if (context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
+                || countPermit.ReversedCandidateHistoryId is not null || countPermit.Lines.Length != 1
+                || plan.Tail.LaterEvents.Count != 1 || plan.Tail.LaterEvents[0].EventId != -countPermit.Lines[0].PreviousGenerationId)
+                throw Invalid("The issue has no unique prepared count correction.");
+            correctedCounts = await StockCountCorrectionHistoryWriter.AppendAsync(context, countPermit,
+                [new StockCountCorrectionPostingLines(countPermit.Lines[0].LineId, 2, 3)],
+                new RunningNumberService(), cancellationToken);
+        }
+        var tail = countPermit is null
+            ? await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
+                context, permit, plan, 2, cancellationToken, purchasePermit: purchaseVariance)
+            : await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
+                context, permit, plan, countPermit, 2, cancellationToken);
         await StockReplayWacCostStateWriter.ApplyAsync(
             context, permit, cancellationToken);
-        return new[] { history.Id }.Concat(tail.RepricedHistoryIds).ToArray();
+        return new[] { history.Id }.Concat(tail.RepricedHistoryIds)
+            .Concat(correctedCounts.Where(g => g.AdjustmentHistoryId.HasValue).Select(g => g.AdjustmentHistoryId!.Value))
+            .Distinct().ToArray();
     }
 
     private static string? BlankToNull(string? value) =>

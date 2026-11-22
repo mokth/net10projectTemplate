@@ -44,13 +44,21 @@ public sealed partial class IvInventoryPostingService
             new(destination.BalLocId, destination.CurrentQuantity, destination.BalanceRowVersion, destination.Projection.FinalQuantity)
         ], cancellationToken);
 
+    private Task<string?> LockQaSinglePileAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        StockReplayPhysicalPlan source, CancellationToken cancellationToken) =>
+        LockQaTransferPilesAsync(db, companyCode, branchCode,
+        [
+            new(source.BalLocId, source.CurrentQuantity, source.BalanceRowVersion, source.Projection.FinalQuantity)
+        ], cancellationToken);
+
     private async Task<string?> LockQaTransferPilesAsync(
         AppDbContext db, string companyCode, string branchCode,
         IReadOnlyList<QaTransferPile> plans, CancellationToken cancellationToken)
     {
         const string stale = "The transfer stock balances changed before QA validation.";
         var ids = plans.Select(p => p.Id).ToArray();
-        if (ids.Length != 2 || ids.Distinct().Count() != 2) return stale;
+        if (ids.Length is < 1 or > 2 || ids.Distinct().Count() != ids.Length) return stale;
         var snapshots = await db.IvBalLocs.AsNoTracking()
             .Where(b => b.CompanyCode == companyCode && b.BranchCode == branchCode && ids.Contains(b.Id))
             .ToArrayAsync(cancellationToken);

@@ -831,7 +831,8 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                 continue;
             }
             var activeAdjustment = root;
-            if (chain.Count > 1 && root.InventoryAdjustmentAmount != 0m)
+            if (chain.Count > 1 && (root.InventoryAdjustmentAmount != 0m
+                    || chain.Any(x => x.InventoryAdjustmentAmount != 0m)))
             {
                 var replayed = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(
                     db, chain, cancellationToken);
@@ -891,11 +892,11 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
             .Select(x => x.InventoryAdjustmentFactId!.Value)
             .Distinct()
             .ToArray();
-        var baseUoms = factIds.Length == 0
-            ? new Dictionary<long, string>()
+        var factsById = factIds.Length == 0
+            ? new Dictionary<long, StockValuationFact>()
             : await db.StockValuationFacts.AsNoTracking()
                 .Where(x => factIds.Contains(x.Id))
-                .ToDictionaryAsync(x => x.Id, x => x.BaseUom, cancellationToken);
+                .ToDictionaryAsync(x => x.Id, cancellationToken);
 
         var reversalSettlements = new List<PurchaseReceiptCostSettlement>(originals.Length);
         foreach (var original in originals)
@@ -937,11 +938,18 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
         {
             var signedInventory = StockLedgerPrecision.Money(original.InventoryAdjustmentAmount);
             StockValueAdjustmentRequest? valueAdjustment = null;
-            if (signedInventory != 0m)
+            if (signedInventory != 0m || original.InventoryAdjustmentFactId is not null)
             {
                 if (original.InventoryAdjustmentFactId is not long factId
-                    || !baseUoms.TryGetValue(factId, out var baseUom)
-                    || string.IsNullOrWhiteSpace(baseUom))
+                    || !factsById.TryGetValue(factId, out var fact)
+                    || string.IsNullOrWhiteSpace(fact.BaseUom)
+                    || fact.CompanyCode != original.CompanyCode || fact.BranchCode != original.BranchCode
+                    || fact.ItemCode != original.ItemCode || fact.CostMethod != original.CostMethod
+                    || fact.ValuationStatus != StockValuationStatuses.Valued
+                    || fact.Direction is not (-1 or 1) || fact.SignedValue != signedInventory
+                    || signedInventory == 0m && (fact.CostAmount != 0m
+                        || fact.Direction != Math.Sign(original.TotalAdjustmentAmount)
+                        || fact.ValuationSource != StockValuationSources.PurchasePriceVariance))
                 {
                     return PurchaseReceiptSettlementResult.Fail(
                         $"Inventory adjustment {original.Id} is missing its immutable base-UOM evidence.");
@@ -953,10 +961,10 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                     original.SourceDocumentLine,
                     split,
                     original.ItemCode,
-                    baseUom,
+                    fact.BaseUom,
                     Math.Abs(signedInventory),
-                    signedInventory > 0m ? -1 : 1,
-                    signedInventory > 0m ? "PURCHASE_PRICE_VARIANCE_OUT" : "PURCHASE_PRICE_VARIANCE_IN",
+                    -fact.Direction,
+                    fact.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_OUT" : "PURCHASE_PRICE_VARIANCE_IN",
                     StockValuationSources.PurchasePriceVariance,
                     SourceDocumentLine: original.SourceDocumentLine.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     OriginalValuationFactId: original.InventoryAdjustmentFactId,
@@ -1961,7 +1969,11 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                     remainingCapitalizableQty - capitalizableQty);
 
                 var splitOrdinal = result.Count(x => x.SourceDocumentLine == row.PiLineNo);
+                // Preserve an invoice-owned zero-value anchor for a WAC variance
+                // that was entirely consumed. A later replay can then prove and
+                // replace the allocation without inventing historical facts.
                 var valueAdjustment = inventoryAmount == 0m
+                    && (method != StockCostMethods.MovingAverage || variance == 0m)
                     ? null
                     : new StockValueAdjustmentRequest(
                         row.PiLineNo,
@@ -1969,8 +1981,8 @@ public sealed class PurchaseReceiptCostSettlementService : IPurchaseReceiptCostS
                         row.ItemCode,
                         entry.BaseUom,
                         Math.Abs(inventoryAmount),
-                        inventoryAmount > 0m ? 1 : -1,
-                        inventoryAmount > 0m ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT",
+                        variance > 0m ? 1 : -1,
+                        variance > 0m ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT",
                         StockValuationSources.PurchasePriceVariance,
                         SourceDocumentLine: row.PiLineNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
                         OriginalValuationFactId: row.ReceiptValuationFactId);

@@ -94,7 +94,8 @@ public static class StockReplayFifoCountSheetPostingPlanner
             || plan.FrozenBases.Any(b => b.CompanyCode != sheet.CompanyCode
                 || b.BranchCode != sheet.BranchCode
                 || b.CostBasisKind is not
-                    (StockCountCostBasisKinds.ManualApproved
+                    (StockCountCostBasisKinds.LedgerFifo
+                        or StockCountCostBasisKinds.ManualApproved
                         or StockCountCostBasisKinds.ZeroCostApproved)
                 || !StockCountAnchorCommandFactory.ValidBasis(b)))
             throw Stale("FIFO count sheet has changed frozen bases.");

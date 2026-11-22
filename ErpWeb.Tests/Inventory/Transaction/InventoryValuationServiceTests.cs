@@ -157,10 +157,13 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
     [InlineData(StockCountCostBasisKinds.ManualApproved, true, true)]
     [InlineData(StockCountCostBasisKinds.ZeroCostApproved, false, true)]
     [InlineData(StockCountCostBasisKinds.ZeroCostApproved, true, true)]
+    [InlineData(StockCountCostBasisKinds.LedgerFifo, false, true)]
+    [InlineData(StockCountCostBasisKinds.LedgerFifo, true, true)]
     public async Task Count_fallback_requires_verified_six_decimal_basis_when_pool_is_empty(
         string basisKind, bool corruptEvidence, bool fifo)
     {
-        var ledgerBasis = basisKind == StockCountCostBasisKinds.LedgerWac;
+        var ledgerBasis = basisKind is StockCountCostBasisKinds.LedgerWac
+            or StockCountCostBasisKinds.LedgerFifo;
         if (fifo)
             await SetCostMethodAsync(StockCostMethods.Fifo);
         if (ledgerBasis)
@@ -198,8 +201,11 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
             db.IvStockCountLines.Add(line);
             await db.SaveChangesAsync();
             var frozen = ledgerBasis
-                ? await StockCountLedgerCostEvidence.CaptureWacAsync(
-                    db, "DEMO", "HQ", line.Id, line.ICode, effectiveAt, 2)
+                ? fifo
+                    ? await StockCountLedgerCostEvidence.CaptureFifoAsync(
+                        db, "DEMO", "HQ", line.Id, line.ICode, effectiveAt, 2)
+                    : await StockCountLedgerCostEvidence.CaptureWacAsync(
+                        db, "DEMO", "HQ", line.Id, line.ICode, effectiveAt, 2)
                 : null;
             var basis = new StockCountCostBasis
             {
@@ -225,6 +231,8 @@ public sealed class InventoryValuationServiceTests : IAsyncLifetime
                 state.InventoryValue = 0m;
                 state.AverageUnitCost = 0m;
                 state.CurrentUnitCost = 0m;
+                if (fifo)
+                    db.StockFifoLayers.RemoveRange(db.StockFifoLayers);
             }
             await db.SaveChangesAsync();
             lineId = line.Id;

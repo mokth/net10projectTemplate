@@ -87,9 +87,14 @@ public static class StockCountCorrectionGenerationWriter
         }
         else
         {
+            var isMovementRoot = context.Posting.SourceModule == "INVENTORY"
+                && context.Posting.SourceDocumentType is IvTrxTypes.MiscellaneousIssue or IvTrxTypes.MiscellaneousReceipt;
             var candidateHistories = await db.IvTrxHistories.AsNoTracking()
                 .Where(h => h.StockPostingId == context.Posting.Id && h.LedgerVersion == 2
-                    && h.EntryRole == "ORIGINAL"
+                    && h.EntryRole == (permit.ReversedCandidateHistoryId.HasValue ? "REVERSAL" : "ORIGINAL")
+                    && (!permit.ReversedCandidateHistoryId.HasValue
+                        || h.ReversesHistoryId == permit.ReversedCandidateHistoryId.Value)
+                    && (!isMovementRoot || h.TrxType == context.Posting.SourceDocumentType)
                     && h.TrxDtTime == permit.Candidate.Key.EffectiveAt
                     && (h.FromBalLocId == permit.BalLocId
                         || h.ToBalLocId == permit.BalLocId))

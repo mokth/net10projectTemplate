@@ -277,7 +277,7 @@ public sealed class BomExplosionService : IBomExplosionService
                     db, company, itemCode, resolveDefinition, version: null, cache, cancellationToken);
                 if (childHdr is null)
                 {
-                    return $"Cannot explode Product {pathStack[0].Prod}[{pathStack[0].Def}] because {(mfg == PrMfgTypes.Phantom ? "Phantom" : "Make")} item {itemCode}[{resolveDefinition}] has no ACTIVE Product Definition revision.";
+                    return $"Cannot explode Product {pathStack[0].Prod}[{pathStack[0].Def}] because {(mfg == PrMfgTypes.Phantom ? "Phantom" : "Make")} item {itemCode}[{resolveDefinition}] has no active BOM (no ACTIVE Product Definition revision).";
                 }
             }
         }

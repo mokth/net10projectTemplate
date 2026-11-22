@@ -17,7 +17,8 @@ public sealed partial class IvInventoryPostingService
         decimal Quantity, ProductionEffectiveCost EffectiveCost,
         string ActiveValuationIds, DateTime EffectiveAt,
         StandardProductionReplayPlan? Output = null,
-        WacFinishedGoodCostPlan? FinishedGoodCost = null);
+        WacFinishedGoodCostPlan? FinishedGoodCost = null,
+        ReversedFinishedGoodPairPlan? ReversedFinishedGoodPair = null);
 
     private static async Task<ProductionLeafReplayPlan?> PlanWacProductionLeafAsync(
         AppDbContext db, string companyCode, string branchCode,
@@ -37,8 +38,10 @@ public sealed partial class IvInventoryPostingService
             if (issueSteps.Length != 1 || issueSteps[0].SignedQuantity != -plan.Quantity
                 || issueSteps[0].SignedValue > 0m)
                 throw ProductionReplayError("The Production issue projection is incomplete.");
-            await EnsureReversedProductionValuesUnchangedAsync(db, companyCode, branchCode,
+            var reversedFgPair = await PlanReversedFinishedGoodPairAsync(db, companyCode, branchCode,
                 plan, -issueSteps[0].SignedValue, cancellationToken);
+            if (reversedFgPair is not null)
+                plan = plan with { ReversedFinishedGoodPair = reversedFgPair };
         }
         if (plan?.Output?.ActiveFinishedGood is not null)
         {
@@ -78,8 +81,10 @@ public sealed partial class IvInventoryPostingService
                 && StockReplayFifoMiRootWriter.HistoryId(i.Key) == plan.HistoryId).ToArray();
             if (issues.Length != 1 || issues[0].Quantity != plan.Quantity)
                 throw ProductionReplayError("The Production issue projection is incomplete.");
-            await EnsureReversedProductionValuesUnchangedAsync(db, companyCode, branchCode,
+            var reversedFgPair = await PlanReversedFinishedGoodPairAsync(db, companyCode, branchCode,
                 plan, issues[0].Value, cancellationToken);
+            if (reversedFgPair is not null)
+                plan = plan with { ReversedFinishedGoodPair = reversedFgPair };
         }
         if (plan?.Output?.ActiveFinishedGood is not null)
         {
@@ -90,47 +95,6 @@ public sealed partial class IvInventoryPostingService
                 throw ProductionReplayError("The backdated receipt would change finished-good cost; full downstream replay is required.");
         }
         return plan;
-    }
-
-    // Reversed movements cancel quantity, but their historical values still
-    // depend on the issue. Do not silently leave either side of a pair stale.
-    private static async Task EnsureReversedProductionValuesUnchangedAsync(
-        AppDbContext db, string company, string branch, ProductionLeafReplayPlan plan,
-        decimal projectedIssueValue, CancellationToken ct)
-    {
-        var output = plan.Output!;
-        var produce = await db.ProductionBalLotMovements.AsNoTracking()
-            .SingleAsync(m => m.Uid == output.ProduceMovementId, ct);
-        var finished = await db.ProductionBalLotMovements.AsNoTracking().Where(m =>
-            m.ProductionBalLotId == produce.ProductionBalLotId
-            && m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut
-            && m.OriginalMovementId == null).ToArrayAsync(ct);
-        if (finished.Length == 0 && !output.OutputReversed) return;
-        if (finished.Length > 1 || produce.BaseQty <= 0m || plan.Quantity <= 0m
-            || projectedIssueValue < 0m || finished.Length == 1
-                && (finished[0].BaseQty <= 0m || finished[0].BaseQty > produce.BaseQty))
-            throw ProductionReplayError("The reversed finished-good value needs a wider replay.");
-        var consume = await db.ProductionBalLotMovements.AsNoTracking()
-            .SingleAsync(m => m.Uid == output.ConsumeMovementId, ct);
-        var costs = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch,
-            [consume.Uid, produce.Uid], ct);
-        var projectedConsume = consume.BaseQty == plan.Quantity ? projectedIssueValue
-            : StockLedgerPrecision.Money(projectedIssueValue * consume.BaseQty / plan.Quantity);
-        var projectedOutput = StockLedgerPrecision.Money(costs[produce.Uid].TotalCost
-            + projectedConsume - costs[consume.Uid].TotalCost);
-        if (finished.Length == 0)
-        {
-            if (projectedOutput < 0m)
-                throw ProductionReplayError("The backdated receipt would make the reversed Production output value negative.");
-            return;
-        }
-        decimal Share(decimal value) => finished[0].BaseQty == produce.BaseQty ? value
-            : StockLedgerPrecision.Money(value * finished[0].BaseQty / produce.BaseQty);
-        if (projectedOutput < 0m || finished[0].TotalCost != Share(costs[produce.Uid].TotalCost)
-            || finished[0].TotalCost != Share(projectedOutput)
-            || output.OutputReversed && (projectedConsume != costs[consume.Uid].TotalCost
-                || projectedOutput != costs[produce.Uid].TotalCost))
-            throw ProductionReplayError("The backdated receipt would change a reversed finished-good cost; this replay is not yet supported.");
     }
 
     private static Task<StandardProductionReplayPlan?> PlanStandardProductionTailAsync(
@@ -296,6 +260,11 @@ public sealed partial class IvInventoryPostingService
             throw ProductionReplayError("The receipt replay root already has another cost replay run.");
         var planHash = StockPostingFingerprint.Create(new { inventoryPlanHash, production = plan },
             new { }).RequestFingerprint;
+        var effectiveLatest = latestEffectiveAt;
+        if (plan.Output is not null && plan.Output.LatestEffectiveAt > effectiveLatest)
+            effectiveLatest = plan.Output.LatestEffectiveAt;
+        if (plan.ReversedFinishedGoodPair is not null && plan.ReversedFinishedGoodPair.ReversalAt > effectiveLatest)
+            effectiveLatest = plan.ReversedFinishedGoodPair.ReversalAt;
         db.StockReplayRuns.Add(new StockReplayRun
         {
             CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
@@ -303,14 +272,15 @@ public sealed partial class IvInventoryPostingService
             RootDocumentType = context.Posting.SourceDocumentType,
             RootDocumentId = context.Posting.SourceDocumentId,
             EarliestEffectiveAt = context.Posting.EffectiveAt,
-            LatestEffectiveAt = plan.Output is not null && plan.Output.LatestEffectiveAt > latestEffectiveAt
-                ? plan.Output.LatestEffectiveAt : latestEffectiveAt,
+            LatestEffectiveAt = effectiveLatest,
             PlanWatermark = branchWatermark, PlanHash = planHash,
             AffectedHistoryCount = affectedHistoryCount + (plan.FinishedGoodCost is not null ? 1
                 : plan.Output?.CorrectedReversedFinishedGood is not null ? 2 : 0),
             AffectedItemCount = plan.FinishedGoodCost is not null
-                || plan.Output?.CorrectedReversedFinishedGood is not null ? 2 : 1,
-            AffectedProductionMovementCount = plan.Output?.MovementCount ?? 1,
+                || plan.Output?.CorrectedReversedFinishedGood is not null
+                || plan.ReversedFinishedGoodPair is not null ? 2 : 1,
+            AffectedProductionMovementCount = (plan.Output?.MovementCount ?? 1)
+                + (plan.ReversedFinishedGoodPair is not null ? 2 : 0),
             CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
         });
         await db.SaveChangesAsync(cancellationToken);
@@ -332,10 +302,14 @@ public sealed partial class IvInventoryPostingService
             await ProductionOutputIssueCostCorrectionWriter.AppendWithinRootAsync(
                 context, plan.Output.IssueMovementId!.Value,
                 plan.Output.ConsumeMovementId!.Value, plan.Output.ProduceMovementId!.Value,
-                plan.Output.OutputReversed, plan.EffectiveCost, cancellationToken);
+                plan.Output.OutputReversed, plan.EffectiveCost, cancellationToken,
+                allowReversedFinishedGood: plan.ReversedFinishedGoodPair is not null);
             if (plan.Output.CorrectedReversedFinishedGood is not null)
                 await ApplyCorrectedReversedFinishedGoodAsync(context,
                     plan.Output.CorrectedReversedFinishedGood, cancellationToken);
+            if (plan.ReversedFinishedGoodPair is not null)
+                await ApplyReversedFinishedGoodPairAsync(context,
+                    plan.ReversedFinishedGoodPair, cancellationToken);
         }
     }
 

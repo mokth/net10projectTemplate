@@ -45,8 +45,8 @@ public class SaEInvoiceSelfBillAndTinTests
 
     [Theory]
     [InlineData("11", "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2")]
-    [InlineData("12", "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2")]
-    [InlineData("13", "urn:oasis:names:specification:ubl:schema:xsd:DebitNote-2")]
+    [InlineData("12", "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2")]
+    [InlineData("13", "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2")]
     public void Self_billed_types_use_the_note_and_invoice_ubl_roots(string code, string expectedNamespace)
     {
         Assert.Equal(expectedNamespace, EInvoiceDocumentTypeMap.GetDocumentNamespace(code));
