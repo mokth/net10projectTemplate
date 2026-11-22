@@ -1,4 +1,4 @@
-/* Product Definition entry — guided, production-focused workspace. */
+/* Production setup: everyday inputs first, specialist settings on request. */
 
 .pdf-hero {
     position: relative;
@@ -300,49 +300,162 @@
     width: auto;
 }
 
-.pdf-product-info {
+.pdf-basic-grid {
     display: grid;
-    grid-template-columns: minmax(260px, 1.8fr) minmax(150px, 0.7fr) minmax(110px, 0.5fr) minmax(170px, 0.8fr) minmax(300px, 2.2fr);
-    grid-template-areas:
-        "code qty uom prefix description"
-        "remark remark remark remark remark"
-        "actions actions actions actions actions";
-    gap: 14px 16px;
-    align-items: end;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.5fr) minmax(0, .8fr) minmax(0, .7fr);
+    gap: 16px;
+    align-items: start;
 }
 
-.pdf-product-info__col {
-    display: contents;
-}
-
-.pdf-product-info .pdf-head__code { grid-area: code; }
-.pdf-product-info .pdf-field-qty { grid-area: qty; }
-.pdf-product-info .pdf-head__uom { grid-area: uom; }
-.pdf-product-info .pdf-field-prefix { grid-area: prefix; }
-.pdf-product-description { grid-area: description; }
-.pdf-product-remark { grid-area: remark; }
 .pdf-product-actions {
-    grid-area: actions;
     justify-content: flex-end;
-    margin-top: -2px;
+    margin-top: 16px;
 }
 
-.pdf-product-info .pdf-field-product-code,
-.pdf-product-info .pdf-field-qty,
-.pdf-product-info .pdf-field-uom,
-.pdf-product-info .pdf-field-prefix {
+.pdf-basic-grid > .iv-field,
+.pdf-options-grid > .iv-field,
+.pdf-route-editor > .iv-field,
+.pdf-machine-editor > .iv-field,
+.pdf-labour-editor > .iv-field,
+.pdf-bom-editor > .iv-field {
     width: 100%;
     max-width: none;
     min-width: 0;
 }
 
-.pdf-product-info__meta {
+.pdf-options-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(140px, 1fr));
-    gap: 12px 16px;
-    margin-top: 16px;
-    padding-top: 14px;
-    border-top: 1px solid var(--line, #d7dde5);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 14px;
+    align-items: start;
+}
+
+.pdf-options {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin-top: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--iv-line, #d7dde5);
+    border-radius: 8px;
+    background: var(--iv-surface, #fff);
+}
+
+.pdf-options > summary {
+    color: var(--iv-ink, #1c2430);
+    cursor: pointer;
+    font-size: .85rem;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.pdf-options > summary > span {
+    margin-left: 12px;
+    color: var(--iv-muted, #667085);
+    font-size: .78rem;
+    font-weight: 400;
+}
+
+.pdf-field-help {
+    display: block;
+    margin-top: 5px;
+    color: var(--iv-muted, #667085);
+    font-size: .78rem;
+    line-height: 1.5;
+}
+
+.pdf-required {
+    margin-left: 5px;
+    color: var(--iv-muted, #667085);
+    font-size: .65rem;
+    font-weight: 400;
+}
+
+.pdf-quantity-example,
+.pdf-guidance {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 14px 0;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--primary, #2563eb) 6%, var(--iv-surface, #fff));
+    color: var(--iv-ink, #1c2430);
+    font-size: .85rem;
+    line-height: 1.6;
+}
+
+.pdf-quantity-example > i,
+.pdf-guidance > i {
+    flex: 0 0 auto;
+    margin-top: 5px;
+    color: var(--primary, #2563eb);
+}
+
+.pdf-guidance p {
+    margin: 4px 0 0;
+}
+
+.pdf-step-intro {
+    margin-bottom: 18px;
+    max-width: 85ch;
+    line-height: 1.6;
+}
+
+.pdf-step-intro h3,
+.pdf-editor-title {
+    margin: 0 0 6px;
+    color: var(--iv-ink, #1c2430);
+    font-size: .98rem;
+    font-weight: 650;
+}
+
+.pdf-step-intro p {
+    margin: 6px 0 0;
+    color: var(--iv-muted, #667085);
+    font-size: .85rem;
+}
+
+.pdf-step-intro .pdf-quantity-context {
+    color: var(--iv-ink, #1c2430);
+}
+
+.pdf-editor-title,
+.pdf-editor-note {
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+.pdf-step-navigation {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 22px;
+    border-top: 1px solid var(--iv-line, #d7dde5);
+}
+
+.pdf-step-navigation > span {
+    color: var(--iv-muted, #667085);
+    font-size: .8rem;
+}
+
+.pdf-step-navigation > div:last-child {
+    text-align: right;
+}
+
+.pdf-help-example {
+    padding: 16px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--primary, #2563eb) 5%, var(--iv-surface, #fff));
+    line-height: 1.6;
+}
+
+.pdf-options > summary:focus-visible,
+.pdf-context-chip:focus-visible,
+.pdf-link-button:focus-visible {
+    outline: 2px solid var(--primary, #2563eb);
+    outline-offset: 3px;
 }
 
 .pdf-code-row {
@@ -397,8 +510,8 @@
 }
 
 .pdf-bom-editor {
-    display: flex;
-    flex-wrap: wrap;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
 }
 
 .pdf-bom-workspace {
@@ -592,8 +705,14 @@
 }
 
 .pdf-bom-editor > .pdf-editor__actions {
-    flex: 1 0 100%;
+    grid-column: 1 / -1;
 }
+
+.pdf-inline-costing { grid-column: 1 / -1; }
+.pdf-inline-costing__label { display: block; margin-bottom: 8px; font-size: .85rem; font-weight: 600; }
+.pdf-inline-costing__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 6px; }
+.pdf-inline-costing__fields > .iv-field { max-width: none; min-width: 0; }
+.pdf-inline-costing > small { color: var(--iv-muted, #667085); line-height: 1.5; }
 
 .pdf-editor__item ::deep .dxbl-text-edit-input {
     text-transform: uppercase;
@@ -750,8 +869,8 @@
 .pdf-process-editor,
 .pdf-machine-editor,
 .pdf-labour-editor {
-    display: flex;
-    flex-wrap: wrap;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
 }
 
 .pdf-field-product-code { flex: 0 1 320px; max-width: 360px; }
@@ -771,7 +890,7 @@
 
 .pdf-centre-editor > .pdf-editor__actions,
 .pdf-process-editor > .pdf-editor__actions {
-    flex: 1 1 220px;
+    grid-column: 1 / -1;
     justify-content: flex-end;
 }
 
@@ -866,7 +985,7 @@
 }
 
 .pdf-resource-actions {
-    flex: 1 1 220px;
+    grid-column: 1 / -1;
     justify-content: flex-end;
 }
 
@@ -911,19 +1030,11 @@
 
 .pdf-route-editor__wide { grid-column: span 2; }
 .pdf-route-editor__actions { justify-content: flex-end; }
-.pdf-labour-editor { grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.7fr) auto; }
+.pdf-labour-editor { grid-template-columns: 1fr 1fr; }
 
 @media (max-width: 1100px) {
-    .pdf-product-info {
-        grid-template-columns: minmax(260px, 1.4fr) minmax(140px, 0.7fr) minmax(110px, 0.5fr) minmax(170px, 0.8fr);
-        grid-template-areas:
-            "code description description description"
-            "qty uom prefix prefix"
-            "remark remark remark remark"
-            "actions actions actions actions";
-    }
-
-    .pdf-product-info__meta {
+    .pdf-basic-grid,
+    .pdf-options-grid {
         grid-template-columns: 1fr 1fr;
     }
 
@@ -944,6 +1055,16 @@
 @media (max-width: 720px) {
     .pdf-overview-card {
         padding: 16px;
+    }
+
+    .pdf-section__head {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .pdf-breadcrumb {
+        max-width: 100%;
+        overflow-wrap: anywhere;
     }
 
     .pdf-definition-summary {
@@ -971,7 +1092,7 @@
         padding: 0 14px 16px;
     }
 
-    .pdf-product-info__meta,
+    .pdf-options-grid,
     .pdf-route-editor,
     .pdf-machine-editor,
     .pdf-labour-editor,
@@ -979,20 +1100,27 @@
         grid-template-columns: 1fr;
     }
 
-    .pdf-product-info {
+    .pdf-basic-grid {
         grid-template-columns: 1fr;
-        grid-template-areas:
-            "code"
-            "description"
-            "qty"
-            "uom"
-            "prefix"
-            "remark"
-            "actions";
     }
 
     .pdf-product-actions {
         justify-content: stretch;
+    }
+
+    .pdf-step-navigation {
+        grid-template-columns: 1fr 1fr;
+        padding: 14px;
+    }
+
+    .pdf-step-navigation > span {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        text-align: center;
+    }
+
+    .pdf-help__actions {
+        grid-template-columns: 1fr;
     }
 
     .pdf-route-editor__wide { grid-column: auto; }
@@ -1028,7 +1156,7 @@
 }
 
 .pdf-buy-notice {
-    margin: 0 1rem 1rem;
+    margin: 0 0 1rem;
 }
 
 .pdf-bom-only-note {

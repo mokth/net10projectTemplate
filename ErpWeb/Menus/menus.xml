@@ -298,7 +298,7 @@
   <!-- ─── Planning ──────────────────────────────────────────────── -->
   <Menu Code="PLANNING" Name="Planning" SortOrder="6" Icon="fa-solid fa-calendar-days">
     <Menu Code="PLN_MASTER" Name="Master" SortOrder="1" Icon="fa-solid fa-folder-tree">
-      <Menu Code="PLN_PRODUCT_DEF" Name="Product Definition" Route="/planning/product-definitions" SortOrder="1"
+      <Menu Code="PLN_PRODUCT_DEF" Name="Production Setup" Route="/planning/product-definitions" SortOrder="1"
             Icon="fa-solid fa-diagram-project" />
       <Menu Code="PLN_WC_HIERARCHY" Name="WC / Process / Machine" Route="/planning/hierarchy" SortOrder="2"
             Icon="fa-solid fa-sitemap" />
