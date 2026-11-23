@@ -221,4 +221,37 @@ public interface IIvInventoryPostingService
         int batchNo, DateTime countDate,
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("This posting service does not support V2 stock-count anchors.");
+
+    /// <summary>
+    /// Stock-transfer (TR) fast-path post on the caller's context, transaction, and StockPostingContext.
+    /// Does not Commit. Calls an intermediate SaveChangesAsync inside the caller's open transaction to
+    /// materialize new destination IvBalLoc IDs before writing IvTrxHistory. Rejects atomically if
+    /// RequiresReplay == true; caller must roll back the transaction on failure.
+    /// </summary>
+    Task<IvInventoryPostingBatchResult> PostStockTransferInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        bool isAuthorizedSubconCaller = false,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This posting service does not support in-transaction stock transfers.");
+
+    /// <summary>
+    /// Stock-transfer (TR) fast-path rollback on the caller's context, transaction, and StockPostingContext.
+    /// Does not Commit. Rejects atomically if RequiresReplay == true or if replay-corrected valuation
+    /// facts exist on the transfer; caller must roll back the transaction on failure.
+    /// </summary>
+    Task<IvInventoryPostingBatchResult> RollBackStockTransferInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        bool isAuthorizedSubconCaller = false,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This posting service does not support in-transaction stock transfer rollbacks.");
 }

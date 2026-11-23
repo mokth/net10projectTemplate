@@ -24,7 +24,12 @@ public partial class SubconReceiveBack : PageBase
     protected bool IsSubmitting;
     protected bool LinePopupVisible;
     protected bool DiscardConfirmVisible;
+    protected bool PostConfirmVisible;
+    protected bool RollbackConfirmVisible;
     protected bool CanEditAfterView;
+    protected bool CanPostPermission;
+    protected bool CanRollbackPermission;
+    protected string? StatusMessage;
     protected string DispatchLookupSearch = string.Empty;
     protected int DispatchLookupSkip;
     protected int DispatchLookupTotal;
@@ -37,6 +42,8 @@ public partial class SubconReceiveBack : PageBase
     protected bool IsView => string.Equals(Mode, "view", StringComparison.OrdinalIgnoreCase);
     protected bool CanEditDocument => !IsView && SubconStatuses.CanEdit(Header.Status);
     protected bool CanEditDocumentAfterView => CanEditAfterView && SubconStatuses.CanEdit(Header.Status);
+    protected bool CanPostDocument => IsView && Header.CanPost && CanPostPermission && !IsSubmitting;
+    protected bool CanRollbackDocument => IsView && Header.CanRollback && CanRollbackPermission && !IsSubmitting;
     protected bool CanSave => CanEditDocument && !IsSubmitting && Lines.Count > 0 && !string.IsNullOrWhiteSpace(Header.SupplierCode);
     protected string PageHeading => IsNew ? "Receive Back" : $"Receive Back {Header.DocNo}";
     protected string ModeChip => IsNew ? "New" : IsView ? "View" : "Edit";
@@ -46,6 +53,14 @@ public partial class SubconReceiveBack : PageBase
     protected override async Task OnPageInitializedAsync()
     {
         CanEditAfterView = await AccessRights.CanAsync(MenuCodes.SubconReceiveBack, PermissionCodes.Edit);
+        CanPostPermission =
+            (await AccessRights.CanAsync(MenuCodes.SubconReceiveBack, PermissionCodes.Post)
+             || await AccessRights.CanAsync(MenuCodes.SubconWorkbench, PermissionCodes.Post))
+            && await AccessRights.CanAsync(MenuCodes.InventoryStockTransfer, PermissionCodes.Post);
+        CanRollbackPermission =
+            (await AccessRights.CanAsync(MenuCodes.SubconReceiveBack, PermissionCodes.Rollback)
+             || await AccessRights.CanAsync(MenuCodes.SubconWorkbench, PermissionCodes.Rollback))
+            && await AccessRights.CanAsync(MenuCodes.InventoryStockTransfer, PermissionCodes.Rollback);
         if (IsNew)
         {
             Header = new HeaderVm { TrxDate = Clock.Today, Status = SubconStatuses.New };
@@ -232,6 +247,64 @@ public partial class SubconReceiveBack : PageBase
         Navigation.NavigateTo("/subcon/receive-back");
     }
 
+    protected async Task ConfirmPostAsync()
+    {
+        if (!CanPostDocument)
+        {
+            return;
+        }
+
+        PostConfirmVisible = false;
+        ErrorMessage = null;
+        StatusMessage = null;
+        IsSubmitting = true;
+        var result = await Subcon.PostReceiptAsync(new SubconKeyCommand
+        {
+            DocNo = Header.DocNo,
+            RowVersion = Header.RowVersion,
+            RequestId = Guid.NewGuid()
+        });
+        IsSubmitting = false;
+        if (!result.Succeeded || result.Receipt is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        Header = HeaderVm.From(result.Receipt);
+        Lines = result.Receipt.Lines.Select(LineVm.From).ToList();
+        StatusMessage = result.InfoMessage ?? $"Posted receive-back {Header.DocNo}.";
+    }
+
+    protected async Task ConfirmRollbackAsync()
+    {
+        if (!CanRollbackDocument)
+        {
+            return;
+        }
+
+        RollbackConfirmVisible = false;
+        ErrorMessage = null;
+        StatusMessage = null;
+        IsSubmitting = true;
+        var result = await Subcon.RollbackReceiptAsync(new SubconKeyCommand
+        {
+            DocNo = Header.DocNo,
+            RowVersion = Header.RowVersion,
+            RequestId = Guid.NewGuid()
+        });
+        IsSubmitting = false;
+        if (!result.Succeeded || result.Receipt is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        Header = HeaderVm.From(result.Receipt);
+        Lines = result.Receipt.Lines.Select(LineVm.From).ToList();
+        StatusMessage = result.InfoMessage ?? $"Rolled back receive-back {Header.DocNo}.";
+    }
+
     protected sealed class HeaderVm
     {
         public string DocNo { get; set; } = string.Empty;
@@ -240,6 +313,10 @@ public partial class SubconReceiveBack : PageBase
         public string SupplierCode { get; set; } = string.Empty;
         public string? SupplierName { get; set; }
         public string? Remarks { get; set; }
+        public int? PostedTrxBatchNo { get; set; }
+        public Guid? PostedOperationId { get; set; }
+        public bool CanPost { get; set; }
+        public bool CanRollback { get; set; }
         public byte[] RowVersion { get; set; } = [];
         public string PostBlockedReason { get; set; } = SubconBlockedReasons.NoAtomicInventorySeam;
 
@@ -251,6 +328,10 @@ public partial class SubconReceiveBack : PageBase
             SupplierCode = dto.SupplierCode,
             SupplierName = dto.SupplierName,
             Remarks = dto.Remarks,
+            PostedTrxBatchNo = dto.PostedTrxBatchNo,
+            PostedOperationId = dto.PostedOperationId,
+            CanPost = dto.CanPost,
+            CanRollback = dto.CanRollback,
             RowVersion = dto.RowVersion,
             PostBlockedReason = dto.PostBlockedReason
         };

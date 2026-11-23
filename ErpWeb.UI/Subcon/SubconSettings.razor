@@ -29,13 +29,13 @@
             <h1 class="iv-title">Settings</h1>
             <div class="iv-chips">
                 <span class="iv-chip">@(Policy.Version == 0 ? "No saved policy yet" : $"Saved policy · version {Policy.Version}")</span>
-                <span class="iv-chip">Drafts only</span>
+                <span class="iv-chip">@(Policy.LiveCustodyReady ? "Non-lot custody live" : "Drafts only")</span>
             </div>
         </div>
     </header>
 
     <section class="iv-card">
-        <SubconPostingBanner />
+        <SubconPostingBanner Message="@BannerMessage" />
         @if (IsLoading)
         {
             <div class="iv-skeleton" aria-busy="true">
@@ -44,13 +44,38 @@
         }
         else
         {
-            <p class="iv-guidance">Live send-out and receive-back stay off until inventory transfer can share a transaction with this document and supplier stock is excluded from sales, issues, and stock count.</p>
+            <p class="iv-guidance">Configure an active warehouse with WarehouseType = <code>SUBCON</code> (and one location per supplier code) before enabling non-lot same-SKU custody posting. All other capabilities remain frozen.</p>
             <ul class="qa-settings-help">
-                <li>Menus SUBCON_WORKBENCH, SUBCON_SEND_OUT, SUBCON_RECEIVE_BACK, SUBCON_INQUIRY, and SUBCON_SETTINGS grant the draft shell. They do not post stock.</li>
-                <li>Inventory-only companies do not need a Planning or Work Order right.</li>
-                <li>Run <code>scripts/create-subcon-foundation.sql</code> and <code>scripts/init-subcon-menu.sql</code> on SQL Server tenants.</li>
-                <li>Do not turn on a costing replay switch from this page. There is none.</li>
+                <li>Run <code>scripts/create-subcon-foundation.sql</code>, <code>scripts/create-subcon-v2-jobs.sql</code>, <code>scripts/create-subcon-v3-posting.sql</code>, and <code>scripts/init-subcon-menu.sql</code> on SQL Server tenants.</li>
+                <li>Posting and rollback require both Subcon and <code>INV_STOCK_TRANSFER</code> permissions.</li>
+                <li>Backdated subcontracting movements with later stock/valuation dependencies remain blocked atomically.</li>
             </ul>
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Enable live subcontracting" ColSpanMd="4">
+                    <Template>
+                        <DxCheckBox @bind-Checked="@EditSubconEnabled" Enabled="@CanEdit">
+                            Subcon live enabled
+                        </DxCheckBox>
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Non-lot same-SKU custody" ColSpanMd="4">
+                    <Template>
+                        <DxCheckBox @bind-Checked="@EditInventoryCustodyPostEnabled" Enabled="@CanEdit">
+                            Allow Send-Out / Receive-Back Post &amp; Rollback
+                        </DxCheckBox>
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Default custody warehouse (SUBCON)" ColSpanMd="4">
+                    <Template>
+                        <IvCodeComboBox Data="@Warehouses"
+                                        Value="@EditDefaultCustodyWarehouseCode"
+                                        ValueChanged="@(v => EditDefaultCustodyWarehouseCode = v)"
+                                        ValueExpression="@(() => EditDefaultCustodyWarehouseCode)"
+                                        Enabled="@CanEdit"
+                                        NullText="Select SUBCON warehouse" />
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
             <div class="qa-settings-list">
                 @foreach (var gate in FrozenGates)
                 {
@@ -67,7 +92,7 @@
                 }
             </div>
             <footer class="iv-footer">
-                <p class="iv-footer__hint">Save keeps every live mode off.</p>
+                <p class="iv-footer__hint">@(Policy.LiveCustodyReady ? "Non-lot same-SKU custody posting is active; conversion, lot return, WIP, and fee capitalization remain off." : "Live posting stays off until explicitly enabled.")</p>
                 <div class="iv-footer__actions">
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                               Text="Close"

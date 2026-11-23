@@ -304,7 +304,8 @@ public static class CoreServiceCollectionExtensions
         services.AddScoped<IMachineScheduleSegmentBackfillService, MachineScheduleSegmentBackfillService>();
         services.AddScoped<IMachineScheduleAllocationBackfillService, MachineScheduleAllocationBackfillService>();
 
-        services.AddScoped<ISubconInventorySourceAdapter, SubconBlockedInventorySourceAdapter>();
+        services.AddScoped<ISubconCustodyGuard, SubconCustodyGuardService>();
+        services.AddScoped<ISubconInventorySourceAdapter, SubconInventoryTransferAdapter>();
         services.AddScoped<ISubconProductionSourceAdapter, SubconBlockedProductionSourceAdapter>();
         services.AddScoped<ISubconBomReadService, SubconBomReadService>();
         services.AddScoped<ISubconApplicationService, SubconApplicationService>();

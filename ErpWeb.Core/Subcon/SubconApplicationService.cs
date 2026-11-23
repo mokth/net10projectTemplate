@@ -67,22 +67,66 @@ public sealed class SubconApplicationService : ISubconApplicationService
             return SubconResult.Fail(SubconMessages.NotAuthorized);
         }
 
-        if (command.SubconEnabled)
-        {
-            return SubconResult.Fail(SubconBlockedReasons.LiveEnablementFrozen);
-        }
-
-        if (command.InventoryModeEnabled)
-        {
-            return SubconResult.Fail(SubconBlockedReasons.InventoryModeFrozen);
-        }
-
-        if (command.ProductionModeEnabled)
+        if (command.ProductionModeEnabled || command.ProductionWipEnabled)
         {
             return SubconResult.Fail(SubconBlockedReasons.ProductionModeFrozen);
         }
 
+        if (command.LotReturnEnabled)
+        {
+            return SubconResult.Fail(SubconBlockedReasons.LotReturnFrozen);
+        }
+
+        if (command.BomConversionEnabled)
+        {
+            return SubconResult.Fail(SubconBlockedReasons.BomConversionFrozen);
+        }
+
+        if (command.FeeCapitalizationEnabled)
+        {
+            return SubconResult.Fail(SubconBlockedReasons.FeeCapitalizationFrozen);
+        }
+
+        if (!_inventory.SupportsLiveCustodyPosting)
+        {
+            if (command.SubconEnabled)
+            {
+                return SubconResult.Fail(SubconBlockedReasons.LiveEnablementFrozen);
+            }
+
+            if (command.InventoryModeEnabled || command.InventoryCustodyPostEnabled)
+            {
+                return SubconResult.Fail(SubconBlockedReasons.InventoryModeFrozen);
+            }
+        }
+
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        var custodyWh = TrimTo(command.DefaultCustodyWarehouseCode, 10);
+        var enableInventoryCustody = command.InventoryCustodyPostEnabled || command.InventoryModeEnabled;
+        if (enableInventoryCustody)
+        {
+            if (string.IsNullOrWhiteSpace(custodyWh))
+            {
+                return SubconResult.Fail(SubconMessages.CustodyWarehouseRequired);
+            }
+
+            var whQuery = db.IvWarehouses.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                            && x.WarehouseCode == custodyWh
+                            && x.IsActive);
+            if (!string.IsNullOrWhiteSpace(scope.BranchCode))
+            {
+                whQuery = whQuery.Where(x => x.BranchCode == scope.BranchCode);
+            }
+
+            var whTypes = await whQuery.Select(x => x.WarehouseType).ToListAsync(cancellationToken);
+            if (!whTypes.Any(SubconCustodyGuardService.IsCustodyWarehouseType))
+            {
+                return SubconResult.Fail(SubconMessages.CustodyWarehouseRequired);
+            }
+        }
+
         var published = await LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
         if (published is null)
         {
@@ -101,9 +145,15 @@ public sealed class SubconApplicationService : ISubconApplicationService
             return SubconResult.Fail(SubconMessages.ChangedReload);
         }
 
-        published.SubconEnabled = false;
-        published.InventoryModeEnabled = false;
+        published.SubconEnabled = _inventory.SupportsLiveCustodyPosting && command.SubconEnabled;
+        published.InventoryModeEnabled = _inventory.SupportsLiveCustodyPosting && enableInventoryCustody;
+        published.InventoryCustodyPostEnabled = _inventory.SupportsLiveCustodyPosting && enableInventoryCustody;
+        published.DefaultCustodyWarehouseCode = custodyWh;
         published.ProductionModeEnabled = false;
+        published.ProductionWipEnabled = false;
+        published.LotReturnEnabled = false;
+        published.BomConversionEnabled = false;
+        published.FeeCapitalizationEnabled = false;
         published.IsPublished = true;
         published.ModifiedDate = DateTime.UtcNow;
         published.ModifiedBy = TruncateUser(scope.UserId);
@@ -121,6 +171,8 @@ public sealed class SubconApplicationService : ISubconApplicationService
 
         var scope = RequireBranch()!;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var policy = await LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
+        var liveCustody = IsLiveCustodyEnabled(policy);
         var today = DateTime.Today;
         var filteredDrafts = ApplyDispatchFilters(
             db.SubconDispatches.AsNoTracking()
@@ -129,20 +181,55 @@ public sealed class SubconApplicationService : ISubconApplicationService
             .Where(x => x.Status == SubconStatuses.New);
 
         var open = await filteredDrafts.CountAsync(cancellationToken);
-        var overdue = await filteredDrafts.CountAsync(
-            x => x.PromisedReturnDate != null && x.PromisedReturnDate < today,
-            cancellationToken);
-        var openLines = await filteredDrafts.SelectMany(x => x.Lines).CountAsync(cancellationToken);
-        var uomTotals = await filteredDrafts
-            .SelectMany(x => x.Lines)
-            .Where(l => l.Uom != string.Empty)
-            .GroupBy(l => l.Uom)
-            .Select(g => new { Uom = g.Key, Qty = g.Sum(x => x.Qty) })
-            .OrderBy(x => x.Uom)
-            .ToListAsync(cancellationToken);
-        var byUom = uomTotals
-            .Select(x => $"{x.Qty:0.####} {x.Uom}")
-            .ToArray();
+        int overdue;
+        int openLines;
+        string[] byUom;
+
+        if (liveCustody)
+        {
+            var postedDispatches = ApplyDispatchFilters(
+                db.SubconDispatches.AsNoTracking()
+                    .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode!),
+                query with { Kind = SubconListKinds.Dispatch })
+                .Where(x => x.Status == SubconStatuses.Posted);
+            overdue = await postedDispatches.CountAsync(
+                x => x.PromisedReturnDate != null && x.PromisedReturnDate < today,
+                cancellationToken);
+
+            var activeAllocs = db.SubconCustodyAllocations.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode
+                            && x.BranchCode == scope.BranchCode!
+                            && x.IsActive
+                            && (x.DispatchedBaseQty - x.ReturnedBaseQty - x.ConsumedBaseQty - x.ScrapBaseQty) > 0m);
+            openLines = await activeAllocs.CountAsync(cancellationToken);
+            var uomTotals = await activeAllocs
+                .GroupBy(x => x.BaseUom)
+                .Select(g => new
+                {
+                    Uom = g.Key,
+                    Qty = g.Sum(x => x.DispatchedBaseQty - x.ReturnedBaseQty - x.ConsumedBaseQty - x.ScrapBaseQty)
+                })
+                .OrderBy(x => x.Uom)
+                .ToListAsync(cancellationToken);
+            byUom = uomTotals.Select(x => $"{x.Qty:0.####} {x.Uom}").ToArray();
+        }
+        else
+        {
+            overdue = await filteredDrafts.CountAsync(
+                x => x.PromisedReturnDate != null && x.PromisedReturnDate < today,
+                cancellationToken);
+            openLines = await filteredDrafts.SelectMany(x => x.Lines).CountAsync(cancellationToken);
+            var uomTotals = await filteredDrafts
+                .SelectMany(x => x.Lines)
+                .Where(l => l.Uom != string.Empty)
+                .GroupBy(l => l.Uom)
+                .Select(g => new { Uom = g.Key, Qty = g.Sum(x => x.Qty) })
+                .OrderBy(x => x.Uom)
+                .ToListAsync(cancellationToken);
+            byUom = uomTotals
+                .Select(x => $"{x.Qty:0.####} {x.Uom}")
+                .ToArray();
+        }
 
         return SubconResult.OkWorkbench(new SubconWorkbenchPage
         {
@@ -151,7 +238,8 @@ public sealed class SubconApplicationService : ISubconApplicationService
             DraftCount = open,
             OutstandingByUom = byUom,
             Rows = list.ListPage.Rows,
-            TotalCount = list.ListPage.TotalCount
+            TotalCount = list.ListPage.TotalCount,
+            PostingBanner = liveCustody ? string.Empty : SubconBlockedReasons.PostingNotEnabled
         }, list.CanUseProductionMode);
     }
 
@@ -241,9 +329,17 @@ public sealed class SubconApplicationService : ISubconApplicationService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var entity = await LoadDispatchAsync(db, scope, docNo, cancellationToken);
-        return entity is null
-            ? SubconResult.Fail(SubconMessages.DispatchNotFound)
-            : SubconResult.OkDispatch(MapDispatch(entity), await CanUseProductionAsync(cancellationToken));
+        if (entity is null)
+        {
+            return SubconResult.Fail(SubconMessages.DispatchNotFound);
+        }
+
+        var policy = await LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
+        var activeLink = await LoadActivePostingLinkAsync(
+            db, scope, SubconPostingDocKinds.Dispatch, entity.Uid, cancellationToken);
+        return SubconResult.OkDispatch(
+            MapDispatch(entity, IsLiveCustodyEnabled(policy), activeLink),
+            await CanUseProductionAsync(cancellationToken));
     }
 
     public async Task<SubconResult> SaveDispatchDraftAsync(SubconDispatchSaveCommand command, CancellationToken cancellationToken = default)
@@ -395,6 +491,12 @@ public sealed class SubconApplicationService : ISubconApplicationService
 
     public async Task<SubconResult> PostDispatchAsync(SubconKeyCommand command, CancellationToken cancellationToken = default)
     {
+        var scope = RequireWrite();
+        if (scope is null)
+        {
+            return SubconResult.Fail(SubconMessages.CompanyBranchRequired);
+        }
+
         var loaded = await GetDispatchAsync(command.DocNo, cancellationToken);
         if (!loaded.Succeeded || loaded.Dispatch is null)
         {
@@ -407,13 +509,28 @@ public sealed class SubconApplicationService : ISubconApplicationService
             return SubconResult.Fail(SubconMessages.NotAuthorized);
         }
 
-        return SubconModes.IsInventory(loaded.Dispatch.Mode)
-            ? await _inventory.PostAsync(loaded.Dispatch, cancellationToken)
-            : await _production.PostAsync(loaded.Dispatch, cancellationToken);
+        if (SubconModes.IsInventory(loaded.Dispatch.Mode))
+        {
+            if (_inventory.SupportsLiveCustodyPosting
+                && !await CanAsync(MenuCodes.InventoryStockTransfer, PermissionCodes.Post, cancellationToken))
+            {
+                return SubconResult.Fail(SubconMessages.NotAuthorized);
+            }
+
+            return await _inventory.PostAsync(command, loaded.Dispatch, scope, cancellationToken);
+        }
+
+        return await _production.PostAsync(loaded.Dispatch, cancellationToken);
     }
 
     public async Task<SubconResult> RollbackDispatchAsync(SubconKeyCommand command, CancellationToken cancellationToken = default)
     {
+        var scope = RequireWrite();
+        if (scope is null)
+        {
+            return SubconResult.Fail(SubconMessages.CompanyBranchRequired);
+        }
+
         var loaded = await GetDispatchAsync(command.DocNo, cancellationToken);
         if (!loaded.Succeeded || loaded.Dispatch is null)
         {
@@ -426,9 +543,18 @@ public sealed class SubconApplicationService : ISubconApplicationService
             return SubconResult.Fail(SubconMessages.NotAuthorized);
         }
 
-        return SubconModes.IsInventory(loaded.Dispatch.Mode)
-            ? await _inventory.RollbackAsync(loaded.Dispatch, cancellationToken)
-            : await _production.RollbackAsync(loaded.Dispatch, cancellationToken);
+        if (SubconModes.IsInventory(loaded.Dispatch.Mode))
+        {
+            if (_inventory.SupportsLiveCustodyPosting
+                && !await CanAsync(MenuCodes.InventoryStockTransfer, PermissionCodes.Rollback, cancellationToken))
+            {
+                return SubconResult.Fail(SubconMessages.NotAuthorized);
+            }
+
+            return await _inventory.RollbackAsync(command, loaded.Dispatch, scope, cancellationToken);
+        }
+
+        return await _production.RollbackAsync(loaded.Dispatch, cancellationToken);
     }
 
     public async Task<SubconResult> GetReceiptAsync(string docNo, CancellationToken cancellationToken = default)
@@ -447,9 +573,15 @@ public sealed class SubconApplicationService : ISubconApplicationService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var entity = await LoadReceiptAsync(db, scope, docNo, cancellationToken);
-        return entity is null
-            ? SubconResult.Fail(SubconMessages.ReceiptNotFound)
-            : SubconResult.OkReceipt(MapReceipt(entity));
+        if (entity is null)
+        {
+            return SubconResult.Fail(SubconMessages.ReceiptNotFound);
+        }
+
+        var policy = await LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
+        var activeLink = await LoadActivePostingLinkAsync(
+            db, scope, SubconPostingDocKinds.Receipt, entity.Uid, cancellationToken);
+        return SubconResult.OkReceipt(MapReceipt(entity, IsLiveCustodyEnabled(policy), activeLink));
     }
 
     public async Task<SubconResult> SaveReceiptDraftAsync(SubconReceiptSaveCommand command, CancellationToken cancellationToken = default)
@@ -531,7 +663,9 @@ public sealed class SubconApplicationService : ISubconApplicationService
                 LineNo = x.LineNo <= 0 ? idx + 1 : x.LineNo,
                 DispatchDocNo = (x.DispatchDocNo ?? string.Empty).Trim(),
                 DispatchLineNo = x.DispatchLineNo,
-                Qty = decimal.Round(x.Qty, 4, MidpointRounding.AwayFromZero)
+                Qty = decimal.Round(x.Qty, 4, MidpointRounding.AwayFromZero),
+                ToWarehouseCode = TrimTo(x.ToWarehouseCode, 10),
+                ToLocationCode = TrimTo(x.ToLocationCode, 10)
             })
             .ToArray();
 
@@ -556,6 +690,25 @@ public sealed class SubconApplicationService : ISubconApplicationService
             }
         }
 
+        var policy = await LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
+        var liveCustody = IsLiveCustodyEnabled(policy);
+
+        var activeWarehouses = (await db.IvWarehouses.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.IsActive)
+                .Select(x => new { x.WarehouseCode, x.WarehouseType })
+                .ToListAsync(cancellationToken))
+            .ToDictionary(x => x.WarehouseCode, x => x.WarehouseType, StringComparer.OrdinalIgnoreCase);
+
+        var activeLocations = (await db.IvLocations.AsNoTracking()
+                .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.IsActive)
+                .Select(x => new { x.WarehouseCode, x.LocCode })
+                .ToListAsync(cancellationToken))
+            .GroupBy(x => x.WarehouseCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(v => v.LocCode).ToDictionary(l => l, StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+
         var docNos = normalizedLines
             .Select(x => x.DispatchDocNo)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -568,7 +721,7 @@ public sealed class SubconApplicationService : ISubconApplicationService
                         && docNos.Contains(x.DocNo))
             .ToDictionaryAsync(x => x.DocNo, StringComparer.OrdinalIgnoreCase, cancellationToken);
 
-        var resolvedTargets = new List<(SubconDispatch Dispatch, SubconDispatchLine DispatchLine, int LineNo, decimal Qty)>(normalizedLines.Length);
+        var resolvedTargets = new List<(SubconDispatch Dispatch, SubconDispatchLine DispatchLine, int LineNo, decimal Qty, string? ToWh, string? ToLoc)>(normalizedLines.Length);
         foreach (var line in normalizedLines)
         {
             if (!dispatches.TryGetValue(line.DispatchDocNo, out var dispatch))
@@ -589,6 +742,12 @@ public sealed class SubconApplicationService : ISubconApplicationService
                 return SubconResult.Fail(SubconMessages.DispatchNotFound);
             }
 
+            if (liveCustody && !SubconStatuses.IsPosted(dispatch.Status))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SubconResult.Fail(SubconMessages.DispatchMustBePosted);
+            }
+
             var dispatchLine = dispatch.Lines.SingleOrDefault(x => x.LineNo == line.DispatchLineNo);
             if (dispatchLine is null)
             {
@@ -596,7 +755,36 @@ public sealed class SubconApplicationService : ISubconApplicationService
                 return SubconResult.Fail(SubconMessages.DispatchNotFound);
             }
 
-            resolvedTargets.Add((dispatch, dispatchLine, line.LineNo, line.Qty));
+            string? toWh = line.ToWarehouseCode;
+            string? toLoc = line.ToLocationCode;
+            if (!string.IsNullOrWhiteSpace(toWh))
+            {
+                if (!activeWarehouses.TryGetValue(toWh, out var whType))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SubconResult.Fail(SubconMessages.WarehouseInvalid);
+                }
+
+                if (SubconCustodyGuardService.IsCustodyWarehouseType(whType))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SubconResult.Fail(SubconMessages.ReceiveDestinationCustodyForbidden);
+                }
+
+                if (!string.IsNullOrWhiteSpace(toLoc))
+                {
+                    if (!activeLocations.TryGetValue(toWh, out var whLocs)
+                        || !whLocs.TryGetValue(toLoc, out var canonicalLoc))
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return SubconResult.Fail(SubconMessages.LocationInvalid);
+                    }
+
+                    toLoc = canonicalLoc;
+                }
+            }
+
+            resolvedTargets.Add((dispatch, dispatchLine, line.LineNo, line.Qty, toWh, toLoc));
         }
 
         var dispatchLineIds = resolvedTargets
@@ -650,7 +838,9 @@ public sealed class SubconApplicationService : ISubconApplicationService
                 DispatchId = target.Dispatch.Uid,
                 DispatchLineId = target.DispatchLine.Uid,
                 Qty = target.Qty,
-                Uom = target.DispatchLine.Uom
+                Uom = target.DispatchLine.Uom,
+                ToWarehouseCode = target.ToWh,
+                ToLocationCode = target.ToLoc
             });
         }
 
@@ -662,7 +852,7 @@ public sealed class SubconApplicationService : ISubconApplicationService
         entity.ModifiedBy = TruncateUser(scope.UserId);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
-        return SubconResult.OkReceipt(MapReceipt(entity));
+        return SubconResult.OkReceipt(MapReceipt(entity, liveCustody, null));
     }
 
     public async Task<SubconResult> DeleteReceiptDraftAsync(SubconKeyCommand command, CancellationToken cancellationToken = default)
@@ -704,6 +894,12 @@ public sealed class SubconApplicationService : ISubconApplicationService
 
     public async Task<SubconResult> PostReceiptAsync(SubconKeyCommand command, CancellationToken cancellationToken = default)
     {
+        var scope = RequireWrite();
+        if (scope is null)
+        {
+            return SubconResult.Fail(SubconMessages.CompanyBranchRequired);
+        }
+
         var loaded = await GetReceiptAsync(command.DocNo, cancellationToken);
         if (!loaded.Succeeded || loaded.Receipt is null)
         {
@@ -716,7 +912,121 @@ public sealed class SubconApplicationService : ISubconApplicationService
             return SubconResult.Fail(SubconMessages.NotAuthorized);
         }
 
-        return await _inventory.PostReceiptAsync(loaded.Receipt, cancellationToken);
+        if (_inventory.SupportsLiveCustodyPosting
+            && !await CanAsync(MenuCodes.InventoryStockTransfer, PermissionCodes.Post, cancellationToken))
+        {
+            return SubconResult.Fail(SubconMessages.NotAuthorized);
+        }
+
+        return await _inventory.PostReceiptAsync(command, loaded.Receipt, scope, cancellationToken);
+    }
+
+    public async Task<SubconResult> RollbackReceiptAsync(SubconKeyCommand command, CancellationToken cancellationToken = default)
+    {
+        var scope = RequireWrite();
+        if (scope is null)
+        {
+            return SubconResult.Fail(SubconMessages.CompanyBranchRequired);
+        }
+
+        var loaded = await GetReceiptAsync(command.DocNo, cancellationToken);
+        if (!loaded.Succeeded || loaded.Receipt is null)
+        {
+            return loaded;
+        }
+
+        if (!await CanAsync(MenuCodes.SubconReceiveBack, PermissionCodes.Rollback, cancellationToken)
+            && !await CanAsync(MenuCodes.SubconWorkbench, PermissionCodes.Rollback, cancellationToken))
+        {
+            return SubconResult.Fail(SubconMessages.NotAuthorized);
+        }
+
+        if (_inventory.SupportsLiveCustodyPosting
+            && !await CanAsync(MenuCodes.InventoryStockTransfer, PermissionCodes.Rollback, cancellationToken))
+        {
+            return SubconResult.Fail(SubconMessages.NotAuthorized);
+        }
+
+        return await _inventory.RollbackReceiptAsync(command, loaded.Receipt, scope, cancellationToken);
+    }
+
+    public async Task<SubconResult> GetCustodyReconciliationAsync(
+        string? supplierCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = RequireBranch();
+        if (scope is null)
+        {
+            return SubconResult.Fail(SubconMessages.CompanyBranchRequired);
+        }
+
+        if (!await CanViewDispatchAsync(cancellationToken))
+        {
+            return SubconResult.Fail(SubconMessages.NotAuthorized);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var query = db.SubconCustodyAllocations.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode
+                        && x.BranchCode == scope.BranchCode!
+                        && x.IsActive);
+
+        var supp = TrimTo(supplierCode, 20);
+        if (!string.IsNullOrWhiteSpace(supp))
+        {
+            query = query.Where(x => x.SupplierCode == supp);
+        }
+
+        var grouped = await query
+            .GroupBy(x => new
+            {
+                x.SupplierCode,
+                x.ItemCode,
+                x.BaseUom,
+                x.CustodyWarehouseCode,
+                x.CustodyLocationCode,
+                x.CustodyBalLocId
+            })
+            .Select(g => new
+            {
+                g.Key.SupplierCode,
+                g.Key.ItemCode,
+                g.Key.BaseUom,
+                g.Key.CustodyWarehouseCode,
+                g.Key.CustodyLocationCode,
+                g.Key.CustodyBalLocId,
+                Dispatched = g.Sum(x => x.DispatchedBaseQty),
+                Returned = g.Sum(x => x.ReturnedBaseQty),
+                Outstanding = g.Sum(x => x.DispatchedBaseQty - x.ReturnedBaseQty - x.ConsumedBaseQty - x.ScrapBaseQty)
+            })
+            .OrderBy(x => x.SupplierCode)
+            .ThenBy(x => x.ItemCode)
+            .ToListAsync(cancellationToken);
+
+        var balIds = grouped.Select(x => x.CustodyBalLocId).Distinct().ToArray();
+        var physicalById = balIds.Length == 0
+            ? new Dictionary<int, decimal>()
+            : await db.IvBalLocs.AsNoTracking()
+                .Where(b => b.CompanyCode == scope.CompanyCode
+                            && b.BranchCode == scope.BranchCode!
+                            && balIds.Contains(b.Id))
+                .ToDictionaryAsync(b => b.Id, b => b.StdQty, cancellationToken);
+
+        var rows = grouped.Select(g => new SubconCustodyReconciliationRow
+        {
+            SupplierCode = g.SupplierCode,
+            ItemCode = g.ItemCode,
+            BaseUom = g.BaseUom,
+            CustodyWarehouseCode = g.CustodyWarehouseCode,
+            CustodyLocationCode = g.CustodyLocationCode,
+            CustodyBalLocId = g.CustodyBalLocId,
+            AllocatedDispatchedBaseQty = g.Dispatched,
+            AllocatedReturnedBaseQty = g.Returned,
+            AllocatedOutstandingBaseQty = g.Outstanding,
+            PhysicalCustodyBaseQty = physicalById.GetValueOrDefault(g.CustodyBalLocId, 0m)
+        }).ToArray();
+
+        return SubconResult.OkReconciliation(rows);
     }
 
     public async Task<SubconResult> SearchDispatchLinesAsync(
@@ -737,11 +1047,13 @@ public sealed class SubconApplicationService : ISubconApplicationService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var policy = await LoadPublishedAsync(db, scope.CompanyCode, cancellationToken);
+        var requiredStatus = IsLiveCustodyEnabled(policy) ? SubconStatuses.Posted : SubconStatuses.New;
         var excludeReceipt = TrimTo(query.ExcludeReceiptDocNo, 20);
         var linesQuery = db.SubconDispatchLines.AsNoTracking()
             .Where(l => l.Dispatch.CompanyCode == scope.CompanyCode
                         && l.Dispatch.BranchCode == scope.BranchCode!
-                        && l.Dispatch.Status == SubconStatuses.New
+                        && l.Dispatch.Status == requiredStatus
                         && l.Dispatch.Mode == SubconModes.Inventory);
 
         var supplierCode = TrimTo(query.SupplierCode, 20);
@@ -1308,9 +1620,9 @@ public sealed class SubconApplicationService : ISubconApplicationService
 
         var activeWarehouses = (await db.IvWarehouses.AsNoTracking()
                 .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.IsActive)
-                .Select(x => x.WarehouseCode)
+                .Select(x => new { x.WarehouseCode, x.WarehouseType })
                 .ToListAsync(cancellationToken))
-            .ToDictionary(x => x, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(x => x.WarehouseCode, x => x, StringComparer.OrdinalIgnoreCase);
 
         var activeLocations = (await db.IvLocations.AsNoTracking()
                 .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.IsActive)
@@ -1403,10 +1715,17 @@ public sealed class SubconApplicationService : ISubconApplicationService
                 return SubconMessages.WarehouseRequired;
             }
 
-            if (!activeWarehouses.TryGetValue(warehouseInput, out var warehouse))
+            if (!activeWarehouses.TryGetValue(warehouseInput, out var warehouseRow))
             {
                 return SubconMessages.WarehouseInvalid;
             }
+
+            if (SubconCustodyGuardService.IsCustodyWarehouseType(warehouseRow.WarehouseType))
+            {
+                return SubconCustodyConstants.SourceCustodyBlocked;
+            }
+
+            var warehouse = warehouseRow.WarehouseCode;
 
             var locationInput = TrimTo(line.LocationCode ?? item.DefLocation, 10);
             string? location = null;
@@ -1607,17 +1926,45 @@ public sealed class SubconApplicationService : ISubconApplicationService
         return query;
     }
 
+    private bool IsLiveCustodyEnabled(SubconPolicy? policy) =>
+        _inventory.SupportsLiveCustodyPosting
+        && policy is { SubconEnabled: true, InventoryCustodyPostEnabled: true };
+
+    private static async Task<SubconPostingLink?> LoadActivePostingLinkAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        string docKind,
+        long docId,
+        CancellationToken cancellationToken) =>
+        await db.SubconPostingLinks.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                       && x.BranchCode == scope.BranchCode!
+                                       && x.DocKind == docKind
+                                       && x.DocId == docId
+                                       && x.PostingRole == SubconPostingRoles.Primary
+                                       && x.IsActive,
+                cancellationToken);
+
     private static SubconPolicyDto MapPolicy(SubconPolicy policy) => new()
     {
         Version = policy.Version,
         SubconEnabled = policy.SubconEnabled,
         InventoryModeEnabled = policy.InventoryModeEnabled,
         ProductionModeEnabled = policy.ProductionModeEnabled,
+        InventoryCustodyPostEnabled = policy.InventoryCustodyPostEnabled,
+        LotReturnEnabled = policy.LotReturnEnabled,
+        BomConversionEnabled = policy.BomConversionEnabled,
+        ProductionWipEnabled = policy.ProductionWipEnabled,
+        FeeCapitalizationEnabled = policy.FeeCapitalizationEnabled,
+        DefaultCustodyWarehouseCode = policy.DefaultCustodyWarehouseCode,
         IsPublished = policy.IsPublished,
         RowVersion = policy.RowVersion
     };
 
-    private static SubconDispatchDto MapDispatch(SubconDispatch entity) => new()
+    private static SubconDispatchDto MapDispatch(
+        SubconDispatch entity,
+        bool liveCustody = false,
+        SubconPostingLink? activeLink = null) => new()
     {
         DocNo = entity.DocNo,
         TrxDate = entity.TrxDate,
@@ -1630,6 +1977,13 @@ public sealed class SubconApplicationService : ISubconApplicationService
         PoRelNo = entity.PoRelNo,
         PoLineNo = entity.PoLineNo,
         Remarks = entity.Remarks,
+        DocumentRevision = entity.DocumentRevision,
+        PostedDate = entity.PostedDate,
+        PostedBy = entity.PostedBy,
+        PostedTrxBatchNo = activeLink?.TrxBatchNo,
+        PostedOperationId = activeLink?.OperationId,
+        CanPost = liveCustody && SubconModes.IsInventory(entity.Mode) && SubconStatuses.CanEdit(entity.Status),
+        CanRollback = liveCustody && SubconModes.IsInventory(entity.Mode) && SubconStatuses.IsPosted(entity.Status),
         RowVersion = entity.RowVersion,
         Lines = entity.Lines.OrderBy(x => x.LineNo).Select(x => new SubconDispatchLineDto
         {
@@ -1637,18 +1991,26 @@ public sealed class SubconApplicationService : ISubconApplicationService
             ItemCode = x.ItemCode,
             ItemName = x.ItemName,
             Uom = x.Uom,
+            BaseUom = x.BaseUom,
             Qty = x.Qty,
+            BaseQty = x.BaseQty,
+            StockStatus = x.StockStatus,
             WarehouseCode = x.WarehouseCode,
             LocationCode = x.LocationCode,
+            CustodyWarehouseCode = x.CustodyWarehouseCode,
+            CustodyLocationCode = x.CustodyLocationCode,
+            CustodyBalLocId = x.CustodyBalLocId,
             LotNo = x.LotNo,
             WorkOrderNo = x.WorkOrderNo,
             OperationCode = x.OperationCode,
             PromisedReturnDate = x.PromisedReturnDate,
             Remarks = x.Remarks
         }).ToArray(),
-        PostBlockedReason = SubconModes.IsInventory(entity.Mode)
-            ? SubconBlockedReasons.NoAtomicInventorySeam
-            : SubconBlockedReasons.NoProductionCustody
+        PostBlockedReason = !SubconModes.IsInventory(entity.Mode)
+            ? SubconBlockedReasons.NoProductionCustody
+            : liveCustody
+                ? string.Empty
+                : SubconBlockedReasons.PostingNotEnabled
     };
 
     private static async Task<SubconJob?> LoadJobAsync(
@@ -1717,7 +2079,10 @@ public sealed class SubconApplicationService : ISubconApplicationService
             : SubconBlockedReasons.NoProductionCustody
     };
 
-    private static SubconReceiptDto MapReceipt(SubconReceipt entity) => new()
+    private static SubconReceiptDto MapReceipt(
+        SubconReceipt entity,
+        bool liveCustody = false,
+        SubconPostingLink? activeLink = null) => new()
     {
         DocNo = entity.DocNo,
         TrxDate = entity.TrxDate,
@@ -1725,15 +2090,28 @@ public sealed class SubconApplicationService : ISubconApplicationService
         SupplierCode = entity.SupplierCode,
         SupplierName = entity.SupplierName,
         Remarks = entity.Remarks,
+        DocumentRevision = entity.DocumentRevision,
+        PostedDate = entity.PostedDate,
+        PostedBy = entity.PostedBy,
+        PostedTrxBatchNo = activeLink?.TrxBatchNo,
+        PostedOperationId = activeLink?.OperationId,
+        CanPost = liveCustody && SubconStatuses.CanEdit(entity.Status),
+        CanRollback = liveCustody && SubconStatuses.IsPosted(entity.Status),
         RowVersion = entity.RowVersion,
         Lines = entity.Lines.OrderBy(x => x.LineNo).Select(x => new SubconReceiptLineDto
         {
             LineNo = x.LineNo,
             DispatchDocNo = x.Dispatch?.DocNo ?? string.Empty,
             DispatchLineNo = x.DispatchLine?.LineNo ?? 0,
+            ItemCode = x.DispatchLine?.ItemCode,
+            ItemName = x.DispatchLine?.ItemName,
             Qty = x.Qty,
-            Uom = x.Uom
-        }).ToArray()
+            Uom = x.Uom,
+            BaseQty = x.BaseQty,
+            ToWarehouseCode = x.ToWarehouseCode,
+            ToLocationCode = x.ToLocationCode
+        }).ToArray(),
+        PostBlockedReason = liveCustody ? string.Empty : SubconBlockedReasons.PostingNotEnabled
     };
 
     private static bool Stale(byte[] stored, byte[]? incoming) =>

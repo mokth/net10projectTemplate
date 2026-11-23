@@ -8,6 +8,7 @@ using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Subcon;
 using ErpWeb.Core.Transactions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -33,6 +34,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     private readonly IProcurementApprovalGuard _approval;
     private readonly IQaReceiptAuthorization _qaReceipt;
     private readonly IQaPhysicalHoldAuthorization _qaPhysical;
+    private readonly ISubconCustodyGuard _subconCustody;
     private static readonly HashSet<string> NormalInventoryFutureDraftTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         IvTrxTypes.MiscellaneousReceipt,
@@ -62,7 +64,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         IIvFailureEvidenceReader? failureEvidence = null,
         IProcurementApprovalGuard? approval = null,
         IQaReceiptAuthorization? qaReceipt = null,
-        IQaPhysicalHoldAuthorization? qaPhysical = null)
+        IQaPhysicalHoldAuthorization? qaPhysical = null,
+        ISubconCustodyGuard? subconCustody = null)
     {
         _dbFactory = dbFactory;
         _tenant = tenant;
@@ -77,6 +80,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         _approval = approval ?? throw new ArgumentNullException(nameof(approval));
         _qaReceipt = qaReceipt ?? DisabledQaReceiptAuthorization.Instance;
         _qaPhysical = qaPhysical ?? DisabledQaPhysicalHoldAuthorization.Instance;
+        _subconCustody = subconCustody ?? SubconCustodyGuardService.Instance;
         _purchaseCostAdjustments = purchaseCostAdjustments;
         _failureEvidence = failureEvidence;
         _openPeriodBackdatedReplayEnabled =
@@ -662,6 +666,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         var ordered = _posting.GetOrderedStockSlices(deltaBySlice.Keys);
+        var custodyDestError = await _subconCustody.AssertStockMovementAllowedAsync(
+            db, companyCode, branchCode, expectedTrxType,
+            sourceBalLocIds: [],
+            destinationWarehouseCodes: ordered.Select(s => s.WhCode).ToArray(),
+            isAuthorizedSubconCaller: false,
+            cancellationToken);
+        if (custodyDestError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, custodyDestError);
+        }
+
         var locked = (await _posting.LockBalanceSlicesAsync(db, ordered, cancellationToken))
             .ToDictionary(x => x.Key, x => x.Value);
 
@@ -1742,6 +1757,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
         }
 
+        var adjCustodyError = await _subconCustody.AssertStockMovementAllowedAsync(
+            db, companyCode, branchCode, IvTrxTypes.StockAdjustment,
+            sourceBalLocIds: netByBalLoc.Keys.ToArray(),
+            destinationWarehouseCodes: locked.Values.Select(v => v.WhCode).ToArray(),
+            isAuthorizedSubconCaller: false,
+            cancellationToken);
+        if (adjCustodyError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, adjCustodyError);
+        }
+
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
         foreach (var (balLocId, net) in netByBalLoc.OrderBy(kv => kv.Key))
@@ -2678,6 +2704,17 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
         }
 
+        var miCustodyError = await _subconCustody.AssertStockMovementAllowedAsync(
+            db, companyCode, branchCode, expectedTrxType,
+            sourceBalLocIds: orderedIds,
+            destinationWarehouseCodes: [],
+            isAuthorizedSubconCaller: false,
+            cancellationToken);
+        if (miCustodyError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, miCustodyError);
+        }
+
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
         foreach (var balLocId in orderedIds)
@@ -3052,6 +3089,75 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
     /// <summary>Test-only hook invoked after TR history insert (before SaveChanges commits POSTED).</summary>
     internal Action? TestHookAfterTrHistory { get; set; }
 
+    public async Task<IvInventoryPostingBatchResult> PostStockTransferInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        bool isAuthorizedSubconCaller = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        if (db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("An existing transaction is required.");
+
+        var route = await StockReplayInventoryRouteSelector.ReadAsync(
+            db, companyCode, branchCode, batchNo, IvTrxTypes.StockTransfer, cancellationToken);
+        if (route.RequiresReplay)
+            return UnsupportedHistoricalInventoryPost(batchNo, IvTrxTypes.StockTransfer);
+
+        var result = await PostInventoryTRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, isAuthorizedSubconCaller, cancellationToken);
+        if (result.Succeeded)
+            StampNewHistory(postingContext, db);
+        return result;
+    }
+
+    public async Task<IvInventoryPostingBatchResult> RollBackStockTransferInTransactionAsync(
+        StockPostingContext? postingContext,
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        bool isAuthorizedSubconCaller = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        if (db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("An existing transaction is required.");
+
+        var route = await StockReplayInventoryRouteSelector.ReadRollbackAsync(
+            db, companyCode, branchCode, batchNo, IvTrxTypes.StockTransfer, cancellationToken);
+        if (route.RequiresReplay)
+            return UnsupportedHistoricalInventoryRollback(batchNo, IvTrxTypes.StockTransfer);
+
+        return await RollBackInventoryTRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, isAuthorizedSubconCaller, postingContext,
+            v2RollbackRouteChecked: true, cancellationToken);
+    }
+
+    private async Task<IvInventoryPostingBatchResult?> AssertStandaloneTrBatchNotSubconOwnedAsync(
+        string companyCode,
+        string branchCode,
+        int batchNo,
+        CancellationToken cancellationToken)
+    {
+        await using var read = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var batchId = await read.IvTrxBatches.AsNoTracking()
+            .Where(b => b.CompanyCode == companyCode && b.BranchCode == branchCode && b.BatchNo == batchNo)
+            .Select(b => (int?)b.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (batchId is not > 0)
+            return null;
+
+        var err = await _subconCustody.AssertBatchNotSubconOwnedAsync(
+            read, companyCode, branchCode, batchId.Value, cancellationToken);
+        return err is null ? null : IvInventoryPostingBatchResult.Fail(batchNo, err);
+    }
+
     private async Task<IvInventoryPostingBatchResult> PostInventoryTRAsync(
         string companyCode,
         string branchCode,
@@ -3059,6 +3165,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         CancellationToken cancellationToken)
     {
+        if (await AssertStandaloneTrBatchNotSubconOwnedAsync(companyCode, branchCode, batchNo, cancellationToken) is { } ownedFail)
+            return ownedFail;
+
         var needsReplay = _openPeriodBackdatedReplayEnabled
             && (await ReadInventoryReplayRouteAsync(companyCode, branchCode,
                 batchNo, IvTrxTypes.StockTransfer, cancellationToken)).RequiresReplay;
@@ -3097,11 +3206,56 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return ledger.Fail;
         }
 
+        var coreResult = await PostInventoryTRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, isAuthorizedSubconCaller: false, cancellationToken);
+        if (!coreResult.Succeeded)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return coreResult;
+        }
+
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
+        postingScope.MarkCompleted();
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, "Destination lot already exists.");
+        }
+
+        _logger.LogInformation(
+            "Posted TR. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
+            companyCode, branchCode, batchNo, coreResult.OperationId, Truncate(userId, 10));
+
+        return coreResult;
+    }
+
+    private async Task<IvInventoryPostingBatchResult> PostInventoryTRCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        bool isAuthorizedSubconCaller,
+        CancellationToken cancellationToken)
+    {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
             || !string.Equals(batch.TrxType, IvTrxTypes.StockTransfer, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock transfer was not found.");
+        }
+
+        if (!isAuthorizedSubconCaller
+            && await _subconCustody.AssertBatchNotSubconOwnedAsync(
+                db, companyCode, branchCode, batch.Id, cancellationToken) is string subconOwnedError)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, subconOwnedError);
         }
 
         if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
@@ -3114,7 +3268,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         if (FuturePostDateError(batch) is string futureDateError)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, futureDateError);
         }
 
@@ -3147,7 +3300,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 db, companyCode, branchCode, detail, masters, cancellationToken);
             if (planResult.Error is not null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, planResult.Error);
             }
 
@@ -3166,7 +3318,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             if (sourceSliceById.TryGetValue(plan.FromBalLocId, out var existingSourceSlice)
                 && !existingSourceSlice.Equals(plan.FromSlice))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Source balance Id {plan.FromBalLocId} is referenced by inconsistent stock slices.");
@@ -3199,7 +3350,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             if (!lockedBySlice.TryGetValue(expected, out var sourceBalance)
                 || sourceBalance.Id != balLocId)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Source balance Id {balLocId} no longer matches the transfer line (item/warehouse/location/lot/status).");
@@ -3209,7 +3359,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             var actualUom = (sourceBalance.StdUom ?? string.Empty).Trim();
             if (!string.Equals(actualUom, stagedUom.Trim(), StringComparison.OrdinalIgnoreCase))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Source balance Id {balLocId} UOM no longer matches the transfer line.");
@@ -3222,14 +3371,12 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 balLocId, sourceBalance.TransDate, batch.TrxDtTime, sourceBalance.LotNo);
             if (stockDateError is not null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
             }
 
             var required = outgoingBySourceId[balLocId];
             if (required > sourceBalance.StdQty)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Insufficient quantity on balance Id {balLocId} (on hand {sourceBalance.StdQty}, required {required}).");
@@ -3239,7 +3386,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (await ValidateV2AsOfOutgoingAsync(db, companyCode, branchCode,
                 batch.TrxDtTime, outgoingBySourceId, cancellationToken) is string asOfError)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, asOfError);
         }
 
@@ -3255,8 +3401,18 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             db, companyCode, branchCode, IvTrxTypes.StockTransfer, batchNo, qaNeeds, cancellationToken);
         if (qaError is not null)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+        }
+
+        var trCustodyError = await _subconCustody.AssertStockMovementAllowedAsync(
+            db, companyCode, branchCode, IvTrxTypes.StockTransfer,
+            sourceBalLocIds: orderedSourceIds,
+            destinationWarehouseCodes: incomingByDestinationSlice.Keys.Select(s => s.WhCode).ToArray(),
+            isAuthorizedSubconCaller: isAuthorizedSubconCaller,
+            cancellationToken);
+        if (trCustodyError is not null)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, trCustodyError);
         }
 
         var now = DateTime.UtcNow;
@@ -3267,7 +3423,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             var lotNo = (plan.ToLotNo ?? string.Empty).Trim();
             if (lotNo.Length == 0)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Line {plan.Detail.TrxLineNo}: destination lot number is required.");
@@ -3283,7 +3438,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 db, companyCode, plan.ICode, lotNo, cancellationToken);
             if (existingLot is not null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Destination lot '{lotNo}' already exists for item '{plan.ICode}'.");
@@ -3383,7 +3537,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                     balance.Id, balance.TransDate, batch.TrxDtTime, balance.LotNo);
                 if (stockDateError is not null)
                 {
-                    await tx.RollbackAsync(cancellationToken);
                     return IvInventoryPostingBatchResult.Fail(batchNo, stockDateError);
                 }
             }
@@ -3391,7 +3544,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             var nextQuantity = balance.StdQty + deltaByBalance[balance];
             if (nextQuantity < 0m)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Insufficient quantity on balance Id {balance.Id} (on hand {balance.StdQty}, required {Math.Abs(deltaByBalance[balance])}).");
@@ -3408,7 +3560,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             db, companyCode, branchCode, trBalLocIds, batch.TrxDtTime, excludeBatchNo: null, cancellationToken);
         if (laterDayError is not null)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, laterDayError);
         }
 
@@ -3437,8 +3588,23 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         TestHookAfterTrStockUpdate?.Invoke();
 
         // New destination balances need database-generated IDs before their IDs are copied to
-        // detail/history rows. This save remains inside the posting transaction.
-        await db.SaveChangesAsync(cancellationToken);
+        // detail/history rows. This save remains inside the caller's open posting transaction.
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            var lotPlan = linePlans.FirstOrDefault(p => p.LotControl);
+            if (lotPlan is not null && !string.IsNullOrWhiteSpace(lotPlan.ToLotNo))
+            {
+                return IvInventoryPostingBatchResult.Fail(
+                    batchNo,
+                    $"Destination lot '{lotPlan.ToLotNo}' already exists for item '{lotPlan.ICode}'.");
+            }
+
+            return IvInventoryPostingBatchResult.Fail(batchNo, "Destination lot already exists.");
+        }
 
         var opId = Guid.NewGuid();
         foreach (var plan in linePlans)
@@ -3480,14 +3646,14 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 ProdDesc = detail.ProdDesc ?? detail.IDesc,
                 ICode = detail.ICode ?? plan.ICode,
                 IDesc = detail.IDesc,
-                 FrWarehouse = lockedSource.WhCode,
-                 FrLocation = lockedSource.LocCode,
-                 FrLotNo = lockedSource.LotNo,
+                FrWarehouse = lockedSource.WhCode,
+                FrLocation = lockedSource.LocCode,
+                FrLotNo = lockedSource.LotNo,
                 FrStdQty = detail.FrStdQty,
                 FrStdUom = detail.FrStdUom,
-                 ToWarehouse = destBal.WhCode,
-                 ToLocation = destBal.LocCode,
-                 ToLotNo = plan.LotControl ? destBal.LotNo : string.Empty,
+                ToWarehouse = destBal.WhCode,
+                ToLocation = destBal.LocCode,
+                ToLotNo = plan.LotControl ? destBal.LotNo : string.Empty,
                 ToStdQty = detail.ToStdQty,
                 ToStdUom = detail.ToStdUom,
                 IStatus = detail.IStatus,
@@ -3508,8 +3674,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         TestHookAfterTrHistory?.Invoke();
-        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: true, cancellationToken);
-        postingScope.MarkCompleted();
 
         batch.BatchStatus = IvBatchStatuses.Posted;
         batch.PostedDate = now;
@@ -3518,29 +3682,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         batch.PostingOperationId = opId;
         batch.ModifiedDate = now;
         batch.ModifiedBy = uid;
-
-        try
-        {
-            await db.SaveChangesAsync(cancellationToken);
-            await tx.CommitAsync(cancellationToken);
-        }
-        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
-        {
-            await tx.RollbackAsync(cancellationToken);
-            var lotPlan = linePlans.FirstOrDefault(p => p.LotControl);
-            if (lotPlan is not null && !string.IsNullOrWhiteSpace(lotPlan.ToLotNo))
-            {
-                return IvInventoryPostingBatchResult.Fail(
-                    batchNo,
-                    $"Destination lot '{lotPlan.ToLotNo}' already exists for item '{lotPlan.ICode}'.");
-            }
-
-            return IvInventoryPostingBatchResult.Fail(batchNo, "Destination lot already exists.");
-        }
-
-        _logger.LogInformation(
-            "Posted TR. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
-            companyCode, branchCode, batchNo, opId, uid);
 
         return IvInventoryPostingBatchResult.Ok(batchNo, opId);
     }
@@ -3552,6 +3693,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         CancellationToken cancellationToken)
     {
+        if (await AssertStandaloneTrBatchNotSubconOwnedAsync(companyCode, branchCode, batchNo, cancellationToken) is { } ownedFail)
+            return ownedFail;
+
         if (_openPeriodBackdatedReplayEnabled && _coordinator is not null
             && await TryRollBackBackdatedWacTrAsync(companyCode, branchCode,
                 batchNo, cancellationToken) is { } wacReplayResult)
@@ -3591,11 +3735,50 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             return ledger.Fail;
         }
 
+        var coreResult = await RollBackInventoryTRCoreAsync(
+            db, companyCode, branchCode, userId, batchNo, isAuthorizedSubconCaller: false, ledger.Context,
+            v2RollbackRouteChecked: false, cancellationToken);
+        if (!coreResult.Succeeded)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return coreResult;
+        }
+
+        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
+        postingScope.MarkCompleted();
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Rolled back TR. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
+            companyCode, branchCode, batchNo, coreResult.OperationId, Truncate(userId, 10));
+
+        return coreResult;
+    }
+
+    private async Task<IvInventoryPostingBatchResult> RollBackInventoryTRCoreAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string userId,
+        int batchNo,
+        bool isAuthorizedSubconCaller,
+        StockPostingContext? postingContext,
+        bool v2RollbackRouteChecked,
+        CancellationToken cancellationToken)
+    {
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
             || !string.Equals(batch.TrxType, IvTrxTypes.StockTransfer, StringComparison.OrdinalIgnoreCase))
         {
             return IvInventoryPostingBatchResult.Fail(batchNo, "Stock transfer was not found.");
+        }
+
+        if (!isAuthorizedSubconCaller
+            && await _subconCustody.AssertBatchNotSubconOwnedAsync(
+                db, companyCode, branchCode, batch.Id, cancellationToken) is string subconOwnedError)
+        {
+            return IvInventoryPostingBatchResult.Fail(batchNo, subconOwnedError);
         }
 
         if (TransactionLifecycleGuard.ArchivedError(batch.DeletedAtUtc, $"Batch {batchNo}") is string archivedBatch)
@@ -3621,7 +3804,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         var integrityError = ValidateTrHistoryIntegrity(details, history, companyCode, branchCode, batchNo);
         if (integrityError is not null)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, integrityError);
         }
 
@@ -3634,7 +3816,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             if (v2Transfers.Any(h => h.StockPostingId is not > 0
                 || activeFacts[h.Id].Any(f => f.StockPostingId != h.StockPostingId)))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo,
                     "This stock transfer has a replay-corrected valuation and needs replay-aware rollback.");
             }
@@ -3660,7 +3841,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             if (sliceById.TryGetValue(frId, out var existingFrSlice)
                 && !existingFrSlice.Equals(frSlice))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"History references balance Id {frId} with inconsistent source stock slices.");
@@ -3676,7 +3856,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             if (sliceById.TryGetValue(toId, out var existingToSlice)
                 && !existingToSlice.Equals(toSlice))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"History references balance Id {toId} with inconsistent destination stock slices.");
@@ -3697,7 +3876,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 db, balLocId, companyCode, branchCode, cancellationToken);
             if (lockedRow is null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"ORPHAN_HISTORY: BalLoc Id {balLocId} missing for rollback.");
@@ -3712,7 +3890,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 || !string.Equals(lockedRow.LotNo?.Trim(), expected.LotNo, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(lockedRow.IStatus?.Trim(), expected.IStatus, StringComparison.OrdinalIgnoreCase))
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"History balance mismatch for BalLoc Id {balLocId} (recorded stock slice does not match the current balance).");
@@ -3722,7 +3899,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             var nextQuantity = lockedRow.StdQty + netByBalLocId[balLocId];
             if (nextQuantity < 0m)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Insufficient quantity on balance Id {balLocId} for rollback (on hand {lockedRow.StdQty}, required {Math.Abs(netByBalLocId[balLocId])}).");
@@ -3733,7 +3909,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             db, companyCode, branchCode, batchNo, cancellationToken);
         if (qaRestore is not null)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, qaRestore);
         }
         foreach (var balLocId in orderedIds)
@@ -3743,14 +3918,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 lockedById[balLocId].StdQty + netByBalLocId[balLocId], cancellationToken);
             if (qaError is not null)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
             }
         }
 
         // The replay selector has already checked the sealed active physical tail
         // under this branch lock. Legacy chronology also counts reversed audit.
-        var rollbackChronology = _openPeriodBackdatedReplayEnabled
+        var rollbackChronology = (_openPeriodBackdatedReplayEnabled || v2RollbackRouteChecked)
             && v2Transfers.Length == history.Count
             ? null
             : await ValidateRollbackChronologyAsync(
@@ -3758,7 +3932,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 cancellationToken);
         if (rollbackChronology is not null)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, rollbackChronology);
         }
 
@@ -3790,14 +3963,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                         db, balLocId, companyCode, branchCode, repairedDates[balLocId], cancellationToken);
             if (affected != 1)
             {
-                await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
                     $"Rollback stock update failed for balance Id {balLocId}.");
             }
         }
 
-        ApplyHistoryRollback(db, history, ledger.Context);
+        ApplyHistoryRollback(db, history, postingContext);
 
         foreach (var detail in details)
         {
@@ -3818,15 +3990,6 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         batch.RollbackOperationId = opId;
         batch.ModifiedDate = now;
         batch.ModifiedBy = uid;
-
-        await CompleteStandaloneLedgerAsync(ledger.Context, db, stampHistory: false, cancellationToken);
-        postingScope.MarkCompleted();
-        await db.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-
-        _logger.LogInformation(
-            "Rolled back TR. Company={Company} Branch={Branch} BatchNo={BatchNo} OpId={OpId} User={User}",
-            companyCode, branchCode, batchNo, opId, uid);
 
         return IvInventoryPostingBatchResult.Ok(batchNo, opId);
     }
@@ -4976,6 +5139,15 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 BatchDetailId = d.Id
             })
             .ToList();
+        var replayCustodyError = await _subconCustody.AssertStockMovementAllowedAsync(
+            db, companyCode, branchCode, trxType,
+            sourceBalLocIds: ids,
+            destinationWarehouseCodes: details.Where(d => !string.IsNullOrWhiteSpace(d.ToWarehouse)).Select(d => d.ToWarehouse!).ToArray(),
+            isAuthorizedSubconCaller: false,
+            cancellationToken);
+        if (replayCustodyError is not null)
+            return replayCustodyError;
+
         return await _qaPhysical.AssertAndClaimStockOutAsync(
             db, companyCode, branchCode, trxType, batchNo, needs, cancellationToken);
     }

@@ -12,6 +12,7 @@ public sealed class SubconPolicyConfiguration : IEntityTypeConfiguration<SubconP
         builder.HasKey(x => x.Uid);
         builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
         builder.Property(x => x.CompanyCode).HasMaxLength(5).IsRequired();
+        builder.Property(x => x.DefaultCustodyWarehouseCode).HasMaxLength(10);
         builder.Property(x => x.CreatedBy).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ModifiedBy).HasMaxLength(20);
         builder.Property(x => x.CreatedDate).HasColumnType("datetime2").IsRequired();
@@ -43,13 +44,21 @@ public sealed class SubconDispatchConfiguration : IEntityTypeConfiguration<Subco
         builder.Property(x => x.SupplierName).HasMaxLength(100);
         builder.Property(x => x.PoNo).HasMaxLength(30);
         builder.Property(x => x.Remarks).HasMaxLength(500);
+        builder.Property(x => x.PostedBy).HasMaxLength(20);
+        builder.Property(x => x.RollbackBy).HasMaxLength(20);
         builder.Property(x => x.CreatedBy).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ModifiedBy).HasMaxLength(20);
         builder.Property(x => x.TrxDate).HasColumnType("datetime2").IsRequired();
         builder.Property(x => x.PromisedReturnDate).HasColumnType("datetime2");
+        builder.Property(x => x.PostedDate).HasColumnType("datetime2");
+        builder.Property(x => x.RollbackDate).HasColumnType("datetime2");
         builder.Property(x => x.CreatedDate).HasColumnType("datetime2").IsRequired();
         builder.Property(x => x.ModifiedDate).HasColumnType("datetime2");
         builder.Property(x => x.RowVersion).IsRowVersion();
+        builder.HasOne(x => x.Job)
+            .WithMany()
+            .HasForeignKey(x => x.JobId)
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.DocNo })
             .IsUnique()
             .HasDatabaseName("UX_SubconDispatch_Company_Branch_No");
@@ -78,9 +87,14 @@ public sealed class SubconDispatchLineConfiguration : IEntityTypeConfiguration<S
         builder.Property(x => x.Uom).HasMaxLength(10).IsRequired();
         builder.Property(x => x.BaseUom).HasMaxLength(10);
         builder.Property(x => x.Qty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.BaseQty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.ConvFactor).HasColumnType("decimal(18,6)");
+        builder.Property(x => x.StockStatus).HasMaxLength(10);
         builder.Property(x => x.WarehouseCode).HasMaxLength(10);
         builder.Property(x => x.LocationCode).HasMaxLength(10);
         builder.Property(x => x.LotNo).HasMaxLength(50);
+        builder.Property(x => x.CustodyWarehouseCode).HasMaxLength(10);
+        builder.Property(x => x.CustodyLocationCode).HasMaxLength(10);
         builder.Property(x => x.WorkOrderNo).HasMaxLength(30);
         builder.Property(x => x.OperationCode).HasMaxLength(20);
         builder.Property(x => x.Remarks).HasMaxLength(500);
@@ -109,9 +123,13 @@ public sealed class SubconReceiptConfiguration : IEntityTypeConfiguration<Subcon
         builder.Property(x => x.SupplierCode).HasMaxLength(20).IsRequired();
         builder.Property(x => x.SupplierName).HasMaxLength(100);
         builder.Property(x => x.Remarks).HasMaxLength(500);
+        builder.Property(x => x.PostedBy).HasMaxLength(20);
+        builder.Property(x => x.RollbackBy).HasMaxLength(20);
         builder.Property(x => x.CreatedBy).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ModifiedBy).HasMaxLength(20);
         builder.Property(x => x.TrxDate).HasColumnType("datetime2").IsRequired();
+        builder.Property(x => x.PostedDate).HasColumnType("datetime2");
+        builder.Property(x => x.RollbackDate).HasColumnType("datetime2");
         builder.Property(x => x.CreatedDate).HasColumnType("datetime2").IsRequired();
         builder.Property(x => x.ModifiedDate).HasColumnType("datetime2");
         builder.Property(x => x.RowVersion).IsRowVersion();
@@ -134,6 +152,10 @@ public sealed class SubconReceiptLineConfiguration : IEntityTypeConfiguration<Su
         builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
         builder.Property(x => x.Uom).HasMaxLength(10).IsRequired();
         builder.Property(x => x.Qty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.BaseQty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.ConvFactor).HasColumnType("decimal(18,6)");
+        builder.Property(x => x.ToWarehouseCode).HasMaxLength(10);
+        builder.Property(x => x.ToLocationCode).HasMaxLength(10);
         builder.Property(x => x.Remarks).HasMaxLength(500);
         builder.HasIndex(x => new { x.ReceiptId, x.LineNo })
             .IsUnique()
@@ -272,5 +294,85 @@ public sealed class SubconSupplierAssignmentConfiguration : IEntityTypeConfigura
         builder.HasIndex(x => new { x.JobId, x.LineNo })
             .IsUnique()
             .HasDatabaseName("UX_SubconSupplierAssignment_Job_LineNo");
+    }
+}
+
+public sealed class SubconPostingLinkConfiguration : IEntityTypeConfiguration<SubconPostingLink>
+{
+    public void Configure(EntityTypeBuilder<SubconPostingLink> builder)
+    {
+        builder.ToTable("SubconPostingLink");
+        builder.HasKey(x => x.Uid);
+        builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
+        builder.Property(x => x.CompanyCode).HasMaxLength(5).IsRequired();
+        builder.Property(x => x.BranchCode).HasMaxLength(5).IsRequired();
+        builder.Property(x => x.DocKind).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.DocNo).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.PostingRole).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.TrxType).HasMaxLength(10).IsRequired();
+        builder.Property(x => x.EffectiveAt).HasColumnType("datetime2").IsRequired();
+        builder.Property(x => x.CreatedDate).HasColumnType("datetime2").IsRequired();
+        builder.Property(x => x.CreatedBy).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.RowVersion).IsRowVersion();
+
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.DocKind, x.DocId })
+            .IsUnique()
+            .HasFilter("[IsActive] = 1 AND [PostingRole] = N'PRIMARY'")
+            .HasDatabaseName("UX_SubconPostingLink_ActiveDoc");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.TrxBatchId, x.DocumentRevision, x.PostingRole })
+            .IsUnique()
+            .HasDatabaseName("UX_SubconPostingLink_Batch_Role_Rev");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.TrxBatchId })
+            .HasDatabaseName("IX_SubconPostingLink_BatchLookup");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.DocKind, x.PostingRole, x.RequestId })
+            .IsUnique()
+            .HasDatabaseName("UX_SubconPostingLink_RequestId");
+    }
+}
+
+public sealed class SubconCustodyAllocationConfiguration : IEntityTypeConfiguration<SubconCustodyAllocation>
+{
+    public void Configure(EntityTypeBuilder<SubconCustodyAllocation> builder)
+    {
+        builder.ToTable("SubconCustodyAllocation");
+        builder.HasKey(x => x.Uid);
+        builder.Property(x => x.Uid).HasColumnName("UID").ValueGeneratedOnAdd();
+        builder.Property(x => x.CompanyCode).HasMaxLength(5).IsRequired();
+        builder.Property(x => x.BranchCode).HasMaxLength(5).IsRequired();
+        builder.Property(x => x.SupplierCode).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.ItemCode).HasMaxLength(30).IsRequired();
+        builder.Property(x => x.BaseUom).HasMaxLength(10).IsRequired();
+        builder.Property(x => x.StockStatus).HasMaxLength(10).IsRequired();
+        builder.Property(x => x.CustodyWarehouseCode).HasMaxLength(10).IsRequired();
+        builder.Property(x => x.CustodyLocationCode).HasMaxLength(10).IsRequired();
+        builder.Property(x => x.DispatchedBaseQty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.ReturnedBaseQty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.ConsumedBaseQty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.ScrapBaseQty).HasColumnType("decimal(18,4)");
+        builder.Property(x => x.CreatedDate).HasColumnType("datetime2").IsRequired();
+        builder.Property(x => x.CreatedBy).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.ModifiedDate).HasColumnType("datetime2");
+        builder.Property(x => x.ModifiedBy).HasMaxLength(20);
+        builder.Property(x => x.RowVersion).IsRowVersion();
+
+        builder.HasOne(x => x.Dispatch)
+            .WithMany()
+            .HasForeignKey(x => x.DispatchId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.DispatchLine)
+            .WithMany()
+            .HasForeignKey(x => x.DispatchLineId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.PostingLink)
+            .WithMany()
+            .HasForeignKey(x => x.PostingLinkId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(x => x.DispatchLineId)
+            .IsUnique()
+            .HasFilter("[IsActive] = 1")
+            .HasDatabaseName("UX_SubconCustodyAllocation_ActiveDispatchLine");
+        builder.HasIndex(x => new { x.CompanyCode, x.BranchCode, x.CustodyBalLocId, x.IsActive })
+            .HasDatabaseName("IX_SubconCustodyAllocation_BalLoc");
     }
 }

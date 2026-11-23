@@ -16,10 +16,26 @@ public static class SubconModes
 public static class SubconStatuses
 {
     public const string New = "NEW";
+    public const string Posted = "POSTED";
     public const string Cancelled = "CANCELLED";
 
     public static bool CanEdit(string? status) =>
         string.Equals(status, New, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsPosted(string? status) =>
+        string.Equals(status, Posted, StringComparison.OrdinalIgnoreCase);
+}
+
+public static class SubconPostingDocKinds
+{
+    public const string Dispatch = "DISPATCH";
+    public const string Receipt = "RECEIPT";
+}
+
+public static class SubconPostingRoles
+{
+    public const string Primary = "PRIMARY";
+    public const string Reversal = "REVERSAL";
 }
 
 public static class SubconJobKinds
@@ -79,6 +95,18 @@ public static class SubconBlockedReasons
 
     public const string ConversionRequired =
         "Conversion required. This version cannot change the item code.";
+
+    public const string LotReturnFrozen =
+        "Cannot enable lot-controlled return. Lot-preserving transfer lineage is not approved yet.";
+
+    public const string BomConversionFrozen =
+        "Cannot enable BOM/assembly conversion. Multi-item atomic V2 conversion owner is not approved yet.";
+
+    public const string FeeCapitalizationFrozen =
+        "Cannot enable fee capitalization. Processing fee valuation and COGS settlement policy is not approved yet.";
+
+    public const string HistoricalReplayBlocked =
+        "Backdated subcontracting posting or rollback with later stock or valuation movements is not enabled yet.";
 }
 
 public static class SubconMessages
@@ -87,6 +115,17 @@ public static class SubconMessages
     public const string CompanyBranchRequired = "A company and branch scope is required.";
     public const string ChangedReload = "This document changed. Reload before continuing.";
     public const string OnlyNewEditable = "Only NEW drafts can be edited.";
+    public const string OnlyNewPostable = "Only NEW documents can be posted.";
+    public const string OnlyPostedRollback = "Only POSTED documents can be rolled back.";
+    public const string DispatchMustBePosted = "Receive-back can only reference or post against a POSTED send-out.";
+    public const string CustodyWarehouseRequired =
+        "Configure an active subcontractor custody warehouse (WarehouseType = SUBCON) in Subcontracting Settings before posting.";
+    public const string CustodyLocationRequired =
+        "Create an active location matching the supplier code in the subcontractor custody warehouse before posting.";
+    public const string ReceiveDestinationCustodyForbidden =
+        "Receive-back destination must be a company warehouse, not a subcontractor custody warehouse.";
+    public const string UomConversionInvalid = "Unable to convert quantity to the item's base UOM.";
+    public const string RequestIdConflict = "This request ID was already used for a different subcontract document.";
     public const string SupplierRequired = "Select a supplier.";
     public const string LineRequired = "Add at least one line.";
     public const string QtyRequired = "Enter a quantity greater than zero.";

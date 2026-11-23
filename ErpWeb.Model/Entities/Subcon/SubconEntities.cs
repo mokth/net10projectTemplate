@@ -1,6 +1,6 @@
 namespace ErpWeb.Model.Entities.Subcon;
 
-/// <summary>Company-level Subcon flags. Live source modes stay off in Phase 1.</summary>
+/// <summary>Company-level Subcon flags. All live capability flags stay off by default.</summary>
 public class SubconPolicy
 {
     public long Uid { get; set; }
@@ -9,6 +9,12 @@ public class SubconPolicy
     public bool SubconEnabled { get; set; }
     public bool InventoryModeEnabled { get; set; }
     public bool ProductionModeEnabled { get; set; }
+    public bool InventoryCustodyPostEnabled { get; set; }
+    public bool LotReturnEnabled { get; set; }
+    public bool BomConversionEnabled { get; set; }
+    public bool ProductionWipEnabled { get; set; }
+    public bool FeeCapitalizationEnabled { get; set; }
+    public string? DefaultCustodyWarehouseCode { get; set; }
     public bool IsPublished { get; set; }
     public DateTime CreatedDate { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
@@ -17,13 +23,14 @@ public class SubconPolicy
     public byte[] RowVersion { get; set; } = [];
 }
 
-/// <summary>Send-out draft. Status stays NEW until a later approved posting owner exists.</summary>
+/// <summary>Send-out document (NEW draft or POSTED via atomic Inventory TR).</summary>
 public class SubconDispatch
 {
     public long Uid { get; set; }
     public string CompanyCode { get; set; } = string.Empty;
     public string BranchCode { get; set; } = string.Empty;
     public string DocNo { get; set; } = string.Empty;
+    public long? JobId { get; set; }
     public DateTime TrxDate { get; set; }
     public string Status { get; set; } = "NEW";
     public string Mode { get; set; } = "INVENTORY";
@@ -34,12 +41,20 @@ public class SubconDispatch
     public short? PoRelNo { get; set; }
     public short? PoLineNo { get; set; }
     public string? Remarks { get; set; }
+    public int DocumentRevision { get; set; }
+    public DateTime? PostedDate { get; set; }
+    public string? PostedBy { get; set; }
+    public int PostedCount { get; set; }
+    public DateTime? RollbackDate { get; set; }
+    public string? RollbackBy { get; set; }
+    public int RollbackCount { get; set; }
     public DateTime CreatedDate { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime? ModifiedDate { get; set; }
     public string? ModifiedBy { get; set; }
     public byte[] RowVersion { get; set; } = [];
 
+    public SubconJob? Job { get; set; }
     public ICollection<SubconDispatchLine> Lines { get; set; } = [];
     public ICollection<SubconReceiptLine> ReceiptAllocations { get; set; } = [];
 }
@@ -54,10 +69,16 @@ public class SubconDispatchLine
     public string Uom { get; set; } = string.Empty;
     public string? BaseUom { get; set; }
     public decimal Qty { get; set; }
+    public decimal? BaseQty { get; set; }
+    public decimal? ConvFactor { get; set; }
+    public string? StockStatus { get; set; }
     public string? WarehouseCode { get; set; }
     public string? LocationCode { get; set; }
     public string? LotNo { get; set; }
     public int? IvBalLocId { get; set; }
+    public string? CustodyWarehouseCode { get; set; }
+    public string? CustodyLocationCode { get; set; }
+    public int? CustodyBalLocId { get; set; }
     public long? ProductionBalLotUid { get; set; }
     public string? WorkOrderNo { get; set; }
     public string? OperationCode { get; set; }
@@ -68,7 +89,7 @@ public class SubconDispatchLine
     public ICollection<SubconReceiptLine> ReceiptAllocations { get; set; } = [];
 }
 
-/// <summary>Receive-back draft. Cannot post in Phase 1.</summary>
+/// <summary>Receive-back document (NEW draft or POSTED via atomic Inventory TR).</summary>
 public class SubconReceipt
 {
     public long Uid { get; set; }
@@ -80,6 +101,13 @@ public class SubconReceipt
     public string SupplierCode { get; set; } = string.Empty;
     public string? SupplierName { get; set; }
     public string? Remarks { get; set; }
+    public int DocumentRevision { get; set; }
+    public DateTime? PostedDate { get; set; }
+    public string? PostedBy { get; set; }
+    public int PostedCount { get; set; }
+    public DateTime? RollbackDate { get; set; }
+    public string? RollbackBy { get; set; }
+    public int RollbackCount { get; set; }
     public DateTime CreatedDate { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime? ModifiedDate { get; set; }
@@ -98,6 +126,11 @@ public class SubconReceiptLine
     public long DispatchLineId { get; set; }
     public decimal Qty { get; set; }
     public string Uom { get; set; } = string.Empty;
+    public decimal? BaseQty { get; set; }
+    public decimal? ConvFactor { get; set; }
+    public string? ToWarehouseCode { get; set; }
+    public string? ToLocationCode { get; set; }
+    public int? ToBalLocId { get; set; }
     public string? Remarks { get; set; }
 
     public SubconReceipt Receipt { get; set; } = null!;
@@ -215,4 +248,63 @@ public class SubconSupplierAssignment
     public string? Remarks { get; set; }
 
     public SubconJob Job { get; set; } = null!;
+}
+
+/// <summary>Immutable audit and active generation link between a Subcon document and its Inventory TR / V2 StockPosting.</summary>
+public class SubconPostingLink
+{
+    public long Uid { get; set; }
+    public string CompanyCode { get; set; } = string.Empty;
+    public string BranchCode { get; set; } = string.Empty;
+    public string DocKind { get; set; } = "DISPATCH";
+    public long DocId { get; set; }
+    public string DocNo { get; set; } = string.Empty;
+    public long? JobId { get; set; }
+    public int DocumentRevision { get; set; }
+    public string PostingRole { get; set; } = "PRIMARY";
+    public string TrxType { get; set; } = "TR";
+    public int TrxBatchId { get; set; }
+    public int TrxBatchNo { get; set; }
+    public long? StockPostingId { get; set; }
+    public Guid OperationId { get; set; }
+    public Guid RequestId { get; set; }
+    public DateTime EffectiveAt { get; set; }
+    public bool IsActive { get; set; } = true;
+    public long? ReversedByLinkId { get; set; }
+    public DateTime CreatedDate { get; set; }
+    public string CreatedBy { get; set; } = string.Empty;
+    public byte[] RowVersion { get; set; } = [];
+}
+
+/// <summary>Per-dispatch-line custody balance allocation. Reconciles to physical IvBalLoc; never a shadow valuation authority.</summary>
+public class SubconCustodyAllocation
+{
+    public long Uid { get; set; }
+    public string CompanyCode { get; set; } = string.Empty;
+    public string BranchCode { get; set; } = string.Empty;
+    public long? JobId { get; set; }
+    public long DispatchId { get; set; }
+    public long DispatchLineId { get; set; }
+    public string SupplierCode { get; set; } = string.Empty;
+    public string ItemCode { get; set; } = string.Empty;
+    public string BaseUom { get; set; } = string.Empty;
+    public string StockStatus { get; set; } = string.Empty;
+    public int CustodyBalLocId { get; set; }
+    public string CustodyWarehouseCode { get; set; } = string.Empty;
+    public string CustodyLocationCode { get; set; } = string.Empty;
+    public decimal DispatchedBaseQty { get; set; }
+    public decimal ReturnedBaseQty { get; set; }
+    public decimal ConsumedBaseQty { get; set; }
+    public decimal ScrapBaseQty { get; set; }
+    public bool IsActive { get; set; } = true;
+    public long PostingLinkId { get; set; }
+    public DateTime CreatedDate { get; set; }
+    public string CreatedBy { get; set; } = string.Empty;
+    public DateTime? ModifiedDate { get; set; }
+    public string? ModifiedBy { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+
+    public SubconDispatch Dispatch { get; set; } = null!;
+    public SubconDispatchLine DispatchLine { get; set; } = null!;
+    public SubconPostingLink PostingLink { get; set; } = null!;
 }

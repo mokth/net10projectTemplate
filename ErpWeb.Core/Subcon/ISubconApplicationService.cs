@@ -28,6 +28,10 @@ public interface ISubconApplicationService
 
     Task<SubconResult> PostReceiptAsync(SubconKeyCommand command, CancellationToken cancellationToken = default);
 
+    Task<SubconResult> RollbackReceiptAsync(SubconKeyCommand command, CancellationToken cancellationToken = default);
+
+    Task<SubconResult> GetCustodyReconciliationAsync(string? supplierCode = null, CancellationToken cancellationToken = default);
+
     Task<SubconResult> SearchDispatchLinesAsync(SubconDispatchLineLookupQuery query, CancellationToken cancellationToken = default);
 
     Task<SubconResult> GetJobAsync(string jobNo, CancellationToken cancellationToken = default);

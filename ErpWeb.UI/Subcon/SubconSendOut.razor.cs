@@ -27,11 +27,15 @@ public partial class SubconSendOut : PageBase
     protected bool LinePopupVisible;
     protected bool DraftPreviewVisible;
     protected bool DiscardConfirmVisible;
+    protected bool PostConfirmVisible;
+    protected bool RollbackConfirmVisible;
     protected bool IsLoadingWarehouses;
     protected bool IsLoadingLocations;
     protected bool IsLoadingUoms;
     protected bool CanUseProductionMode;
     protected bool CanEditAfterView;
+    protected bool CanPostPermission;
+    protected bool CanRollbackPermission;
     protected string? StatusMessage;
     protected IReadOnlyList<IvCodeLookupRow> Warehouses { get; private set; } = [];
     protected IReadOnlyList<IvCodeLookupRow> Locations { get; private set; } = [];
@@ -50,6 +54,8 @@ public partial class SubconSendOut : PageBase
     protected bool IsAssemblyJob => SubconJobKinds.IsAssembly(Header.JobKind);
     protected bool CanEditDocument => !IsView && SubconStatuses.CanEdit(Header.Status);
     protected bool CanEditDocumentAfterView => CanEditAfterView && SubconStatuses.CanEdit(Header.Status);
+    protected bool CanPostDocument => IsView && Header.CanPost && CanPostPermission && !IsSubmitting;
+    protected bool CanRollbackDocument => IsView && Header.CanRollback && CanRollbackPermission && !IsSubmitting;
     protected bool CanSave => CanEditDocument && !IsSubmitting && Lines.Count > 0 && !string.IsNullOrWhiteSpace(Header.SupplierCode);
     protected string PageHeading => IsNew ? "Send Out" : $"Send Out {Header.DocNo}";
     protected string ModeChip => IsNew ? "New" : IsView ? "View" : "Edit";
@@ -59,6 +65,14 @@ public partial class SubconSendOut : PageBase
     protected override async Task OnPageInitializedAsync()
     {
         CanEditAfterView = await AccessRights.CanAsync(MenuCodes.SubconSendOut, PermissionCodes.Edit);
+        CanPostPermission =
+            (await AccessRights.CanAsync(MenuCodes.SubconSendOut, PermissionCodes.Post)
+             || await AccessRights.CanAsync(MenuCodes.SubconWorkbench, PermissionCodes.Post))
+            && await AccessRights.CanAsync(MenuCodes.InventoryStockTransfer, PermissionCodes.Post);
+        CanRollbackPermission =
+            (await AccessRights.CanAsync(MenuCodes.SubconSendOut, PermissionCodes.Rollback)
+             || await AccessRights.CanAsync(MenuCodes.SubconWorkbench, PermissionCodes.Rollback))
+            && await AccessRights.CanAsync(MenuCodes.InventoryStockTransfer, PermissionCodes.Rollback);
         if (IsNew)
         {
             var initialJobKind = string.Equals(KindQuery, "assembly", StringComparison.OrdinalIgnoreCase)
@@ -381,6 +395,64 @@ public partial class SubconSendOut : PageBase
         Navigation.NavigateTo("/subcon/send-out");
     }
 
+    protected async Task ConfirmPostAsync()
+    {
+        if (!CanPostDocument)
+        {
+            return;
+        }
+
+        PostConfirmVisible = false;
+        ErrorMessage = null;
+        StatusMessage = null;
+        IsSubmitting = true;
+        var result = await Subcon.PostDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = Header.DocNo,
+            RowVersion = Header.RowVersion,
+            RequestId = Guid.NewGuid()
+        });
+        IsSubmitting = false;
+        if (!result.Succeeded || result.Dispatch is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        Header = HeaderVm.From(result.Dispatch);
+        Lines = result.Dispatch.Lines.Select(LineVm.From).ToList();
+        StatusMessage = result.InfoMessage ?? $"Posted send-out {Header.DocNo}.";
+    }
+
+    protected async Task ConfirmRollbackAsync()
+    {
+        if (!CanRollbackDocument)
+        {
+            return;
+        }
+
+        RollbackConfirmVisible = false;
+        ErrorMessage = null;
+        StatusMessage = null;
+        IsSubmitting = true;
+        var result = await Subcon.RollbackDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = Header.DocNo,
+            RowVersion = Header.RowVersion,
+            RequestId = Guid.NewGuid()
+        });
+        IsSubmitting = false;
+        if (!result.Succeeded || result.Dispatch is null)
+        {
+            ErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        Header = HeaderVm.From(result.Dispatch);
+        Lines = result.Dispatch.Lines.Select(LineVm.From).ToList();
+        StatusMessage = result.InfoMessage ?? $"Rolled back send-out {Header.DocNo}.";
+    }
+
     private async Task EnsureMasterLookupsLoadedAsync()
     {
         if (Warehouses.Count == 0 && !IsLoadingWarehouses)
@@ -441,6 +513,10 @@ public partial class SubconSendOut : PageBase
         public bool IsManualKit { get; set; }
         public string? PoNo { get; set; }
         public string? Remarks { get; set; }
+        public int? PostedTrxBatchNo { get; set; }
+        public Guid? PostedOperationId { get; set; }
+        public bool CanPost { get; set; }
+        public bool CanRollback { get; set; }
         public byte[] RowVersion { get; set; } = [];
         public string PostBlockedReason { get; set; } = SubconBlockedReasons.NoAtomicInventorySeam;
 
@@ -455,6 +531,10 @@ public partial class SubconSendOut : PageBase
             SupplierName = dto.SupplierName,
             PoNo = dto.PoNo,
             Remarks = dto.Remarks,
+            PostedTrxBatchNo = dto.PostedTrxBatchNo,
+            PostedOperationId = dto.PostedOperationId,
+            CanPost = dto.CanPost,
+            CanRollback = dto.CanRollback,
             RowVersion = dto.RowVersion,
             PostBlockedReason = dto.PostBlockedReason
         };

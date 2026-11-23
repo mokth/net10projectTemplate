@@ -192,17 +192,23 @@ public sealed class SaDeliveryRequestFulfilmentService : ISaDeliveryRequestFulfi
             .OrderBy(x => x.Uid)
             .ToListAsync(cancellationToken);
 
-        var candidateRows = await db.IvBalLocs.AsNoTracking()
-            .Where(x => x.CompanyCode == scope.CompanyCode
-                && x.BranchCode == scope.BranchCode
-                && x.ICode == header.ProductCode
-                && x.WhCode == header.WarehouseCode
-                && x.StdQty > 0m
-                && x.IStatus == IvItemStatuses.Active
-                && x.TransDate != null
-                && x.TransDate < _dates.Today.Date.AddDays(1)
-                && (x.LocationCode == scope.LocationCode || x.LocationCode == null || x.LocationCode == ""))
-            .ToListAsync(cancellationToken);
+        var candidateRows = await (
+            from bal in db.IvBalLocs.AsNoTracking()
+            join wh in db.IvWarehouses.AsNoTracking()
+                on new { bal.CompanyCode, bal.BranchCode, WarehouseCode = bal.WhCode }
+                equals new { wh.CompanyCode, wh.BranchCode, wh.WarehouseCode } into whs
+            from wh in whs.DefaultIfEmpty()
+            where bal.CompanyCode == scope.CompanyCode
+                && bal.BranchCode == scope.BranchCode
+                && bal.ICode == header.ProductCode
+                && bal.WhCode == header.WarehouseCode
+                && bal.StdQty > 0m
+                && bal.IStatus == IvItemStatuses.Active
+                && bal.TransDate != null
+                && bal.TransDate < _dates.Today.Date.AddDays(1)
+                && (bal.LocationCode == scope.LocationCode || bal.LocationCode == null || bal.LocationCode == "")
+                && (wh == null || wh.WarehouseType == null || wh.WarehouseType.ToUpper() != "SUBCON")
+            select bal).ToListAsync(cancellationToken);
 
         var allIds = candidateRows.Select(x => x.Id)
             .Concat(currentRows.Select(x => x.BalLocId))

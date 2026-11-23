@@ -2,6 +2,7 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Subcon;
 using ErpWeb.Core.Transactions;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
@@ -415,6 +416,12 @@ public sealed class IvStockTransferService : IIvStockTransferService
             return IvStockTransferOperationResult.Fail("Only NEW stock transfers can be edited.");
         }
 
+        if (await SubconCustodyGuardService.Instance.AssertBatchNotSubconOwnedAsync(
+                db, context.CompanyCode!, context.BranchCode!, batch.Id, cancellationToken) is string subconOwnedErr)
+        {
+            return IvStockTransferOperationResult.Fail(subconOwnedErr);
+        }
+
         var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
 
         var validatedResult = await ValidateLinesAsync(
@@ -520,6 +527,12 @@ public sealed class IvStockTransferService : IIvStockTransferService
 
             if (batch.DeletedAtUtc is not null)
                 continue;
+
+            if (await SubconCustodyGuardService.Instance.AssertBatchNotSubconOwnedAsync(
+                    db, context.CompanyCode!, context.BranchCode!, batch.Id, cancellationToken) is string subconOwnedErr)
+            {
+                return IvStockTransferOperationResult.Fail($"stock transfer {no}: {subconOwnedErr}");
+            }
 
             var deleteError = await TransactionDeleteApplicator.ApplyInventoryBatchAsync(
                 db, batch, TransactionDeleteOwnerTypes.InventoryBatch, context.UserId, null, cancellationToken);
@@ -802,6 +815,11 @@ public sealed class IvStockTransferService : IIvStockTransferService
             return ($"Line {lineNo}: warehouse '{frWarehouse}' was not found for this branch.", null);
         }
 
+        if (SubconCustodyGuardService.IsCustodyWarehouseType(warehouse.WarehouseType))
+        {
+            return ($"Line {lineNo}: {SubconCustodyConstants.SourceCustodyBlocked}", null);
+        }
+
         var frLocation = (line.FrLocation ?? string.Empty).Trim();
         var balLocation = (bal.LocCode ?? string.Empty).Trim();
         if (!string.Equals(frLocation, balLocation, StringComparison.OrdinalIgnoreCase))
@@ -941,6 +959,11 @@ public sealed class IvStockTransferService : IIvStockTransferService
         if (toWhRow is null)
         {
             return ($"Line {lineNo}: destination warehouse '{toWarehouse}' was not found for this branch.", null);
+        }
+
+        if (SubconCustodyGuardService.IsCustodyWarehouseType(toWhRow.WarehouseType))
+        {
+            return ($"Line {lineNo}: {SubconCustodyConstants.DestinationCustodyBlocked}", null);
         }
 
         var toLocation = (line.ToLocation ?? string.Empty).Trim();

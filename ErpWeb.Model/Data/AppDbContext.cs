@@ -391,6 +391,8 @@ public class AppDbContext : DbContext
     public DbSet<SubconJobMaterial> SubconJobMaterials => Set<SubconJobMaterial>();
     public DbSet<SubconJobOutput> SubconJobOutputs => Set<SubconJobOutput>();
     public DbSet<SubconSupplierAssignment> SubconSupplierAssignments => Set<SubconSupplierAssignment>();
+    public DbSet<SubconPostingLink> SubconPostingLinks => Set<SubconPostingLink>();
+    public DbSet<SubconCustodyAllocation> SubconCustodyAllocations => Set<SubconCustodyAllocation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

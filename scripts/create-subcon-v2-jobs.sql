@@ -68,7 +68,7 @@ BEGIN
     (
         UID              BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_SubconJobMaterial PRIMARY KEY,
         JobId            BIGINT               NOT NULL,
-        LineNo           INT                  NOT NULL,
+        [LineNo]         INT                  NOT NULL,
         ItemCode         NVARCHAR(30)         NOT NULL,
         ItemName         NVARCHAR(100)        NULL,
         Uom              NVARCHAR(10)         NOT NULL,
@@ -87,7 +87,7 @@ BEGIN
     );
 
     CREATE UNIQUE INDEX UX_SubconJobMaterial_Job_LineNo
-        ON dbo.SubconJobMaterial (JobId, LineNo);
+        ON dbo.SubconJobMaterial (JobId, [LineNo]);
 END;
 
 IF OBJECT_ID(N'dbo.SubconJobOutput', N'U') IS NULL
@@ -96,7 +96,7 @@ BEGIN
     (
         UID           BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_SubconJobOutput PRIMARY KEY,
         JobId         BIGINT               NOT NULL,
-        LineNo        INT                  NOT NULL,
+        [LineNo]      INT                  NOT NULL,
         OutputKind    NVARCHAR(20)         NOT NULL,
         ItemCode      NVARCHAR(30)         NOT NULL,
         ItemName      NVARCHAR(100)        NULL,
@@ -110,7 +110,7 @@ BEGIN
     );
 
     CREATE UNIQUE INDEX UX_SubconJobOutput_Job_LineNo
-        ON dbo.SubconJobOutput (JobId, LineNo);
+        ON dbo.SubconJobOutput (JobId, [LineNo]);
 END;
 
 IF OBJECT_ID(N'dbo.SubconSupplierAssignment', N'U') IS NULL
@@ -119,7 +119,7 @@ BEGIN
     (
         UID                BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_SubconSupplierAssignment PRIMARY KEY,
         JobId              BIGINT               NOT NULL,
-        LineNo             INT                  NOT NULL,
+        [LineNo]           INT                  NOT NULL,
         SupplierCode       NVARCHAR(20)         NOT NULL,
         SupplierName       NVARCHAR(100)        NULL,
         AssignedQty        DECIMAL(18,4)        NOT NULL,
@@ -134,5 +134,5 @@ BEGIN
     );
 
     CREATE UNIQUE INDEX UX_SubconSupplierAssignment_Job_LineNo
-        ON dbo.SubconSupplierAssignment (JobId, LineNo);
+        ON dbo.SubconSupplierAssignment (JobId, [LineNo]);
 END;

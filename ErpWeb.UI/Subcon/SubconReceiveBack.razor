@@ -6,6 +6,13 @@
 
 <MenuAuthorize MenuCode="@MenuCodes.SubconReceiveBack">
     <div class="iv-page">
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="iv-toast iv-toast--ok" role="status">
+                <span>@StatusMessage</span>
+                <button type="button" class="iv-toast__close" @onclick="() => StatusMessage = null" aria-label="Dismiss">×</button>
+            </div>
+        }
         @if (!string.IsNullOrWhiteSpace(ErrorMessage))
         {
             <div class="iv-toast iv-toast--err" role="alert">
@@ -26,17 +33,24 @@
                     <span class="iv-chip">@DocNoDisplay</span>
                     <span class="iv-chip">@LineCountLabel</span>
                     <span class="iv-chip">@Header.Status</span>
+                    @if (Header.PostedTrxBatchNo is int postedBatchNo)
+                    {
+                        <span class="iv-chip">TR #@postedBatchNo</span>
+                    }
                 </div>
             </div>
         </header>
 
         <section class="iv-card">
             <SubconPostingBanner Message="@Header.PostBlockedReason" />
-            <p class="iv-guidance">Outstanding send-out quantity stays empty until a send-out is posted. Save keeps a draft against a send-out document. Stock will not move.</p>
-            <div class="qa-empty">
-                <h3>No outstanding items.</h3>
-                <p>@SubconBlockedReasons.NoOutstanding</p>
-            </div>
+            @if (!string.IsNullOrWhiteSpace(Header.PostBlockedReason))
+            {
+                <p class="iv-guidance">Outstanding send-out quantity stays empty until a send-out is posted. Save keeps a draft against a send-out document. Stock will not move.</p>
+                <div class="qa-empty">
+                    <h3>No outstanding items.</h3>
+                    <p>@SubconBlockedReasons.NoOutstanding</p>
+                </div>
+            }
             <DxFormLayout SizeMode="SizeMode.Small">
                 <DxFormLayoutItem Caption="Date *" ColSpanMd="4">
                     <Template>
@@ -120,7 +134,7 @@
             }
 
             <footer class="iv-footer">
-                <p class="iv-footer__hint">@LineCountLabel. Post is not available.</p>
+                <p class="iv-footer__hint">@LineCountLabel. @(Header.CanPost ? "Ready to post return from supplier custody." : Header.CanRollback ? "Posted back to company stock." : "Post is not available.")</p>
                 <div class="iv-footer__actions">
                     <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                               Text="@(IsView ? "Close" : "Cancel")"
@@ -134,12 +148,31 @@
                                   Click="@OnSaveAsync"
                                   Enabled="@CanSave" />
                     }
-                    else if (CanEditDocumentAfterView)
+                    else
                     {
-                        <DxButton RenderStyle="ButtonRenderStyle.Primary"
-                                  Text="Edit"
-                                  IconCssClass="fa-solid fa-pen"
-                                  Click="@(() => Navigation.NavigateTo($"/subcon/receive-back/edit/{DocNo}"))" />
+                        @if (CanEditDocumentAfterView)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                                      Text="Edit"
+                                      IconCssClass="fa-solid fa-pen"
+                                      Click="@(() => Navigation.NavigateTo($"/subcon/receive-back/edit/{DocNo}"))" />
+                        }
+                        @if (CanPostDocument)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Success"
+                                      Text="@(IsSubmitting ? "Posting…" : "Post")"
+                                      IconCssClass="fa-solid fa-box-open"
+                                      Click="@(() => PostConfirmVisible = true)"
+                                      Enabled="@CanPostDocument" />
+                        }
+                        @if (CanRollbackDocument)
+                        {
+                            <DxButton RenderStyle="ButtonRenderStyle.Danger"
+                                      Text="@(IsSubmitting ? "Rolling back…" : "Rollback")"
+                                      IconCssClass="fa-solid fa-rotate-left"
+                                      Click="@(() => RollbackConfirmVisible = true)"
+                                      Enabled="@CanRollbackDocument" />
+                        }
                     }
                 </div>
             </footer>
@@ -261,6 +294,36 @@
         <FooterContentTemplate>
             <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Keep editing" Click="@(() => DiscardConfirmVisible = false)" />
             <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Discard" Click="@ConfirmDiscard" />
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup HeaderText="Post receive-back from supplier custody?"
+             Width="480px"
+             ShowFooter="true"
+             CloseOnOutsideClick="false"
+             @bind-Visible="@PostConfirmVisible">
+        <BodyContentTemplate>
+            <p class="mb-2">Post receive-back <strong>@Header.DocNo</strong> (@LineCountLabel) from supplier <strong>@Header.SupplierCode</strong> on <strong>@Header.TrxDate.ToString("dd/MM/yyyy")</strong>?</p>
+            <p class="mb-0 text-muted">This atomically returns company-owned stock from supplier custody into the receiving company warehouse via one Inventory TR.</p>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => PostConfirmVisible = false)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Success" Text="Confirm Post" Click="@ConfirmPostAsync" Enabled="@CanPostDocument" />
+        </FooterContentTemplate>
+    </DxPopup>
+
+    <DxPopup HeaderText="Roll back receive-back?"
+             Width="480px"
+             ShowFooter="true"
+             CloseOnOutsideClick="false"
+             @bind-Visible="@RollbackConfirmVisible">
+        <BodyContentTemplate>
+            <p class="mb-2">Roll back posted receive-back <strong>@Header.DocNo</strong>@(Header.PostedTrxBatchNo is int b ? $" (TR #{b})" : string.Empty)?</p>
+            <p class="mb-0 text-muted">Stock will return to supplier custody and this document will return to NEW.</p>
+        </BodyContentTemplate>
+        <FooterContentTemplate>
+            <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Cancel" Click="@(() => RollbackConfirmVisible = false)" />
+            <DxButton RenderStyle="ButtonRenderStyle.Danger" Text="Confirm Rollback" Click="@ConfirmRollbackAsync" Enabled="@CanRollbackDocument" />
         </FooterContentTemplate>
     </DxPopup>
 </MenuAuthorize>

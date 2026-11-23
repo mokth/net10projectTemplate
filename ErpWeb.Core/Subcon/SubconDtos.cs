@@ -12,6 +12,7 @@ public sealed class SubconResult
     public SubconWorkbenchPage? Workbench { get; init; }
     public SubconDispatchLineLookupPage? DispatchLineLookup { get; init; }
     public SubconJobDto? Job { get; init; }
+    public IReadOnlyList<SubconCustodyReconciliationRow>? Reconciliation { get; init; }
     public bool CanUseProductionMode { get; init; }
 
     public static SubconResult Fail(string message) => new() { Succeeded = false, ErrorMessage = message };
@@ -19,11 +20,14 @@ public sealed class SubconResult
     public static SubconResult OkPolicy(SubconPolicyDto policy, string? info = null) =>
         new() { Succeeded = true, Policy = policy, InfoMessage = info };
 
-    public static SubconResult OkDispatch(SubconDispatchDto item, bool canUseProductionMode = false) =>
-        new() { Succeeded = true, Dispatch = item, CanUseProductionMode = canUseProductionMode };
+    public static SubconResult OkDispatch(SubconDispatchDto item, bool canUseProductionMode = false, string? info = null) =>
+        new() { Succeeded = true, Dispatch = item, CanUseProductionMode = canUseProductionMode, InfoMessage = info };
 
-    public static SubconResult OkReceipt(SubconReceiptDto item) =>
-        new() { Succeeded = true, Receipt = item };
+    public static SubconResult OkReceipt(SubconReceiptDto item, string? info = null) =>
+        new() { Succeeded = true, Receipt = item, InfoMessage = info };
+
+    public static SubconResult OkReconciliation(IReadOnlyList<SubconCustodyReconciliationRow> rows) =>
+        new() { Succeeded = true, Reconciliation = rows };
 
     public static SubconResult OkList(SubconListPage page, bool canUseProductionMode = false) =>
         new() { Succeeded = true, ListPage = page, CanUseProductionMode = canUseProductionMode };
@@ -44,8 +48,15 @@ public sealed class SubconPolicyDto
     public bool SubconEnabled { get; init; }
     public bool InventoryModeEnabled { get; init; }
     public bool ProductionModeEnabled { get; init; }
+    public bool InventoryCustodyPostEnabled { get; init; }
+    public bool LotReturnEnabled { get; init; }
+    public bool BomConversionEnabled { get; init; }
+    public bool ProductionWipEnabled { get; init; }
+    public bool FeeCapitalizationEnabled { get; init; }
+    public string? DefaultCustodyWarehouseCode { get; init; }
     public bool IsPublished { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    public bool LiveCustodyReady => SubconEnabled && InventoryCustodyPostEnabled;
 }
 
 public sealed class SubconPolicySaveCommand
@@ -53,6 +64,12 @@ public sealed class SubconPolicySaveCommand
     public bool SubconEnabled { get; init; }
     public bool InventoryModeEnabled { get; init; }
     public bool ProductionModeEnabled { get; init; }
+    public bool InventoryCustodyPostEnabled { get; init; }
+    public bool LotReturnEnabled { get; init; }
+    public bool BomConversionEnabled { get; init; }
+    public bool ProductionWipEnabled { get; init; }
+    public bool FeeCapitalizationEnabled { get; init; }
+    public string? DefaultCustodyWarehouseCode { get; init; }
     public byte[]? RowVersion { get; init; }
 }
 
@@ -123,6 +140,13 @@ public sealed class SubconDispatchDto
     public short? PoRelNo { get; init; }
     public short? PoLineNo { get; init; }
     public string? Remarks { get; init; }
+    public int DocumentRevision { get; init; }
+    public DateTime? PostedDate { get; init; }
+    public string? PostedBy { get; init; }
+    public int? PostedTrxBatchNo { get; init; }
+    public Guid? PostedOperationId { get; init; }
+    public bool CanPost { get; init; }
+    public bool CanRollback { get; init; }
     public byte[] RowVersion { get; init; } = [];
     public IReadOnlyList<SubconDispatchLineDto> Lines { get; init; } = [];
     public string PostBlockedReason { get; init; } = SubconBlockedReasons.NoAtomicInventorySeam;
@@ -134,9 +158,15 @@ public sealed class SubconDispatchLineDto
     public string ItemCode { get; init; } = string.Empty;
     public string? ItemName { get; init; }
     public string Uom { get; init; } = string.Empty;
+    public string? BaseUom { get; init; }
     public decimal Qty { get; init; }
+    public decimal? BaseQty { get; init; }
+    public string? StockStatus { get; init; }
     public string? WarehouseCode { get; init; }
     public string? LocationCode { get; init; }
+    public string? CustodyWarehouseCode { get; init; }
+    public string? CustodyLocationCode { get; init; }
+    public int? CustodyBalLocId { get; init; }
     public string? LotNo { get; init; }
     public string? WorkOrderNo { get; init; }
     public string? OperationCode { get; init; }
@@ -182,6 +212,13 @@ public sealed class SubconReceiptDto
     public string SupplierCode { get; init; } = string.Empty;
     public string? SupplierName { get; init; }
     public string? Remarks { get; init; }
+    public int DocumentRevision { get; init; }
+    public DateTime? PostedDate { get; init; }
+    public string? PostedBy { get; init; }
+    public int? PostedTrxBatchNo { get; init; }
+    public Guid? PostedOperationId { get; init; }
+    public bool CanPost { get; init; }
+    public bool CanRollback { get; init; }
     public byte[] RowVersion { get; init; } = [];
     public IReadOnlyList<SubconReceiptLineDto> Lines { get; init; } = [];
     public string PostBlockedReason { get; init; } = SubconBlockedReasons.NoAtomicInventorySeam;
@@ -192,8 +229,13 @@ public sealed class SubconReceiptLineDto
     public int LineNo { get; init; }
     public string DispatchDocNo { get; init; } = string.Empty;
     public int DispatchLineNo { get; init; }
+    public string? ItemCode { get; init; }
+    public string? ItemName { get; init; }
     public decimal Qty { get; init; }
     public string Uom { get; init; } = string.Empty;
+    public decimal? BaseQty { get; init; }
+    public string? ToWarehouseCode { get; init; }
+    public string? ToLocationCode { get; init; }
 }
 
 public sealed class SubconReceiptSaveCommand
@@ -212,12 +254,31 @@ public sealed class SubconReceiptLineSaveCommand
     public string DispatchDocNo { get; init; } = string.Empty;
     public int DispatchLineNo { get; init; }
     public decimal Qty { get; init; }
+    public string? ToWarehouseCode { get; init; }
+    public string? ToLocationCode { get; init; }
 }
 
 public sealed class SubconKeyCommand
 {
     public string DocNo { get; init; } = string.Empty;
     public byte[]? RowVersion { get; init; }
+    public Guid? RequestId { get; init; }
+}
+
+public sealed class SubconCustodyReconciliationRow
+{
+    public string SupplierCode { get; init; } = string.Empty;
+    public string ItemCode { get; init; } = string.Empty;
+    public string BaseUom { get; init; } = string.Empty;
+    public string CustodyWarehouseCode { get; init; } = string.Empty;
+    public string CustodyLocationCode { get; init; } = string.Empty;
+    public int CustodyBalLocId { get; init; }
+    public decimal AllocatedDispatchedBaseQty { get; init; }
+    public decimal AllocatedReturnedBaseQty { get; init; }
+    public decimal AllocatedOutstandingBaseQty { get; init; }
+    public decimal PhysicalCustodyBaseQty { get; init; }
+    public decimal VarianceBaseQty => PhysicalCustodyBaseQty - AllocatedOutstandingBaseQty;
+    public bool IsReconciled => VarianceBaseQty == 0m;
 }
 
 public sealed record SubconDispatchLineLookupQuery

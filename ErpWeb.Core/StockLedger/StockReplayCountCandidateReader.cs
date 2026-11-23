@@ -53,10 +53,15 @@ public static class StockReplayCountCandidateReader
             from bal in db.IvBalLocs.AsNoTracking()
             join sm in db.IvStockMasters.AsNoTracking()
                 on new { bal.CompanyCode, bal.ICode } equals new { sm.CompanyCode, sm.ICode }
+            join wh in db.IvWarehouses.AsNoTracking()
+                on new { bal.CompanyCode, bal.BranchCode, WarehouseCode = bal.WhCode }
+                equals new { wh.CompanyCode, wh.BranchCode, wh.WarehouseCode } into whs
+            from wh in whs.DefaultIfEmpty()
             join lot in db.IvLots.AsNoTracking()
                 on bal.LotId equals lot.Id into lots
             from lot in lots.DefaultIfEmpty()
             where bal.CompanyCode == company && bal.BranchCode == branch && sm.StockControl
+                && (wh == null || wh.WarehouseType == null || wh.WarehouseType.ToUpper() != "SUBCON")
             select new { bal, sm, lot };
 
         if (!scope.IncludeInactive)

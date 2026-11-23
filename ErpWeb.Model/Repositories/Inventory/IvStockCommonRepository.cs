@@ -489,6 +489,10 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
             from bal in db.IvBalLocs.AsNoTracking()
             join sm in db.IvStockMasters.AsNoTracking()
                 on new { bal.CompanyCode, bal.ICode } equals new { sm.CompanyCode, sm.ICode }
+            join wh in db.IvWarehouses.AsNoTracking()
+                on new { bal.CompanyCode, bal.BranchCode, WarehouseCode = bal.WhCode }
+                equals new { wh.CompanyCode, wh.BranchCode, wh.WarehouseCode } into whs
+            from wh in whs.DefaultIfEmpty()
             join lot in db.IvLots.AsNoTracking()
                 on bal.LotId equals lot.Id into lots
             from lot in lots.DefaultIfEmpty()
@@ -497,6 +501,7 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
                   && bal.StdQty > 0m
                   && sm.IsActive
                   && sm.StockControl
+                  && (wh == null || wh.WarehouseType == null || wh.WarehouseType.ToUpper() != "SUBCON")
             select new { bal, sm, lot };
 
         if (asOfDate is DateTime asOf)
@@ -618,6 +623,10 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
             from bal in db.IvBalLocs.AsNoTracking()
             join sm in db.IvStockMasters.AsNoTracking()
                 on new { bal.CompanyCode, bal.ICode } equals new { sm.CompanyCode, sm.ICode }
+            join wh in db.IvWarehouses.AsNoTracking()
+                on new { bal.CompanyCode, bal.BranchCode, WarehouseCode = bal.WhCode }
+                equals new { wh.CompanyCode, wh.BranchCode, wh.WarehouseCode } into whs
+            from wh in whs.DefaultIfEmpty()
             join lot in db.IvLots.AsNoTracking()
                 on bal.LotId equals lot.Id into lots
             from lot in lots.DefaultIfEmpty()
@@ -625,6 +634,8 @@ public sealed class IvStockCommonRepository : IIvStockCommonRepository
                   && bal.BranchCode == branch
                   // An uncontrolled item has no balance worth adjusting — always excluded.
                   && sm.StockControl
+                  // Supplier-held subcontractor custody stock is excluded from ordinary physical stock count sheets.
+                  && (wh == null || wh.WarehouseType == null || wh.WarehouseType.ToUpper() != "SUBCON")
             select new { bal, sm, lot };
 
         if (asOfDate is DateTime asOf)

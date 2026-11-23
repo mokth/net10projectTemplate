@@ -103,6 +103,7 @@ public sealed class ProductionMaterialStockAvailabilityReader : IProductionMater
                 && x.StdQty > 0m
                 && x.StockMaster.IsActive
                 && x.StockMaster.StockControl
+                && (x.Warehouse == null || x.Warehouse.WarehouseType == null || x.Warehouse.WarehouseType.ToUpper() != "SUBCON")
                 && (x.StdUom == null || x.StdUom == "" || x.StdUom == material.BaseUom)
                 && (!x.StockMaster.LotControl
                     || (x.LotId != null && x.Lot != null && x.Lot.IsActive && x.LotNo != ""
