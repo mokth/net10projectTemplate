@@ -1,7 +1,9 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Purchase;
 using ErpWeb.Core.Quality;
+using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
@@ -10,8 +12,11 @@ using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
+using ErpWeb.Tests.Infrastructure.Helpers;
+using ErpWeb.Tests.Procurement.Transaction;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace ErpWeb.Tests.Inventory.Transaction;
@@ -1212,6 +1217,239 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
             Assert.Equal(adjustment, active.SignedAdjustmentQty);
             Assert.Equal(countedQty, (await db.IvStockCountLines.SingleAsync(l => l.Id == lineId)).PhysicalQty);
+            if (adjustment == 0m)
+                Assert.Null(active.AdjustmentHistoryId);
+            else
+            {
+                var history = await db.IvTrxHistories.SingleAsync(h => h.Id == active.AdjustmentHistoryId);
+                var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                Assert.Equal(countCost, Assert.Single(facts[history.Id]).CostAmount);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(110, 10)]
+    [InlineData(100, 10)]
+    [InlineData(90, 10)]
+    [InlineData(90, 20)]
+    public async Task Scrap_before_count_posts_rolls_back_and_reposts(decimal countedQty, decimal scrapQty)
+    {
+        var (lineId, pileId) = await PostCountForIssueAsync(countedQty);
+        var scrap = InventoryLedgerTestFixture.CreateScrap(_factory, FixedToday, enableBackdatedReplay: true);
+        var draft = await scrap.SaveNewAsync(new IvScrapSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(-1),
+            Lines = [new IvScrapLineRequest
+            {
+                FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                FrLotNo = string.Empty, Quantity = scrapQty, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", UnitPrice = 2m, Reason = "DAMAGED"
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var posted = await scrap.PostAsync([draft.BatchNo]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertStateAsync(IvBatchStatuses.Posted, countedQty - 100m + scrapQty);
+            var rolled = await scrap.RollbackAsync([draft.BatchNo]);
+            Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+            await AssertStateAsync(IvBatchStatuses.New, countedQty - 100m);
+        }
+
+        async Task AssertStateAsync(string status, decimal adjustment)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((countedQty, countedQty * 2m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(status, (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
+            if (adjustment == 0m)
+                Assert.Null(active.AdjustmentHistoryId);
+            else
+            {
+                var history = await db.IvTrxHistories.SingleAsync(h => h.Id == active.AdjustmentHistoryId);
+                var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                Assert.Equal(Math.Abs(adjustment) * 2m, Assert.Single(facts[history.Id]).CostAmount);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(110, 10)]
+    [InlineData(100, 10)]
+    [InlineData(90, 10)]
+    public async Task Vendor_return_before_count_updates_po_return_qty_and_restores_on_rollback(
+        decimal countedQty, decimal returnQty)
+    {
+        var (lineId, pileId) = await PostCountForIssueAsync(countedQty);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PoSuppliers.Add(new PoSupplier
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                SuppCode = "SUP01", SuppName = "Supplier",
+                Currency = "MYR", GlCode = "AP001",
+                IsActive = true, RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            db.PoOrders.Add(new PoOrder
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                PoNo = "PO-VR-CNT", PoRelNo = 1, PoDate = FixedToday.AddDays(-5),
+                Status = PoOrderStatuses.Received, VendCode = "SUP01", VendName = "Supplier",
+                CurCode = "MYR", OneTime = false, FinClosed = false
+            });
+            db.PoOrderDetails.Add(new PoOrderDetail
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                PoNo = "PO-VR-CNT", PoRelNo = 1, Line = 1,
+                ICode = "A100", IDesc = "Item A", OneTime = false,
+                PoQty = 100m, PoPurQty = 100m, RecvQty = 100m, ReturnQty = 0m,
+                BalanceQty = 0m, OverRecvQty = 0m, InvoicedQty = 0m,
+                StdUom = "EA", PurchaseUom = "EA", PackSz = 1m, PoUnitPrice = 2m
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var vr = InventoryLedgerTestFixture.CreateVendorReturn(_factory, FixedToday, enableBackdatedReplay: true);
+        var draft = await vr.SaveNewAsync(new IvVendorReturnSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(-1),
+            Lines = [new IvVendorReturnLineRequest
+            {
+                FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                FrLotNo = string.Empty, Quantity = returnQty, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", UnitPrice = 2m,
+                PoNo = "PO-VR-CNT", PoRelNo = 1, PoLineNo = 1
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var posted = await vr.PostAsync([draft.BatchNo]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertStateAsync(IvBatchStatuses.Posted, countedQty - 100m + returnQty, returnQty);
+            var rolled = await vr.RollbackAsync([draft.BatchNo]);
+            Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+            await AssertStateAsync(IvBatchStatuses.New, countedQty - 100m, 0m);
+        }
+
+        async Task AssertStateAsync(string status, decimal adjustment, decimal expectedReturnQty)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((countedQty, countedQty * 2m), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(status, (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            var poLine = await db.PoOrderDetails.SingleAsync(d => d.PoNo == "PO-VR-CNT" && d.Line == 1);
+            Assert.Equal(expectedReturnQty, poLine.ReturnQty);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
+            if (adjustment == 0m)
+                Assert.Null(active.AdjustmentHistoryId);
+            else
+            {
+                var history = await db.IvTrxHistories.SingleAsync(h => h.Id == active.AdjustmentHistoryId);
+                var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                Assert.Equal(Math.Abs(adjustment) * 2m, Assert.Single(facts[history.Id]).CostAmount);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(110, 10, 3, 230, 0, 0)]
+    [InlineData(110, 20, 3, 238.333330, -10, 21.666670)]
+    [InlineData(10, 20, 3, 21.666630, -110, 238.333370)]
+    public async Task Goods_receipt_before_count_reprices_changed_cost_updates_po_and_restores_on_rollback(
+        decimal countedQty, decimal receiptQty, decimal poUnitPrice,
+        decimal expectedValue, decimal expectedAdjustment, decimal expectedCountCost)
+    {
+        var (lineId, _) = await PostCountForIssueAsync(countedQty);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PoSuppliers.Add(new PoSupplier
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                SuppCode = "SUP01", SuppName = "Supplier",
+                Currency = "MYR", GlCode = "AP001",
+                IsActive = true, RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            db.PoOrders.Add(new PoOrder
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                PoNo = "PO-GR-CNT", PoRelNo = 1, PoDate = FixedToday.AddDays(-5),
+                Status = PoOrderStatuses.New, VendCode = "SUP01", VendName = "Supplier",
+                CurCode = "MYR", OneTime = false, FinClosed = false
+            });
+            db.PoOrderDetails.Add(new PoOrderDetail
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                PoNo = "PO-GR-CNT", PoRelNo = 1, Line = 1,
+                ICode = "A100", IDesc = "Item A", OneTime = false,
+                PoQty = 50m, PoPurQty = 50m, RecvQty = 0m, ReturnQty = 0m,
+                BalanceQty = 50m, OverRecvQty = 0m, InvoicedQty = 0m,
+                StdUom = "EA", PurchaseUom = "EA", PackSz = 1m, PoUnitPrice = poUnitPrice,
+                Amount = 50m * poUnitPrice, NetAmount = 50m * poUnitPrice, CurCode = "MYR"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
+            enableBackdatedReplay: true);
+        var gr = new IvGoodsReceiptService(
+            _factory, tenant, access.Object, new RunningNumberService(),
+            new FixedCurrentDateService(FixedToday),
+            new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+            new IvStockTransactionRepository(), new IvStockPostingRepository(),
+            posting, NullLogger<IvGoodsReceiptService>.Instance,
+            approval: TestDisabledProcurementApprovalGuard.Instance);
+        var draft = await gr.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive,
+            TrxDate = FixedToday.AddDays(-1).AddHours(12),
+            RefNo = "GR-BEFORE-COUNT",
+            Lines = [new IvGoodsReceiptLineRequest
+            {
+                PoNo = "PO-GR-CNT", PoRelNo = 1, PoLineNo = 1,
+                ToWarehouse = "MAIN", ToLocation = "BIN1",
+                ToRecvQty = receiptQty
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var posted = await gr.PostAsync([draft.BatchNo]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertStateAsync(IvBatchStatuses.Posted, expectedValue, expectedAdjustment, expectedCountCost, receiptQty);
+            var rolled = await gr.RollbackAsync([draft.BatchNo]);
+            Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+            await AssertStateAsync(IvBatchStatuses.New, countedQty * 2m, countedQty - 100m, Math.Abs(countedQty - 100m) * 2m, 0m);
+        }
+
+        async Task AssertStateAsync(string status, decimal value, decimal adjustment, decimal countCost, decimal expectedRecvQty)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((countedQty, value), (state.OnHandBaseQty, state.InventoryValue));
+            Assert.Equal(status, (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            var poLine = await db.PoOrderDetails.SingleAsync(d => d.PoNo == "PO-GR-CNT" && d.Line == 1);
+            Assert.Equal(expectedRecvQty, poLine.RecvQty);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
             if (adjustment == 0m)
                 Assert.Null(active.AdjustmentHistoryId);
             else

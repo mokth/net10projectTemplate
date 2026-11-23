@@ -185,7 +185,7 @@ public static class StockReplayWacMiRootWriter
         IReadOnlyList<StockCountReplayGeneration> correctedCounts = [];
         if (countPermit is not null)
         {
-            if (context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousIssue
+            if (!StockReplayFifoInventoryIssueKinds.IsSupportedWac(context.Posting.SourceDocumentType)
                 || countPermit.ReversedCandidateHistoryId is not null || countPermit.Lines.Length != 1
                 || plan.Tail.LaterEvents.Count != 1 || plan.Tail.LaterEvents[0].EventId != -countPermit.Lines[0].PreviousGenerationId)
                 throw Invalid("The issue has no unique prepared count correction.");

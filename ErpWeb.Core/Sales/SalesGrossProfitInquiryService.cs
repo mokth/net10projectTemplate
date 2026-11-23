@@ -134,7 +134,8 @@ public sealed class SalesGrossProfitInquiryService : ISalesGrossProfitInquirySer
                 .ToListAsync(cancellationToken);
         var collapsedReturns = CollapseReturnAllocationChains(allocations);
         var returnDocNos = collapsedReturns
-            .Where(x => string.Equals(x.ReturnDocumentType, "SA_CN", StringComparison.OrdinalIgnoreCase)
+            .Where(x => (string.Equals(x.ReturnDocumentType, "SA_CDN", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(x.ReturnDocumentType, "SA_CN", StringComparison.OrdinalIgnoreCase))
                         && !string.IsNullOrWhiteSpace(x.ReturnDocumentNo))
             .Select(x => x.ReturnDocumentNo)
             .Distinct(StringComparer.OrdinalIgnoreCase)

@@ -326,6 +326,75 @@ public sealed partial class CostingDiagnosticCenterTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Invoice_cogs_proof_pro_rates_partially_billed_linked_do_and_rejects_overbilled_do()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv1 = new SaInvoice
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-P1", DoNo = "DO-P1",
+                CustCode = "CUST-1", InvDate = new DateTime(2026, 10, 3), Status = "POSTED"
+            };
+            inv1.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-P1", Line = 1,
+                ICode = "ITEM-1", Qty = 4m, StdQty = 4m, StdUom = "EA", StockControl = true,
+                LinkDo = true, DoNo = "DO-P1", DoLine = 1, SoNo = string.Empty
+            });
+            var inv2 = new SaInvoice
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-P2", DoNo = "DO-P1",
+                CustCode = "CUST-1", InvDate = new DateTime(2026, 10, 3), Status = "POSTED"
+            };
+            inv2.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-P2", Line = 1,
+                ICode = "ITEM-1", Qty = 6m, StdQty = 6m, StdUom = "EA", StockControl = true,
+                LinkDo = true, DoNo = "DO-P1", DoLine = 1, SoNo = string.Empty
+            });
+            db.SaInvoices.AddRange(inv1, inv2);
+            await db.SaveChangesAsync();
+        }
+
+        var delivery = await AddPostingAsync("SP", "99", isSealed: true);
+        await AddFactAsync(delivery, direction: -1, qty: 10m, value: 30m, documentType: "SA_DO", documentNo: "DO-P1", line: "1", split: 0);
+
+        var service = new CostingDiagnosticService(_factory, new Tenant(), new Access(viewCost: true));
+        var p1 = await service.ProveInvoiceCogsAsync("INV-P1");
+        var p2 = await service.ProveInvoiceCogsAsync("INV-P2");
+        Assert.True(p1.IsFullyProven);
+        Assert.True(p2.IsFullyProven);
+        Assert.Equal("PROVEN_PARTIAL_DO", Assert.Single(p1.Lines).Lineage);
+        Assert.Equal(12m, Assert.Single(p1.Lines).Cogs);
+        Assert.Equal(18m, Assert.Single(p2.Lines).Cogs);
+        Assert.Empty(p1.Findings);
+        Assert.Empty(p2.Findings);
+
+        // Over-billing the DO (4 + 6 + 2 = 12 > 10 shipped) must fail closed.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var inv3 = new SaInvoice
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-P3", DoNo = "DO-P1",
+                CustCode = "CUST-1", InvDate = new DateTime(2026, 10, 3), Status = "POSTED"
+            };
+            inv3.Details.Add(new SaInvoiceDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", InvNo = "INV-P3", Line = 1,
+                ICode = "ITEM-1", Qty = 2m, StdQty = 2m, StdUom = "EA", StockControl = true,
+                LinkDo = true, DoNo = "DO-P1", DoLine = 1, SoNo = string.Empty
+            });
+            db.SaInvoices.Add(inv3);
+            await db.SaveChangesAsync();
+        }
+
+        var overbilled = await service.ProveInvoiceCogsAsync("INV-P1");
+        Assert.False(overbilled.IsFullyProven);
+        Assert.Equal("LEGACY_OR_AMBIGUOUS_COGS_LINEAGE", Assert.Single(overbilled.Lines).Lineage);
+        Assert.Contains(overbilled.Findings, x => x.Code == CostingFindingCodes.SalesCogsLineageIncomplete);
+    }
+
+    [Fact]
     public async Task Trace_keeps_the_branch_item_pool_and_uses_an_opening_anchor()
     {
         var first = await AddPostingAsync("MR", "11", isSealed: true, effective: new DateTime(2026, 10, 1));

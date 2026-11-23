@@ -960,8 +960,11 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string expectedTrxType,
         CancellationToken cancellationToken,
         StockPostingContext? postingContext = null,
-        bool allowReplayedPurchaseNote = false)
+        bool allowReplayedPurchaseNote = false,
+        bool deferCountCorrectedBalance = false)
     {
+        if (deferCountCorrectedBalance && postingContext is null)
+            throw new InvalidOperationException("Deferred count balance requires a replay posting context.");
         var batch = await _posting.LockBatchForUpdateAsync(db, companyCode, branchCode, batchNo, cancellationToken);
         if (batch is null
             || !string.Equals(batch.TrxType, expectedTrxType, StringComparison.OrdinalIgnoreCase))
@@ -1038,7 +1041,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             }
 
             var next = bal.StdQty - deltaBySlice[slice];
-            if (next < 0m)
+            if (!deferCountCorrectedBalance && next < 0m)
             {
                 return IvInventoryPostingBatchResult.Fail(
                     batchNo,
@@ -1060,23 +1063,29 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         }
 
         var repairedDates = new Dictionary<int, DateTime?>();
-        foreach (var slice in ordered)
+        if (!deferCountCorrectedBalance)
         {
-            var bal = locked[slice];
-            var nextQty = bal.StdQty - deltaBySlice[slice];
-            repairedDates[bal.Id] = await ResolveRollbackTransDateAsync(
-                db, companyCode, branchCode, bal.Id, batchNo, bal.TransDate, nextQty, cancellationToken);
+            foreach (var slice in ordered)
+            {
+                var bal = locked[slice];
+                var nextQty = bal.StdQty - deltaBySlice[slice];
+                repairedDates[bal.Id] = await ResolveRollbackTransDateAsync(
+                    db, companyCode, branchCode, bal.Id, batchNo, bal.TransDate, nextQty, cancellationToken);
+            }
         }
 
         // Apply all after all checks
         var now = DateTime.UtcNow;
         var uid = Truncate(userId, 10);
-        foreach (var slice in ordered)
+        if (!deferCountCorrectedBalance)
         {
-            var bal = locked[slice];
-            bal.StdQty -= deltaBySlice[slice];
-            bal.ModifiedDate = now;
-            bal.TransDate = repairedDates[bal.Id];
+            foreach (var slice in ordered)
+            {
+                var bal = locked[slice];
+                bal.StdQty -= deltaBySlice[slice];
+                bal.ModifiedDate = now;
+                bal.TransDate = repairedDates[bal.Id];
+            }
         }
 
         if (postingContext is null)

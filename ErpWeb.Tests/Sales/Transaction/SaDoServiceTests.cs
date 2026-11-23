@@ -1891,6 +1891,77 @@ public class SaDoServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Partially_billed_do_sales_return_attributes_cogs_reduction_only_to_returned_invoice()
+    {
+        await SeedBalLocAsync(15m, FixedToday.AddDays(-5));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedCompanyAsync(db);
+            await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 15m, 3m);
+            await InventoryLedgerTestFixture.SeedOpeningValuationFactAsync(
+                db, "A100", 15m, 3m, FixedToday.AddDays(-20), StockCostMethods.MovingAverage);
+            await db.SaveChangesAsync();
+        }
+
+        // Ship 10 EA on one DO @ 3m/EA (total COGS = 30m), then bill across INV-1 (4 EA) and INV-2 (6 EA).
+        var delivery = CreateSut(withLedger: true);
+        var savedDo = await delivery.SaveNewAsync(Request(qty: 10m, price: 10m));
+        Assert.True(savedDo.Succeeded, savedDo.ErrorMessage);
+        Assert.True((await ShipAsync(delivery, savedDo.DoNo!)).Succeeded);
+        Assert.True((await delivery.PostAsync([Keyed(savedDo.DoNo!, GetRowVersion(savedDo.DoNo!))])).Succeeded);
+
+        var invNumbering = new FakeDoDocumentNumberingService();
+        var inv1 = await PostLinkedInvoiceAsync(savedDo.DoNo!, qty: 4m, numbering: invNumbering);
+        var inv2 = await PostLinkedInvoiceAsync(savedDo.DoNo!, qty: 6m, numbering: invNumbering);
+
+        // Return 2 EA with stock via SA_CDN against INV-1 only (returned cost = 6m).
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        var note = new SaCdnService(_factory, tenant, Access().Object,
+            new FakeCdnDocumentNumberingService(), new RunningNumberService(),
+            new FixedCurrentDateService(FixedToday), new SaCdnRepository(),
+            new SaInvoiceRepository(), new IvStockPostingRepository(),
+            new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+            InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true),
+            NullLogger<SaCdnService>.Instance);
+        var savedNote = await note.SaveNewAsync(new SaCdnSaveRequest
+        {
+            Type = "CN", DocDate = FixedToday, CustCode = "CUST01", Currency = "MYR",
+            InvNo = inv1.InvoiceNo, SalesmanCode = "SM1", ReturnStock = true,
+            Lines = [new SaCdnLineRequest
+            {
+                ICode = "A100", Qty = 2m, UnitPrice = 10m, SourceInvLine = 1,
+                CostPrice = 3m, FrWarehouse = "MAIN", LocCode = "BIN1", IStatus = "ACTIVE"
+            }]
+        });
+        Assert.True(savedNote.Succeeded, savedNote.ErrorMessage);
+        var postedNote = await note.PostAsync([new SaCdnKeyedRequest
+        {
+            DocNo = savedNote.DocNo!, RowVersion = savedNote.Document!.RowVersion
+        }]);
+        Assert.True(postedNote.Succeeded, postedNote.ErrorMessage);
+
+        // Verify the return allocation is persisted as SA_CDN and reduces ONLY INV-1 COGS (12 - 6 = 6m),
+        // leaving INV-2 COGS untouched at 18m.
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            var alloc = await verify.SalesReturnCostAllocations.AsNoTracking().SingleAsync();
+            Assert.Equal("SA_CDN", alloc.ReturnDocumentType);
+            Assert.Equal(6m, alloc.ReturnedCostAmount);
+        }
+
+        var inquiry = new SalesGrossProfitInquiryService(_factory, tenant);
+        var rows = (await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery { ItemCode = "A100" })).Rows;
+        Assert.Equal(2, rows.Count);
+        var row1 = rows.Single(r => r.Invoice == inv1.InvoiceNo);
+        var row2 = rows.Single(r => r.Invoice == inv2.InvoiceNo);
+        Assert.Equal(6m, row1.Cogs);
+        Assert.Equal(18m, row2.Cogs);
+        Assert.Equal(24m, row1.Cogs + row2.Cogs);
+    }
+
+    [Fact]
     public async Task Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice()
     {
         var balA = await SeedBalLocAsync(15m, FixedToday.AddDays(-5));

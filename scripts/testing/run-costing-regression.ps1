@@ -145,7 +145,11 @@ $patterns = @(
     'Backdated_transfer_creates_new_non_lot_destination_pile_rolls_back_and_reposts',
     'Backdated_new_destination_transfer_rejects_shortage_without_creating_pile',
     'Backdated_receipt_reprices_partially_billed_do_across_two_invoices_without_double_counting_cogs',
-    'Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice'
+    'Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice',
+    'Partially_billed_do_sales_return_attributes_cogs_reduction_only_to_returned_invoice',
+    'Scrap_before_count_posts_rolls_back_and_reposts',
+    'Vendor_return_before_count_updates_po_return_qty_and_restores_on_rollback',
+    'Goods_receipt_before_count_reprices_changed_cost_updates_po_and_restores_on_rollback'
 )
 $required = @(
     'StockLedgerInfrastructureTests', 'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
@@ -326,7 +330,12 @@ $required = @(
     'Backdated_transfer_creates_new_non_lot_destination_pile_rolls_back_and_reposts',
     'Backdated_new_destination_transfer_rejects_shortage_without_creating_pile',
     'Backdated_receipt_reprices_partially_billed_do_across_two_invoices_without_double_counting_cogs',
-    'Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice'
+    'Backdated_wac_receipt_reprices_multiline_do_and_mixed_direct_linked_invoice',
+    'Partially_billed_do_sales_return_attributes_cogs_reduction_only_to_returned_invoice',
+    'Invoice_cogs_proof_pro_rates_partially_billed_linked_do_and_rejects_overbilled_do',
+    'Scrap_before_count_posts_rolls_back_and_reposts',
+    'Vendor_return_before_count_updates_po_return_qty_and_restores_on_rollback',
+    'Goods_receipt_before_count_reprices_changed_cost_updates_po_and_restores_on_rollback'
 )
 $filter = '(' + (($patterns | ForEach-Object { 'FullyQualifiedName~' + $_ }) -join '|') +
     ')&FullyQualifiedName!~SqlServer&Category!=SqlServer'

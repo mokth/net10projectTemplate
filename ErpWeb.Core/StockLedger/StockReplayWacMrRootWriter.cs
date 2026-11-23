@@ -188,8 +188,8 @@ public static class StockReplayWacMrRootWriter
         IReadOnlyList<StockCountReplayGeneration> correctedCounts = [];
         if (countPermit is not null)
         {
-            if (goodsReceipt || purchasePermit is not null
-                || context.Posting.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+            if (allowInvoiced || purchasePermit is not null
+                || context.Posting.SourceDocumentType != receiptType
                 || countPermit.ReversedCandidateHistoryId is not null || countPermit.Lines.Length != 1
                 || plan.Tail.LaterEvents.Count != 1
                 || plan.Tail.LaterEvents[0].EventId != -countPermit.Lines[0].PreviousGenerationId)

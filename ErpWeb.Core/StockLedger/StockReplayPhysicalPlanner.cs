@@ -577,9 +577,9 @@ public static class StockReplayPhysicalPlanner
     {
         await ValidateWithinRootAsync(context, plan, cancellationToken);
         var removed = plan.RemovedActiveEvent;
-        var isIssue = context.Posting.SourceDocumentType == IvTrxTypes.MiscellaneousIssue
+        var isIssue = StockReplayFifoInventoryIssueKinds.IsSupportedWac(context.Posting.SourceDocumentType)
             && removed.SignedDelta < 0m;
-        var isReceipt = context.Posting.SourceDocumentType == IvTrxTypes.MiscellaneousReceipt
+        var isReceipt = context.Posting.SourceDocumentType is IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive
             && removed.SignedDelta > 0m;
         if (removed.EventId is not (> 0 and <= int.MaxValue) || (!isIssue && !isReceipt)
             || removed.Key.ClassPriority != StockReplayEventKey.OrdinaryClass || removed.AbsoluteCountQty is not null

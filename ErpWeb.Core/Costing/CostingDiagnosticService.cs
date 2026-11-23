@@ -123,6 +123,25 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                 })
                 .ToListAsync(cancellationToken);
 
+        var linkedDoNos = lines.Where(x => x.LinkDo && !string.IsNullOrWhiteSpace(x.DoNo))
+            .Select(x => x.DoNo!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var postedBilledDoRows = linkedDoNos.Length == 0
+            ? []
+            : await db.SaInvoiceDetails.AsNoTracking()
+                .Where(d => d.CompanyCode == scope.CompanyCode
+                    && d.BranchCode == scope.BranchCode
+                    && d.LinkDo
+                    && d.StockControl
+                    && d.DoNo != null && linkedDoNos.Contains(d.DoNo)
+                    && db.SaInvoices.Any(i => i.CompanyCode == d.CompanyCode
+                        && i.BranchCode == d.BranchCode
+                        && i.InvNo == d.InvNo
+                        && i.Status == "POSTED"))
+                .Select(d => new { d.DoNo, d.DoLine, d.ICode, d.StdQty })
+                .ToListAsync(cancellationToken);
+
         var proof = new List<CostingCogsProofLine>();
         var findings = new List<CostingFinding>();
         foreach (var line in lines)
@@ -138,9 +157,27 @@ public sealed class CostingDiagnosticService : ICostingDiagnosticService
                     && string.Equals(x.SourceDocumentLine, ownerLine, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(x.ItemCode, line.ICode, StringComparison.OrdinalIgnoreCase)).ToArray();
             var actualQty = matches.Sum(x => x.BaseQty);
-            var cogs = matches.Sum(x => x.CostAmount);
-            var proven = matches.Length > 0 && actualQty == line.StdQty;
-            var lineage = proven ? "PROVEN" : "LEGACY_OR_AMBIGUOUS_COGS_LINEAGE";
+            var totalCost = matches.Sum(x => x.CostAmount);
+            var isPartialLinkedDo = line.LinkDo
+                && matches.Length > 0
+                && actualQty > 0.0000005m
+                && line.StdQty > 0m
+                && line.StdQty < actualQty - 0.0000005m;
+            var totalBilledOnDoLine = isPartialLinkedDo
+                ? postedBilledDoRows
+                    .Where(d => string.Equals(d.DoNo?.Trim(), ownerNo, StringComparison.OrdinalIgnoreCase)
+                        && d.DoLine == line.DoLine
+                        && string.Equals(d.ICode, line.ICode, StringComparison.OrdinalIgnoreCase))
+                    .Sum(d => d.StdQty)
+                : 0m;
+            var partialProven = isPartialLinkedDo && totalBilledOnDoLine <= actualQty + 0.0000005m;
+            var proven = partialProven || (matches.Length > 0 && actualQty == line.StdQty);
+            var cogs = partialProven
+                ? decimal.Round(totalCost * (line.StdQty / actualQty), 6, MidpointRounding.AwayFromZero)
+                : totalCost;
+            var lineage = partialProven
+                ? "PROVEN_PARTIAL_DO"
+                : proven ? "PROVEN" : "LEGACY_OR_AMBIGUOUS_COGS_LINEAGE";
             proof.Add(new CostingCogsProofLine(
                 line.Line,
                 line.ICode ?? string.Empty,

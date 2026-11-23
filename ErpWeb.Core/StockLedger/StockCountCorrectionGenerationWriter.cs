@@ -88,7 +88,8 @@ public static class StockCountCorrectionGenerationWriter
         else
         {
             var isMovementRoot = context.Posting.SourceModule == "INVENTORY"
-                && context.Posting.SourceDocumentType is IvTrxTypes.MiscellaneousIssue or IvTrxTypes.MiscellaneousReceipt;
+                && (StockReplayFifoInventoryIssueKinds.IsSupportedWac(context.Posting.SourceDocumentType)
+                    || context.Posting.SourceDocumentType is IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive);
             var candidateHistories = await db.IvTrxHistories.AsNoTracking()
                 .Where(h => h.StockPostingId == context.Posting.Id && h.LedgerVersion == 2
                     && h.EntryRole == (permit.ReversedCandidateHistoryId.HasValue ? "REVERSAL" : "ORIGINAL")
