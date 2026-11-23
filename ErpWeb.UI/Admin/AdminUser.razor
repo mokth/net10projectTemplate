@@ -9,10 +9,6 @@
     .code-style {
         text-transform: uppercase !important;
     }
-    .password-style {
-        background-color: color-mix(in srgb, var(--danger, #b42318) 12%, var(--surface, #fff)) !important;
-        color: var(--text, #1c2430) !important;
-    }
 </style>
 
 <MenuAuthorize MenuCode="@MenuCodes.AdminUsers">
@@ -101,7 +97,7 @@
                                     Login Info
                                 </HeaderContentTemplate>
                                 <Items>
-                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User ID" ColSpanMd="6">
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User ID *" ColSpanMd="6">
                                         <Template>
                                             <DxTextBox @bind-Text="@CreateModel.LoginId" maxlength="10" InputCssClass="required-field"></DxTextBox>
                                         </Template>
@@ -117,22 +113,22 @@
                                             <small class="text-muted d-block">Applies after the user's next sign-in.</small>
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name" ColSpanMd="6" BeginRow="true">
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name *" ColSpanMd="6" BeginRow="true">
                                         <Template>
                                             <DxTextBox @bind-Text="@CreateModel.Name" maxlength="50" InputCssClass="required-field"></DxTextBox>
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Password" ColSpanMd="6">
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Password *" ColSpanMd="6">
                                         <Template>
-                                            <DxTextBox Password="true" @bind-Text="@CreateModel.TemporaryPassword" InputCssClass="password-style" maxlength="100"></DxTextBox>
+                                            <DxTextBox Password="true" @bind-Text="@CreateModel.TemporaryPassword" InputCssClass="required-field" maxlength="100"></DxTextBox>
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Confirm Password" ColSpanMd="6" BeginRow="true">
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Confirm Password *" ColSpanMd="6" BeginRow="true">
                                         <Template>
-                                            <DxTextBox Password="true" @bind-Text="@CreateModel.ConfirmPassword" InputCssClass="password-style" maxlength="100"></DxTextBox>
+                                            <DxTextBox Password="true" @bind-Text="@CreateModel.ConfirmPassword" InputCssClass="required-field" maxlength="100"></DxTextBox>
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level" ColSpanMd="6">
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level *" ColSpanMd="6">
                                         <Template>
                                             <DxComboBox Data="@levelgroup"
                                                         AllowUserInput="false"
@@ -206,7 +202,7 @@
                                 <Items>
                                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="User ID" ColSpanMd="6">
                                         <Template>
-                                            <DxTextBox @bind-Text="@EditModel.LoginId" maxlength="10" ReadOnly="true" InputCssClass="required-field"></DxTextBox>
+                                            <DxTextBox @bind-Text="@EditModel.LoginId" maxlength="10" ReadOnly="true" InputCssClass="code-style"></DxTextBox>
                                         </Template>
                                     </DxFormLayoutItem>
                                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Active" ColSpanMd="3">
@@ -220,12 +216,12 @@
                                             <small class="text-muted d-block">Applies after the user's next sign-in.</small>
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name" ColSpanMd="6" BeginRow="true">
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="User Name *" ColSpanMd="6" BeginRow="true">
                                         <Template>
                                             <DxTextBox @bind-Text="@EditModel.Name" maxlength="50" ReadOnly="@(!editEnable)" InputCssClass="required-field"></DxTextBox>
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level" ColSpanMd="6">
+                                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Level *" ColSpanMd="6">
                                         <Template>
                                             <DxComboBox Data="@levelgroup"
                                                         AllowUserInput="false"
@@ -307,12 +303,12 @@
                         <DxTextBox @bind-Text="@ResetModel.Name" maxlength="50" ReadOnly="true" InputCssClass="code-style"></DxTextBox>
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="New Password" ColSpanMd="12" BeginRow="true">
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="New Password *" ColSpanMd="12" BeginRow="true">
                     <Template>
                         <DxTextBox Password="true" @bind-Text="@ResetModel.NewPassword" InputCssClass="required-field" maxlength="100"></DxTextBox>
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Confirm New Password" ColSpanMd="12">
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Confirm New Password *" ColSpanMd="12">
                     <Template>
                         <DxTextBox Password="true" @bind-Text="@ResetModel.ConfirmPassword" InputCssClass="required-field" maxlength="100"></DxTextBox>
                     </Template>

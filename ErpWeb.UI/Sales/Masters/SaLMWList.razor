@@ -60,7 +60,7 @@
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
                     @* Both key fields are locked in edit mode — the key is never editable (D-11). *@
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Licence No" ColSpanMd="4">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Licence No *" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.LicenseNo"
                                        maxlength="40"
@@ -68,7 +68,7 @@
                                        InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer Code" ColSpanMd="4">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer Code *" ColSpanMd="4">
                         <Template>
                             <IvCodeComboBox Data="@CustomerOptions"
                                             Value="@EditModel.CustCode"
@@ -113,28 +113,32 @@
                         </Template>
                     </DxFormLayoutItem>
 
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Licence Start" ColSpanMd="3" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Licence Start *" ColSpanMd="3" BeginRow="true">
                         <Template>
                             <DxDateEdit @bind-Date="@EditModel.LicenseStartDate"
-                                        ReadOnly="@(!EditEnabled)" />
+                                        ReadOnly="@(!EditEnabled)"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Licence End" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Licence End *" ColSpanMd="3">
                         <Template>
                             <DxDateEdit @bind-Date="@EditModel.LicenseEndDate"
-                                        ReadOnly="@(!EditEnabled)" />
+                                        ReadOnly="@(!EditEnabled)"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="System Start" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="System Start *" ColSpanMd="3">
                         <Template>
                             <DxDateEdit @bind-Date="@EditModel.SystemStartDate"
-                                        ReadOnly="@(!EditEnabled)" />
+                                        ReadOnly="@(!EditEnabled)"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="System End" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="System End *" ColSpanMd="3">
                         <Template>
                             <DxDateEdit @bind-Date="@EditModel.SystemEndDate"
-                                        ReadOnly="@(!EditEnabled)" />
+                                        ReadOnly="@(!EditEnabled)"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
 

@@ -91,12 +91,13 @@
                                     <DxTextBox Text="@DoNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@DoDate"
                                                 DateChanged="@(async (DateTime d) => await OnDoDateChanged(d))"
                                                 DisplayFormat="dd/MM/yyyy"
-                                                Enabled="@CanEditDocument" DateExpression="@(() => DoDate)" />
+                                                Enabled="@CanEditDocument"
+                                                InputCssClass="required-field" DateExpression="@(() => DoDate)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
@@ -115,7 +116,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Customer</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Customer" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Customer *" ColSpanMd="12">
                                 <Template>
                                     <SaCustomerPicker CustCode="@CustCode"
                                                       SecondaryName="@CustName"
@@ -142,13 +143,13 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Terms</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Payment term" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Payment term *" ColSpanMd="12">
                                 <Template>
                                     <IvCodeComboBox Data="@PayCodes" Value="@PayCode" ValueChanged="@(async (string? v) => await OnPayCodeChanged(v))" Enabled="@CanEditDocument" NullText="Select payment term" InputCssClass="required-field" />
                                     @FieldError("PayCode")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Tax group" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@(TaxGroupRequired ? "Tax group *" : "Tax group")" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@TaxGroups"
                                                 TextFieldName="@nameof(SaDoTaxGroupLookupRow.DisplayText)"
@@ -159,7 +160,9 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select tax group"
-                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" ValueExpression="@(() => TaxGrCode)" />
+                                                CssClass="w-100"
+                                                InputCssClass="@(TaxGroupRequired ? "required-field" : null)"
+                                                ValueExpression="@(() => TaxGrCode)" />
                                     @FieldError("TaxGrCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -527,7 +530,7 @@
                     <p class="sdoc-field-hint">Price source: @_priceHint</p>
                 }
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
-                    <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                    <DxFormLayoutItem Caption="Item *" ColSpanMd="12">
                         <Template>
                             <IvStockMasterPicker ICode="@Popup.ICode"
                                                  Selected="@OnPopupItemSelectedAsync"
@@ -552,20 +555,21 @@
                     </DxFormLayoutItem>
                     @if (ShowPopupAdvanced)
                     {
-                        <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="@(Popup.StockControl ? "Warehouse *" : "Warehouse")" ColSpanMd="4">
                             <Template>
                                 <DxComboBox Data="@Warehouses"
                                             TextFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
                                             ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
                                             @bind-Value="@Popup.FrWarehouse"
                                             Enabled="@CanEditDocument"
-                                            CssClass="w-100 required-field" />
+                                            CssClass="w-100"
+                                            InputCssClass="@(Popup.StockControl ? "required-field" : null)" />
                             </Template>
                         </DxFormLayoutItem>
                     }
-                    <DxFormLayoutItem Caption="Qty" ColSpanMd="6">
+                    <DxFormLayoutItem Caption="Qty *" ColSpanMd="6">
                         <Template>
-                            <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" ValueExpression="@(() => Popup.Qty)" />
+                            <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" InputCssClass="required-field" ValueExpression="@(() => Popup.Qty)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Pack" ColSpanMd="6">

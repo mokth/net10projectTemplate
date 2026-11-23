@@ -183,8 +183,8 @@
                         <div class="pwo-form-step"><span>1</span><div><h3>What do you need to make?</h3><p>The production setup supplies the work steps and material list.</p></div></div>
                         <div class="pwo-form-grid">
                             <div class="iv-field pwo-span-2">
-                                <label class="iv-field__label">Product <span class="pwo-required">Required</span></label>
-                                <IvStockMasterPicker ICode="@Request.ProductCode" ICodeChanged="OnProductCodeChanged" Selected="OnProductSelectedAsync" Enabled="@CanEditProduct" InputCssClass="required-field code-style" NullText="Type a product code or use search" />
+                                <label class="iv-field__label">@(CanEditProduct ? "Product *" : "Product")</label>
+                                <IvStockMasterPicker ICode="@Request.ProductCode" ICodeChanged="OnProductCodeChanged" Selected="OnProductSelectedAsync" Enabled="@CanEditProduct" InputCssClass="@(CanEditProduct ? "required-field code-style" : "code-style")" NullText="Type a product code or use search" />
                                 @FieldError("ProductCode")
                             </div>
                             <div class="iv-field pwo-span-2">
@@ -192,8 +192,8 @@
                                 <DxTextBox InputId="pwo-product-name" Text="@CurrentProductDescription" ReadOnly="true" NullText="Shown after choosing a product" ValidationEnabled="false" />
                             </div>
                             <div class="iv-field">
-                                <label class="iv-field__label" for="pwo-quantity">Quantity to make <span class="pwo-required">Required</span></label>
-                                <DxSpinEdit InputId="pwo-quantity" @bind-Value="@Request.PlannedQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ReadOnly="@(!CanEditInputs)" />
+                                <label class="iv-field__label" for="pwo-quantity">@(CanEditInputs ? "Quantity to make *" : "Quantity to make")</label>
+                                <DxSpinEdit InputId="pwo-quantity" @bind-Value="@Request.PlannedQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" ReadOnly="@(!CanEditInputs)" InputCssClass="@(CanEditInputs ? "required-field" : null)" />
                                 @FieldError("PlannedQty")
                             </div>
                             <div class="iv-field">
@@ -201,10 +201,10 @@
                                 <DxTextBox InputId="pwo-unit" Text="@CurrentOutputUom" ReadOnly="true" ValidationEnabled="false" />
                             </div>
                             <div class="iv-field pwo-span-2">
-                                <label class="iv-field__label" for="pwo-setup">Production setup</label>
+                                <label class="iv-field__label" for="pwo-setup">@(CanEditDefinition ? "Production setup *" : "Production setup")</label>
                                 @if (CanEditDefinition)
                                 {
-                                    <DxComboBox InputId="pwo-setup" Data="@DefinitionOptions" TextFieldName="@nameof(DefinitionOption.Label)" ValueFieldName="@nameof(DefinitionOption.Code)" Value="@Request.DefinitionCode" ValueChanged="@((string? v) => OnDefinitionCodeChanged(v))" Enabled="@CanEditDefinition" NullText="Choose a setup in use" SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" ValueExpression="@(() => Request.DefinitionCode)" />
+                                    <DxComboBox InputId="pwo-setup" Data="@DefinitionOptions" TextFieldName="@nameof(DefinitionOption.Label)" ValueFieldName="@nameof(DefinitionOption.Code)" Value="@Request.DefinitionCode" ValueChanged="@((string? v) => OnDefinitionCodeChanged(v))" Enabled="@CanEditDefinition" NullText="Choose a setup in use" SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" InputCssClass="required-field" ValueExpression="@(() => Request.DefinitionCode)" />
                                 }
                                 else
                                 {
@@ -238,14 +238,14 @@
                                 @FieldError("SchedulingDirection")
                             </div>
                             <div class="iv-field">
-                                <label class="iv-field__label" for="pwo-start">@(IsBackwardSchedule ? "Start date (calculated)" : "Start date")</label>
-                                <DxDateEdit InputId="pwo-start" @bind-Date="@Request.PlannedStartDate" ReadOnly="@(!CanEditInputs || IsBackwardSchedule)" />
+                                <label class="iv-field__label" for="pwo-start">@(IsBackwardSchedule ? "Start date (calculated)" : CanEditInputs ? "Start date *" : "Start date")</label>
+                                <DxDateEdit InputId="pwo-start" @bind-Date="@Request.PlannedStartDate" ReadOnly="@(!CanEditInputs || IsBackwardSchedule)" InputCssClass="@(CanEditInputs && !IsBackwardSchedule ? "required-field" : null)" />
                                 @FieldError("PlannedStartDate")
                                 <small class="pwo-field-help">@(IsBackwardSchedule ? "Updated when you check, save or send the order." : "Production will be planned from this date.")</small>
                             </div>
                             <div class="iv-field">
-                                <label class="iv-field__label" for="pwo-finish">@(IsBackwardSchedule ? "Finish date" : "Finish date (calculated)")</label>
-                                <DxDateEdit InputId="pwo-finish" @bind-Date="@Request.PlannedCompletionDate" ReadOnly="@(!CanEditInputs || !IsBackwardSchedule)" />
+                                <label class="iv-field__label" for="pwo-finish">@(!IsBackwardSchedule ? "Finish date (calculated)" : CanEditInputs ? "Finish date *" : "Finish date")</label>
+                                <DxDateEdit InputId="pwo-finish" @bind-Date="@Request.PlannedCompletionDate" ReadOnly="@(!CanEditInputs || !IsBackwardSchedule)" InputCssClass="@(CanEditInputs && IsBackwardSchedule ? "required-field" : null)" />
                                 @FieldError("PlannedCompletionDate")
                                 <small class="pwo-field-help">@(IsBackwardSchedule ? "The system plans backwards from this date." : "Updated when you check, save or send the order.")</small>
                             </div>
@@ -869,8 +869,8 @@
             <Content>
                 <p class="iv-confirm__copy">Cancel @CurrentWorkOrderNo?</p>
                 <div class="iv-field">
-                    <label class="iv-field__label">Reason</label>
-                    <DxMemo @bind-Text="@CancellationReason" Rows="3" NullText="Required cancellation reason" />
+                    <label class="iv-field__label">Reason *</label>
+                    <DxMemo @bind-Text="@CancellationReason" Rows="3" NullText="Required cancellation reason" InputCssClass="required-field" />
                     @FieldError("CancellationReason")
                 </div>
                 <div class="iv-popup-footer">
@@ -921,7 +921,8 @@
                     <label class="iv-field__label">Reason *</label>
                     <DxMemo @bind-Text="@ReopenReason"
                             Rows="3"
-                            NullText="e.g. Customer changed required quantity / production date rescheduled" />
+                            NullText="e.g. Customer changed required quantity / production date rescheduled"
+                            InputCssClass="required-field" />
                     @FieldError("Reason")
                 </div>
                 <div class="iv-popup-footer">
@@ -965,7 +966,10 @@
                 {
                     <p class="text-muted small">Added @RefreshPreviewModel.Added.Count, removed @RefreshPreviewModel.Removed.Count, changed @RefreshPreviewModel.Changed.Count.</p>
                 }
-                <input class="form-control" @bind="RefreshReason" placeholder="Reason" />
+                <div class="iv-field">
+                    <label class="iv-field__label" for="pwo-refresh-reason">Reason *</label>
+                    <input id="pwo-refresh-reason" class="form-control required-field" @bind="RefreshReason" placeholder="Reason" />
+                </div>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
                         <DxButton RenderStyle="ButtonRenderStyle.Secondary" Text="Close" Click="@(() => RefreshVisible = false)" />
@@ -987,14 +991,16 @@
                     to another production setup in use. This replaces machine and material choices with those from the selected setup.
                 </p>
                 <div class="iv-field">
-                    <label class="iv-field__label">New production setup</label>
+                    <label class="iv-field__label">New production setup *</label>
                     <DxComboBox Data="@ChangeDefinitionOptions"
                                 TextFieldName="@nameof(DefinitionOption.Label)"
                                 ValueFieldName="@nameof(DefinitionOption.Code)"
                                 Value="@SelectedChangeDefinitionCode"
                                 ValueChanged="@((string? v) => OnChangeDefinitionTargetChanged(v))"
                                 NullText="Choose a production setup"
-                                Enabled="@(!IsSubmitting)" ValueExpression="@(() => SelectedChangeDefinitionCode)" />
+                                Enabled="@(!IsSubmitting)"
+                                InputCssClass="required-field"
+                                ValueExpression="@(() => SelectedChangeDefinitionCode)" />
                 </div>
                 @if (ChangeDefinitionPreviewModel is not null)
                 {
@@ -1008,8 +1014,8 @@
                     </p>
                 }
                 <div class="iv-field">
-                    <label class="iv-field__label">Reason</label>
-                    <DxMemo @bind-Text="@ChangeDefinitionReason" Rows="2" NullText="Required when confirming" />
+                    <label class="iv-field__label">Reason *</label>
+                    <DxMemo @bind-Text="@ChangeDefinitionReason" Rows="2" NullText="Required when confirming" InputCssClass="required-field" />
                 </div>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">
@@ -1055,11 +1061,15 @@
                 }
                 else
                 {
-                    <DxComboBox Data="@MaterialAlternates"
-                                TextFieldName="@nameof(ProductionWorkOrderMaterialAlternateVm.ComponentCode)"
-                                ValueFieldName="@nameof(ProductionWorkOrderMaterialAlternateVm.SourceBomLineId)"
-                                @bind-Value="@SelectedAlternateBomLineId"
-                                NullText="Choose a substitute material" />
+                    <div class="iv-field">
+                        <label class="iv-field__label">Substitute material *</label>
+                        <DxComboBox Data="@MaterialAlternates"
+                                    TextFieldName="@nameof(ProductionWorkOrderMaterialAlternateVm.ComponentCode)"
+                                    ValueFieldName="@nameof(ProductionWorkOrderMaterialAlternateVm.SourceBomLineId)"
+                                    @bind-Value="@SelectedAlternateBomLineId"
+                                    NullText="Choose a substitute material"
+                                    InputCssClass="required-field" />
+                    </div>
                 }
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">

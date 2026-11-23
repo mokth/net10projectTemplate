@@ -80,7 +80,7 @@
                             <DxFormLayoutItem Caption="Request no." ColSpanMd="12">
                                 <Template><DxTextBox Text="@DocumentNoDisplay" ReadOnly="true" ValidationEnabled="false" /></Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Required date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Required date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@RequiredDate"
                                                 DateChanged="@((DateTime date) => OnRequiredDateChanged(date))"

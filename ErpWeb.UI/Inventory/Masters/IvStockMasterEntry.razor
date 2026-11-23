@@ -328,7 +328,7 @@
                             </div>
                             <div class="iv-stock-fields">
                                 <div class="iv-field">
-                                    <label class="iv-field__label">Item code</label>
+                                    <label class="iv-field__label">Item code *</label>
                                     <DxTextBox @bind-Text="@Model.ICode"
                                                maxlength="30"
                                                ReadOnly="@(!IsNewMode)"
@@ -337,7 +337,7 @@
                                     @FieldError(nameof(IvStockMasterEditVm.ICode))
                                 </div>
                                 <div class="iv-field iv-stock-field--wide">
-                                    <label class="iv-field__label">Description</label>
+                                    <label class="iv-field__label">Description *</label>
                                     <DxTextBox @bind-Text="@Model.IDesc"
                                                maxlength="200"
                                                NullText="Item description"
@@ -375,10 +375,7 @@
                                         <p class="iv-lifecycle-change__warning" role="note">
                                             @LifecycleChangeWarning
                                         </p>
-                                        <label class="iv-field__label">
-                                            Reason for status change
-                                            <span class="iv-field__required" aria-hidden="true">*</span>
-                                        </label>
+                                        <label class="iv-field__label">Reason for status change *</label>
                                         <DxTextBox @bind-Text="@Model.LifecycleChangeReason"
                                                    maxlength="250"
                                                    NullText="Required: explain why this item is changing status"
@@ -420,13 +417,7 @@
                                 @FieldError(nameof(IvStockMasterEditVm.IType))
                             </div>
                             <div class="iv-field">
-                                <label class="iv-field__label">
-                                    Class
-                                    @if (Model.StockControl)
-                                    {
-                                        <span class="iv-field__required" aria-hidden="true">*</span>
-                                    }
-                                </label>
+                                <label class="iv-field__label">@(Model.StockControl ? "Class *" : "Class")</label>
                                 <IvCodeComboBox Data="@Classes"
                                                 Value="@Model.IClassCode"
                                                 ValueExpression="() => Model.IClassCode"
@@ -445,7 +436,7 @@
                                 @FieldError(nameof(IvStockMasterEditVm.ISubClassCode))
                             </div>
                             <div class="iv-field">
-                                <label class="iv-field__label">Classification</label>
+                                <label class="iv-field__label">Classification *</label>
                                 <IvCodeComboBox Data="@Classifications"
                                                 @bind-Value="@Model.Classification"
                                                 InputCssClass="required-field"
@@ -479,13 +470,7 @@
                             }
                             <div class="iv-field-grid">
                                 <div class="iv-field iv-field--lead">
-                                    <label class="iv-field__label">
-                                        Std UOM
-                                        @if (Model.StockControl)
-                                        {
-                                            <span class="iv-field__required" aria-hidden="true">*</span>
-                                        }
-                                    </label>
+                                    <label class="iv-field__label">@(Model.StockControl ? "Std UOM *" : "Std UOM")</label>
                                     <IvCodeComboBox Data="@Uoms"
                                                     Value="@Model.StdUom"
                                                     ValueExpression="() => Model.StdUom"
@@ -504,14 +489,21 @@
                                                     NullText="Select UOM" />
                                 </div>
                                 <div class="iv-field">
-                                    <label class="iv-field__label">Selling pack size</label>
+                                    @{
+                                        var sellingPackRequired = Model.StockControl
+                                            && !string.IsNullOrWhiteSpace(Model.StdUom)
+                                            && !string.IsNullOrWhiteSpace(Model.SellingUom)
+                                            && !IsSellingIdentity;
+                                    }
+                                    <label class="iv-field__label">@(sellingPackRequired ? "Selling pack size *" : "Selling pack size")</label>
                                     <div class="iv-pack-equation">
                                         <span class="iv-pack-equation__lhs">1 @SellingUomLabel</span>
                                         <span class="iv-pack-equation__eq">=</span>
                                         <DxSpinEdit @bind-Value="@Model.StdPackSize"
                                                     MinValue="0m"
                                                     DisplayFormat="n4"
-                                                    Enabled="@(!IsSellingIdentity)" />
+                                                    Enabled="@(!IsSellingIdentity)"
+                                                    InputCssClass="@(sellingPackRequired ? "required-field" : null)" />
                                         <span class="iv-pack-equation__rhs">@StandardUomLabel</span>
                                     </div>
                                     @if (IsSellingIdentity)
@@ -529,14 +521,21 @@
                                                     NullText="Select UOM" />
                                 </div>
                                 <div class="iv-field">
-                                    <label class="iv-field__label">Purchase pack size</label>
+                                    @{
+                                        var purchasePackRequired = Model.StockControl
+                                            && !string.IsNullOrWhiteSpace(Model.StdUom)
+                                            && !string.IsNullOrWhiteSpace(Model.PurUom)
+                                            && !IsPurchaseIdentity;
+                                    }
+                                    <label class="iv-field__label">@(purchasePackRequired ? "Purchase pack size *" : "Purchase pack size")</label>
                                     <div class="iv-pack-equation">
                                         <span class="iv-pack-equation__lhs">1 @PurchaseUomLabel</span>
                                         <span class="iv-pack-equation__eq">=</span>
                                         <DxSpinEdit @bind-Value="@Model.PurStdPackSize"
                                                     MinValue="0m"
                                                     DisplayFormat="n4"
-                                                    Enabled="@(!IsPurchaseIdentity)" />
+                                                    Enabled="@(!IsPurchaseIdentity)"
+                                                    InputCssClass="@(purchasePackRequired ? "required-field" : null)" />
                                         <span class="iv-pack-equation__rhs">@StandardUomLabel</span>
                                     </div>
                                     @if (IsPurchaseIdentity)
@@ -641,7 +640,7 @@
                             <h3>Accounting</h3>
                             <div class="iv-stock-fields">
                                 <div class="iv-field">
-                                    <label class="iv-field__label">Selling GL</label>
+                                    <label class="iv-field__label">Selling GL *</label>
                                     <DxTextBox @bind-Text="@Model.SellingGlCode"
                                                maxlength="20"
                                                InputCssClass="required-field"

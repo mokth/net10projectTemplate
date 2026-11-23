@@ -51,11 +51,12 @@
 
             <section class="sr-card">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sr-header-form">
-                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Transaction date *" ColSpanMd="4">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
@@ -248,12 +249,12 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Source invoice</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Source invoice" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Source invoice *" ColSpanMd="6">
                                 <Template>
                                     <DxTextBox @bind-Text="@Popup.SourceInvNo" maxlength="30" InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Source invoice line" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Source invoice line *" ColSpanMd="6">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@Popup.SourceInvoiceLine"
                                                 Increment="1"
@@ -277,7 +278,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Item</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item code *" ColSpanMd="6">
                                 <Template>
                                     <IvStockMasterPicker ICode="@Popup.ICode"
                                                          Selected="OnItemSelectedAsync"
@@ -295,7 +296,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Quantity</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Quantity" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Quantity *" ColSpanMd="4">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@Popup.Quantity"
                                                 Increment="1m"
@@ -316,7 +317,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Receive to</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Warehouse *" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Warehouses"
                                                     Value="@Popup.ToWarehouse"
@@ -325,7 +326,7 @@
                                                     NullText="Select warehouse" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Location" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="@(Locations.Count > 0 ? "Location *" : "Location")" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Locations"
                                                     @bind-Value="@Popup.ToLocation"
@@ -343,12 +344,13 @@
                                                NullText="Auto-generated if blank" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Expiry date" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="@(Popup.LotControl ? "Expiry date *" : "Expiry date")" ColSpanMd="6">
                                 <Template>
                                     <DxDateEdit @bind-Date="@Popup.ExpiryDate"
                                                 DisplayFormat="dd/MM/yyyy"
                                                 MinDate="@Header.TrxDate.Date"
                                                 Enabled="@Popup.LotControl"
+                                                InputCssClass="@(Popup.LotControl ? "required-field" : null)"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                 </Template>
                             </DxFormLayoutItem>
@@ -363,7 +365,7 @@
 <DxTextBox Text="@Popup.IClassCode" ReadOnly="true" NullText="—" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Item status" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item status *" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Statuses"
                                                     @bind-Value="@Popup.IStatus"
@@ -377,7 +379,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Notes</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Reason" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Reason *" ColSpanMd="6">
                                 <Template>
                                     <DxComboBox Data="@IvReturnReasons.All"
                                                 @bind-Value="@Popup.Reason"

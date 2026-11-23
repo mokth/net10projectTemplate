@@ -118,14 +118,14 @@
                     <span class="pr-stock-step">1 of 3</span>
                 </header>
                 <div class="pr-stock-lookup">
-                    <label class="form-label">Work Order</label>
+                    <label class="form-label">Work Order *</label>
                     <PrProductionStockWorkOrderPicker WorkOrderNo="@Document.WorkOrderNo"
                                                       ResolveAsync="@ResolveWorkOrderAsync"
                                                       SearchAsync="@SearchWorkOrdersAsync"
                                                       Selected="@OnWorkOrderSelectedAsync"
                                                       Cleared="@OnWorkOrderClearedAsync"
                                                       Enabled="@(!Busy)"
-                                                      InputCssClass="pr-stock-work-order-input" />
+                                                      InputCssClass="required-field pr-stock-work-order-input" />
                     <p class="pr-stock-field-hint">Use the search button to browse Work Orders by number, product, or description.</p>
                 </div>
             </section>
@@ -404,7 +404,8 @@
                                                     DisplayFormat="n4"
                                                     ShowSpinButtons="false"
                                                     Enabled="@CanEditFields"
-                                                    CssClass="pr-stock-qty" />
+                                                    CssClass="pr-stock-qty"
+                                                    InputCssClass="@(CanEditFields ? "required-field" : null)" />
                                     </CellDisplayTemplate>
                                 </DxGridDataColumn>
                                 <DxGridDataColumn Caption="AFTER RETURN" Width="145px" TextAlignment="GridTextAlignment.Right">
@@ -438,7 +439,8 @@
                                                     TData="string"
                                                     TValue="string"
                                                     @bind-Value="row.Reason"
-                                                    Enabled="@CanEditFields" />
+                                                    Enabled="@CanEditFields"
+                                                    InputCssClass="@(CanEditFields ? "required-field" : null)" />
                                     </CellDisplayTemplate>
                                 </DxGridDataColumn>
                                 <DxGridDataColumn Caption="REMARKS" Width="190px">
@@ -449,7 +451,8 @@
                                         <DxTextBox @bind-Text="row.Remarks"
                                                    maxlength="250"
                                                    NullText="Required for Other"
-                                                   Enabled="@CanEditFields" />
+                                                   Enabled="@CanEditFields"
+                                                   InputCssClass="@(CanEditFields && row.Reason == ProductionStockReturnReasons.Other ? "required-field" : null)" />
                                     </CellDisplayTemplate>
                                 </DxGridDataColumn>
                                 <DxGridDataColumn Caption="" Width="92px" VisibleIndex="0" FixedPosition="GridColumnFixedPosition.Left">
@@ -779,10 +782,14 @@
             <Content>
                 <div class="common-popup__body">
                     <p>This appends a reversal for the linked Inventory and Production movements.</p>
-                    <DxMemo @bind-Text="RollbackReason"
-                            Rows="3"
-                            maxlength="250"
-                            NullText="Rollback reason (required)" />
+                    <div class="iv-field">
+                        <label class="iv-field__label">Reason *</label>
+                        <DxMemo @bind-Text="RollbackReason"
+                                Rows="3"
+                                maxlength="250"
+                                NullText="Rollback reason (required)"
+                                InputCssClass="required-field" />
+                    </div>
                 </div>
                 <div class="iv-popup-footer">
                     <div class="iv-popup-footer__actions">

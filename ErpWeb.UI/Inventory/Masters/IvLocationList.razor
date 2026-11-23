@@ -69,7 +69,7 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Warehouse" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Warehouse *" ColSpanMd="6">
                         <Template>
                             <IvCodeComboBox Data="@WarehouseOptions"
                                             @bind-Value="@EditModel.WarehouseCode"
@@ -85,7 +85,7 @@
                                         ReadOnly="@(!EditEnabled)" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Loc Code" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Loc Code *" ColSpanMd="6" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Code"
                                        maxlength="10"
@@ -93,7 +93,7 @@
                                        InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description *" ColSpanMd="12" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Desc"
                                        maxlength="100"

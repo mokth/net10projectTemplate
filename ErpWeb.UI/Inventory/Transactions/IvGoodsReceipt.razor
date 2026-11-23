@@ -52,12 +52,13 @@
 
             <section class="mr-card">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form erp-form-scope">
-                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Transaction date *" ColSpanMd="3">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
                                         Enabled="@CanEditDocument"
-                                        CssClass="erp-form-control--md" />
+                                        CssClass="erp-form-control--md"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="3">
@@ -65,7 +66,7 @@
 <DxTextBox Text="@BatchStatusDisplay" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--sm" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Receipt type" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Receipt type *" ColSpanMd="3">
                         <Template>
 <DxComboBox Data="@TrxTypeOptions"
                                         TData="IvGoodsReceiptTrxTypeOption"
@@ -76,7 +77,7 @@
                                         ValueChanged="@OnTrxTypeChangedAsync"
                                         Enabled="@CanEditDocument"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Never"
-                                        NullText="Select type" CssClass="erp-form-control--md" ValueExpression="@(() => TrxTypeDisplay)" />
+                                        NullText="Select type" CssClass="erp-form-control--md" InputCssClass="required-field" ValueExpression="@(() => TrxTypeDisplay)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Ref No" ColSpanMd="3">
@@ -409,7 +410,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Receive quantity</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="To receive qty" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="To receive qty *" ColSpanMd="6">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@LinePopup.ToRecvQty"
                                                 Increment="1m"
@@ -434,7 +435,7 @@
                         <DxFormLayoutGroup ColSpanMd="12">
                             <HeaderContentTemplate>Receive to</HeaderContentTemplate>
                             <Items>
-                                <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                                <DxFormLayoutItem Caption="Warehouse *" ColSpanMd="6">
                                     <Template>
                                         <div class="erp-form-control--md">
                                             <IvCodeComboBox Data="@Warehouses"
@@ -445,7 +446,7 @@
                                         </div>
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Location" ColSpanMd="6">
+                                <DxFormLayoutItem Caption="@(Locations.Count > 0 ? "Location *" : "Location")" ColSpanMd="6">
                                     <Template>
                                         <div class="erp-form-control--md">
                                             <IvCodeComboBox Data="@Locations"
@@ -481,11 +482,12 @@
                                                     DisplayFormat="dd/MM/yyyy"
                                                     MinDate="@ExpiryMinimumDate"
                                                     Enabled="@LineExpiryEnabled"
-                                                    CssClass="@(LineExpiryRequired ? "w-100 required-field erp-form-control--md" : "w-100 erp-form-control--md")"
+                                                    CssClass="w-100 erp-form-control--md"
+                                                    InputCssClass="@(LineExpiryRequired ? "required-field" : null)"
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Item status" ColSpanMd="6">
+                                <DxFormLayoutItem Caption="Item status *" ColSpanMd="6">
                                     <Template>
                                         <div class="erp-form-control--md">
                                             <IvCodeComboBox Data="@Statuses"

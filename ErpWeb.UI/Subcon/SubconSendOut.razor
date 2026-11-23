@@ -41,13 +41,14 @@
             <SubconPostingBanner Message="@Header.PostBlockedReason" />
             <p class="iv-guidance">Who am I sending this to? What item? How much? Save keeps a draft. Stock will not move.</p>
             <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem Caption="Date" ColSpanMd="4">
+                <DxFormLayoutItem Caption="Date *" ColSpanMd="4">
                     <Template>
                         <DxDateEdit Date="@Header.TrxDate"
                                     DateChanged="@((DateTime d) => OnTrxDateChanged(d))"
                                     DateExpression="@(() => Header.TrxDate)"
                                     DisplayFormat="dd/MM/yyyy"
-                                    Enabled="@CanEditDocument" />
+                                    Enabled="@CanEditDocument"
+                                    InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Document" ColSpanMd="4">
@@ -64,12 +65,13 @@
                                     Enabled="@CanEditDocument" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Supplier" ColSpanMd="6">
+                <DxFormLayoutItem Caption="Supplier *" ColSpanMd="6">
                     <Template>
                         <PoSupplierPicker @bind-SuppCode="@Header.SupplierCode"
                                           Selected="@OnSupplierSelected"
                                           Enabled="@CanEditDocument"
-                                          NullText="Search supplier" />
+                                          NullText="Search supplier"
+                                          InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Supplier name" ColSpanMd="6">
@@ -77,7 +79,7 @@
                         <DxTextBox Text="@Header.SupplierName" ReadOnly="true" ValidationEnabled="false" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Job type" ColSpanMd="4">
+                <DxFormLayoutItem Caption="Job type *" ColSpanMd="4">
                     <Template>
                         <DxComboBox Data="@JobKindOptions"
                                     TextFieldName="@nameof(JobKindOption.Caption)"
@@ -85,7 +87,8 @@
                                     Value="@Header.JobKind"
                                     ValueChanged="@((string v) => OnJobKindChanged(v))"
                                     ValueExpression="@(() => Header.JobKind)"
-                                    Enabled="@(CanEditDocument && IsNew)" />
+                                    Enabled="@(CanEditDocument && IsNew)"
+                                    InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Source" ColSpanMd="4">
@@ -104,22 +107,24 @@
                 </DxFormLayoutItem>
                 @if (IsAssemblyJob)
                 {
-                    <DxFormLayoutItem Caption="Target output item" ColSpanMd="5">
+                    <DxFormLayoutItem Caption="Target output item *" ColSpanMd="5">
                         <Template>
                             <IvStockMasterPicker @bind-ICode="@Header.TargetItemCode"
                                                  Selected="@OnTargetItemSelected"
                                                  Enabled="@CanEditDocument"
-                                                 NullText="Select assembled product" />
+                                                 NullText="Select assembled product"
+                                                 InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Target qty" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Target qty *" ColSpanMd="3">
                         <Template>
                             <DxSpinEdit Value="@Header.TargetQty"
                                         ValueChanged="@((decimal v) => OnTargetQtyChanged(v))"
                                         ValueExpression="@(() => Header.TargetQty)"
                                         Increment="1m"
                                         MinValue="0m"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Assembly source" ColSpanMd="4">
@@ -251,21 +256,23 @@
                                         Selected="@OnBalLocSelectedAsync" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                <DxFormLayoutItem Caption="Item *" ColSpanMd="12">
                     <Template Context="field">
                         <IvStockMasterPicker @bind-ICode="@DraftLine.ItemCode"
                                              Selected="@OnItemSelectedAsync"
-                                             NullText="Search item" />
+                                             NullText="Search item"
+                                             InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                <DxFormLayoutItem Caption="Warehouse *" ColSpanMd="4">
                     <Template Context="field">
                         <IvCodeComboBox Data="@Warehouses"
                                         Value="@DraftLine.WarehouseCode"
                                         ValueChanged="OnDraftWarehouseChangedAsync"
                                         ValueExpression="@(() => DraftLine.WarehouseCode)"
                                         IsLoading="@IsLoadingWarehouses"
-                                        NullText="Select warehouse" />
+                                        NullText="Select warehouse"
+                                        InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Location" ColSpanMd="4">
@@ -279,19 +286,20 @@
                                         NullText="Optional location" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
+                <DxFormLayoutItem Caption="UOM *" ColSpanMd="4">
                     <Template Context="field">
                         <IvCodeComboBox Data="@Uoms"
                                         Value="@DraftLine.Uom"
                                         ValueChanged="@(v => DraftLine.Uom = v ?? string.Empty)"
                                         ValueExpression="@(() => DraftLine.Uom)"
                                         IsLoading="@IsLoadingUoms"
-                                        NullText="Select UOM" />
+                                        NullText="Select UOM"
+                                        InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Quantity" ColSpanMd="4">
+                <DxFormLayoutItem Caption="Quantity *" ColSpanMd="4">
                     <Template Context="field">
-                        <DxSpinEdit @bind-Value="@DraftLine.Qty" Increment="1m" MinValue="0m" />
+                        <DxSpinEdit @bind-Value="@DraftLine.Qty" Increment="1m" MinValue="0m" InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
             </DxFormLayout>

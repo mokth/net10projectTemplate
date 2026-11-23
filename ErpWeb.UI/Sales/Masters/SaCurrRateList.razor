@@ -59,7 +59,7 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Currency" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Currency *" ColSpanMd="6">
                         <Template>
                             <DxComboBox Data="@CurrencyOptions"
                                         TextFieldName="@nameof(SaCurrencyListRow.Code)"
@@ -77,21 +77,21 @@
                                         ReadOnly="@(!EditEnabled)" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start Date" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start Date *" ColSpanMd="6" BeginRow="true">
                         <Template>
                             <DxDateEdit @bind-Date="@EditModel.StartDate"
                                         ReadOnly="@IsEditMode"
                                         InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="End Date" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="End Date *" ColSpanMd="6">
                         <Template>
                             <DxDateEdit @bind-Date="@EditModel.EndDate"
                                         ReadOnly="@IsEditMode"
                                         InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Rate" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Rate *" ColSpanMd="6" BeginRow="true">
                         <Template>
                             <DxSpinEdit @bind-Value="@EditModel.HomeCurPerUnit"
                                         ReadOnly="@(!EditEnabled)"

@@ -52,17 +52,17 @@
             <EditForm Model="@EditModel" Context="reasonForm" OnValidSubmit="@HandleValidSubmitAsync">
                 <DataAnnotationsValidator />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code *" ColSpanMd="6">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.ReasonCd" maxlength="10" ReadOnly="@IsEditMode" InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Type" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Type *" ColSpanMd="6">
                         <Template>
-                            <DxComboBox Data="@ReasonTypes" @bind-Value="@EditModel.ReasonType" ReadOnly="@(!EditEnabled)" />
+                            <DxComboBox Data="@ReasonTypes" @bind-Value="@EditModel.ReasonType" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description *" ColSpanMd="12" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Description" maxlength="100" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
                         </Template>

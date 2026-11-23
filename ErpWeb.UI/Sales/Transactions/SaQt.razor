@@ -103,7 +103,7 @@
                                     <DxTextBox Text="@QtNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@QtDate"
                                                 DateChanged="@(async (DateTime d) => await OnQtDateChanged(d))"
@@ -112,7 +112,7 @@
                                                 InputCssClass="required-field" DateExpression="@(() => QtDate)" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Valid until" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Valid until *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@ValidUntil"
                                                 DateChanged="@(async (DateTime d) => await OnValidUntilChanged(d))"
@@ -138,7 +138,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Customer</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Customer" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Customer *" ColSpanMd="12">
                                 <Template>
                                     <SaCustomerPicker CustCode="@CustCode"
                                                       SecondaryName="@CustName"
@@ -170,13 +170,13 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Terms</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Payment term" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Payment term *" ColSpanMd="12">
                                 <Template>
                                     <IvCodeComboBox Data="@PayCodes" Value="@PayCode" ValueChanged="@(async (string? v) => await OnPayCodeChanged(v))" Enabled="@CanEditDocument" NullText="Select payment term" InputCssClass="required-field" />
                                     @FieldError("PayCode")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Tax group" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@(TaxGroupRequired ? "Tax group *" : "Tax group")" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@TaxGroups"
                                                 TextFieldName="@nameof(SaSoTaxGroupLookupRow.DisplayText)"
@@ -187,7 +187,9 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select tax group"
-                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" ValueExpression="@(() => TaxGrCode)" />
+                                                CssClass="w-100"
+                                                InputCssClass="@(TaxGroupRequired ? "required-field" : null)"
+                                                ValueExpression="@(() => TaxGrCode)" />
                                     @FieldError("TaxGrCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -605,7 +607,7 @@
                         <p class="sdoc-popup-error">@PopupError</p>
                     }
                     <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
-                        <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                        <DxFormLayoutItem Caption="Item *" ColSpanMd="12">
                             <Template>
                                 <IvStockMasterPicker ICode="@Popup.ICode"
                                                      Selected="@OnPopupItemSelectedAsync"
@@ -634,7 +636,7 @@
                                 <DxTextBox @bind-Text="@Popup.CustICode" Enabled="@CanEditDocument" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Order qty" ColSpanMd="3">
+                        <DxFormLayoutItem Caption="Order qty *" ColSpanMd="3">
                             <Template>
                                 <DxSpinEdit Value="@Popup.OrderQty"
                                             ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))"
@@ -693,11 +695,12 @@
                                     </p>
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Override reason" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Override reason *" ColSpanMd="6">
                                 <Template>
                                     <DxTextBox Text="@Popup.OverrideReason"
                                                TextChanged="@((string? v) => Popup.OverrideReason = v)"
                                                MaxLength="100"
+                                               InputCssClass="required-field"
                                                NullText="Why was the resolved price changed?" TextExpression="@(() => Popup.OverrideReason)" />
                                 </Template>
                             </DxFormLayoutItem>
@@ -817,7 +820,10 @@
                  @bind-Visible="@LoseVisible">
             <Content>
                 <p class="sdoc-popup-hint">A reason is required so the loss is auditable.</p>
-                <DxMemo @bind-Text="@LostReasonDraft" Rows="3" MaxLength="200" CssClass="w-100" NullText="Why was this quotation lost?" />
+                <div class="iv-field">
+                    <label class="iv-field__label">Reason *</label>
+                    <DxMemo @bind-Text="@LostReasonDraft" Rows="3" MaxLength="200" CssClass="w-100 required-field" NullText="Why was this quotation lost?" />
+                </div>
                 @if (!string.IsNullOrWhiteSpace(LoseError))
                 {
                     <p class="sdoc-popup-error">@LoseError</p>

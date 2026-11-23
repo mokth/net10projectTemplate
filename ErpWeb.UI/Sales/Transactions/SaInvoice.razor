@@ -105,12 +105,13 @@
                                     <DxTextBox Text="@InvNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@InvDate"
                                                 DateChanged="@(async (DateTime d) => await OnInvDateChanged(d))"
                                                 DisplayFormat="dd/MM/yyyy"
-                                                Enabled="@CanEditDocument" DateExpression="@(() => InvDate)" />
+                                                Enabled="@CanEditDocument"
+                                                InputCssClass="required-field" DateExpression="@(() => InvDate)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Status" ColSpanMd="12">
@@ -147,7 +148,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Customer</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Customer" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Customer *" ColSpanMd="12">
                                 <Template>
                                     <SaCustomerPicker CustCode="@CustCode"
                                                       SecondaryName="@CustName"
@@ -174,13 +175,13 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Terms</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Payment term" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Payment term *" ColSpanMd="12">
                                 <Template>
                                     <IvCodeComboBox Data="@PayCodes" Value="@PayCode" ValueChanged="@(async (string? v) => await OnPayCodeChanged(v))" Enabled="@CanEditDocument" NullText="Select payment term" InputCssClass="required-field" />
                                     @FieldError("PayCode")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Tax group" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@(TaxGroupRequired ? "Tax group *" : "Tax group")" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@TaxGroups"
                                                 TextFieldName="@nameof(SaInvoiceTaxGroupLookupRow.DisplayText)"
@@ -191,11 +192,13 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select tax group"
-                                                CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" ValueExpression="@(() => TaxGrCode)" />
+                                                CssClass="w-100"
+                                                InputCssClass="@(TaxGroupRequired ? "required-field" : null)"
+                                                ValueExpression="@(() => TaxGrCode)" />
                                     @FieldError("TaxGrCode")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Salesman" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Salesman *" ColSpanMd="12">
                                 <Template>
                                     <IvCodeComboBox Data="@SalesReps"
                                                     Value="@SalesmanCode"
@@ -239,13 +242,13 @@
                     <DxTabPage Text="Billing">
                         <div class="sdoc-tab">
                             <DxFormLayout SizeMode="SizeMode.Small">
-                                <DxFormLayoutItem Caption="Bill name" ColSpanMd="6">
+                                <DxFormLayoutItem Caption="Bill name *" ColSpanMd="6">
                                     <Template>
                                         <DxTextBox @bind-Text="@InvName" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="required-field" />
                                         @FieldError("InvName")
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Address 1" ColSpanMd="6">
+                                <DxFormLayoutItem Caption="Address 1 *" ColSpanMd="6">
                                     <Template>
                                         <DxTextBox @bind-Text="@InvAddress1" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="required-field" />
                                         @FieldError("InvAddress1")
@@ -266,7 +269,7 @@
                                         <DxTextBox @bind-Text="@InvAddress4" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="City" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="City *" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@InvCity" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="required-field" />
                                         @FieldError("InvCity")
@@ -281,13 +284,13 @@
                                                         NullText="Select state" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Postal" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="Postal *" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@InvPostalCode" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="required-field" />
                                         @FieldError("InvPostalCode")
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Country" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="Country *" ColSpanMd="3">
                                     <Template>
                                         <IvCodeComboBox Data="@Countries"
                                                         Value="@InvCountry"
@@ -298,13 +301,13 @@
                                         @FieldError("InvCountry")
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Tel" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="@(!HasContact ? "Tel *" : "Tel")" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@InvTel" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" InputCssClass="@ContactRequiredCss" />
                                         @FieldError("InvTel")
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Email" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="@(!HasContact ? "Email *" : "Email")" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@InvEmail" Enabled="@CanEditAddresses" InputCssClass="@ContactRequiredCss" />
                                     </Template>
@@ -314,13 +317,13 @@
                                         <DxTextBox @bind-Text="@InvFax" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditAddresses" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="TIN" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="@(!HasBuyerId ? "TIN *" : "TIN")" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@BuyerTin" Enabled="@CanEditAddresses" ReadOnly="true" InputCssClass="@BuyerIdRequiredCss" />
                                         @FieldError("BuyerTin")
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Reg. no." ColSpanMd="3">
+                                <DxFormLayoutItem Caption="@(!HasBuyerId ? "Reg. no. *" : "Reg. no.")" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@BuyerBrn" Enabled="@CanEditAddresses" ReadOnly="true" InputCssClass="@BuyerIdRequiredCss" />
                                     </Template>
@@ -617,7 +620,7 @@
                     <p class="sdoc-field-hint">Source: @Popup.SourceDisplay · Agreed price: @((Popup.OriginalUnitPrice ?? Popup.UnitPrice).ToString("n4"))</p>
                 }
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
-                    <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                    <DxFormLayoutItem Caption="Item *" ColSpanMd="12">
                         <Template>
                             <IvStockMasterPicker ICode="@Popup.ICode"
                                                  Selected="@OnPopupItemSelectedAsync"
@@ -642,19 +645,20 @@
                     </DxFormLayoutItem>
                     @if (ShowPopupAdvanced)
                     {
-                        <DxFormLayoutItem Caption="Warehouse" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="@(Popup.StockControl ? "Warehouse *" : "Warehouse")" ColSpanMd="4">
                             <Template>
                                 <DxComboBox Data="@Warehouses"
                                             TextFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
                                             ValueFieldName="@nameof(IvWarehouseLookupRow.WarehouseCode)"
                                             @bind-Value="@Popup.FrWarehouse"
-                                            Enabled="@CanEditDocument" />
+                                            Enabled="@CanEditDocument"
+                                            InputCssClass="@(Popup.StockControl ? "required-field" : null)" />
                             </Template>
                         </DxFormLayoutItem>
                     }
-                    <DxFormLayoutItem Caption="Qty" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Qty *" ColSpanMd="4">
                         <Template>
-                            <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" ValueExpression="@(() => Popup.Qty)" />
+                            <DxSpinEdit Value="@Popup.Qty" ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))" Increment="1m" Enabled="@CanEditDocument" InputCssClass="required-field" ValueExpression="@(() => Popup.Qty)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Pack" ColSpanMd="4">
@@ -674,7 +678,7 @@
                     {
                     @if (IsPriceOverridden())
                     {
-                        <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12" BeginRow="true">
+                        <DxFormLayoutItem Caption="Override reason (required) *" ColSpanMd="12" BeginRow="true">
                             <Template>
                                 <DxTextBox @bind-Text="@Popup.OverrideReason"
                                            maxlength="100"
@@ -705,7 +709,7 @@
                                         CssClass="w-100" ValueExpression="@(() => Popup.TaxGrCode)" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Classification" ColSpanMd="6">
+                    <DxFormLayoutItem Caption="Classification *" ColSpanMd="6">
                         <Template>
                             <IvCodeComboBox Data="@Classifications"
                                             @bind-Value="@Popup.Classification"

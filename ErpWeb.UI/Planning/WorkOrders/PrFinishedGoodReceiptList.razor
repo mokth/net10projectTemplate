@@ -169,9 +169,9 @@
                 @if (ConfirmNeedsReason)
                 {
                     <DxFormLayout SizeMode="SizeMode.Small">
-                        <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                        <DxFormLayoutItem Caption="Reason *" ColSpanMd="12">
                             <Template>
-                                <DxMemo @bind-Text="@ConfirmReason" Rows="2" maxlength="500" />
+                                <DxMemo @bind-Text="@ConfirmReason" Rows="2" maxlength="500" InputCssClass="required-field" />
                             </Template>
                         </DxFormLayoutItem>
                     </DxFormLayout>

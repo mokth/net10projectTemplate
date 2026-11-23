@@ -53,19 +53,20 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine Code" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine Code *" ColSpanMd="6">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.MachineCd" maxlength="20" ReadOnly="@IsEditMode" InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Process" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Process *" ColSpanMd="6">
                         <Template>
                             <DxComboBox Data="@Processes" @bind-Value="@EditModel.ProcessCd"
                                         TextFieldName="Code" ValueFieldName="Code"
-                                        ReadOnly="@(!EditEnabled)" NullText="Select process" />
+                                        ReadOnly="@(!EditEnabled)" NullText="Select process"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description *" ColSpanMd="12" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.MachineDes" maxlength="100" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
                         </Template>

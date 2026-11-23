@@ -40,15 +40,17 @@
 
         <section class="iv-card">
             <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem Caption="Item" ColSpanMd="4">
+                <DxFormLayoutItem Caption="Item *" ColSpanMd="4">
                     <DxTextBox @bind-Text="@ItemCode"
                                NullText="Item code"
-                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               InputCssClass="required-field" />
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Base UOM" ColSpanMd="2">
+                <DxFormLayoutItem Caption="Base UOM *" ColSpanMd="2">
                     <DxTextBox @bind-Text="@BaseUom"
                                NullText="EA"
-                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                               ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                               InputCssClass="required-field" />
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="From" ColSpanMd="3">
                     <DxDateEdit @bind-Date="@DateFrom"

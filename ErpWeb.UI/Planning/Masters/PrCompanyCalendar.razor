@@ -193,12 +193,12 @@
                     <h3 class="plcal-advanced__subtitle">Add Holiday</h3>
                     <div class="plcal-holiday-form__fields">
                         <div class="iv-field">
-                            <label class="iv-field__label">Date</label>
-                            <DxDateEdit @bind-Date="@_holDate" Enabled="@(!_busy)" />
+                            <label class="iv-field__label">Date *</label>
+                            <DxDateEdit @bind-Date="@_holDate" Enabled="@(!_busy)" InputCssClass="required-field" />
                         </div>
                         <div class="iv-field">
-                            <label class="iv-field__label">Holiday Name</label>
-                            <DxTextBox @bind-Text="@_holDesc" NullText="Holiday name" Enabled="@(!_busy)" />
+                            <label class="iv-field__label">Holiday Name *</label>
+                            <DxTextBox @bind-Text="@_holDesc" NullText="Holiday name" Enabled="@(!_busy)" InputCssClass="required-field" />
                         </div>
                     </div>
                     <div class="plcal-holiday-form__actions">

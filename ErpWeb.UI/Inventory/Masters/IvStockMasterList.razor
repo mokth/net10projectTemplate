@@ -217,12 +217,13 @@
             {
                 <div class="iv-popup-body">
                     <DxFormLayout SizeMode="SizeMode.Small">
-                        <DxFormLayoutItem Caption="Reason (required, audited)" ColSpanMd="12">
+                        <DxFormLayoutItem Caption="Reason (required, audited) *" ColSpanMd="12">
                             <Template>
                                 <DxTextBox @bind-Text="@BulkReason"
                                            NullText="Why is this lifecycle changing?"
                                            MaxLength="250"
-                                           CssClass="w-100" />
+                                           CssClass="w-100"
+                                           InputCssClass="required-field" />
                             </Template>
                         </DxFormLayoutItem>
                     </DxFormLayout>

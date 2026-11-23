@@ -53,11 +53,12 @@
 
             <section class="tr-card">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="tr-header-form">
-                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Transaction date *" ColSpanMd="4">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
@@ -292,7 +293,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Item</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item code *" ColSpanMd="6">
                                 <Template>
                                     <IvStockMasterPicker ICode="@Popup.ICode"
                                                          Selected="OnItemSelectedAsync"
@@ -329,7 +330,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Transfer From</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Balance location (Fr Lot)" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Balance location (Fr Lot) *" ColSpanMd="12">
                                 <Template>
                                     <IvBalLocPicker BalLocId="@Popup.FromBalLocId"
                                                     DisplayLotNo="@Popup.BalLocDisplay"
@@ -376,7 +377,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Transfer To</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Warehouse *" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Warehouses"
                                                     Value="@Popup.ToWarehouse"
@@ -385,7 +386,7 @@
                                                     NullText="Select warehouse" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Location" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="@(Locations.Count > 0 ? "Location *" : "Location")" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Locations"
                                                     @bind-Value="@Popup.ToLocation"
@@ -418,7 +419,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Transfer Details</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Transfer Qty" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Transfer Qty *" ColSpanMd="4">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@Popup.Quantity"
                                                 Increment="1m"
@@ -514,7 +515,7 @@
                             <DxCheckBox @bind-Checked="@SplitPopup.AutoGenerate" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="To warehouse" ColSpanMd="6">
+                    <DxFormLayoutItem Caption="To warehouse *" ColSpanMd="6">
                         <Template>
                             <IvCodeComboBox Data="@Warehouses"
                                             Value="@SplitPopup.ToWarehouse"
@@ -522,7 +523,7 @@
                                             InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="To location" ColSpanMd="6">
+                    <DxFormLayoutItem Caption="@(Locations.Count > 0 ? "To location *" : "To location")" ColSpanMd="6">
                         <Template>
                             <IvCodeComboBox Data="@Locations"
                                             @bind-Value="@SplitPopup.ToLocation"
@@ -541,7 +542,7 @@
                     }
                     else
                     {
-                        <DxFormLayoutItem Caption="New lot no start" ColSpanMd="6">
+                        <DxFormLayoutItem Caption="New lot no start *" ColSpanMd="6">
                             <Template>
                                 <DxTextBox @bind-Text="@SplitPopup.NewLotNoStart" maxlength="50" InputCssClass="required-field" />
                             </Template>

@@ -58,7 +58,7 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code *" ColSpanMd="6">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Code"
                                        maxlength="30"
@@ -73,7 +73,7 @@
                                         ReadOnly="@(!EditEnabled)" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description *" ColSpanMd="12" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Desc"
                                        maxlength="200"
@@ -120,7 +120,7 @@
                                                 </CellDisplayTemplate>
                                             </DxGridCommandColumn>
                                         }
-                                        <DxGridDataColumn FieldName="@nameof(IvSubClassEditVm.Code)" Caption="Code" Width="140px">
+                                        <DxGridDataColumn FieldName="@nameof(IvSubClassEditVm.Code)" Caption="Code *" Width="140px">
                                             <CellDisplayTemplate Context="codeCell">
                                                 @{
                                                     var sub = (IvSubClassEditVm)codeCell.DataItem;
@@ -129,17 +129,18 @@
                                                 <DxTextBox @bind-Text="@sub.Code"
                                                            maxlength="30"
                                                            ReadOnly="@codeLocked"
-                                                           InputCssClass="code-style" />
+                                                           InputCssClass="required-field code-style" />
                                             </CellDisplayTemplate>
                                         </DxGridDataColumn>
-                                        <DxGridDataColumn FieldName="@nameof(IvSubClassEditVm.Desc)" Caption="Description" MinWidth="180">
+                                        <DxGridDataColumn FieldName="@nameof(IvSubClassEditVm.Desc)" Caption="Description *" MinWidth="180">
                                             <CellDisplayTemplate Context="descCell">
                                                 @{
                                                     var sub = (IvSubClassEditVm)descCell.DataItem;
                                                 }
                                                 <DxTextBox @bind-Text="@sub.Desc"
                                                            maxlength="100"
-                                                           ReadOnly="@(!EditEnabled)" />
+                                                           ReadOnly="@(!EditEnabled)"
+                                                           InputCssClass="required-field" />
                                             </CellDisplayTemplate>
                                         </DxGridDataColumn>
                                         <DxGridDataColumn FieldName="@nameof(IvSubClassEditVm.IsActive)" Caption="Active" Width="90px">

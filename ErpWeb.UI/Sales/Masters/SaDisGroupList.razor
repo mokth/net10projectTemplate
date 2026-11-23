@@ -59,7 +59,7 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Name" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Name *" ColSpanMd="6">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.GroupName"
                                        maxlength="40"
@@ -67,7 +67,7 @@
                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Pay Code" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Pay Code *" ColSpanMd="6">
                         <Template>
                             <IvCodeComboBox Data="@PayCodeOptions"
                                             @bind-Value="@EditModel.PayCode"

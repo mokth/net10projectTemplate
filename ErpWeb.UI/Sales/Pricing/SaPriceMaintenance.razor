@@ -379,8 +379,8 @@
             </div>
             <div class="sa-price-review__apply-row">
                 <div class="iv-field sa-price-review__reason">
-                    <label class="iv-field__label">Reason (required, max @SaPriceMaintenanceLimits.MaxReasonLength)</label>
-                    <DxMemo @bind-Text="@Reason" Rows="3" MaxLength="@SaPriceMaintenanceLimits.MaxReasonLength" NullText="Why is this price change being made?" />
+                    <label class="iv-field__label">Reason (required, max @SaPriceMaintenanceLimits.MaxReasonLength) *</label>
+                    <DxMemo @bind-Text="@Reason" Rows="3" MaxLength="@SaPriceMaintenanceLimits.MaxReasonLength" NullText="Why is this price change being made?" CssClass="required-field" />
                 </div>
                 <div class="sa-price-review__apply-action">
                     <DxButton RenderStyle="ButtonRenderStyle.Primary"

@@ -59,7 +59,7 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer *" ColSpanMd="6">
                         <Template>
                             <IvCodeComboBox Data="@CustomerOptions"
                                             @bind-Value="@EditModel.CustCode"
@@ -68,7 +68,7 @@
                                             InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item *" ColSpanMd="6">
                         <Template>
                             <IvStockMasterPicker ICode="@EditModel.ICode"
                                                  ICodeChanged="@(v => EditModel.ICode = v ?? string.Empty)"
@@ -78,7 +78,7 @@
                         </Template>
                     </DxFormLayoutItem>
 
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer item code" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Customer item code *" ColSpanMd="6" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.CustICode"
                                        maxlength="100"
@@ -86,7 +86,7 @@
                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Selling UOM" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Selling UOM *" ColSpanMd="3">
                         <Template>
                             <IvCodeComboBox Data="@UomOptions"
                                             @bind-Value="@EditModel.SellingUOM"
@@ -95,7 +95,7 @@
                                             InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="MOQ" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="MOQ *" ColSpanMd="3">
                         <Template>
                             <DxSpinEdit @bind-Value="@EditModel.MOQ"
                                         ReadOnly="@IsEditMode"

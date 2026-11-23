@@ -256,8 +256,10 @@
                 }
 
                 <div class="iv-costing-field">
-                    <label class="iv-field-label">Reason</label>
-                    <DxTextBox @bind-Text="@RepairReason" NullText="Why this repair is required" />
+                    <label class="iv-field-label">@(Preview.CanRepair ? "Reason *" : "Reason")</label>
+                    <DxTextBox @bind-Text="@RepairReason"
+                               NullText="Why this repair is required"
+                               InputCssClass="@(Preview.CanRepair ? "required-field" : null)" />
                 </div>
                 <div class="iv-costing-row iv-costing-row--actions">
                     @if (Preview.CanRepair && PreviewKind == CostingRepairTargetKind.Posting)

@@ -110,13 +110,13 @@
                         <DxFormLayoutGroup ColSpanMd="4">
                             <HeaderContentTemplate>Scope &amp; Ownership</HeaderContentTemplate>
                             <Items>
-                                <DxFormLayoutItem Caption="Title" ColSpanMd="12">
+                                <DxFormLayoutItem Caption="Title *" ColSpanMd="12">
                                     <Template>
                                         <DxTextBox Text="@Title"
                                                    TextChanged="@((string v) => { Title = v; MarkDirty(); })"
                                                    MaxLength="200"
                                                    Enabled="@CanEditDocument"
-                                                   CssClass="required-field"
+                                                   InputCssClass="required-field"
                                                    TextExpression="@(() => Title)" />
                                     </Template>
                                 </DxFormLayoutItem>
@@ -589,14 +589,14 @@
                                 <DxCheckBox @bind-Checked="@EditingLine.OneTimeItemYn" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Description" ColSpanMd="12">
+                        <DxFormLayoutItem Caption="Description *" ColSpanMd="12">
                             <Template>
-                                <DxTextBox @bind-Text="@EditingLine.ItemDescription" MaxLength="200" CssClass="required-field" />
+                                <DxTextBox @bind-Text="@EditingLine.ItemDescription" MaxLength="200" InputCssClass="required-field" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Requested Qty" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="Requested Qty *" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit @bind-Value="@EditingLine.RequestedPurchaseQty" MinValue="0.0001m" DisplayFormat="n4" />
+                                <DxSpinEdit @bind-Value="@EditingLine.RequestedPurchaseQty" MinValue="0.0001m" DisplayFormat="n4" InputCssClass="required-field" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Purchase UOM" ColSpanMd="4">
@@ -641,9 +641,9 @@
                                             @bind-Value="@EditingSupplier.DefaultCurrency" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Supplier Name" ColSpanMd="12">
+                        <DxFormLayoutItem Caption="Supplier Name *" ColSpanMd="12">
                             <Template>
-                                <DxTextBox @bind-Text="@EditingSupplier.SupplierName" MaxLength="200" CssClass="required-field" />
+                                <DxTextBox @bind-Text="@EditingSupplier.SupplierName" MaxLength="200" InputCssClass="required-field" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Contact Person" ColSpanMd="6">

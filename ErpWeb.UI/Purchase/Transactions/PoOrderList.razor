@@ -181,13 +181,14 @@
             @if (ConfirmAction == "CLOSE")
             {
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem Caption="Close reason" ColSpanMd="12">
+                    <DxFormLayoutItem Caption="Close reason *" ColSpanMd="12">
                         <Template>
                             <DxMemo @bind-Text="@CloseReason"
                                     Rows="3"
                                     MaxLength="200"
                                     NullText="Required"
-                                    CssClass="w-100 required-field" />
+                                    InputCssClass="required-field"
+                                    CssClass="w-100" />
                         </Template>
                     </DxFormLayoutItem>
                 </DxFormLayout>

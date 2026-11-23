@@ -247,7 +247,7 @@
                                     <div class="po-approval-editor" role="region" id="@editorId" aria-label="Rule details">
                                         <div class="po-approval-editor__fields">
                                             <div class="po-approval-field po-approval-field--currency">
-                                                <label class="po-approval-label" for="@($"po-approval-currency-{currentBand.UiKey:N}")">Currency</label>
+                                                <label class="po-approval-label" for="@($"po-approval-currency-{currentBand.UiKey:N}")">@(CanShowCurrencyCombo ? "Currency *" : "Currency")</label>
                                                 @if (CanShowCurrencyCombo)
                                                 {
                                                     <IvCodeComboBox Data="@CurrencyOptionsFor(currentBand)"
@@ -257,7 +257,7 @@
                                                                     Enabled="@CanMutate"
                                                                     NullText="Select currency"
                                                                     InputId="@($"po-approval-currency-{currentBand.UiKey:N}")"
-                                                                    InputCssClass="po-approval-currency" />
+                                                                    InputCssClass="required-field po-approval-currency" />
                                                 }
                                                 else
                                                 {
@@ -366,7 +366,7 @@
                                                                             Enabled="@CanMutate" />
                                                             </div>
                                                             <div class="po-approval-field po-approval-field--lookup">
-                                                                <label class="po-approval-label">@(IsRoleKind(currentLevel) ? "Role" : "Person")</label>
+                                                                <label class="po-approval-label">@((IsRoleKind(currentLevel) ? "Role" : "Person") + (currentLevel.Assignees.Count == 0 ? " *" : ""))</label>
                                                                 <DxComboBox Data="@AvailableAssignees(currentLevel)"
                                                                             TextFieldName="@nameof(ProcurementApprovalLookupRow.DisplayText)"
                                                                             ValueFieldName="@nameof(ProcurementApprovalLookupRow.Code)"
@@ -377,6 +377,7 @@
                                                                             SearchFilterCondition="ListSearchFilterCondition.Contains"
                                                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                                             NullText="@(IsRoleKind(currentLevel) ? "Search and select a role" : "Search and select a person")"
+                                                                            InputCssClass="@(currentLevel.Assignees.Count == 0 ? "required-field" : null)"
                                                                             Enabled="@CanMutate" />
                                                             </div>
                                                         </div>

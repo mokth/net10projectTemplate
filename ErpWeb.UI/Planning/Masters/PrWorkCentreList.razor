@@ -58,7 +58,7 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code *" ColSpanMd="6">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.WrkCtrCd"
                                        maxlength="20"
@@ -77,7 +77,7 @@
                                         InputCssClass="code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description *" ColSpanMd="12" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.WrkCtrDes"
                                        maxlength="100"

@@ -261,7 +261,7 @@
                         <div class="sa-cust-identity__col">
                             <div class="iv-form-grid iv-form-grid--single erp-form-scope">
                                 <div class="iv-field">
-                                    <label class="iv-field__label">Customer code</label>
+                                    <label class="iv-field__label">Customer code *</label>
                                     <DxTextBox @bind-Text="@Model.CustCode"
                                                maxlength="30"
                                                ReadOnly="@(!IsNewMode)"
@@ -271,7 +271,7 @@
                                     @FieldError(nameof(SaCustEditVm.CustCode))
                                 </div>
                                 <div class="iv-field">
-                                    <label class="iv-field__label">Customer name</label>
+                                    <label class="iv-field__label">Customer name *</label>
                                     <DxTextBox @bind-Text="@Model.CustName" maxlength="200" CssClass="erp-form-control--xl" InputCssClass="required-field" NullText="Required" />
                                     @FieldError(nameof(SaCustEditVm.CustName))
                                 </div>
@@ -300,7 +300,7 @@
                         <div class="sa-cust-identity__col">
                             <div class="iv-form-grid iv-form-grid--single erp-form-scope">
                                 <div class="iv-field">
-                                    <label class="iv-field__label">Type</label>
+                                    <label class="iv-field__label">Type *</label>
                                     <div class="erp-form-control--md">
                                         <IvCodeComboBox Data="@Types" @bind-Value="@Model.CustType" NullText="Select type" InputCssClass="required-field" />
                                     </div>
@@ -391,7 +391,7 @@
                                         <DxTextBox @bind-Text="@Model.PostalCode" maxlength="20" />
                                     </div>
                                     <div class="iv-field">
-                                        <label class="iv-field__label">Country <span class="sa-cust-req">*</span></label>
+                                        <label class="iv-field__label">Country *</label>
                                         <IvCodeComboBox Data="@Countries" @bind-Value="@Model.Country" NullText="Select country" InputCssClass="required-field" />
                                         @FieldError(nameof(SaCustEditVm.Country))
                                     </div>
@@ -494,7 +494,7 @@
                                             <DxTextBox @bind-Text="@Model.ShipPostalCode" maxlength="20" />
                                         </div>
                                         <div class="iv-field">
-                                            <label class="iv-field__label">Ship-to country <span class="sa-cust-req">*</span></label>
+                                            <label class="iv-field__label">Ship-to country *</label>
                                             <IvCodeComboBox Data="@Countries" @bind-Value="@Model.ShipCountry" NullText="Select country" InputCssClass="required-field" />
                                             @FieldError(nameof(SaCustEditVm.ShipCountry))
                                         </div>
@@ -647,14 +647,14 @@
                                                 <DxTextBox @bind-Text="@Model.GstregNo" maxlength="50" />
                                             </div>
                                             <div class="sa-cust-pay-field">
-                                                <label class="iv-field__label">Payment term <span class="sa-cust-req">*</span></label>
+                                                <label class="iv-field__label">Payment term *</label>
                                                 <div class="sa-cust-pay-control">
                                                     <IvCodeComboBox Data="@PayCodes" @bind-Value="@Model.PayCode" NullText="Select payment term" InputCssClass="required-field" />
                                                     @FieldError(nameof(SaCustEditVm.PayCode))
                                                 </div>
                                             </div>
                                             <div class="sa-cust-pay-field">
-                                                <label class="iv-field__label">Currency <span class="sa-cust-req">*</span></label>
+                                                <label class="iv-field__label">Currency *</label>
                                                 <div class="sa-cust-pay-control">
                                                     <IvCodeComboBox Data="@Currencies" @bind-Value="@Model.Currency" NullText="Select currency" InputCssClass="required-field" />
                                                     @FieldError(nameof(SaCustEditVm.Currency))
@@ -716,7 +716,7 @@
                                                 <DxSpinEdit @bind-Value="@Model.PaidUpCapital" MinValue="0m" DisplayFormat="n2" />
                                             </div>
                                             <div class="sa-cust-pay-field">
-                                                <label class="iv-field__label">GL code <span class="sa-cust-req">*</span></label>
+                                                <label class="iv-field__label">@(IsNewMode ? "GL code *" : "GL code")</label>
                                                 <div class="sa-cust-pay-control">
                                                     <DxTextBox @bind-Text="@Model.GlCode" maxlength="20" InputCssClass="@(IsNewMode ? "required-field" : null)" />
                                                     @FieldError(nameof(SaCustEditVm.GlCode))

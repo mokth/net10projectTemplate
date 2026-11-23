@@ -701,7 +701,9 @@
                                             ValueChanged="@((string? v) => OnReasonChanged(line, v))"
                                             NullText="Select reason"
                                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                            Enabled="@(CanEditFields && line.IsConsumeEditable && line.VarianceQty != 0m)" ValueExpression="@(() => line.VarianceReasonCode)" />
+                                            Enabled="@(CanEditFields && line.IsConsumeEditable && line.VarianceQty != 0m)"
+                                            InputCssClass="@(CanEditFields && line.IsConsumeEditable && line.VarianceQty != 0m ? "required-field" : null)"
+                                            ValueExpression="@(() => line.VarianceReasonCode)" />
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn Caption="Reason detail" Width="280px" MinWidth="210">
@@ -712,7 +714,9 @@
                                 <DxTextBox Text="@line.VarianceReasonText"
                                            TextChanged="@((string v) => line.VarianceReasonText = v)"
                                            NullText="Required for OTHER"
-                                           Enabled="@(CanEditFields && line.IsConsumeEditable && string.Equals(line.VarianceReasonCode, ProductionMaterialVarianceReasonCodes.Other, StringComparison.Ordinal))" TextExpression="@(() => line.VarianceReasonText)" />
+                                           Enabled="@(CanEditFields && line.IsConsumeEditable && string.Equals(line.VarianceReasonCode, ProductionMaterialVarianceReasonCodes.Other, StringComparison.Ordinal))"
+                                           InputCssClass="@(CanEditFields && line.IsConsumeEditable && string.Equals(line.VarianceReasonCode, ProductionMaterialVarianceReasonCodes.Other, StringComparison.Ordinal) ? "required-field" : null)"
+                                           TextExpression="@(() => line.VarianceReasonText)" />
                             </CellDisplayTemplate>
                         </DxGridDataColumn>
                         <DxGridDataColumn FieldName="@nameof(MaterialLineEdit.AvailableQty)" Caption="Current Available" Width="140px" DisplayFormat="n4" TextAlignment="GridTextAlignment.Right" />
@@ -792,7 +796,10 @@
              Closed="@(() => RollbackConfirmVisible = false)">
         <BodyContentTemplate>
             <p>Enter a reason to roll back this posted document.</p>
-            <DxMemo @bind-Text="@RollbackReason" Rows="3" maxlength="250" CssClass="w-100" />
+            <div class="iv-field">
+                <label class="iv-field__label">Reason *</label>
+                <DxMemo @bind-Text="@RollbackReason" Rows="3" maxlength="250" CssClass="w-100" InputCssClass="required-field" />
+            </div>
         </BodyContentTemplate>
         <FooterContentTemplate>
             <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => RollbackConfirmVisible = false)" Enabled="@(!IsSubmitting)" />

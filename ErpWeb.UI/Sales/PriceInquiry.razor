@@ -24,7 +24,7 @@
         <div class="iv-card">
             <div class="pi-inputs">
                 <div class="iv-field">
-                    <label class="iv-field__label code-style">Customer</label>
+                    <label class="iv-field__label code-style">Customer *</label>
                     <IvCodeComboBox Data="@CustomerOptions"
                                     @bind-Value="@CustCode"
                                     NullText="Type to search…"
@@ -35,14 +35,14 @@
                                TextChanged="@(async (v) => await OnCustomerSearchChangedAsync(v))" TextExpression="@(() => CustomerSearch)" />
                 </div>
                 <div class="iv-field">
-                    <label class="iv-field__label code-style">Item</label>
+                    <label class="iv-field__label code-style">Item *</label>
                     <IvStockMasterPicker ICode="@ICode"
                                          ICodeChanged="@(v => ICode = v)"
                                          Selected="OnItemSelected"
                                          InputCssClass="required-field code-style" />
                 </div>
                 <div class="iv-field">
-                    <label class="iv-field__label code-style">UOM</label>
+                    <label class="iv-field__label code-style">UOM *</label>
                     <IvCodeComboBox Data="@UomOptions" @bind-Value="@Uom" NullText="Select UOM" InputCssClass="required-field code-style" />
                 </div>
                 <div class="iv-field">

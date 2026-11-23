@@ -132,7 +132,7 @@
                     }
                     <div class="pdf-basic-grid">
                             <div class="iv-field pdf-head__code pdf-field-product-code">
-                                <label class="iv-field__label code-style">Product code <span class="pdf-required">Required</span></label>
+                                <label class="iv-field__label code-style">@(IsNewMode && IsEditingRoot && Model.BomHdrId == 0 ? "Product code *" : "Product code")</label>
                                 <div class="pdf-code-row">
                                     @if (IsNewMode && IsEditingRoot && Model.BomHdrId == 0)
                                     {
@@ -160,14 +160,14 @@
                                 <DxTextBox InputId="production-product-name" @bind-Text="@ProductDescText" ReadOnly="true" NullText="Shown after you choose a product" />
                             </div>
                             <div class="iv-field pdf-field-qty">
-                                <label class="iv-field__label" for="production-base-quantity">Quantity to make <span class="pdf-required">Required</span></label>
+                                <label class="iv-field__label" for="production-base-quantity">@(IsViewMode || IsReadOnlyStatus ? "Quantity to make" : "Quantity to make *")</label>
                                 @if (IsViewMode || IsReadOnlyStatus)
                                 {
                                     <DxTextBox InputId="production-base-quantity" Text="@Model.BaseQty.ToString("n4")" ReadOnly="true" ValidationEnabled="false" />
                                 }
                                 else
                                 {
-                                    <DxSpinEdit InputId="production-base-quantity" @bind-Value="@Model.BaseQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                    <DxSpinEdit InputId="production-base-quantity" @bind-Value="@Model.BaseQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" InputCssClass="required-field" />
                                     @FieldError("BaseQty")
                                 }
                             </div>
@@ -183,10 +183,11 @@
                         <p class="pdf-hint">Keep STANDARD for your usual way of making this product. Use a different code for another method, such as LINE-B. A code cannot change after the first save.</p>
                         <div class="pdf-options-grid">
                             <div class="iv-field">
-                                <label class="iv-field__label" for="production-setup-code">Setup code</label>
+                                <label class="iv-field__label" for="production-setup-code">@(IsViewMode || IsReadOnlyStatus || Model.BomHdrId > 0 || !IsEditingRoot ? "Setup code" : "Setup code *")</label>
                                 <DxTextBox InputId="production-setup-code" @bind-Text="@Model.DefinitionCode"
                                            ReadOnly="@(IsViewMode || IsReadOnlyStatus || Model.BomHdrId > 0 || !IsEditingRoot)"
-                                           NullText="STANDARD" />
+                                           NullText="STANDARD"
+                                           InputCssClass="@(IsViewMode || IsReadOnlyStatus || Model.BomHdrId > 0 || !IsEditingRoot ? null : "required-field")" />
                                 @FieldError("DefinitionCode")
                             </div>
                             <div class="iv-field">
@@ -368,22 +369,23 @@
                                     <div class="pdf-route-editor pdf-centre-editor">
                                         <h3 class="pdf-editor-title">@(_originalCentreKey is null ? "Add a production stage" : "Edit production stage")</h3>
                                         <div class="iv-field pdf-field-code">
-                                            <label class="iv-field__label" for="production-stage-area">Production area (work centre)</label>
+                                            <label class="iv-field__label" for="production-stage-area">Production area (work centre) *</label>
                                             <DxComboBox InputId="production-stage-area" Data="@WorkCentreOptions" @bind-Value="@CentreEdit.WorkCentreCode"
                                                         TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)"
-                                                        SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose an area" />
+                                                        SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose an area"
+                                                        InputCssClass="required-field" />
                                             @if (WorkCentres.Count == 0)
                                             {
                                                 <small class="pdf-field-help">Create a work centre in Production masters first.</small>
                                             }
                                         </div>
                                         <div class="iv-field pdf-field-seq">
-                                            <label class="iv-field__label" for="production-stage-order">Stage order</label>
-                                            <DxSpinEdit InputId="production-stage-order" @bind-Value="@CentreEdit.CentralSequence" MinValue="1" ShowSpinButtons="false" />
+                                            <label class="iv-field__label" for="production-stage-order">Stage order *</label>
+                                            <DxSpinEdit InputId="production-stage-order" @bind-Value="@CentreEdit.CentralSequence" MinValue="1" ShowSpinButtons="false" InputCssClass="required-field" />
                                             <small class="pdf-field-help">Lower numbers run first. The same number allows stages to run together.</small>
                                         </div>
                                         <div class="iv-field pdf-field-product-code">
-                                            <label class="iv-field__label">Item made at this stage</label>
+                                            <label class="iv-field__label">Item made at this stage *</label>
                                             <IvStockMasterPicker ICode="@CentreEdit.OutputItemCode"
                                                                  ICodeChanged="OnCentreOutputCodeChanged"
                                                                  Selected="OnCentreOutputSelectedAsync"
@@ -394,8 +396,8 @@
                                             <DxTextBox Text="@(CentreEdit.OutputItemDescription ?? string.Empty)" ReadOnly="true" ValidationEnabled="false" />
                                         </div>
                                         <div class="iv-field pdf-field-qty">
-                                            <label class="iv-field__label">Stage output quantity</label>
-                                            <DxSpinEdit @bind-Value="@CentreEdit.OutputBaseQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                            <label class="iv-field__label">Stage output quantity *</label>
+                                            <DxSpinEdit @bind-Value="@CentreEdit.OutputBaseQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" InputCssClass="required-field" />
                                         </div>
                                         <div class="iv-field pdf-field-uom">
                                             <label class="iv-field__label">Output unit</label>
@@ -481,26 +483,28 @@
                                         <div class="pdf-route-editor pdf-process-editor">
                                             <h3 class="pdf-editor-title">@(IsAddingOperation ? "Add a work step" : "Edit work step")</h3>
                                             <div class="iv-field pdf-field-code">
-                                                <label class="iv-field__label" for="production-work-step">Work step (process)</label>
+                                                <label class="iv-field__label" for="production-work-step">Work step (process) *</label>
                                                 <DxComboBox InputId="production-work-step" Data="@ProcessOptions" @bind-Value="@OperationEdit.OperationCode"
                                                             TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)"
-                                                            SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose the work to do" />
+                                                            SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose the work to do"
+                                                            InputCssClass="required-field" />
                                                 @if (AvailableProcesses.Count == 0)
                                                 {
                                                     <small class="pdf-field-help">Create a process for this work centre in Production masters first.</small>
                                                 }
                                             </div>
                                             <div class="iv-field pdf-field-seq">
-                                                <label class="iv-field__label">Work step order</label>
-                                                <DxSpinEdit @bind-Value="@OperationEdit.ProcessSequence" MinValue="1" ShowSpinButtons="false" />
+                                                <label class="iv-field__label">Work step order *</label>
+                                                <DxSpinEdit @bind-Value="@OperationEdit.ProcessSequence" MinValue="1" ShowSpinButtons="false" InputCssClass="required-field" />
                                             </div>
                                             <div class="iv-field pdf-field-code">
-                                                <label class="iv-field__label">Type of work</label>
+                                                <label class="iv-field__label">Type of work *</label>
                                                 <DxComboBox Data="@ProcessTypeOptions"
                                                             @bind-Value="@OperationEdit.ProcessType"
                                                             TextFieldName="@nameof(Option.Text)"
                                                             ValueFieldName="@nameof(Option.Value)"
-                                                            SearchMode="ListSearchMode.AutoSearch" />
+                                                            SearchMode="ListSearchMode.AutoSearch"
+                                                            InputCssClass="required-field" />
                                                 <small class="pdf-field-help">Choose manual work or a quality check when no machine is used.</small>
                                             </div>
                                             @if (ShowsStandardDuration(OperationEdit))
@@ -672,7 +676,7 @@
                                                 <div class="pdf-editor pdf-bom-editor">
                                         <h3 class="pdf-editor-title">@(LineEditUid is null && LineEditTempId is null ? "Add a material" : "Edit material")</h3>
                                         <div class="iv-field pdf-editor__item pdf-field-product-code">
-                                            <label class="iv-field__label">Material code</label>
+                                            <label class="iv-field__label">Material code *</label>
                                             <IvStockMasterPicker ICode="@LineItem"
                                                                  ICodeChanged="OnLineItemCodeChanged"
                                                                  Selected="OnLineItemSelectedAsync"
@@ -683,15 +687,15 @@
                                             <DxTextBox @bind-Text="@LineItemDescText" ReadOnly="true" NullText="From stock item" />
                                         </div>
                                         <div class="iv-field pdf-field-qty">
-                                            <label class="iv-field__label">Quantity needed</label>
-                                            <DxSpinEdit @bind-Value="@LineStdQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" />
+                                            <label class="iv-field__label">Quantity needed *</label>
+                                            <DxSpinEdit @bind-Value="@LineStdQty" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" InputCssClass="required-field" />
                                         </div>
                                         <div class="iv-field pdf-field-uom">
                                             <label class="iv-field__label">Unit</label>
                                             <DxTextBox @bind-Text="@LineUomText" ReadOnly="true" NullText="From stock item" InputCssClass="code-style" />
                                         </div>
                                         <div class="iv-field pdf-field-warehouse">
-                                            <label class="iv-field__label">Take material from</label>
+                                            <label class="iv-field__label">Take material from *</label>
                                             <IvCodeComboBox Data="@Warehouses"
                                                             @bind-Value="@LineWarehouse"
                                                             NullText="Select warehouse"
@@ -710,20 +714,21 @@
                                         @if (string.Equals(LineSupplySource, PrMaterialSupplySources.InternalRouteWip, StringComparison.Ordinal))
                                         {
                                             <div class="iv-field pdf-field-code">
-                                                <label class="iv-field__label">Stage that makes this material</label>
+                                                <label class="iv-field__label">Stage that makes this material *</label>
                                                 <DxComboBox Data="@ProducerOptionsForLine"
                                                             @bind-Value="@LineProducingRouteStepKey"
                                                             TextFieldName="@nameof(ProducerOption.Text)"
                                                             ValueFieldName="@nameof(ProducerOption.Value)"
                                                             SearchMode="ListSearchMode.AutoSearch"
-                                                            NullText="@(ProducerOptionsForLine.Count == 0 ? "Save stages as a draft first" : "Choose a stage")" />
+                                                            NullText="@(ProducerOptionsForLine.Count == 0 ? "Save stages as a draft first" : "Choose a stage")"
+                                                            InputCssClass="required-field" />
                                                 <small class="pdf-field-help">Choose the stage that makes this item before the current work uses it.</small>
                                             </div>
                                         }
                                         @if (string.Equals(LineSupplySource, PrMaterialSupplySources.SeparateProductDefinition, StringComparison.Ordinal))
                                         {
                                             <div class="iv-field pdf-field-code">
-                                                <label class="iv-field__label">Production setup for this material</label>
+                                                <label class="iv-field__label">Production setup for this material *</label>
                                                 <DxComboBox Data="@ComponentDefinitionOptions"
                                                             Value="@LineComponentDefinitionCode"
                                                             ValueChanged="@((string? v) => LineComponentDefinitionCode = v)"
@@ -731,7 +736,8 @@
                                                             ValueFieldName="@nameof(DefinitionOption.Value)"
                                                             SearchMode="ListSearchMode.AutoSearch"
                                                             NullText="@(ComponentDefinitionOptions.Count == 0 ? "No setup found for this item" : "Choose its production setup")"
-                                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" ValueExpression="@(() => LineComponentDefinitionCode)" />
+                                                            ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" ValueExpression="@(() => LineComponentDefinitionCode)"
+                                                            InputCssClass="required-field" />
                                             </div>
                                         }
                                         <details class="pdf-options">
@@ -898,13 +904,13 @@
                                         else
                                         {
                                             <div class="pdf-machine-editor">
-                                                <div class="iv-field pdf-field-code"><label class="iv-field__label" for="production-machine">Machine</label><DxComboBox InputId="production-machine" Data="@MachineOptions" Value="@MachineEdit.MachineCode" ValueChanged="@((string? value) => OnMachineCodeChanged(value))" TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)" SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose a machine" InputCssClass="required-field" ValueExpression="@(() => MachineEdit.MachineCode)" />
+                                                <div class="iv-field pdf-field-code"><label class="iv-field__label" for="production-machine">Machine *</label><DxComboBox InputId="production-machine" Data="@MachineOptions" Value="@MachineEdit.MachineCode" ValueChanged="@((string? value) => OnMachineCodeChanged(value))" TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)" SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose a machine" InputCssClass="required-field" ValueExpression="@(() => MachineEdit.MachineCode)" />
                                                     @if (AvailableMachines.Count == 0)
                                                     {
                                                         <small class="pdf-field-help">Create a machine for this process in Production masters first.</small>
                                                     }
                                                 </div>
-                                                <div class="iv-field pdf-field-qty"><label class="iv-field__label" for="production-machine-output">Quantity per machine cycle</label><DxSpinEdit InputId="production-machine-output" @bind-Value="@MachineEdit.OutputPerCycle" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" /><small class="pdf-field-help">Quantity in @SelectedOperation.OutputUom made in one cycle.</small></div>
+                                                <div class="iv-field pdf-field-qty"><label class="iv-field__label" for="production-machine-output">Quantity per machine cycle *</label><DxSpinEdit InputId="production-machine-output" @bind-Value="@MachineEdit.OutputPerCycle" MinValue="0.0001m" DisplayFormat="n4" ShowSpinButtons="false" InputCssClass="required-field" /><small class="pdf-field-help">Quantity in @SelectedOperation.OutputUom made in one cycle.</small></div>
                                                 <div class="iv-field pdf-field-time"><label class="iv-field__label" for="production-machine-cycle">Cycle time (seconds)</label><DxSpinEdit InputId="production-machine-cycle" @bind-Value="@MachineEdit.CycleSeconds" MinValue="0m" DisplayFormat="n4" ShowSpinButtons="false" /></div>
                                                 <details class="pdf-options">
                                                     <summary>Extra time, capacity &amp; machine cost</summary>
@@ -1014,7 +1020,7 @@
                                         else
                                         {
                                             <div class="pdf-labour-editor">
-                                                <div class="iv-field pdf-field-code"><label class="iv-field__label" for="production-operator">Operator / labour category</label><DxComboBox InputId="production-operator" Data="@OperatorOptions" @bind-Value="@LabourEdit.LabourCode" TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)" SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose an operator" InputCssClass="required-field" />
+                                                <div class="iv-field pdf-field-code"><label class="iv-field__label" for="production-operator">Operator / labour category *</label><DxComboBox InputId="production-operator" Data="@OperatorOptions" @bind-Value="@LabourEdit.LabourCode" TextFieldName="@nameof(Option.Text)" ValueFieldName="@nameof(Option.Value)" SearchMode="ListSearchMode.AutoSearch" SearchFilterCondition="ListSearchFilterCondition.Contains" NullText="Choose an operator" InputCssClass="required-field" />
                                                     @if (Operators.Count == 0)
                                                     {
                                                         <small class="pdf-field-help">Create an operator in Production masters first.</small>

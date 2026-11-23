@@ -53,11 +53,12 @@
 
             <section class="sa-card">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sa-header-form">
-                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Transaction date *" ColSpanMd="4">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
@@ -276,7 +277,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Item</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item code *" ColSpanMd="6">
                                 <Template>
                                     <IvStockMasterPicker ICode="@Popup.ICode"
                                                          Selected="OnItemSelectedAsync"
@@ -313,7 +314,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Balance</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Balance location" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Balance location *" ColSpanMd="12">
                                 <Template>
                                     <IvBalLocPicker BalLocId="@Popup.BalLocId"
                                                     DisplayLotNo="@Popup.BalLocDisplay"
@@ -368,7 +369,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Adjustment</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Adjust qty" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Adjust qty *" ColSpanMd="4">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@PopupAdjustQty"
                                                 Increment="1m"
@@ -413,27 +414,32 @@
                             </DxFormLayoutItem>
                             @if (ShowCostOverride)
                             {
-                                <DxFormLayoutItem Caption="Override unit cost" ColSpanMd="4">
+                                var costOverrideReasonRequired = string.Equals(Popup.CostEvidenceType, InventoryCostEvidenceTypes.ZeroCostApproved, StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(Popup.CostEvidenceType, InventoryCostEvidenceTypes.OpeningApproved, StringComparison.OrdinalIgnoreCase);
+                                <DxFormLayoutItem Caption="Override unit cost *" ColSpanMd="4">
                                     <Template>
                                         <DxSpinEdit @bind-Value="@Popup.UnitPrice"
                                                     Increment="0.0001m"
                                                     MinValue="0m"
                                                     DisplayFormat="n4"
-                                                    BindValueMode="BindValueMode.OnInput" />
+                                                    BindValueMode="BindValueMode.OnInput"
+                                                    InputCssClass="required-field" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Evidence type" ColSpanMd="4">
+                                <DxFormLayoutItem Caption="Evidence type *" ColSpanMd="4">
                                     <Template>
                                         <DxComboBox Data="@CostEvidenceTypes"
                                                     @bind-Value="@Popup.CostEvidenceType"
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                                    InputCssClass="required-field"
                                                     NullText="Required for an override" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Reason" ColSpanMd="4">
+                                <DxFormLayoutItem Caption="@(costOverrideReasonRequired ? "Reason *" : "Reason")" ColSpanMd="4">
                                     <Template>
                                         <DxTextBox @bind-Text="@Popup.CostOverrideReason"
                                                    maxlength="250"
+                                                   InputCssClass="@(costOverrideReasonRequired ? "required-field" : null)"
                                                    NullText="Required for zero or opening evidence" />
                                     </Template>
                                 </DxFormLayoutItem>
@@ -453,7 +459,7 @@
                                     </Template>
                                 </DxFormLayoutItem>
                             }
-                            <DxFormLayoutItem Caption="Reason" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Reason *" ColSpanMd="6">
                                 <Template>
                                     <DxComboBox Data="@ReasonOptions"
                                                 @bind-Value="@Popup.Reason"
@@ -463,9 +469,15 @@
                                                 InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                            @{
+                                var remarkRequired = string.Equals(Popup.Reason, IvAdjustmentReasons.Other, StringComparison.OrdinalIgnoreCase);
+                            }
+                            <DxFormLayoutItem Caption="@(remarkRequired ? "Remarks *" : "Remarks")" ColSpanMd="12">
                                 <Template>
-                                    <DxMemo @bind-Text="@Popup.Remarks" Rows="3" NullText="Required when reason is OTHER" />
+                                    <DxMemo @bind-Text="@Popup.Remarks"
+                                            Rows="3"
+                                            InputCssClass="@(remarkRequired ? "required-field" : null)"
+                                            NullText="Required when reason is OTHER" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>

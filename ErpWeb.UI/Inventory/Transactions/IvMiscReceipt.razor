@@ -54,11 +54,12 @@
                     Purchase with PO: create/use the PO and receive using Goods Receipt. Stock-in without PO: use Misc Receipt.
                 </p>
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form">
-                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Transaction date *" ColSpanMd="4">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
@@ -290,7 +291,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Item</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item code *" ColSpanMd="6">
                                 <Template>
                                     <IvStockMasterPicker ICode="@Popup.ICode"
                                                          Selected="OnItemSelectedAsync"
@@ -308,7 +309,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Quantity and value</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Quantity" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Quantity *" ColSpanMd="4">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@Popup.Quantity"
                                                 Increment="1m"
@@ -318,7 +319,7 @@
                                                 InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="UOM *" ColSpanMd="4">
                                 <Template>
                                     <IvCodeComboBox Data="@Uoms"
                                                     @bind-Value="@Popup.Uom"
@@ -326,7 +327,7 @@
                                                     NullText="Select UOM" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Unit price *" ColSpanMd="4">
                                 <Template>
                                     <DxCheckBox @bind-Checked="Popup.PriceConfirmed">Price confirmed in company base currency (including zero)</DxCheckBox>
                                     <DxSpinEdit @bind-Value="@Popup.UnitPrice"
@@ -345,10 +346,15 @@
                                                 NullText="Select approval/evidence type" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Cost approval reason" ColSpanMd="6">
+                            @{
+                                var costApprovalReasonRequired = string.Equals(Popup.CostEvidenceType, InventoryCostEvidenceTypes.ZeroCostApproved, StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(Popup.CostEvidenceType, InventoryCostEvidenceTypes.OpeningApproved, StringComparison.OrdinalIgnoreCase);
+                            }
+                            <DxFormLayoutItem Caption="@(costApprovalReasonRequired ? "Cost approval reason *" : "Cost approval reason")" ColSpanMd="6">
                                 <Template>
                                     <DxTextBox @bind-Text="@Popup.CostOverrideReason"
                                                maxlength="250"
+                                               InputCssClass="@(costApprovalReasonRequired ? "required-field" : null)"
                                                NullText="Required for zero/opening evidence" />
                                 </Template>
                             </DxFormLayoutItem>
@@ -366,7 +372,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Receive to</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Warehouse" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Warehouse *" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Warehouses"
                                                     Value="@Popup.ToWarehouse"
@@ -375,7 +381,7 @@
                                                     NullText="Select warehouse" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Location" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="@(Locations.Count > 0 ? "Location *" : "Location")" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Locations"
                                                     @bind-Value="@Popup.ToLocation"
@@ -393,12 +399,13 @@
                                                NullText="Auto-generated if blank" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Expiry date" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="@(Popup.LotControl ? "Expiry date *" : "Expiry date")" ColSpanMd="6">
                                 <Template>
                                     <DxDateEdit @bind-Date="@Popup.ExpiryDate"
                                                 DisplayFormat="dd/MM/yyyy"
                                                 MinDate="@Header.TrxDate.Date"
                                                 Enabled="@Popup.LotControl"
+                                                InputCssClass="@(Popup.LotControl ? "required-field" : null)"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                 </Template>
                             </DxFormLayoutItem>
@@ -408,7 +415,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Classification</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Item class" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item class *" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Classes"
                                                     @bind-Value="@Popup.IClassCode"
@@ -416,7 +423,7 @@
                                                     NullText="Select class" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Item status" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item status *" ColSpanMd="6">
                                 <Template>
                                     <IvCodeComboBox Data="@Statuses"
                                                     @bind-Value="@Popup.IStatus"
@@ -430,14 +437,14 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Notes</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Reason" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Reason *" ColSpanMd="6">
                                 <Template>
                                     <DxComboBox Data="@IvTrxReasons.All"
                                                 @bind-Value="@Popup.Reason"
                                                 AllowUserInput="true"
                                                 NullText="Select or type reason"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                                CssClass="required-field" />
+                                                InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">

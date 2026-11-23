@@ -53,11 +53,12 @@
 
             <section class="vr-card">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="vr-header-form">
-                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Transaction date *" ColSpanMd="4">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
@@ -275,7 +276,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>PO Link</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="PO No" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="PO No *" ColSpanMd="4">
                                 <Template>
                                     <DxTextBox @bind-Text="@Popup.PoNo"
                                                NullText="PO number"
@@ -283,7 +284,7 @@
                                                InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Rel" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Rel *" ColSpanMd="4">
                                 <Template>
                                     <DxSpinEdit T="short"
                                                 @bind-Value="@Popup.PoRelNo"
@@ -294,7 +295,7 @@
                                                 InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="PO Line" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="PO Line *" ColSpanMd="4">
                                 <Template>
                                     <DxSpinEdit T="short"
                                                 @bind-Value="@Popup.PoLineNo"
@@ -311,7 +312,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Item</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item code *" ColSpanMd="6">
                                 <Template>
                                     <IvStockMasterPicker ICode="@Popup.ICode"
                                                          Selected="OnItemSelectedAsync"
@@ -348,7 +349,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Return From</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Balance location (Fr Lot)" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Balance location (Fr Lot) *" ColSpanMd="12">
                                 <Template>
                                     <IvBalLocPicker BalLocId="@Popup.FromBalLocId"
                                                     DisplayLotNo="@Popup.BalLocDisplay"
@@ -403,7 +404,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Return Details</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Return qty" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Return qty *" ColSpanMd="4">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@Popup.Quantity"
                                                 Increment="1m"

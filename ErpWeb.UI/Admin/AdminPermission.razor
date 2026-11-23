@@ -45,7 +45,7 @@
             <DataAnnotationsValidator />
             <ValidationSummary />
             <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Permission Code" ColSpanMd="6">
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Permission Code *" ColSpanMd="6">
                     <Template>
                         <DxTextBox @bind-Text="@selectedRow.PermissionCode"
                                    maxlength="50"
@@ -60,7 +60,7 @@
                                     ReadOnly="@(!editEnable)" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Permission Name" ColSpanMd="6" BeginRow="true">
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Permission Name *" ColSpanMd="6" BeginRow="true">
                     <Template>
                         <DxTextBox @bind-Text="@selectedRow.PermissionName"
                                    maxlength="100"
@@ -68,7 +68,7 @@
                                    InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Type" ColSpanMd="6">
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Type *" ColSpanMd="6">
                     <Template>
                         <DxComboBox Data="@PermissionTypes"
                                     @bind-Value="@selectedRow.PermissionType"

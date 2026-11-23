@@ -59,21 +59,21 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="NumCd" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="NumCd *" ColSpanMd="6">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.NumCd"
                                        ReadOnly="@IsEditMode"
                                        InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Prefix" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Prefix *" ColSpanMd="6">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Prefix"
                                        ReadOnly="@NamespaceFrozen"
                                        InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Total length (prefix + digits)" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Total length (prefix + digits) *" ColSpanMd="6" BeginRow="true">
                         <Template>
                             <DxSpinEdit T="short"
                                         @bind-Value="@EditModel.TotLength"
@@ -84,7 +84,7 @@
                                         InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Next sequence" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Next sequence *" ColSpanMd="6">
                         <Template>
                             <DxSpinEdit T="long"
                                         @bind-Value="@EditModel.Seq"

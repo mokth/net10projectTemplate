@@ -125,9 +125,10 @@ Prefer:
 - `var(--navy)`
 - `var(--danger)`
 - `var(--field-label)`
+- `var(--required-field-bg)`
 - existing module aliases derived from those variables
 
-Required fields should use the existing `required-field` pattern when the field is genuinely mandatory.
+Required fields must follow `.agents/skills/erp-required-field-standard/skill.md`: apply `required-field` on the input (`--required-field-bg`) **and** end the field caption/label with ` *` in the same color as the caption text.
 
 Do not:
 

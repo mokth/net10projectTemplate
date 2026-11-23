@@ -108,10 +108,11 @@
                 <AntiforgeryToken />
                 <div class="form-group">
                     <label class="field" for="CompanyCode">
-                        <span class="field-label">Company Code</span>
+                        <span class="field-label">Company Code *</span>
                         <div class="input-wrapper">
                             <i class="fa-solid fa-building input-icon" aria-hidden="true"></i>
-                            <input name="CompanyCode"
+                            <input class="required-field"
+                                   name="CompanyCode"
                                    id="CompanyCode"
                                    maxlength="5"
                                    required
@@ -124,10 +125,11 @@
 
                 <div class="form-group">
                     <label class="field" for="Username">
-                        <span class="field-label">Username</span>
+                        <span class="field-label">Username *</span>
                         <div class="input-wrapper">
                             <i class="fa-solid fa-user input-icon" aria-hidden="true"></i>
-                            <input name="Username"
+                            <input class="required-field"
+                                   name="Username"
                                    id="Username"
                                    maxlength="10"
                                    required
@@ -139,10 +141,11 @@
 
                 <div class="form-group">
                     <label class="field" for="Password">
-                        <span class="field-label">Password</span>
+                        <span class="field-label">Password *</span>
                         <div class="input-wrapper">
                             <i class="fa-solid fa-lock input-icon" aria-hidden="true"></i>
-                            <input name="Password"
+                            <input class="required-field"
+                                   name="Password"
                                    id="Password"
                                    type="@(ShowPassword ? "text" : "password")"
                                    required

@@ -102,24 +102,25 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine *" ColSpanMd="6">
                         <Template>
                             <DxComboBox Data="@EditMachineOptions" @bind-Value="@EditModel.MachineCd"
                                         TextFieldName="@nameof(MachineCdOption.MachineCd)"
                                         ValueFieldName="@nameof(MachineCdOption.MachineCd)"
                                         ReadOnly="@(!EditEnabled)" NullText="Select machine"
-                                        CssClass="required-field" />
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Type" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Type *" ColSpanMd="6">
                         <Template>
                             <DxComboBox Data="@MaintenanceTypes" @bind-Value="@EditModel.MType"
-                                        ReadOnly="@(!EditEnabled)" />
+                                        ReadOnly="@(!EditEnabled)"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Transaction Date" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Transaction Date *" ColSpanMd="6" BeginRow="true">
                         <Template>
-                            <DxDateEdit @bind-Date="@EditModel.TrxDate" ReadOnly="@(!EditEnabled)" />
+                            <DxDateEdit @bind-Date="@EditModel.TrxDate" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Reason" ColSpanMd="6">
@@ -131,7 +132,7 @@
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description / Problem" ColSpanMd="12" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description / Problem *" ColSpanMd="12" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Description" maxlength="200" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
                         </Template>
@@ -147,18 +148,20 @@
                                         ReadOnly="@(!EditEnabled)" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start Date/Time" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="@(EditModel.Status is PrMaintenanceStatuses.InProgress or PrMaintenanceStatuses.Completed ? "Start Date/Time *" : "Start Date/Time")" ColSpanMd="6" BeginRow="true">
                         <Template>
                             <DxDateEdit @bind-Date="@EditModel.StartDateTime" TimeSectionVisible="true"
                                         ReadOnly="@(!EditEnabled)"
-                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        InputCssClass="@(EditModel.Status is PrMaintenanceStatuses.InProgress or PrMaintenanceStatuses.Completed ? "required-field" : null)" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="End Date/Time" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="@(EditModel.Status == PrMaintenanceStatuses.Completed ? "End Date/Time *" : "End Date/Time")" ColSpanMd="6">
                         <Template>
                             <DxDateEdit @bind-Date="@EditModel.EndDateTime" TimeSectionVisible="true"
                                         ReadOnly="@(!EditEnabled)"
-                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
+                                        ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
+                                        InputCssClass="@(EditModel.Status == PrMaintenanceStatuses.Completed ? "required-field" : null)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Action Taken" ColSpanMd="12" BeginRow="true">
@@ -166,9 +169,9 @@
                             <DxTextBox @bind-Text="@EditModel.ActionTaken" maxlength="200" ReadOnly="@(!EditEnabled)" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Action By" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="@(EditModel.Status == PrMaintenanceStatuses.Completed ? "Action By *" : "Action By")" ColSpanMd="6" BeginRow="true">
                         <Template>
-                            <DxTextBox @bind-Text="@EditModel.ActionBy" maxlength="50" ReadOnly="@(!EditEnabled)" />
+                            <DxTextBox @bind-Text="@EditModel.ActionBy" maxlength="50" ReadOnly="@(!EditEnabled)" InputCssClass="@(EditModel.Status == PrMaintenanceStatuses.Completed ? "required-field" : null)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Parts Cost" ColSpanMd="4" BeginRow="true">

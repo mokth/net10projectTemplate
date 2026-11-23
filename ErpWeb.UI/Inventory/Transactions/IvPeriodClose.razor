@@ -49,12 +49,12 @@
             <h2 class="iv-card__title">Close a period</h2>
             <div class="iv-form-row">
                 <div class="iv-form-row__field">
-                    <label class="iv-field-label">Period start</label>
-                    <DxDateEdit @bind-Date="@PeriodFrom" DisplayFormat="dd/MM/yyyy" />
+                    <label class="iv-field-label">Period start *</label>
+                    <DxDateEdit @bind-Date="@PeriodFrom" DisplayFormat="dd/MM/yyyy" InputCssClass="required-field" />
                 </div>
                 <div class="iv-form-row__field">
-                    <label class="iv-field-label">Period end</label>
-                    <DxDateEdit @bind-Date="@PeriodTo" DisplayFormat="dd/MM/yyyy" />
+                    <label class="iv-field-label">Period end *</label>
+                    <DxDateEdit @bind-Date="@PeriodTo" DisplayFormat="dd/MM/yyyy" InputCssClass="required-field" />
                 </div>
                 <div class="iv-form-row__field iv-form-row__field--grow">
                     <label class="iv-field-label">Remark</label>
@@ -146,8 +146,8 @@
                 <p>
                     Reopen <strong>@(ReopenTarget?.PeriodFrom.ToString("dd/MM/yyyy")) – @(ReopenTarget?.PeriodTo.ToString("dd/MM/yyyy"))</strong>?
                 </p>
-                <label class="iv-field-label">Reason (required)</label>
-                <DxTextBox @bind-Text="@ReopenReason" />
+                <label class="iv-field-label">Reason (required) *</label>
+                <DxTextBox @bind-Text="@ReopenReason" InputCssClass="required-field" />
                 <p class="iv-field-hint">
                     Reopening withdraws this period's stored snapshot (only its line count and closing
                     value are retained). A later closed period must be reopened first.

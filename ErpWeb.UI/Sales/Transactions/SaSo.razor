@@ -104,7 +104,7 @@
                                     <DxTextBox Text="@SoNoDisplay" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@SoDate"
                                                 DateChanged="@(async (DateTime d) => await OnSoDateChanged(d))"
@@ -131,7 +131,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Customer</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Customer" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Customer *" ColSpanMd="12">
                                 <Template>
                                     <div class="erp-form-control--xl">
                                         <SaCustomerPicker CustCode="@CustCode"
@@ -160,7 +160,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Terms</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Payment term" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Payment term *" ColSpanMd="12">
                                 <Template>
                                     <div class="erp-form-control--md">
                                         <IvCodeComboBox Data="@PayCodes"
@@ -173,7 +173,7 @@
                                     @FieldError("PayCode")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Tax group" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@(TaxGroupRequired ? "Tax group *" : "Tax group")" ColSpanMd="12">
                                 <Template>
                                     <div class="erp-form-control--md">
                                         <DxComboBox Data="@TaxGroups"
@@ -186,7 +186,8 @@
                                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                     Enabled="@CanEditDocument"
                                                     NullText="Select tax group"
-                                                    CssClass="@(TaxGroupRequired ? "w-100 required-field" : "w-100")" />
+                                                    CssClass="w-100"
+                                                    InputCssClass="@(TaxGroupRequired ? "required-field" : null)" />
                                     </div>
                                     @FieldError("TaxGrCode")
                                 </Template>
@@ -213,7 +214,7 @@
                                     <DxTextBox @bind-Text="@Ref1" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Cust PO" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Cust PO *" ColSpanMd="4">
                                 <Template>
                                     <DxTextBox @bind-Text="@CustPo" @bind-Text:after="MarkDirtyOnly" Enabled="@CanEditDocument" MaxLength="50" CssClass="erp-form-control--lg" InputCssClass="required-field" />
                                     @FieldError("CustPo")
@@ -440,7 +441,7 @@
                         <h3 class="saso-quick-add__title">Quick Add</h3>
                         <div class="saso-quick-add__grid">
                             <div class="saso-quick-add__item">
-                                <label>Item</label>
+                                <label>Item *</label>
                                 <IvStockMasterPicker @ref="_quickAddItemPicker"
                                                      ICode="@Popup.ICode"
                                                      Selected="@OnQuickAddItemSelectedAsync"
@@ -450,14 +451,15 @@
                                                      InputCssClass="required-field" />
                             </div>
                             <div class="saso-quick-add__quantity" @onkeydown="OnQuickAddQuantityKeyDown">
-                                <label>Qty</label>
+                                <label>Qty *</label>
                                 <DxSpinEdit @ref="_quickAddQtyEditor"
                                             Value="@Popup.OrderQty"
                                             ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))"
                                             ValueExpression="@(() => Popup.OrderQty)"
                                             Increment="0.0001m"
                                             ShowSpinButtons="false"
-                                            Enabled="@CanMutateLines" />
+                                            Enabled="@CanMutateLines"
+                                            InputCssClass="required-field" />
                             </div>
                             <div class="saso-quick-add__date">
                                 <label>Delivery date</label>
@@ -634,7 +636,7 @@
                         <p class="sdoc-popup-error">@PopupError</p>
                     }
                     <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
-                        <DxFormLayoutItem Caption="Item" ColSpanMd="12">
+                        <DxFormLayoutItem Caption="Item *" ColSpanMd="12">
                             <Template>
                                 <IvStockMasterPicker ICode="@Popup.ICode"
                                                      Selected="@OnPopupItemSelectedAsync"
@@ -683,7 +685,7 @@
                                 </Template>
                             </DxFormLayoutItem>
                         }
-                        <DxFormLayoutItem Caption="Order qty" ColSpanMd="3">
+                        <DxFormLayoutItem Caption="Order qty *" ColSpanMd="3">
                             <Template>
                                 <DxSpinEdit Value="@Popup.OrderQty"
                                             ValueChanged="@((decimal v) => OnPopupQuantityChangedAsync(v))"
@@ -765,7 +767,7 @@
                             }
                             @if (IsPriceOverridden())
                             {
-                                <DxFormLayoutItem Caption="Override reason (required)" ColSpanMd="12" BeginRow="true">
+                                <DxFormLayoutItem Caption="Override reason (required) *" ColSpanMd="12" BeginRow="true">
                                     <Template>
                                         <DxTextBox @bind-Text="@Popup.OverrideReason"
                                                    maxlength="100"

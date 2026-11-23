@@ -49,7 +49,7 @@
                                     <DxTextBox Text="@DocNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit @bind-Date="Model.DocDate"
                                                 DisplayFormat="dd/MM/yyyy"
@@ -73,7 +73,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Vendor</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Vendor" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Vendor *" ColSpanMd="12">
                                 <Template>
                                     <PoSupplierPicker SuppCode="@Model.VendorCode"
                                                       Selected="@OnVendorSelectedAsync"
@@ -99,7 +99,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Terms</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Currency" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Currency *" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@Currencies"
                                                 TextFieldName="@nameof(PoSbCodeLookupRow.DisplayText)"
@@ -110,7 +110,8 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@IsEditable"
                                                 NullText="Select currency"
-                                                CssClass="w-100 required-field" ValueExpression="@(() => Model.Currency)" />
+                                                InputCssClass="required-field"
+                                                CssClass="w-100" ValueExpression="@(() => Model.Currency)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Rate" ColSpanMd="12">
@@ -252,19 +253,19 @@
             <Content>
                 <div class="sdoc-popup-body">
                     <DxFormLayout SizeMode="SizeMode.Small">
-                        <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                        <DxFormLayoutItem Caption="Item code *" ColSpanMd="6">
                             <Template>
-                                <DxTextBox @bind-Text="Popup.ICode" CssClass="w-100 required-field" />
+                                <DxTextBox @bind-Text="Popup.ICode" InputCssClass="required-field" CssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Description" ColSpanMd="6">
+                        <DxFormLayoutItem Caption="Description *" ColSpanMd="6">
                             <Template>
-                                <DxTextBox @bind-Text="Popup.IDesc" CssClass="w-100 required-field" />
+                                <DxTextBox @bind-Text="Popup.IDesc" InputCssClass="required-field" CssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Qty" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="Qty *" ColSpanMd="4">
                             <Template>
-                                <DxSpinEdit @bind-Value="Popup.Qty" CssClass="w-100" />
+                                <DxSpinEdit @bind-Value="Popup.Qty" InputCssClass="required-field" CssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Unit price" ColSpanMd="4">
@@ -272,14 +273,15 @@
                                 <DxSpinEdit @bind-Value="Popup.UnitPrice" CssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="UOM" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="UOM *" ColSpanMd="4">
                             <Template>
                                 <DxComboBox Data="@Uoms"
                                             TextFieldName="@nameof(PoSbCodeLookupRow.DisplayText)"
                                             ValueFieldName="@nameof(PoSbCodeLookupRow.Code)"
                                             @bind-Value="Popup.StdUom"
                                             SearchMode="ListSearchMode.AutoSearch"
-                                            CssClass="w-100 required-field" />
+                                            InputCssClass="required-field"
+                                            CssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Tax group" ColSpanMd="6">
@@ -293,9 +295,9 @@
                                             CssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Classification" ColSpanMd="6">
+                        <DxFormLayoutItem Caption="Classification *" ColSpanMd="6">
                             <Template>
-                                <DxTextBox @bind-Text="Popup.Classification" CssClass="w-100 required-field" />
+                                <DxTextBox @bind-Text="Popup.Classification" InputCssClass="required-field" CssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Tax inclusive" ColSpanMd="6">

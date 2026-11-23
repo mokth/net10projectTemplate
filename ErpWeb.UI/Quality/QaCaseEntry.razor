@@ -103,11 +103,12 @@
                     </div>
                 }
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="mr-header-form">
-                    <DxFormLayoutItem Caption="Case date" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Case date *" ColSpanMd="4">
                         <Template Context="field">
                             <DxDateEdit @bind-Date="@Header.CaseDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
@@ -115,14 +116,15 @@
                             <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Source type" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Source type *" ColSpanMd="4">
                         <Template Context="field">
                             <DxComboBox Data="@SourceTypeOptions"
                                         TextFieldName="@nameof(QaNamedOption.Name)"
                                         ValueFieldName="@nameof(QaNamedOption.Key)"
                                         @bind-Value="@Header.SourceType"
                                         Enabled="@CanChangeSourceType"
-                                        NullText="Select source" />
+                                        NullText="Select source"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Source document" ColSpanMd="6">
@@ -224,9 +226,9 @@
                                         <th>Line</th>
                                         <th>Item</th>
                                         <th class="qa-num">Qty</th>
-                                        <th class="qa-num">Inspected</th>
+                                        <th class="qa-num">Inspected *</th>
                                         <th class="qa-num">Pending</th>
-                                        <th>Result</th>
+                                        <th>Result *</th>
                                         <th class="qa-num">Accept</th>
                                         <th class="qa-num">Reject</th>
                                         <th class="qa-num">Rework</th>
@@ -257,7 +259,8 @@
                                                             MinValue="0m"
                                                             MaxValue="@line.Qty"
                                                             DisplayFormat="n4"
-                                                            CssClass="qa-spin" />
+                                                            CssClass="qa-spin"
+                                                            InputCssClass="required-field" />
                                             </td>
                                             <td class="qa-num">@PendingQty(line).ToString("n4")</td>
                                             <td>
@@ -265,7 +268,8 @@
                                                             TextFieldName="@nameof(QaNamedOption.Name)"
                                                             ValueFieldName="@nameof(QaNamedOption.Key)"
                                                             @bind-Value="@line.Result"
-                                                            CssClass="qa-result" />
+                                                            CssClass="qa-result"
+                                                            InputCssClass="required-field" />
                                             </td>
                                             <td class="qa-num">
                                                 <DxSpinEdit @bind-Value="@line.AcceptQty" MinValue="0m" DisplayFormat="n4" CssClass="qa-spin" />
@@ -301,9 +305,9 @@
                                     }
                                 </div>
                                 <DxFormLayout SizeMode="SizeMode.Small">
-                                    <DxFormLayoutItem Caption="Inspected" ColSpanMd="6">
+                                    <DxFormLayoutItem Caption="Inspected *" ColSpanMd="6">
                                         <Template Context="field">
-                                            <DxSpinEdit @bind-Value="@line.InspectedQty" MinValue="0m" MaxValue="@line.Qty" DisplayFormat="n4" />
+                                            <DxSpinEdit @bind-Value="@line.InspectedQty" MinValue="0m" MaxValue="@line.Qty" DisplayFormat="n4" InputCssClass="required-field" />
                                         </Template>
                                     </DxFormLayoutItem>
                                     <DxFormLayoutItem Caption="Pending" ColSpanMd="6">
@@ -311,12 +315,13 @@
                                             <DxTextBox Text="@PendingQty(line).ToString("n4")" ReadOnly="true" />
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem Caption="Result" ColSpanMd="12">
+                                    <DxFormLayoutItem Caption="Result *" ColSpanMd="12">
                                         <Template Context="field">
                                             <DxComboBox Data="@ResultOptions"
                                                         TextFieldName="@nameof(QaNamedOption.Name)"
                                                         ValueFieldName="@nameof(QaNamedOption.Key)"
-                                                        @bind-Value="@line.Result" />
+                                                        @bind-Value="@line.Result"
+                                                        InputCssClass="required-field" />
                                         </Template>
                                     </DxFormLayoutItem>
                                     <DxFormLayoutItem Caption="Accept" ColSpanMd="6">
@@ -462,22 +467,26 @@
                     @if (CanManageActions)
                     {
                         <DxFormLayout SizeMode="SizeMode.Small">
-                            <DxFormLayoutItem Caption="Line" ColSpanMd="3">
+                            <DxFormLayoutItem Caption="Line *" ColSpanMd="3">
                                 <Template Context="field">
-                                    <DxSpinEdit @bind-Value="@DraftActionLineNo" MinValue="1" />
+                                    <DxSpinEdit @bind-Value="@DraftActionLineNo" MinValue="1" InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Type" ColSpanMd="5">
+                            <DxFormLayoutItem Caption="Type *" ColSpanMd="5">
                                 <Template Context="field">
                                     <DxComboBox Data="@ActionTypeOptions"
                                                 TextFieldName="@nameof(QaNamedOption.Name)"
                                                 ValueFieldName="@nameof(QaNamedOption.Key)"
-                                                @bind-Value="@DraftActionType" />
+                                                @bind-Value="@DraftActionType"
+                                                InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Qty" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="@(QaActionTypes.IsQuantitative(DraftActionType) ? "Qty *" : "Qty")" ColSpanMd="4">
                                 <Template Context="field">
-                                    <DxSpinEdit @bind-Value="@DraftActionQty" MinValue="0m" DisplayFormat="n4" />
+                                    <DxSpinEdit @bind-Value="@DraftActionQty"
+                                                MinValue="0m"
+                                                DisplayFormat="n4"
+                                                InputCssClass="@(QaActionTypes.IsQuantitative(DraftActionType) ? "required-field" : null)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Assign to" ColSpanMd="4">
@@ -490,9 +499,9 @@
                                     <DxDateEdit @bind-Date="@DraftActionDueDate" DisplayFormat="dd/MM/yyyy" ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Reason *" ColSpanMd="12">
                                 <Template Context="field">
-                                    <DxTextBox @bind-Text="@DraftActionReason" maxlength="250" NullText="Why this follow-up exists" />
+                                    <DxTextBox @bind-Text="@DraftActionReason" maxlength="250" NullText="Why this follow-up exists" InputCssClass="required-field" />
                                 </Template>
                             </DxFormLayoutItem>
                         </DxFormLayout>
@@ -848,7 +857,14 @@
              @bind-Visible="@ConfirmReinspectVisible">
         <BodyContentTemplate>
             <p class="mr-confirm__copy">Reinspection stays on the same source. Quality will not create a second delivery or posting allowance.</p>
-            <DxMemo @bind-Text="@ReinspectReason" Rows="3" NullText="Reason (required)" />
+            <div class="iv-field">
+                <label class="iv-field__label" for="qa-reinspect-reason">Reason *</label>
+                <DxMemo InputId="qa-reinspect-reason"
+                        @bind-Text="@ReinspectReason"
+                        Rows="3"
+                        NullText="Reason"
+                        InputCssClass="required-field" />
+            </div>
         </BodyContentTemplate>
         <FooterContentTemplate>
             <div class="mr-popup-footer__actions">

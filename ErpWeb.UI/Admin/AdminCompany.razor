@@ -156,12 +156,12 @@
                         <DxFormLayoutGroup ColSpanMd="12">
                             <HeaderContentTemplate>Identity</HeaderContentTemplate>
                             <Items>
-                                <DxFormLayoutItem Caption="Company Code" ColSpanMd="3">
+                                <DxFormLayoutItem Caption="@(IsCreateMode ? "Company Code *" : "Company Code")" ColSpanMd="3">
                                     <Template>
                                         <DxTextBox @bind-Text="@EditModel.CompanyCode"
                                                    maxlength="5"
                                                    ReadOnly="@(!IsCreateMode)"
-                                                   InputCssClass="required-field company-code" />
+                                                   InputCssClass="@(IsCreateMode ? "required-field company-code" : "company-code")" />
                                     </Template>
                                 </DxFormLayoutItem>
                                 <DxFormLayoutItem Caption="Active" ColSpanMd="3">
@@ -171,7 +171,7 @@
                                                     ReadOnly="@(!CanMutate)" />
                                     </Template>
                                 </DxFormLayoutItem>
-                                <DxFormLayoutItem Caption="Company Name" ColSpanMd="6" BeginRow="true">
+                                <DxFormLayoutItem Caption="Company Name *" ColSpanMd="6" BeginRow="true">
                                     <Template>
                                         <DxTextBox @bind-Text="@EditModel.CompanyName"
                                                    maxlength="100"
@@ -417,7 +417,7 @@
                             <DxFormLayoutGroup ColSpanMd="12">
                                 <HeaderContentTemplate>First administrator</HeaderContentTemplate>
                                 <Items>
-                                    <DxFormLayoutItem Caption="Admin User ID" ColSpanMd="4">
+                                    <DxFormLayoutItem Caption="Admin User ID *" ColSpanMd="4">
                                         <Template>
                                             <DxTextBox @bind-Text="@BootstrapModel.AdminLoginId"
                                                        maxlength="10"
@@ -437,7 +437,7 @@
                                                        maxlength="50" />
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem Caption="Password" ColSpanMd="4" BeginRow="true">
+                                    <DxFormLayoutItem Caption="Password *" ColSpanMd="4" BeginRow="true">
                                         <Template>
                                             <DxTextBox @bind-Text="@BootstrapModel.AdminPassword"
                                                        Password="true"
@@ -445,7 +445,7 @@
                                                        InputCssClass="required-field" />
                                         </Template>
                                     </DxFormLayoutItem>
-                                    <DxFormLayoutItem Caption="Confirm Password" ColSpanMd="4">
+                                    <DxFormLayoutItem Caption="Confirm Password *" ColSpanMd="4">
                                         <Template>
                                             <DxTextBox @bind-Text="@BootstrapModel.ConfirmPassword"
                                                        Password="true"

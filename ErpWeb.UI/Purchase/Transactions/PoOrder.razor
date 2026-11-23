@@ -73,7 +73,7 @@
                                     <DxTextBox Text="@PoNoDisplay" ReadOnly="true" ValidationEnabled="false" CssClass="erp-form-control--md" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit T="DateTime?"
                                                 Date="@PoDate"
@@ -101,7 +101,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Supplier</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Supplier" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Supplier *" ColSpanMd="12">
                                 <Template>
                                     <div class="erp-form-control--xl">
                                     <PoSupplierPicker SuppCode="@VendCode"
@@ -130,7 +130,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Terms</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Currency" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Currency *" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@Currencies"
                                                 TextFieldName="@nameof(PoOrderCodeLookupRow.DisplayText)"
@@ -141,7 +141,8 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select currency"
-                                                CssClass="w-100 required-field erp-form-control--sm" ValueExpression="@(() => CurCode)" />
+                                                InputCssClass="required-field"
+                                                CssClass="w-100 erp-form-control--sm" ValueExpression="@(() => CurCode)" />
                                     @FieldError("CurCode")
                                 </Template>
                             </DxFormLayoutItem>
@@ -245,7 +246,7 @@
                                     @FieldError("DeptCode")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Revision reason" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@(IsReviseMode ? "Revision reason *" : "Revision reason")" ColSpanMd="12">
                                 <Template>
                                     <DxMemo @bind-Text="@RevisionReason"
                                             @bind-Text:after="MarkDirtyOnly"
@@ -253,6 +254,7 @@
                                             Enabled="@IsReviseMode"
                                             MaxLength="200"
                                             NullText="Reason for this revision"
+                                            InputCssClass="@(IsReviseMode ? "required-field" : null)"
                                             CssClass="erp-form-control--full" />
                                     @FieldError("RevisionReason")
                                 </Template>
@@ -629,7 +631,7 @@
                         <p class="sdoc-field-hint">Received lines keep item, UOM, and PR reference locked. Purchase quantity can only be increased.</p>
                     }
                     <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
-                        <DxFormLayoutItem Caption="Item" ColSpanMd="8">
+                        <DxFormLayoutItem Caption="Item *" ColSpanMd="8">
                             <Template>
                                 <PoPurchasingItemPicker ICode="@Popup.ICode"
                                                         SecondaryName="@Popup.IDesc"
@@ -657,7 +659,7 @@
                                 <DxTextBox @bind-Text="@Popup.IDesc" Enabled="@CanEditDocument" MaxLength="200" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Purchase qty" ColSpanMd="3">
+                        <DxFormLayoutItem Caption="Purchase qty *" ColSpanMd="3">
                             <Template>
                                 <DxSpinEdit Value="@Popup.PoPurQty"
                                             ValueChanged="@((decimal v) => { Popup.PoPurQty = v; OnPopupQtyOrPriceChanged(); })"
@@ -674,7 +676,7 @@
                                             Enabled="@CanEditPopupIdentity" ValueExpression="@(() => Popup.PackSz)" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Purchase UOM" ColSpanMd="3">
+                        <DxFormLayoutItem Caption="Purchase UOM *" ColSpanMd="3">
                             <Template>
                                 <DxTextBox @bind-Text="@Popup.PurchaseUom" Enabled="@CanEditPopupIdentity" MaxLength="10" InputCssClass="required-field" />
                             </Template>

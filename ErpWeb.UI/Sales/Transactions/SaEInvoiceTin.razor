@@ -39,23 +39,26 @@
             </p>
             <div class="iv-form-grid">
                 <div class="iv-field">
-                    <label class="iv-field__label" for="tin-validate-idtype">Identity type</label>
+                    <label class="iv-field__label" for="tin-validate-idtype">Identity type *</label>
                     <DxComboBox Data="@IdTypes"
                                 @bind-Value="@ValidateIdType"
                                 CssClass="w-100"
+                                InputCssClass="required-field"
                                 id="tin-validate-idtype" />
                 </div>
                 <div class="iv-field">
-                    <label class="iv-field__label" for="tin-validate-idvalue">Identity value</label>
+                    <label class="iv-field__label" for="tin-validate-idvalue">Identity value *</label>
                     <DxTextBox @bind-Text="@ValidateIdValue"
                                CssClass="w-100"
+                               InputCssClass="required-field"
                                NullText="BRN / NRIC / passport / army number"
                                id="tin-validate-idvalue" />
                 </div>
                 <div class="iv-field">
-                    <label class="iv-field__label" for="tin-validate-tin">TIN</label>
+                    <label class="iv-field__label" for="tin-validate-tin">TIN *</label>
                     <DxTextBox @bind-Text="@ValidateTinValue"
                                CssClass="w-100"
+                               InputCssClass="required-field"
                                NullText="e.g. C1234567890"
                                id="tin-validate-tin" />
                 </div>

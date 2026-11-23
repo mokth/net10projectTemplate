@@ -27,7 +27,6 @@
 .pwo-form-step > span { display: grid; place-items: center; flex: 0 0 28px; height: 28px; border-radius: 50%; background: var(--accent, #2f6fed); color: white; font-weight: 600; }
 .pwo-form-step h3 { margin: 0; font-size: 1rem; line-height: 1.6; }
 .pwo-field-help { display: block; color: var(--iv-muted); font-size: .8rem; line-height: 1.5; margin-top: 5px; }
-.pwo-required { margin-left: 4px; font-weight: 400; font-size: .65rem; color: var(--iv-muted); }
 .pwo-options { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--iv-border); border-radius: 8px; }
 .pwo-options > summary { cursor: pointer; font-size: .88rem; font-weight: 600; line-height: 1.5; }
 .pwo-options > summary:focus-visible { outline: 2px solid var(--accent, #2f6fed); outline-offset: 3px; }

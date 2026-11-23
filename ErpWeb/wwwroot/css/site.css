@@ -75,12 +75,15 @@
     color-scheme: dark;
 }
 
-/* Mandatory-field tint (InputCssClass on text/date/combo, CssClass on DxComboBox root). */
+/* Mandatory-field tint (InputCssClass on editors/pickers, or CssClass on editor root). */
 .required-field,
 .required-field input,
+.required-field textarea,
+.required-field select,
 .required-field .dxbl-text-edit-input,
 .required-field.dxbl-text-edit .dxbl-text-edit-input,
-.required-field.dxbl-spin-edit .dxbl-text-edit-input {
+.required-field.dxbl-spin-edit .dxbl-text-edit-input,
+.required-field.dxbl-memo .dxbl-text-edit-input {
     background-color: var(--required-field-bg) !important;
 }
 

@@ -210,11 +210,12 @@
             @if (IsCancelAction)
             {
                 <div class="iv-einv-reason">
-                    <div class="iv-einv-reason__label">Cancellation reason (required, max 300 characters)</div>
+                    <div class="iv-einv-reason__label">Cancellation reason (required, max 300 characters) *</div>
                     <DxTextBox @bind-Text="@EInvoiceCancelReason"
                                MaxLength="300"
                                NullText="e.g. Wrong buyer details"
-                               CssClass="w-100" />
+                               CssClass="w-100"
+                               InputCssClass="required-field" />
                 </div>
             }
             <div class="iv-popup-footer">

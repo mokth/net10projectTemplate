@@ -53,24 +53,25 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine *" ColSpanMd="6">
                         <Template>
                             <DxComboBox Data="@Machines" @bind-Value="@EditModel.MachineCd"
                                         TextFieldName="MachineCd" ValueFieldName="MachineCd"
-                                        ReadOnly="@(!EditEnabled)" NullText="Select machine" />
+                                        ReadOnly="@(!EditEnabled)" NullText="Select machine"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Date" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Date *" ColSpanMd="6">
                         <Template>
-                            <DxDateEdit @bind-Date="@EditModel.DownDt" ReadOnly="@(!EditEnabled)" />
+                            <DxDateEdit @bind-Date="@EditModel.DownDt" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start Time" ColSpanMd="3" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start Time *" ColSpanMd="3" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.StartText" NullText="HH:mm" ReadOnly="@(!EditEnabled)" InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="End Time" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="End Time *" ColSpanMd="3">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.EndText" NullText="HH:mm" ReadOnly="@(!EditEnabled)" InputCssClass="required-field code-style" />
                         </Template>
@@ -122,22 +123,22 @@
     <DxPopup HeaderCssClass="code-style" HeaderText="Add Date Range" CloseOnOutsideClick="false" Width="50vw" CssClass="common-popup" @bind-Visible="@RangePopupVisible">
         <Content>
             <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine" ColSpanMd="6">
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Machine *" ColSpanMd="6">
                     <Template>
-                        <DxComboBox Data="@Machines" @bind-Value="@_rangeMac" TextFieldName="MachineCd" ValueFieldName="MachineCd" NullText="Machine" />
+                        <DxComboBox Data="@Machines" @bind-Value="@_rangeMac" TextFieldName="MachineCd" ValueFieldName="MachineCd" NullText="Machine" InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="From" ColSpanMd="3">
-                    <Template><DxDateEdit @bind-Date="@_from" /></Template>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="From *" ColSpanMd="3">
+                    <Template><DxDateEdit @bind-Date="@_from" InputCssClass="required-field" /></Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="To" ColSpanMd="3">
-                    <Template><DxDateEdit @bind-Date="@_to" /></Template>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="To *" ColSpanMd="3">
+                    <Template><DxDateEdit @bind-Date="@_to" InputCssClass="required-field" /></Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start" ColSpanMd="3" BeginRow="true">
-                    <Template><DxTextBox @bind-Text="@_startText" NullText="HH:mm" /></Template>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Start *" ColSpanMd="3" BeginRow="true">
+                    <Template><DxTextBox @bind-Text="@_startText" NullText="HH:mm" InputCssClass="required-field code-style" /></Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="End" ColSpanMd="3">
-                    <Template><DxTextBox @bind-Text="@_endText" NullText="HH:mm" /></Template>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="End *" ColSpanMd="3">
+                    <Template><DxTextBox @bind-Text="@_endText" NullText="HH:mm" InputCssClass="required-field code-style" /></Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="Reason" ColSpanMd="6">
                     <Template>
@@ -166,11 +167,11 @@
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="Reason" ColSpanMd="6">
                     <Template><DxTextBox Text="@CompleteModel.ReasonCd" ReadOnly="true" ValidationEnabled="false" /></Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Actual Start" ColSpanMd="6" BeginRow="true">
-                    <Template><DxDateEdit @bind-Date="@CompleteModel.ActualStart" TimeSectionVisible="true" /></Template>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Actual Start *" ColSpanMd="6" BeginRow="true">
+                    <Template><DxDateEdit @bind-Date="@CompleteModel.ActualStart" TimeSectionVisible="true" InputCssClass="required-field" /></Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Actual End" ColSpanMd="6">
-                    <Template><DxDateEdit @bind-Date="@CompleteModel.ActualEnd" TimeSectionVisible="true" /></Template>
+                <DxFormLayoutItem CaptionCssClass="code-style" Caption="Actual End *" ColSpanMd="6">
+                    <Template><DxDateEdit @bind-Date="@CompleteModel.ActualEnd" TimeSectionVisible="true" InputCssClass="required-field" /></Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem CaptionCssClass="code-style" Caption="Action Taken" ColSpanMd="12" BeginRow="true">
                     <Template><DxTextBox @bind-Text="@CompleteModel.ActionTaken" /></Template>

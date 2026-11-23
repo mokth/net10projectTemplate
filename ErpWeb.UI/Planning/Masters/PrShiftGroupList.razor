@@ -53,12 +53,12 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Code" ColSpanMd="4">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Group Code *" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.ShfGrpCd" maxlength="20" ReadOnly="@IsEditMode" InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="5">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description *" ColSpanMd="5">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.ShfGrpDes" maxlength="100" ReadOnly="@(!EditEnabled)" InputCssClass="required-field" />
                         </Template>

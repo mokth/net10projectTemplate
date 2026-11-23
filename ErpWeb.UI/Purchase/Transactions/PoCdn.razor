@@ -53,12 +53,13 @@
                                     <DxTextBox Text="@DocNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@DocDate"
                                                 DateChanged="@(async (DateTime d) => await OnDocDateChanged(d))"
                                                 DisplayFormat="dd/MM/yyyy"
-                                                Enabled="@CanEditDocument" DateExpression="@(() => DocDate)" />
+                                                Enabled="@CanEditDocument"
+                                                InputCssClass="required-field" DateExpression="@(() => DocDate)" />
                                     @FieldError("DocDate")
                                 </Template>
                             </DxFormLayoutItem>
@@ -86,7 +87,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Vendor</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Vendor" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Vendor *" ColSpanMd="12">
                                 <Template>
                                     <PoSupplierPicker SuppCode="@VendorCode"
                                                       Selected="@OnVendorSelectedAsync"
@@ -153,7 +154,7 @@
                                     @FieldError("ProjId")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Reason *" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@SelectableReasons"
                                                 TextFieldName="@nameof(PoCdnReasonCodeOption.Code)"
@@ -163,7 +164,8 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@CanEditDocument"
                                                 NullText="Select reason"
-                                                CssClass="w-100 required-field" ValueExpression="@(() => ReasonCode)" />
+                                                InputCssClass="required-field"
+                                                CssClass="w-100" ValueExpression="@(() => ReasonCode)" />
                                     @if (SelectedReasonInfo is not null)
                                     {
                                         <p class="sdoc-field-hint">
@@ -181,12 +183,13 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Source</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Invoice ref" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@((IsCreditNote || SelectedReasonInfo?.RequiresInvoice == true) ? "Invoice ref *" : "Invoice ref")" ColSpanMd="12">
                                 <Template>
                                     <div class="sdoc-field-row">
                                         <DxTextBox @bind-Text="PendingSourceInvNo"
                                                    @bind-Text:after="OnPendingSourceTextChanged"
                                                    Enabled="@CanEditDocument"
+                                                   InputCssClass="@((IsCreditNote || SelectedReasonInfo?.RequiresInvoice == true) ? "required-field" : null)"
                                                    NullText="Internal PI no" />
                                         @if (CanFindSource)
                                         {
@@ -238,12 +241,13 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Supplier document</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Supplier doc no" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@(SupplierDocNoRequired ? "Supplier doc no *" : "Supplier doc no")" ColSpanMd="12">
                                 <Template>
                                     <DxTextBox @bind-Text="SupplierDocNo"
                                                Enabled="@CanEditDocument"
                                                NullText="@(SupplierDocNoRequired ? "Required" : "Optional")"
-                                               CssClass="@(SupplierDocNoRequired ? "w-100 required-field" : "w-100")" />
+                                               InputCssClass="@(SupplierDocNoRequired ? "required-field" : null)"
+                                               CssClass="w-100" />
                                     @if (!SupplierDocNoRequired && string.IsNullOrWhiteSpace(SupplierDocNo))
                                     {
                                         <p class="sdoc-field-hint">Blank is allowed for an internal adjustment.</p>
@@ -251,11 +255,12 @@
                                     @FieldError("SupplierDocNo")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Supplier doc date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@(SupplierDocDateRequired ? "Supplier doc date *" : "Supplier doc date")" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit @bind-Date="SupplierDocDate"
                                                 DisplayFormat="dd/MM/yyyy"
                                                 Enabled="@CanEditDocument"
+                                                InputCssClass="@(SupplierDocDateRequired ? "required-field" : null)"
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto" />
                                     @if (SupplierDocDateRequired && SupplierDocDate is null)
                                     {
@@ -278,9 +283,11 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Notes and totals</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Remarks" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@(SelectedReasonInfo?.InternalAdjustment == true ? "Remarks *" : "Remarks")" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox @bind-Text="Remarks" Enabled="@CanEditDocument" />
+                                    <DxTextBox @bind-Text="Remarks"
+                                               Enabled="@CanEditDocument"
+                                               InputCssClass="@(SelectedReasonInfo?.InternalAdjustment == true ? "required-field" : null)" />
                                     @FieldError("Remarks")
                                 </Template>
                             </DxFormLayoutItem>
@@ -458,7 +465,7 @@
                 }
 
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
-                    <DxFormLayoutItem Caption="Item" ColSpanMd="8">
+                    <DxFormLayoutItem Caption="Item *" ColSpanMd="8">
                         <Template>
                             <IvStockMasterPicker ICode="@Popup.ICode"
                                                  Selected="@OnPopupItemSelected"
@@ -492,14 +499,14 @@
                             <DxTextBox @bind-Text="Popup.IDesc" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Qty" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Qty *" ColSpanMd="3">
                         <Template>
-                            <DxSpinEdit @bind-Value="Popup.Qty" />
+                            <DxSpinEdit @bind-Value="Popup.Qty" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Unit price" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="@(!Popup.IsTaxOnly ? "Unit price *" : "Unit price")" ColSpanMd="3">
                         <Template>
-                            <DxSpinEdit @bind-Value="Popup.UnitPrice" />
+                            <DxSpinEdit @bind-Value="Popup.UnitPrice" InputCssClass="@(!Popup.IsTaxOnly ? "required-field" : null)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Discount %" ColSpanMd="3">
@@ -541,7 +548,7 @@
 
                     @if (Popup.IsStockReturn)
                     {
-                        <DxFormLayoutItem Caption="Balance location (pile)" ColSpanMd="12">
+                        <DxFormLayoutItem Caption="Balance location (pile) *" ColSpanMd="12">
                             <Template>
                                 <IvBalLocPicker BalLocId="@Popup.FromBalLocId"
                                                 DisplayLotNo="@Popup.BalLocDisplay"

@@ -568,7 +568,7 @@
                                 @{ var reasonLine = (MaterialLineVm)context.DataItem; }
                                 @if (reasonLine.RequiresExcessReason)
                                 {
-                                    <DxTextBox @bind-Text="reasonLine.ExcessIssueReason" NullText="Required above BOM standard" Enabled="@(!IsSubmitting)" />
+                                    <DxTextBox @bind-Text="reasonLine.ExcessIssueReason" NullText="Required above BOM standard" Enabled="@(!IsSubmitting)" InputCssClass="required-field" />
                                 }
                                 else
                                 {

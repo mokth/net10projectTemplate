@@ -364,13 +364,6 @@
     line-height: 1.5;
 }
 
-.pdf-required {
-    margin-left: 5px;
-    color: var(--iv-muted, #667085);
-    font-size: .65rem;
-    font-weight: 400;
-}
-
 .pdf-quantity-example,
 .pdf-guidance {
     display: flex;

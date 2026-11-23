@@ -53,11 +53,12 @@
 
             <section class="mi-card">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="mi-header-form">
-                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Transaction date *" ColSpanMd="4">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
@@ -274,7 +275,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Item</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Item code" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Item code *" ColSpanMd="6">
                                 <Template>
                                     <IvStockMasterPicker ICode="@Popup.ICode"
                                                          Selected="OnItemSelectedAsync"
@@ -311,7 +312,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Issue From</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Balance location (Fr Lot)" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Balance location (Fr Lot) *" ColSpanMd="12">
                                 <Template>
                                     <IvBalLocPicker BalLocId="@Popup.FromBalLocId"
                                                     DisplayLotNo="@Popup.BalLocDisplay"
@@ -366,7 +367,7 @@
                     <DxFormLayoutGroup ColSpanMd="12">
                         <HeaderContentTemplate>Issue Details</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Issue qty" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Issue qty *" ColSpanMd="4">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@Popup.Quantity"
                                                 Increment="1m"

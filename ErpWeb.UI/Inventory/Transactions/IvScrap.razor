@@ -53,11 +53,12 @@
 
             <section class="sc-card">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sc-header-form">
-                    <DxFormLayoutItem Caption="Transaction date" ColSpanMd="4">
+                    <DxFormLayoutItem Caption="Transaction date *" ColSpanMd="4">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.TrxDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanEditDocument" />
+                                        Enabled="@CanEditDocument"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="4">
@@ -274,7 +275,7 @@
                     <DxFormLayoutGroup ColSpanMd="6">
                         <HeaderContentTemplate>Item</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Item code" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Item code *" ColSpanMd="12">
                                 <Template>
                                     <IvStockMasterPicker ICode="@Popup.ICode"
                                                          Selected="OnItemSelectedAsync"
@@ -320,7 +321,7 @@
 <DxTextBox Text="@Popup.FrWarehouse" ReadOnly="true" NullText="—" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="From lot no" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="From lot no *" ColSpanMd="12">
                                 <Template>
                                     <IvBalLocPicker BalLocId="@Popup.FromBalLocId"
                                                     DisplayLotNo="@Popup.BalLocDisplay"
@@ -355,7 +356,7 @@
                                     <DxMemo @bind-Text="@Popup.IDesc" Rows="3" ReadOnly="true" NullText="Selected item description" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Scrap qty" ColSpanMd="6">
+                            <DxFormLayoutItem Caption="Scrap qty *" ColSpanMd="6">
                                 <Template>
                                     <DxSpinEdit @bind-Value="@Popup.Quantity"
                                                 Increment="1m"
@@ -370,7 +371,7 @@
 <DxTextBox Text="@Popup.Uom" ReadOnly="true" NullText="—" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Reason *" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@IvScrapReasons.All"
                                                 @bind-Value="@Popup.Reason"

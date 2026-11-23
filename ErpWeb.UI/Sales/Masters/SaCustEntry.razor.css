@@ -133,10 +133,6 @@
     margin: 0;
 }
 
-.sa-cust-req {
-    color: var(--danger, #b42318);
-}
-
 .sa-cust-hint {
     margin: 8px 0 14px;
     color: var(--iv-muted, #667085);

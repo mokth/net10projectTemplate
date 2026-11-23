@@ -198,13 +198,14 @@
         <Content>
             <p class="iv-confirm__copy">@ConfirmMessage</p>
             <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem Caption="Cancel reason" ColSpanMd="12">
+                <DxFormLayoutItem Caption="Cancel reason *" ColSpanMd="12">
                     <Template>
                         <DxMemo @bind-Text="@CancelReason"
                                 Rows="3"
                                 MaxLength="200"
                                 NullText="Required"
-                                CssClass="w-100 required-field" />
+                                InputCssClass="required-field"
+                                CssClass="w-100" />
                     </Template>
                 </DxFormLayoutItem>
             </DxFormLayout>

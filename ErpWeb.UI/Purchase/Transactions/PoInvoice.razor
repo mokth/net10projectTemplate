@@ -55,7 +55,7 @@
                                     <DxTextBox Text="@DocNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit @bind-Date="Model.DocDate"
                                                 DisplayFormat="dd/MM/yyyy"
@@ -73,9 +73,9 @@
                                     <DxTextBox Text="@(Model.Prefix ?? string.Empty)" ReadOnly="true" NullText="From numbering" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="@SupplierInvCaption" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="@($"{SupplierInvCaption} *")" ColSpanMd="12">
                                 <Template>
-                                    <DxTextBox @bind-Text="Model.InvNo" Enabled="@IsEditable" CssClass="w-100 required-field" />
+                                    <DxTextBox @bind-Text="Model.InvNo" Enabled="@IsEditable" InputCssClass="required-field" CssClass="w-100" />
                                 </Template>
                             </DxFormLayoutItem>
                         </Items>
@@ -84,7 +84,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Vendor</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Vendor" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Vendor *" ColSpanMd="12">
                                 <Template>
                                     <PoSupplierPicker SuppCode="@Model.VendorCode"
                                                       Selected="@OnVendorSelectedAsync"
@@ -105,7 +105,7 @@
                     <DxFormLayoutGroup ColSpanMd="4">
                         <HeaderContentTemplate>Terms</HeaderContentTemplate>
                         <Items>
-                            <DxFormLayoutItem Caption="Currency" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Currency *" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@Currencies"
                                                 TextFieldName="@nameof(IvCodeLookupRow.DisplayText)"
@@ -116,7 +116,8 @@
                                                 ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                                 Enabled="@IsEditable"
                                                 NullText="Select currency"
-                                                CssClass="w-100 required-field" ValueExpression="@(() => Model.Currency)" />
+                                                InputCssClass="required-field"
+                                                CssClass="w-100" ValueExpression="@(() => Model.Currency)" />
                                 </Template>
                             </DxFormLayoutItem>
                             <DxFormLayoutItem Caption="Rate" ColSpanMd="12">

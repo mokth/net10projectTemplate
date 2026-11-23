@@ -165,11 +165,11 @@
             {
                 <p class="einvoice__message einvoice__message--error" role="alert">@_cancelError</p>
             }
-            <label for="einvoice-cancel-reason">Cancellation reason (required)</label>
+            <label for="einvoice-cancel-reason">Cancellation reason (required) *</label>
             <DxMemo @bind-Text="_cancelReason"
                     Rows="3"
                     MaxLength="300"
-                    CssClass="w-100 einvoice__cancel-reason" />
+                    CssClass="w-100 einvoice__cancel-reason required-field" />
             </div>
             <div class="sdoc-popup-footer">
                 <div class="sdoc-popup-footer__actions">

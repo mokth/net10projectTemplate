@@ -56,7 +56,7 @@
                                     <DxTextBox Text="@StatusDisplay" ReadOnly="true" ValidationEnabled="false" />
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="Create date" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="Create date *" ColSpanMd="12">
                                 <Template>
                                     <DxDateEdit Date="@CreateDt"
                                                 DateChanged="@((DateTime d) => { CreateDt = d.Date; OnHeaderChanged(); })"
@@ -97,7 +97,7 @@
                                     @FieldError("DeptCode")
                                 </Template>
                             </DxFormLayoutItem>
-                            <DxFormLayoutItem Caption="PR type" ColSpanMd="12">
+                            <DxFormLayoutItem Caption="PR type *" ColSpanMd="12">
                                 <Template>
                                     <DxComboBox Data="@PrTypeOptions"
                                                 TextFieldName="@nameof(PoPrCodeLookupRow.DisplayText)"
@@ -105,7 +105,8 @@
                                                 Value="@PrType"
                                                 ValueChanged="@((string? v) => OnPrTypeChanged(v))"
                                                 Enabled="@CanEditDocument"
-                                                CssClass="w-100 required-field" ValueExpression="@(() => PrType)" />
+                                                InputCssClass="required-field"
+                                                CssClass="w-100" ValueExpression="@(() => PrType)" />
                                     @FieldError("PrType")
                                 </Template>
                             </DxFormLayoutItem>
@@ -455,7 +456,7 @@
                         <p class="sdoc-field-hint">This line is linked to PO @Popup.PoNo and is read-only.</p>
                     }
                     <DxFormLayout SizeMode="SizeMode.Small" CssClass="sdoc-popup-form">
-                        <DxFormLayoutItem Caption="Item" ColSpanMd="8">
+                        <DxFormLayoutItem Caption="Item *" ColSpanMd="8">
                             <Template>
                                 <PoPurchasingItemPicker ICode="@Popup.ICode"
                                                         SecondaryName="@Popup.IDesc"
@@ -512,7 +513,7 @@
                                             Enabled="@(!PopupReadOnly)" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Currency" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="Currency *" ColSpanMd="4">
                             <Template>
                                 <DxComboBox Data="@Currencies"
                                             TextFieldName="@nameof(PoPrCodeLookupRow.DisplayText)"
@@ -521,7 +522,8 @@
                                             SearchMode="ListSearchMode.AutoSearch"
                                             Enabled="@(!PopupReadOnly)"
                                             NullText="Select currency"
-                                            CssClass="w-100 required-field" />
+                                            InputCssClass="required-field"
+                                            CssClass="w-100" />
                             </Template>
                         </DxFormLayoutItem>
                         <DxFormLayoutItem Caption="Buying term" ColSpanMd="4">
@@ -561,7 +563,7 @@
                                 </Template>
                             </DxFormLayoutItem>
                         }
-                        <DxFormLayoutItem Caption="Purchase qty" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="Purchase qty *" ColSpanMd="4">
                             <Template>
                                 <DxSpinEdit Value="@Popup.PurchaseQty"
                                             ValueChanged="@((decimal v) => { Popup.PurchaseQty = v; OnPopupQtyOrPriceChanged(); })"
@@ -570,7 +572,7 @@
                                             InputCssClass="required-field" ValueExpression="@(() => Popup.PurchaseQty)" />
                             </Template>
                         </DxFormLayoutItem>
-                        <DxFormLayoutItem Caption="Purchase UOM" ColSpanMd="4">
+                        <DxFormLayoutItem Caption="Purchase UOM *" ColSpanMd="4">
                             <Template>
                                 <DxTextBox @bind-Text="@Popup.PurchaseUom" Enabled="@(!PopupReadOnly)" MaxLength="10" InputCssClass="required-field" />
                             </Template>
@@ -634,7 +636,7 @@
                         </DxFormLayoutItem>
                         @if (IsRepairType)
                         {
-                            <DxFormLayoutItem Caption="Repair type" ColSpanMd="4">
+                            <DxFormLayoutItem Caption="Repair type *" ColSpanMd="4">
                                 <Template>
                                     <DxComboBox Data="@RepairTypeOptions"
                                                 TextFieldName="@nameof(PoPrCodeLookupRow.DisplayText)"
@@ -642,7 +644,8 @@
                                                 @bind-Value="@Popup.RepairType"
                                                 Enabled="@(!PopupReadOnly)"
                                                 NullText="Select"
-                                                CssClass="w-100 required-field" />
+                                                InputCssClass="required-field"
+                                                CssClass="w-100" />
                                 </Template>
                             </DxFormLayoutItem>
                         }

@@ -59,7 +59,7 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item *" ColSpanMd="6">
                         <Template>
                             <IvStockMasterPicker ICode="@EditModel.ICode"
                                                  ICodeChanged="@(v => EditModel.ICode = v ?? string.Empty)"
@@ -78,19 +78,19 @@
                         </Template>
                     </DxFormLayoutItem>
 
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Quantity from" ColSpanMd="3" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Quantity from *" ColSpanMd="3" BeginRow="true">
                         <Template>
-                            <DxSpinEdit @bind-Value="@EditModel.QtyFr" ReadOnly="@(!EditEnabled)" MinValue="0.0001m" ShowSpinButtons="false" />
+                            <DxSpinEdit @bind-Value="@EditModel.QtyFr" ReadOnly="@(!EditEnabled)" MinValue="0.0001m" ShowSpinButtons="false" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Quantity to" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Quantity to *" ColSpanMd="3">
                         <Template>
-                            <DxSpinEdit @bind-Value="@EditModel.QtyTo" ReadOnly="@(!EditEnabled)" MinValue="0" ShowSpinButtons="false" />
+                            <DxSpinEdit @bind-Value="@EditModel.QtyTo" ReadOnly="@(!EditEnabled)" MinValue="0" ShowSpinButtons="false" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Effective from" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Effective from *" ColSpanMd="3">
                         <Template>
-                            <DxDateEdit @bind-Date="@DateFrValue" Enabled="@EditEnabled" DisplayFormat="dd/MM/yyyy" />
+                            <DxDateEdit @bind-Date="@DateFrValue" Enabled="@EditEnabled" DisplayFormat="dd/MM/yyyy" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Effective to" ColSpanMd="3">
@@ -107,13 +107,14 @@
                             <DxSpinEdit @bind-Value="@EditModel.Discount" ReadOnly="@(!EditEnabled)" MinValue="0" ShowSpinButtons="false" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Discount 1 type" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="@(EditModel.Discount is > 0m ? "Discount 1 type *" : "Discount 1 type")" ColSpanMd="3">
                         <Template>
                             <DxComboBox Data="@DiscountTypes"
                                         @bind-Value="@EditModel.DiscountType"
                                         Enabled="@EditEnabled"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                        NullText="Select type" />
+                                        NullText="Select type"
+                                        InputCssClass="@(EditModel.Discount is > 0m ? "required-field" : null)" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem CaptionCssClass="code-style" Caption="Discount 2" ColSpanMd="3">
@@ -121,13 +122,14 @@
                             <DxSpinEdit @bind-Value="@EditModel.Discount1" ReadOnly="@(!EditEnabled)" MinValue="0" ShowSpinButtons="false" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Discount 2 type" ColSpanMd="3">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="@(EditModel.Discount1 is > 0m ? "Discount 2 type *" : "Discount 2 type")" ColSpanMd="3">
                         <Template>
                             <DxComboBox Data="@DiscountTypes"
                                         @bind-Value="@EditModel.DiscountType1"
                                         Enabled="@EditEnabled"
                                         ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
-                                        NullText="Select type" />
+                                        NullText="Select type"
+                                        InputCssClass="@(EditModel.Discount1 is > 0m ? "required-field" : null)" />
                         </Template>
                     </DxFormLayoutItem>
 

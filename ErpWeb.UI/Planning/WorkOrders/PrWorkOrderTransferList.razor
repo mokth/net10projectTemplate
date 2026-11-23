@@ -123,8 +123,8 @@
                         else if (ConfirmRollback)
                         {
                             <p>Return the exact original WIP quantity and value to the source pool. Any later Production movement or downstream use blocks rollback.</p>
-                            <label class="form-label" for="wot-list-rollback-reason">Reason (required)</label>
-                            <DxTextBox Id="wot-list-rollback-reason" Text="@RollbackReason" TextChanged="RollbackReasonChanged" maxlength="500" CssClass="w-100" />
+                            <label class="form-label" for="wot-list-rollback-reason">Reason *</label>
+                            <DxTextBox Id="wot-list-rollback-reason" Text="@RollbackReason" TextChanged="RollbackReasonChanged" maxlength="500" CssClass="w-100" InputCssClass="required-field" />
                         }
                         else { <p>Delete @ConfirmRow.TransferNo? No stock movement has been posted.</p> }
                     </div>

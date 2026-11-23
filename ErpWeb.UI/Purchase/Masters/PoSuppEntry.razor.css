@@ -134,10 +134,6 @@
     margin: 0;
 }
 
-.po-supp-req {
-    color: var(--danger, #b42318);
-}
-
 .po-supp-remark-grid {
     display: grid;
     gap: 14px;

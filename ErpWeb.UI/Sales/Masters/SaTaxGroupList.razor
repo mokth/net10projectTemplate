@@ -58,7 +58,7 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code" ColSpanMd="6">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Code *" ColSpanMd="6">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Code"
                                        maxlength="20"
@@ -66,7 +66,7 @@
                                        InputCssClass="required-field code-style" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description" ColSpanMd="12" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Description *" ColSpanMd="12" BeginRow="true">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Desc"
                                        maxlength="100"
@@ -74,7 +74,7 @@
                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Percentage" ColSpanMd="6" BeginRow="true">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Percentage *" ColSpanMd="6" BeginRow="true">
                         <Template>
                             <DxSpinEdit @bind-Value="@EditModel.Percentage"
                                         MinValue="0"

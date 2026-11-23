@@ -60,11 +60,12 @@
 
             <section class="sa-card">
                 <DxFormLayout SizeMode="SizeMode.Small" CssClass="sa-header-form">
-                    <DxFormLayoutItem Caption="Count date" ColSpanMd="3">
+                    <DxFormLayoutItem Caption="Count date *" ColSpanMd="3">
                         <Template>
                             <DxDateEdit @bind-Date="@Header.CountDate"
                                         DisplayFormat="dd/MM/yyyy"
-                                        Enabled="@CanConfigureScope" />
+                                        Enabled="@CanConfigureScope"
+                                        InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
                     <DxFormLayoutItem Caption="Status" ColSpanMd="3">
@@ -387,10 +388,10 @@
         <Content>
             <div class="sa-popup-body">
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem Caption="Item code" ColSpanMd="12">
+                    <DxFormLayoutItem Caption="Item code *" ColSpanMd="12">
                         <Template>
                             <div class="sa-inline">
-                                <DxTextBox @bind-Text="@EnterByItemCode" maxlength="30" NullText="Scan or type an item code" />
+                                <DxTextBox @bind-Text="@EnterByItemCode" maxlength="30" NullText="Scan or type an item code" InputCssClass="required-field" />
                                 <DxButton RenderStyle="ButtonRenderStyle.Secondary"
                                           Text="Find"
                                           Click="@OnEnterByItemFindAsync"
@@ -398,18 +399,19 @@
                             </div>
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Counted qty" ColSpanMd="12">
+                    <DxFormLayoutItem Caption="Counted qty *" ColSpanMd="12">
                         <Template>
-                            <DxSpinEdit @bind-Value="@EnterByItemQty" MinValue="0m" Increment="1m" DisplayFormat="n4" />
+                            <DxSpinEdit @bind-Value="@EnterByItemQty" MinValue="0m" Increment="1m" DisplayFormat="n4" InputCssClass="required-field" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem Caption="Pile" ColSpanMd="12">
+                    <DxFormLayoutItem Caption="Pile *" ColSpanMd="12">
                         <Template>
                             <DxComboBox Data="@EnterByItemSlices"
                                         TextFieldName="@nameof(EnterByItemSlice.Name)"
                                         ValueFieldName="@nameof(EnterByItemSlice.Key)"
                                         @bind-Value="@EnterByItemSliceKey"
                                         Enabled="@(EnterByItemSlices.Count > 1)"
+                                        InputCssClass="required-field"
                                         NullText="— no pile —" />
                             <span class="sa-hint">@EnterByItemHint</span>
                         </Template>
@@ -443,14 +445,14 @@
                 <p class="sa-popup-error">@FifoApprovalError</p>
             }
             <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem Caption="Fallback unit cost" ColSpanMd="12">
+                <DxFormLayoutItem Caption="Fallback unit cost *" ColSpanMd="12">
                     <Template>
-                        <DxSpinEdit @bind-Value="@FifoApprovedUnitCost" MinValue="0m" Increment="0.01m" DisplayFormat="n6" />
+                        <DxSpinEdit @bind-Value="@FifoApprovedUnitCost" MinValue="0m" Increment="0.01m" DisplayFormat="n6" InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Approval reason" ColSpanMd="12">
+                <DxFormLayoutItem Caption="Approval reason *" ColSpanMd="12">
                     <Template>
-                        <DxMemo @bind-Text="@FifoApprovalReason" Rows="2" maxlength="250" />
+                        <DxMemo @bind-Text="@FifoApprovalReason" Rows="2" maxlength="250" InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
             </DxFormLayout>
@@ -558,9 +560,9 @@
                 The batch number is kept as the audit trail; a re-post allocates a new batch.
             </p>
             <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                <DxFormLayoutItem Caption="Reason *" ColSpanMd="12">
                     <Template>
-                        <DxMemo @bind-Text="@RollbackReason" Rows="2" maxlength="250" />
+                        <DxMemo @bind-Text="@RollbackReason" Rows="2" maxlength="250" InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
             </DxFormLayout>

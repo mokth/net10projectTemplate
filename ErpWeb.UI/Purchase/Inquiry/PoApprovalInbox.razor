@@ -296,7 +296,7 @@
                                     NullText="Select current assignee" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="With user" ColSpanMd="12">
+                <DxFormLayoutItem Caption="With user *" ColSpanMd="12">
                     <Template>
                         <DxComboBox Data="@ReassignToUsers"
                                     TextFieldName="@nameof(ProcurementApprovalLookupRow.DisplayText)"
@@ -306,12 +306,12 @@
                                     SearchFilterCondition="ListSearchFilterCondition.Contains"
                                     ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                                     NullText="Select user"
-                                    CssClass="required-field" />
+                                    InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Reason" ColSpanMd="12">
+                <DxFormLayoutItem Caption="Reason *" ColSpanMd="12">
                     <Template>
-                        <DxMemo @bind-Text="@ReassignReason" Rows="3" MaxLength="200" NullText="Required" CssClass="w-100 required-field" />
+                        <DxMemo @bind-Text="@ReassignReason" Rows="3" MaxLength="200" NullText="Required" InputCssClass="required-field" CssClass="w-100" />
                     </Template>
                 </DxFormLayoutItem>
             </DxFormLayout>

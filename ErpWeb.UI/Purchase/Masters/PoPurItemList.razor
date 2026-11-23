@@ -58,13 +58,13 @@
                 <DataAnnotationsValidator />
                 <ValidationSummary />
                 <DxFormLayout SizeMode="SizeMode.Small">
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item Code" ColSpanMd="4">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Item Code *" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.ICode" maxlength="30"
                                        InputCssClass="required-field code-style" ReadOnly="@IsEditMode" />
                         </Template>
                     </DxFormLayoutItem>
-                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Vendor" ColSpanMd="4">
+                    <DxFormLayoutItem CaptionCssClass="code-style" Caption="Vendor *" ColSpanMd="4">
                         <Template>
                             <DxTextBox @bind-Text="@EditModel.Vendor" maxlength="60"
                                        InputCssClass="required-field code-style" ReadOnly="@IsEditMode" />

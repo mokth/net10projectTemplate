@@ -38,13 +38,14 @@
                 <p>@SubconBlockedReasons.NoOutstanding</p>
             </div>
             <DxFormLayout SizeMode="SizeMode.Small">
-                <DxFormLayoutItem Caption="Date" ColSpanMd="4">
+                <DxFormLayoutItem Caption="Date *" ColSpanMd="4">
                     <Template>
                         <DxDateEdit Date="@Header.TrxDate"
                                     DateChanged="@((DateTime d) => OnTrxDateChanged(d))"
                                     DateExpression="@(() => Header.TrxDate)"
                                     DisplayFormat="dd/MM/yyyy"
-                                    Enabled="@CanEditDocument" />
+                                    Enabled="@CanEditDocument"
+                                    InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Document" ColSpanMd="4">
@@ -52,12 +53,13 @@
                         <DxTextBox Text="@DocNoDisplay" ReadOnly="true" ValidationEnabled="false" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Supplier" ColSpanMd="4">
+                <DxFormLayoutItem Caption="Supplier *" ColSpanMd="4">
                     <Template>
                         <PoSupplierPicker @bind-SuppCode="@Header.SupplierCode"
                                           Selected="@OnSupplierSelected"
                                           Enabled="@CanEditDocument"
-                                          NullText="Search supplier" />
+                                          NullText="Search supplier"
+                                          InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
                 <DxFormLayoutItem Caption="Supplier name" ColSpanMd="6">
@@ -235,9 +237,9 @@
                         <DxTextBox Text="@(DraftLine.RemainingQty > 0m ? $"{DraftLine.RemainingQty:0.####} {DraftLine.Uom}" : "-")" ReadOnly="true" ValidationEnabled="false" />
                     </Template>
                 </DxFormLayoutItem>
-                <DxFormLayoutItem Caption="Receive quantity" ColSpanMd="3">
+                <DxFormLayoutItem Caption="Receive quantity *" ColSpanMd="3">
                     <Template Context="field">
-                        <DxSpinEdit @bind-Value="@DraftLine.Qty" Increment="1m" MinValue="0m" />
+                        <DxSpinEdit @bind-Value="@DraftLine.Qty" Increment="1m" MinValue="0m" InputCssClass="required-field" />
                     </Template>
                 </DxFormLayoutItem>
             </DxFormLayout>

@@ -523,7 +523,9 @@
                                                 NullText="Required warehouse"
                                                 SearchMode="ListSearchMode.AutoSearch"
                                                 SearchFilterCondition="ListSearchFilterCondition.Contains"
-                                                Enabled="@CanEditFields" ValueExpression="@(() => editor.Line.Warehouse)" />
+                                                Enabled="@CanEditFields"
+                                                InputCssClass="@(CanEditFields ? "required-field" : null)"
+                                                ValueExpression="@(() => editor.Line.Warehouse)" />
                                 </CellDisplayTemplate>
                             </DxGridDataColumn>
                             <DxGridDataColumn Caption="Location" Width="180px">
@@ -757,7 +759,10 @@
              Closed="@(() => RollbackConfirmVisible = false)">
         <BodyContentTemplate>
             <p>Enter a reason to roll back this posted document.</p>
-            <DxMemo @bind-Text="@RollbackReason" Rows="3" maxlength="500" CssClass="w-100" />
+            <div class="iv-field">
+                <label class="iv-field__label">Reason *</label>
+                <DxMemo @bind-Text="@RollbackReason" Rows="3" maxlength="500" CssClass="w-100" InputCssClass="required-field" />
+            </div>
         </BodyContentTemplate>
         <FooterContentTemplate>
             <DxButton Text="Cancel" RenderStyle="ButtonRenderStyle.Secondary" Click="@(() => RollbackConfirmVisible = false)" Enabled="@(!IsSubmitting)" />

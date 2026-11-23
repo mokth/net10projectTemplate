@@ -700,16 +700,16 @@
 
                         <div class="pr-machine-schedule-dialog__inputs">
                             <label>
-                                <span>Requested date</span>
-                                <input type="date" value="@RequestedDateText" @onchange="OnRequestedDateChanged" disabled="@IsRescheduleBusy" />
+                                <span>Requested date *</span>
+                                <input type="date" class="required-field" value="@RequestedDateText" @onchange="OnRequestedDateChanged" disabled="@IsRescheduleBusy" />
                             </label>
                             <label>
-                                <span>Requested time</span>
-                                <input type="time" step="60" value="@RequestedTimeText" @onchange="OnRequestedTimeChanged" disabled="@IsRescheduleBusy" />
+                                <span>Requested time *</span>
+                                <input type="time" class="required-field" step="60" value="@RequestedTimeText" @onchange="OnRequestedTimeChanged" disabled="@IsRescheduleBusy" />
                             </label>
                             <label class="pr-machine-schedule-dialog__reason">
-                                <span>Reason</span>
-                                <textarea maxlength="500" rows="3" @bind="RescheduleReason" @bind:after="InvalidateReschedulePreview"
+                                <span>Reason *</span>
+                                <textarea class="required-field" maxlength="500" rows="3" @bind="RescheduleReason" @bind:after="InvalidateReschedulePreview"
                                           placeholder="Why does this schedule need to change?" disabled="@IsRescheduleBusy"></textarea>
                             </label>
                         </div>
@@ -809,12 +809,12 @@
                         @if (AdvancedNeedsStart)
                         {
                             <label>
-                                <span>Requested start date</span>
-                                <input type="date" value="@AdvancedDateText" @onchange="OnAdvancedDateChanged" disabled="@IsAdvancedBusy" />
+                                <span>Requested start date *</span>
+                                <input type="date" class="required-field" value="@AdvancedDateText" @onchange="OnAdvancedDateChanged" disabled="@IsAdvancedBusy" />
                             </label>
                             <label>
-                                <span>Requested start time</span>
-                                <input type="time" step="60" value="@AdvancedTimeText" @onchange="OnAdvancedTimeChanged" disabled="@IsAdvancedBusy" />
+                                <span>Requested start time *</span>
+                                <input type="time" class="required-field" step="60" value="@AdvancedTimeText" @onchange="OnAdvancedTimeChanged" disabled="@IsAdvancedBusy" />
                             </label>
                         }
                         @if (AdvancedNeedsQuantity)
@@ -828,8 +828,8 @@
                         @if (AdvancedNeedsHoldType)
                         {
                             <label>
-                                <span>Hold type</span>
-                                <select value="@AdvancedHoldType" @onchange="@((ChangeEventArgs e) => { AdvancedHoldType = e.Value?.ToString() ?? ProductionScheduleHoldTypes.Other; InvalidateAdvancedPreview(); })" disabled="@IsAdvancedBusy">
+                                <span>Hold type *</span>
+                                <select class="required-field" value="@AdvancedHoldType" @onchange="@((ChangeEventArgs e) => { AdvancedHoldType = e.Value?.ToString() ?? ProductionScheduleHoldTypes.Other; InvalidateAdvancedPreview(); })" disabled="@IsAdvancedBusy">
                                     <option value="@ProductionScheduleHoldTypes.MaterialShortage">Material shortage</option>
                                     <option value="@ProductionScheduleHoldTypes.QualityHold">Quality hold</option>
                                     <option value="@ProductionScheduleHoldTypes.CustomerHold">Customer hold</option>
@@ -848,12 +848,12 @@
                         @if (AdvancedNeedsDowntime)
                         {
                             <label>
-                                <span>Downtime start date</span>
-                                <input type="date" value="@AdvancedDowntimeStartDateText" @onchange="OnAdvancedDowntimeStartDateChanged" disabled="@IsAdvancedBusy" />
+                                <span>Downtime start date *</span>
+                                <input type="date" class="required-field" value="@AdvancedDowntimeStartDateText" @onchange="OnAdvancedDowntimeStartDateChanged" disabled="@IsAdvancedBusy" />
                             </label>
                             <label>
-                                <span>Downtime start time</span>
-                                <input type="time" step="60" value="@AdvancedDowntimeStartTimeText" @onchange="OnAdvancedDowntimeStartTimeChanged" disabled="@IsAdvancedBusy" />
+                                <span>Downtime start time *</span>
+                                <input type="time" class="required-field" step="60" value="@AdvancedDowntimeStartTimeText" @onchange="OnAdvancedDowntimeStartTimeChanged" disabled="@IsAdvancedBusy" />
                             </label>
                             <label>
                                 <span>Downtime end date (blank = open-ended)</span>
@@ -886,8 +886,8 @@
                             </label>
                         }
                         <label class="pr-machine-schedule-dialog__reason">
-                            <span>Reason @(AdvancedNeedsReason ? "(required)" : "(optional)")</span>
-                            <textarea maxlength="500" rows="3" value="@AdvancedReason" @onchange="OnAdvancedReasonChanged"
+                            <span>@(AdvancedNeedsReason ? "Reason *" : "Reason (optional)")</span>
+                            <textarea class="@(AdvancedNeedsReason ? "required-field" : null)" maxlength="500" rows="3" value="@AdvancedReason" @onchange="OnAdvancedReasonChanged"
                                       placeholder="Why does this advanced schedule change need to happen?" disabled="@IsAdvancedBusy"></textarea>
                         </label>
                     </div>

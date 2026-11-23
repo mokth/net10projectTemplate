@@ -63,14 +63,14 @@
                     <section class="spg-section">
                         <div class="spg-head">
                             <div class="iv-field spg-head__code">
-                                <label class="iv-field__label code-style">Code</label>
+                                <label class="iv-field__label code-style">Code *</label>
                                 <DxTextBox @bind-Text="@EditModel.CustPriceCode"
                                            maxlength="20"
                                            ReadOnly="@IsEditMode"
                                            InputCssClass="required-field code-style" />
                             </div>
                             <div class="iv-field">
-                                <label class="iv-field__label">Description</label>
+                                <label class="iv-field__label">Description *</label>
                                 <DxTextBox @bind-Text="@EditModel.CustPriceDesc"
                                            maxlength="50"
                                            ReadOnly="@(!EditEnabled)"
@@ -93,14 +93,14 @@
                         {
                             <div class="spg-editor">
                                 <div class="iv-field spg-editor__item">
-                                    <label class="iv-field__label code-style">Item</label>
+                                    <label class="iv-field__label code-style">Item *</label>
                                     <IvStockMasterPicker ICode="@LineItem"
                                                          ICodeChanged="@(v => LineItem = v)"
                                                          Selected="OnLineItemSelectedAsync"
                                                          InputCssClass="required-field code-style" />
                                 </div>
                                 <div class="iv-field">
-                                    <label class="iv-field__label code-style">UOM</label>
+                                    <label class="iv-field__label code-style">UOM *</label>
                                     <IvCodeComboBox Data="@UomOptions"
                                                     @bind-Value="@LineUom"
                                                     NullText="Select UOM"

@@ -90,7 +90,7 @@
         <h2 class="iv-card__title">Calendar Setup</h2>
         <div class="plcal-context__fields">
             <div class="iv-field">
-                <label class="iv-field__label">Machine</label>
+                <label class="iv-field__label">Machine *</label>
                 <DxComboBox Data="@_machineOptions"
                             @bind-Value="@_machineCd"
                             TextFieldName="@nameof(MachineOption.Display)"
@@ -98,7 +98,8 @@
                             SearchMode="ListSearchMode.AutoSearch"
                             ClearButtonDisplayMode="DataEditorClearButtonDisplayMode.Auto"
                             NullText="Select machine"
-                            Enabled="@(!_busy)" />
+                            Enabled="@(!_busy)"
+                            InputCssClass="required-field" />
             </div>
             <div class="iv-field plcal-field-year">
                 <label class="iv-field__label">Year</label>
