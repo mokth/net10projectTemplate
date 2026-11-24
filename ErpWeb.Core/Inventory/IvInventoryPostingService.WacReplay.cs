@@ -246,7 +246,7 @@ public sealed partial class IvInventoryPostingService
             .PrepareCountCorrectionsWithinRootAsync(ledger.Context, physical, cancellationToken);
         var required = await StockReplayWacMrRootWriter.InsertAsync(
             ledger.Context, financial, batchNo, cancellationToken, purchasePermit: purchasePermit,
-            countPermit: countPermit);
+            countPermit: countPermit, allowProductionReturn: productionPlan?.TerminalReturn is not null);
         if (saleCycle is { RootRole: "REVERSAL", ActiveRootId: not null } && reversedSaleProof is not null)
             await AppendReversedSaleUndoAsync(ledger.Context, saleCycle, reversedSaleProof, financial, cancellationToken);
         else if (reversedSaleProof is { } saleCorrection
@@ -508,7 +508,7 @@ public sealed partial class IvInventoryPostingService
         var required = await StockReplayWacMrRootWriter.InsertAsync(
             ledger.Context, financial, batchNo, cancellationToken,
             goodsReceipt: true, allowInvoiced: replayInvoice is not null,
-            countPermit: countPermit);
+            countPermit: countPermit, allowProductionReturn: productionPlan?.TerminalReturn is not null);
         await ApplyGoodsReceiptPoQtyAsync(write, locked.Orders!,
             snapshot.Details!, +1, snapshot.Batch!.TrxDtTime, userId,
             cancellationToken);
@@ -1339,7 +1339,8 @@ public sealed partial class IvInventoryPostingService
                 new RunningNumberService(), cancellationToken);
         var tail = countPermit is null
             ? await StockReplayWacTailRepricingWriter.AppendPreparedRemovalTailAsync(context, permit, financial, 2,
-                cancellationToken, allowSalesReturn: isReceipt, purchasePermit: purchasePermit)
+                cancellationToken, allowSalesReturn: isReceipt, purchasePermit: purchasePermit,
+                allowProductionReturn: productionPlan?.TerminalReturn is not null)
             : await StockReplayWacTailRepricingWriter.AppendPreparedRemovalTailAsync(context, permit, financial,
                 countPermit, 2, cancellationToken);
         if (saleCycle is { RootRole: "PRIMARY", ActiveRootId: not null } && reversedSaleProof is not null)
@@ -1521,6 +1522,7 @@ public sealed partial class IvInventoryPostingService
                         || h.PoLineNo is not null
                         || (h.TrxType == IvTrxTypes.MiscellaneousReceipt
                             || allowBoundedSales && h.TrxType == IvTrxTypes.CustomerReturn
+                            || allowBoundedProduction && h.TrxType == IvTrxTypes.ProductionStockReturn
                             ? eventById[h.Id].OldSignedQuantity <= 0m
                             : StockReplayFifoInventoryIssueKinds.IsSupported(h.TrxType)
                                 || allowBoundedSales && h.TrxType == IvTrxTypes.SalesOut
@@ -1590,11 +1592,17 @@ public sealed partial class IvInventoryPostingService
         var typeByOwner = histories.GroupBy(h => h.StockPostingId!.Value)
             .ToDictionary(g => g.Key, g => g.Select(h => h.TrxType).Distinct().ToArray());
         if (owners.Length != ownerIds.Length
-            || owners.Any(p => p.SourceModule != "INVENTORY"
-                || p.SealedAtUtc is null
+            || owners.Any(p => p.SealedAtUtc is null
                 || !typeByOwner.TryGetValue(p.Id, out var types)
-                || types.Length != 1 || p.SourceDocumentType != types[0]
-                || p.CommandType != $"IV_POST_{types[0]}"))
+                || types.Length != 1
+                || (types[0] == IvTrxTypes.ProductionStockReturn
+                    ? !allowBoundedProduction
+                        || p.SourceModule != "PRODUCTION"
+                        || p.SourceDocumentType != ErpWeb.Model.Entities.Production.ProductionDocumentTypes.ProductionStockReturn
+                        || p.CommandType != ErpWeb.Model.Entities.Production.ProductionPostingCommandTypes.ProductionStockReturnPost
+                    : p.SourceModule != "INVENTORY"
+                        || p.SourceDocumentType != types[0]
+                        || p.CommandType != $"IV_POST_{types[0]}")))
             return "Backdated WAC replay has a dependent posting outside supported Inventory MR/GR/MI/Scrap/transfer.";
         var batchNumbers = histories.Select(h => h.BatchNo)
             .Distinct().ToArray();

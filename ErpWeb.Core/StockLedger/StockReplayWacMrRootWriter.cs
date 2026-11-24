@@ -18,7 +18,8 @@ public static class StockReplayWacMrRootWriter
         int batchNo, CancellationToken cancellationToken = default,
         bool goodsReceipt = false, bool allowInvoiced = false,
         StockReplayPurchaseVarianceWritePermit? purchasePermit = null,
-        StockCountCorrectionWritePermit? countPermit = null)
+        StockCountCorrectionWritePermit? countPermit = null,
+        bool allowProductionReturn = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
@@ -200,7 +201,8 @@ public static class StockReplayWacMrRootWriter
         }
         var tail = countPermit is null
             ? await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
-                context, permit, plan, 2, cancellationToken, allowSalesReturn: true, purchasePermit: purchasePermit)
+                context, permit, plan, 2, cancellationToken, allowSalesReturn: true,
+                purchasePermit: purchasePermit, allowProductionReturn: allowProductionReturn)
             : await StockReplayWacTailRepricingWriter.AppendPreparedInsertionTailAsync(
                 context, permit, plan, countPermit, 2, cancellationToken);
         await StockReplayWacCostStateWriter.ApplyAsync(

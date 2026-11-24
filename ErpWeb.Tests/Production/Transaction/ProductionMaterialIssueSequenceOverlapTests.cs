@@ -928,6 +928,12 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public Task Backdated_wac_receipt_reprices_production_stock_return_and_rolls_back(
+        bool goodsReceipt) => BackdatedReceiptAndProductionIssueAsync(goodsReceipt, true, 905, false);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public Task Backdated_fifo_receipt_reprices_padj_out_and_rolls_back(
         bool goodsReceipt) => BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, true, 902);
 
@@ -1425,6 +1431,9 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         PostedWorkOrderTransfer? postedTransfer = null;
         if (consumeAt == 904)
             postedTransfer = await PostWorkOrderTransferForOutputAsync(consumedOutputId, businessDate.AddHours(14));
+        PostedPrtn? postedPrtn = null;
+        if (consumeAt == 905)
+            postedPrtn = await PostPrtnAsync(graph.OrderId, issue.Data.BatchNo, 2m, businessDate.AddHours(13));
         if (consumeAt == 25)
         {
             await using var inject = await _factory.CreateDbContextAsync();
@@ -3146,6 +3155,15 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 postedTransfer!, consumedOutputId, receiptBatchNo, goodsReceipt,
                 expectedPostedStockValue: 75.6m, expectedPostedTransferCost: 18.4m,
                 expectedOriginalStockValue: 32m, expectedOriginalTransferCost: 12m,
+                PostReceiptAsync, RollbackReceiptAsync);
+            return;
+        }
+        if (consumeAt == 905)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            Assert.NotNull(postedPrtn);
+            await AssertPrtnReplayCycleAsync(
+                postedPrtn!, issue.Data.BatchNo, receiptBatchNo, goodsReceipt,
                 PostReceiptAsync, RollbackReceiptAsync);
             return;
         }
@@ -8753,6 +8771,131 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             var targetPool = await db.ProductionBalLots.SingleAsync(l => l.Uid == postedTransfer.TargetPoolId);
             Assert.Equal((4m, expectedPostedTransferCost), (sourcePool.BaseQty, sourcePool.TotalCost));
             Assert.Equal((0m, 0m), (targetPool.BaseQty, targetPool.TotalCost));
+        }
+    }
+
+    private sealed record PostedPrtn(
+        ProductionStockReturnService Service,
+        ProductionStockReturnDocument Document,
+        long ReturnMovementId,
+        int ReturnHistoryId);
+
+    private async Task<PostedPrtn> PostPrtnAsync(
+        long orderId, int issueBatchNo, decimal returnQty, DateTime effectiveAt)
+    {
+        long poolId;
+        int snapshotRevision;
+        string snapshotHash;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var material = await db.ProductionMaterialMovements.SingleAsync(m =>
+                m.InventoryBatchNo == issueBatchNo && m.MovementType == ProductionMaterialMovementTypes.Issue);
+            poolId = await db.ProductionBalLots
+                .Where(l => l.OriginalIssueMovementId == material.Uid)
+                .Select(l => l.Uid).SingleAsync();
+            var order = await db.ProductionWorkOrders.SingleAsync(o => o.Uid == orderId);
+            snapshotRevision = order.SnapshotRevision;
+            snapshotHash = order.SnapshotHash ?? string.Empty;
+        }
+        var service = new ProductionStockReturnService(
+            _factory, InventoryTenantTestHelper.CreateTenantContext(), Access(),
+            new FixedCurrentDateService(effectiveAt.Date, effectiveAt),
+            new TestRunningNumberService(), new BranchStockTransactionLock(),
+            ProductionLedgerTestFixture.CreateCoordinator(_factory),
+            new IvStockPostingRepository(),
+            new ProductionStockWriter(new StockMovementRegistry()),
+            new IvInventoryHistoryWriter(),
+            InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true));
+        var saved = await service.SaveAsync(new ProductionStockReturnSaveRequest
+        {
+            WorkOrderId = orderId,
+            SnapshotRevision = snapshotRevision,
+            SnapshotHash = snapshotHash,
+            EffectiveDate = effectiveAt,
+            RefNo = "PRTN-REPLAY",
+            Lines = [new ProductionStockReturnLineInput
+            {
+                ProductionBalLotId = poolId,
+                Quantity = returnQty,
+                Reason = ProductionStockReturnReasons.All[0]
+            }]
+        });
+        Assert.True(saved.Succeeded, saved.Message);
+        await using (var db = await _factory.CreateDbContextAsync())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE PrProductionStockReturn SET RowVersion = X'01' WHERE BatchId = {saved.Data!.Id};");
+        var draft = await service.GetAsync(saved.Data!.Id);
+        Assert.True(draft.Succeeded, draft.Message);
+        var posted = await service.PostAsync(new ProductionStockReturnCommand(
+            draft.Data!.Id, draft.Data.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var fact = await db.ProductionStockReturnFacts.SingleAsync(f =>
+                f.BatchId == posted.Data!.Id && f.ReversesFactId == null);
+            return new(service, posted.Data!, fact.ProductionMovementId, fact.InventoryHistoryId);
+        }
+    }
+
+    private async Task AssertPrtnReplayCycleAsync(
+        PostedPrtn postedPrtn, int issueBatchNo, int receiptBatchNo, bool goodsReceipt,
+        Func<Task<(bool Succeeded, string? Error)>> postReceipt,
+        Func<Task<(bool Succeeded, string? Error)>> rollbackReceipt)
+    {
+        async Task AssertStateAsync(decimal stockQty, decimal stockValue, decimal issueCost,
+            decimal returnCost, decimal remainingPoolCost, decimal expectedRecvQty)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var stock = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+            Assert.Equal((stockQty, stockValue), (stock.OnHandBaseQty, stock.InventoryValue));
+            if (goodsReceipt)
+                Assert.Equal(expectedRecvQty, (await db.PoOrderDetails.SingleAsync()).RecvQty);
+            var material = await db.ProductionMaterialMovements.SingleAsync(m =>
+                m.InventoryBatchNo == issueBatchNo && m.MovementType == ProductionMaterialMovementTypes.Issue);
+            var pool = await db.ProductionBalLots.SingleAsync(l => l.OriginalIssueMovementId == material.Uid);
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == pool.Uid);
+            var issueMove = await db.ProductionBalLotMovements.SingleAsync(m =>
+                m.ProductionBalLotId == pool.Uid && m.MovementType == ProductionBalLotMovementTypes.Issue);
+            var effective = await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ",
+                [issueMove.Uid, postedPrtn.ReturnMovementId]);
+            Assert.Equal((2m, remainingPoolCost, remainingPoolCost), (pool.BaseQty, pool.TotalCost, valuation.TrackedValue));
+            Assert.Equal((issueCost, returnCost),
+                (effective[issueMove.Uid].TotalCost, effective[postedPrtn.ReturnMovementId].TotalCost));
+            var returnHistory = await db.IvTrxHistories.SingleAsync(h => h.Id == postedPrtn.ReturnHistoryId);
+            var activeReturnFact = Assert.Single((await StockReplayValuationGenerationResolver.ResolveAsync(
+                db, "DEMO", "HQ", [returnHistory]))[returnHistory.Id]);
+            Assert.Equal(returnCost, activeReturnFact.CostAmount);
+            var doc = await postedPrtn.Service.GetAsync(postedPrtn.Document.Id);
+            Assert.True(doc.Succeeded, doc.Message);
+            Assert.Equal(returnCost, Assert.Single(doc.Data!.Lines).TotalValue);
+        }
+
+        await AssertStateAsync(23m, 82.8m, 14.4m, 7.2m, 7.2m, 5m);
+        var removed = await rollbackReceipt();
+        Assert.True(removed.Succeeded, removed.Error);
+        await AssertStateAsync(18m, 36m, 8m, 4m, 4m, 0m);
+        var reposted = await postReceipt();
+        Assert.True(reposted.Succeeded, reposted.Error);
+        await AssertStateAsync(23m, 82.8m, 14.4m, 7.2m, 7.2m, 5m);
+
+        // Replay-aware PRTN rollback reverses exact restated 7.2m out of Inventory and back into MATERIAL_IN.
+        await using (var db = await _factory.CreateDbContextAsync())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE PrProductionStockReturn SET RowVersion = X'01' WHERE BatchId = {postedPrtn.Document.Id};");
+        var current = await postedPrtn.Service.GetAsync(postedPrtn.Document.Id);
+        Assert.True(current.Succeeded, current.Message);
+        var prtnRollback = await postedPrtn.Service.RollbackAsync(new ProductionStockReturnCommand(
+            current.Data!.Id, current.Data.RowVersion, Guid.NewGuid(), "Reverse restated PRTN"));
+        Assert.True(prtnRollback.Succeeded, prtnRollback.Message);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var stock = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+            Assert.Equal((21m, 75.6m), (stock.OnHandBaseQty, stock.InventoryValue));
+            var material = await db.ProductionMaterialMovements.SingleAsync(m =>
+                m.InventoryBatchNo == issueBatchNo && m.MovementType == ProductionMaterialMovementTypes.Issue);
+            var pool = await db.ProductionBalLots.SingleAsync(l => l.OriginalIssueMovementId == material.Uid);
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == pool.Uid);
+            Assert.Equal((4m, 14.4m, 14.4m), (pool.BaseQty, pool.TotalCost, valuation.TrackedValue));
         }
     }
 

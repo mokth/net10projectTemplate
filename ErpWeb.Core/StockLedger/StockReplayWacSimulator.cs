@@ -25,7 +25,9 @@ public sealed record StockReplayWacEvent(
     long? SalesReturnAllocationId = null,
     long? ReversedProductionIssueEventId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    StockReplayPurchaseVariance? PurchaseVariance = null);
+    StockReplayPurchaseVariance? PurchaseVariance = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    long? ReturnOfProductionIssueEventId = null);
 
 /// <summary>Immutable invoice variance and settlement quantity for a value-only replay event.</summary>
 public sealed record StockReplayPurchaseVariance(decimal TotalVariance, decimal SettledQuantity);
@@ -258,6 +260,15 @@ public static class StockReplayWacSimulator
             deltaValue = StockLedgerPrecision.Money(
                 -sale.SignedValue * deltaQty / -sale.SignedQuantity);
         }
+        else if (movement.ReturnOfProductionIssueEventId is long prtnIssueId)
+        {
+            if (!applied.TryGetValue(prtnIssueId, out var prtnIssue)
+                || prtnIssue.SignedQuantity >= 0m || prtnIssue.SignedValue > 0m
+                || deltaQty <= 0m || deltaQty > -prtnIssue.SignedQuantity)
+                throw Invalid(movement.EventId, "has no matching earlier replayed Production issue");
+            deltaValue = StockLedgerPrecision.Money(
+                -prtnIssue.SignedValue * deltaQty / -prtnIssue.SignedQuantity);
+        }
         else if (movement.PurchaseVariance is { } purchase)
         {
             var capitalizable = StockLedgerPrecision.Quantity(Math.Min(beforeQty, purchase.SettledQuantity));
@@ -343,6 +354,7 @@ public static class StockReplayWacSimulator
                 || movement.ReturnOfSaleEventId.HasValue
                 || movement.SalesReturnAllocationId.HasValue
                 || movement.ReversedProductionIssueEventId.HasValue
+                || movement.ReturnOfProductionIssueEventId.HasValue
                 || movement.PurchaseVariance is not null
                 || movement.Key.EffectiveAt
                     != StockReplayEventKey.CountEndOfDay(movement.Key.EffectiveAt))
@@ -354,21 +366,31 @@ public static class StockReplayWacSimulator
             || movement.ReturnOfSaleEventId is long returnSaleId
                 && (returnSaleId <= 0 || returnSaleId == movement.EventId
                     || movement.ReplaySignedQuantity <= 0m
-                    || movement.SalesReturnAllocationId is not > 0)
+                    || movement.SalesReturnAllocationId is not > 0
+                    || movement.ReturnOfProductionIssueEventId.HasValue)
             || movement.ReturnOfSaleEventId is null
                 && movement.SalesReturnAllocationId.HasValue
+            || movement.ReturnOfProductionIssueEventId is long returnIssueId
+                && (returnIssueId <= 0 || returnIssueId == movement.EventId
+                    || movement.ReplaySignedQuantity <= 0m
+                    || movement.FixedSignedValue != movement.OldSignedValue
+                    || movement.ReturnOfSaleEventId.HasValue
+                    || movement.SalesReturnAllocationId.HasValue
+                    || movement.ReversedProductionIssueEventId.HasValue)
             || movement.ReversedProductionIssueEventId is long issueId
                 && (issueId <= 0 || issueId == movement.EventId
                     || movement.ReplaySignedQuantity <= 0m
                     || movement.FixedSignedValue != movement.OldSignedValue
                     || movement.ReturnOfSaleEventId.HasValue
-                    || movement.SalesReturnAllocationId.HasValue)
+                    || movement.SalesReturnAllocationId.HasValue
+                    || movement.ReturnOfProductionIssueEventId.HasValue)
             || movement.PurchaseVariance is { } purchase
                 && (movement.EventId <= int.MaxValue
                     || movement.OldSignedQuantity != 0m || movement.ReplaySignedQuantity != 0m
                     || movement.FixedSignedValue != movement.OldSignedValue
                     || movement.ReturnOfSaleEventId.HasValue || movement.SalesReturnAllocationId.HasValue
                     || movement.ReversedProductionIssueEventId.HasValue
+                    || movement.ReturnOfProductionIssueEventId.HasValue
                     || purchase.TotalVariance == 0m
                     || StockLedgerPrecision.Money(purchase.TotalVariance) != purchase.TotalVariance
                     || purchase.SettledQuantity <= 0m

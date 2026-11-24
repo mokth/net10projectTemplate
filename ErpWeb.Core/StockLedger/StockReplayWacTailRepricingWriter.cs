@@ -134,7 +134,8 @@ public static class StockReplayWacTailRepricingWriter
         int firstRootPostingLineNo,
         CancellationToken cancellationToken = default,
         bool allowSalesReturn = false,
-        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null,
+        bool allowProductionReturn = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(wacPermit);
@@ -153,7 +154,8 @@ public static class StockReplayWacTailRepricingWriter
             throw Invalid("The prepared WAC insertion tail has no matching root permit.");
         return AppendTailAsync(context, wacPermit, plan.Tail.LaterEvents,
             plan.Projection.LaterSteps, firstRootPostingLineNo,
-            null, null, cancellationToken, allowSalesReturn, purchasePermit);
+            null, null, cancellationToken, allowSalesReturn, purchasePermit,
+            allowProductionReturn: allowProductionReturn);
     }
 
     public static Task<StockReplayWacTailRepricingResult> AppendPreparedInsertionTailAsync(
@@ -266,7 +268,8 @@ public static class StockReplayWacTailRepricingWriter
         StockReplayWacRemovalPlan plan, int firstRootPostingLineNo,
         CancellationToken cancellationToken = default,
         bool allowSalesReturn = false,
-        StockReplayPurchaseVarianceWritePermit? purchasePermit = null)
+        StockReplayPurchaseVarianceWritePermit? purchasePermit = null,
+        bool allowProductionReturn = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
@@ -284,7 +287,8 @@ public static class StockReplayWacTailRepricingWriter
             throw Invalid("The prepared WAC removal tail has no matching root permit.");
         return AppendTailAsync(context, permit, plan.Tail.LaterEvents,
             plan.Projection.LaterSteps, firstRootPostingLineNo,
-            null, null, cancellationToken, allowSalesReturn, purchasePermit);
+            null, null, cancellationToken, allowSalesReturn, purchasePermit,
+            allowProductionReturn: allowProductionReturn);
     }
 
     public static Task<StockReplayWacTailRepricingResult> AppendPreparedRemovalTailAsync(
@@ -322,17 +326,19 @@ public static class StockReplayWacTailRepricingWriter
         CancellationToken cancellationToken,
         bool allowSalesReturn = false,
         StockReplayPurchaseVarianceWritePermit? purchasePermit = null,
-        StockReplayWacRemovalPlan? changedCountRemovalPlan = null)
+        StockReplayWacRemovalPlan? changedCountRemovalPlan = null,
+        bool allowProductionReturn = false)
     {
-        if (allowSalesReturn && (context.Posting.SourceModule != "INVENTORY"
+        if ((allowSalesReturn || allowProductionReturn) && (context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType is not
                 (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)))
-            throw Invalid("Sales return repricing requires an Inventory receipt root.");
+            throw Invalid("Return repricing requires an Inventory receipt root.");
         if (purchasePermit is not null && (purchasePermit.RootPostingId != context.Posting.Id
             || purchasePermit.PlanHash != permit.PlanHash))
             throw Invalid("The purchase variance has no matching replay root.");
         var steps = ValidateTail(laterEvents, laterSteps,
-            changedCountPlan, countPermit, allowSalesReturn, purchasePermit, changedCountRemovalPlan);
+            changedCountPlan, countPermit, allowSalesReturn, purchasePermit, changedCountRemovalPlan,
+            allowProductionReturn);
 
         var histories = new List<int>();
         var countLines = new List<int>();
@@ -389,6 +395,16 @@ public static class StockReplayWacTailRepricingWriter
                     if (changed)
                         histories.Add(checked((int)movement.EventId));
                 }
+                else if (movement.ReturnOfProductionIssueEventId is long prtnIssueId)
+                {
+                    if (!allowProductionReturn || !repricedSales.TryGetValue(prtnIssueId, out var issueFacts))
+                        throw Invalid("A WAC Production return has no authorized earlier Production issue.");
+                    var changed = await StockReplayWacProductionReturnRepricingWriter.AppendAsync(
+                        context, movement, step, issueFacts,
+                        reversalLine, replacementLine, cancellationToken);
+                    if (changed)
+                        histories.Add(checked((int)movement.EventId));
+                }
                 else if (movement.OldSignedQuantity == 0m)
                 {
                     var replacements = await StockReplayWacTransferRepricingWriter.AppendAsync(
@@ -412,7 +428,8 @@ public static class StockReplayWacTailRepricingWriter
         StockCountCorrectionWritePermit? countPermit,
         bool allowSalesReturn = false,
         StockReplayPurchaseVarianceWritePermit? purchasePermit = null,
-        StockReplayWacRemovalPlan? changedCountRemovalPlan = null)
+        StockReplayWacRemovalPlan? changedCountRemovalPlan = null,
+        bool allowProductionReturn = false)
     {
         var steps = laterSteps.ToDictionary(s => s.EventId);
         if (steps.Count != laterEvents.Count
@@ -451,7 +468,8 @@ public static class StockReplayWacTailRepricingWriter
                 || movement.EventId > 0 && movement.EventId <= int.MaxValue
                     && movement.OldSignedQuantity > 0m
                     && step.SignedValue != movement.OldSignedValue
-                    && !(allowSalesReturn && movement.ReturnOfSaleEventId.HasValue))
+                    && !(allowSalesReturn && movement.ReturnOfSaleEventId.HasValue)
+                    && !(allowProductionReturn && movement.ReturnOfProductionIssueEventId.HasValue))
                 throw Invalid($"WAC event {movement.EventId} needs separate receipt or settlement authority.");
             if (movement.ReturnOfSaleEventId is long saleId)
             {
@@ -463,6 +481,17 @@ public static class StockReplayWacTailRepricingWriter
                     || step.SignedValue != StockLedgerPrecision.Money(
                         -saleStep.SignedValue * step.SignedQuantity / -saleStep.SignedQuantity))
                     throw Invalid($"WAC event {movement.EventId} has invalid Sales return cost authority.");
+            }
+            if (movement.ReturnOfProductionIssueEventId is long prtnIssueId)
+            {
+                var prtnIssue = laterEvents.SingleOrDefault(e => e.EventId == prtnIssueId);
+                if (!allowProductionReturn || prtnIssue is null || prtnIssue.Key.CompareTo(movement.Key) >= 0
+                    || prtnIssue.OldSignedQuantity >= 0m || movement.OldSignedQuantity <= 0m
+                    || !steps.TryGetValue(prtnIssueId, out var issueStep)
+                    || issueStep.SignedQuantity >= 0m
+                    || step.SignedValue != StockLedgerPrecision.Money(
+                        -issueStep.SignedValue * step.SignedQuantity / -issueStep.SignedQuantity))
+                    throw Invalid($"WAC event {movement.EventId} has invalid Production return cost authority.");
             }
         }
         if (countPermit is not null

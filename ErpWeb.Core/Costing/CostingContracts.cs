@@ -171,11 +171,44 @@ public sealed class CostingCogsProof
     public IReadOnlyList<CostingFinding> Findings { get; init; } = [];
 }
 
+public static class ReplayPreflightFindingCodes
+{
+    public const string NoActiveEpoch = "NO_ACTIVE_EPOCH";
+    public const string UnsealedStockPosting = "UNSEALED_STOCK_POSTING";
+    public const string LegacyZeroCountUnordered = "LEGACY_ZERO_COUNT_UNORDERED";
+    public const string LegacyCountUnanchored = "LEGACY_COUNT_UNANCHORED";
+    public const string PositiveCountMissingBasis = "POSITIVE_COUNT_MISSING_BASIS";
+    public const string BasisTenantMismatch = "BASIS_TENANT_MISMATCH";
+    public const string CountBasisInvalid = "COUNT_BASIS_INVALID";
+    public const string CountGenerationCorrupt = "COUNT_GENERATION_CORRUPT";
+    public const string CountAnchorMismatch = "COUNT_ANCHOR_MISMATCH";
+    public const string CountActiveStatusMismatch = "COUNT_ACTIVE_STATUS_MISMATCH";
+    public const string ReplayEffectOwnerInvalid = "REPLAY_EFFECT_OWNER_INVALID";
+}
+
+public sealed record BranchReplayPreflightFinding(
+    string Code,
+    string? CountNo,
+    int? StockCountLineId,
+    string Detail);
+
+public sealed class BranchReplayPreflightReport
+{
+    public bool Denied { get; init; }
+    public string? Error { get; init; }
+    public string CompanyCode { get; init; } = string.Empty;
+    public string BranchCode { get; init; } = string.Empty;
+    public bool IsReadyForReplay => !Denied && string.IsNullOrWhiteSpace(Error) && Findings.Count == 0;
+    public IReadOnlyList<BranchReplayPreflightFinding> Findings { get; init; } = [];
+}
+
 public interface ICostingDiagnosticService
 {
     Task<CostingHealthPage> SearchAsync(CostingHealthQuery? query = null, CancellationToken cancellationToken = default);
 
     Task<CostingCogsProof> ProveInvoiceCogsAsync(string invoiceNo, CancellationToken cancellationToken = default);
+
+    Task<BranchReplayPreflightReport> CheckReplayReadinessAsync(CancellationToken cancellationToken = default);
 }
 
 public interface ICostingTraceService

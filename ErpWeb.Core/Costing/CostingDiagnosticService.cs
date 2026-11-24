@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Costing;
 
-public sealed class CostingDiagnosticService : ICostingDiagnosticService
+public sealed partial class CostingDiagnosticService : ICostingDiagnosticService
 {
     private const int FindingLimit = 200;
     private readonly IDbContextFactory<AppDbContext> _dbFactory;

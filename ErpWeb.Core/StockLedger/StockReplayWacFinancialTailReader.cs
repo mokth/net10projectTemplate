@@ -603,8 +603,60 @@ public static class StockReplayWacFinancialTailReader
             throw Corrupt($"Item {itemCode} has duplicate WAC event identity or key.");
         await BindSingleSalesReturnAsync(db, companyCode, branchCode,
             histories, activeFacts, ordered, cancellationToken);
+        await BindSingleProductionReturnAsync(db, companyCode, branchCode,
+            histories, activeFacts, ordered, cancellationToken);
         return new(state.OnHandBaseQty, state.InventoryValue, ordered, byPile,
             balances.ToDictionary(b => b.Id, b => b.StdQty));
+    }
+
+    private static async Task BindSingleProductionReturnAsync(
+        AppDbContext db, string companyCode, string branchCode,
+        IReadOnlyCollection<IvTrxHistory> histories,
+        IReadOnlyDictionary<int, IReadOnlyList<StockValuationFact>> activeFacts,
+        StockReplayWacEvent[] events, CancellationToken cancellationToken)
+    {
+        var issues = histories.Where(h => h.TrxType == IvTrxTypes.IssueToProduction).ToArray();
+        var returns = histories.Where(h => h.TrxType == IvTrxTypes.ProductionStockReturn).ToArray();
+        if (returns.Length != 1 || issues.Length != 1
+            || activeFacts[returns[0].Id].Count != 1 || activeFacts[issues[0].Id].Count != 1)
+            return;
+        var returned = activeFacts[returns[0].Id][0];
+        var issued = activeFacts[issues[0].Id][0];
+        if (returned.Direction != 1 || returned.MovementCode != "PRODUCTION_STOCK_RETURN_IN"
+            || returned.BaseQty <= 0m
+            || issued.Direction != -1 || issued.MovementCode != "PRODUCTION_MATERIAL_OUT"
+            || issued.BaseQty <= 0m || returned.BaseQty > issued.BaseQty)
+            return;
+        var returnFacts = await db.ProductionStockReturnFacts.AsNoTracking()
+            .Where(f => f.InventoryHistoryId == returns[0].Id && f.ReversesFactId == null)
+            .ToArrayAsync(cancellationToken);
+        if (returnFacts.Length != 1 || returnFacts[0].BaseQty != returned.BaseQty)
+            return;
+        var issueMovements = await db.ProductionBalLotMovements.AsNoTracking()
+            .Where(m => m.CompanyCode == companyCode && m.BranchCode == branchCode
+                && m.InventoryHistoryId == issues[0].Id
+                && m.MovementType == ErpWeb.Model.Entities.Production.ProductionBalLotMovementTypes.Issue
+                && m.OriginalMovementId == null)
+            .ToArrayAsync(cancellationToken);
+        if (issueMovements.Length != 1)
+            return;
+        var returnMovement = await db.ProductionBalLotMovements.AsNoTracking()
+            .SingleOrDefaultAsync(m => m.Uid == returnFacts[0].ProductionMovementId, cancellationToken);
+        if (returnMovement is null
+            || returnMovement.ProductionBalLotId != issueMovements[0].ProductionBalLotId
+            || returnMovement.MovementType != ErpWeb.Model.Entities.Production.ProductionBalLotMovementTypes.Return
+            || returnMovement.OriginalMovementId is not null
+            || returned.CostAmount != StockLedgerPrecision.Money(
+                issued.CostAmount * returned.BaseQty / issued.BaseQty))
+            return;
+        var issueIndex = Array.FindIndex(events, e => e.EventId == issues[0].Id);
+        var returnIndex = Array.FindIndex(events, e => e.EventId == returns[0].Id);
+        if (issueIndex < 0 || returnIndex <= issueIndex)
+            return;
+        events[returnIndex] = events[returnIndex] with
+        {
+            ReturnOfProductionIssueEventId = issues[0].Id
+        };
     }
 
     // A bounded customer return derives its replayed value from the earlier

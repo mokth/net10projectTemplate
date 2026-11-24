@@ -440,11 +440,8 @@ public sealed partial class ProductionStockReturnService
         var facts = await db.ProductionStockReturnFacts.Where(x => x.BatchId == r.BatchId
             && x.StockPostingId == r.PostingId && x.ReversesFactId == null).OrderBy(x => x.ReturnLineId).ToListAsync(ct);
         if (facts.Count != r.Lines.Count) throw new ReturnException("The original PRTN cross-ledger facts are incomplete.");
-        var effectiveCosts = await ProductionEffectiveCostResolver.ResolveAsync(db,
+        var effectiveCosts = await ProductionReplayEffectiveCostReader.ReadAsync(db,
             scope.CompanyCode, scope.BranchCode!, facts.Select(x => x.ProductionMovementId).ToArray(), ct);
-        if (facts.Any(x => effectiveCosts[x.ProductionMovementId].TotalCost != x.TotalValue))
-            throw new ReturnException("The posted return has a corrected Production cost and requires replay-aware Inventory/Production rollback.",
-                IvMasterErrorCode.InUse);
         var originalPosting = await db.StockPostings.SingleAsync(x => x.Id == r.PostingId, ct);
         var poolIds = pools.Keys.ToArray();
         var laterMovement = await (from m in db.ProductionBalLotMovements
@@ -470,12 +467,23 @@ public sealed partial class ProductionStockReturnService
                 && historyIds.Contains(x.InventoryHistoryId.Value)
                 && x.StockPostingId == r.PostingId && x.ReversesValuationFactId == null)
             .Select(x => x.Id).ToArrayAsync(ct);
-        if (activeValuations.Values.SelectMany(x => x).Any(x => x.StockPostingId != r.PostingId)
-            || await db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
-                x.OriginalValuationFactId.HasValue
+        if (await db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
+                x.InventoryHistoryId == null && x.OriginalValuationFactId.HasValue
                 && originalValuationIds.Contains(x.OriginalValuationFactId.Value), ct))
-            throw new ReturnException("The posted return has corrected Inventory valuation and requires replay-aware Inventory/Production rollback.",
+            throw new ReturnException("The posted return has unreversed value-only Inventory adjustments and requires replay-aware rollback.",
                 IvMasterErrorCode.InUse);
+        foreach (var fact in facts)
+        {
+            var effective = effectiveCosts[fact.ProductionMovementId];
+            var activeInvFacts = activeValuations[fact.InventoryHistoryId];
+            var activeInvTotal = StockLedgerPrecision.Money(activeInvFacts.Sum(x => x.CostAmount));
+            if (activeInvFacts.Count != 1
+                || activeInvFacts[0].Direction != 1
+                || activeInvFacts[0].MovementCode != "PRODUCTION_STOCK_RETURN_IN"
+                || (context.CostMethod != StockCostMethods.Standard && activeInvTotal != effective.TotalCost))
+                throw new ReturnException("The posted return Inventory and Production effective costs do not reconcile for rollback.",
+                    IvMasterErrorCode.InUse);
+        }
         var snapshots = await db.ProductionStockReturnPriceSnapshots.Where(x => x.StockPostingId == r.PostingId).ToListAsync(ct);
         if (snapshots.Count == 0) throw new ReturnException("The original PRTN operational price snapshots are missing.");
         foreach (var group in facts.GroupBy(x => x.DestinationBalanceId).OrderBy(x => x.Key))
@@ -489,8 +497,15 @@ public sealed partial class ProductionStockReturnService
                 throw new ReturnException("The exact PRTN destination Inventory balance is missing.");
             var snapshot = snapshots.SingleOrDefault(x => x.DestinationBalanceId == balance.Id)
                 ?? throw new ReturnException("The original PRTN destination price snapshot is missing.");
-            if (balance.UnitPrice != snapshot.PostedUnitPrice || balance.Cost != snapshot.PostedCost
-                || balance.PriceEvidence != snapshot.PostedPriceEvidence)
+            var hasRestatedValuation = group.Any(f => activeValuations[f.InventoryHistoryId].Any(v => v.StockPostingId != r.PostingId));
+            var matchesPostedSnapshot = balance.UnitPrice == snapshot.PostedUnitPrice
+                && balance.Cost == snapshot.PostedCost
+                && balance.PriceEvidence == snapshot.PostedPriceEvidence;
+            var matchesReplayClearedSnapshot = hasRestatedValuation
+                && balance.UnitPrice == snapshot.PostedUnitPrice
+                && balance.Cost == snapshot.PostedCost
+                && balance.PriceEvidence is null;
+            if (!matchesPostedSnapshot && !matchesReplayClearedSnapshot)
                 throw new ReturnException("Destination operational price evidence changed after PRTN; rollback cannot overwrite it.", IvMasterErrorCode.InUse);
             var quantity = histories.Where(x => x.ToBalLocId == balance.Id).Sum(x => x.ToStdQty ?? 0m);
             if (quantity <= 0m || balance.StdQty < quantity)
@@ -501,11 +516,16 @@ public sealed partial class ProductionStockReturnService
                 && x.StockPostingId != r.PostingId && x.ReversesHistoryId == null
                 && !db.IvTrxHistories.Any(y => y.ReversesHistoryId == x.Id)
                 && (x.StockPostingId == null ? x.Id > maxOriginalHistoryId
-                    : db.StockPostings.Any(p => p.Id == x.StockPostingId && p.PostingSequence > originalPosting.PostingSequence && p.SealedAtUtc != null)))
+                    : db.StockPostings.Any(p => p.Id == x.StockPostingId && p.SealedAtUtc != null
+                        && (p.EffectiveAt > originalPosting.EffectiveAt
+                            || (p.EffectiveAt == originalPosting.EffectiveAt && p.PostingSequence > originalPosting.PostingSequence)))))
                 .AnyAsync(ct);
             if (laterHistory) throw new ReturnException("Reverse later active Inventory movements on the PRTN destination first.", IvMasterErrorCode.InUse);
             balance.StdQty = IvQty.Round(balance.StdQty - quantity); balance.TransDate = context.Posting.EffectiveAt;
-            balance.UnitPrice = snapshot.PreviousUnitPrice; balance.Cost = snapshot.PreviousCost; balance.PriceEvidence = snapshot.PreviousPriceEvidence;
+            if (matchesPostedSnapshot)
+            {
+                balance.UnitPrice = snapshot.PreviousUnitPrice; balance.Cost = snapshot.PreviousCost; balance.PriceEvidence = snapshot.PreviousPriceEvidence;
+            }
         }
 
         var reversedHistories = historyWriter.AppendReversal(context, histories, r.DocumentRevision);
@@ -515,19 +535,21 @@ public sealed partial class ProductionStockReturnService
         var legs = facts.Select(f =>
         {
             var original = originalMovements.Single(x => x.Uid == f.ProductionMovementId);
+            var effective = effectiveCosts[f.ProductionMovementId];
             return new ProductionStockLeg(pools[original.ProductionBalLotId], ProductionBalLotMovementTypes.ReturnReversal,
                 original.Qty, f.BaseQty, r.WorkOrderId, original.WorkOrderMaterialId, original.WorkOrderOperationId,
                 original.RouteStepId, link.Uid, ProductionDocumentTypes.ProductionStockReturn, r.Batch.BatchNo.ToString(),
                 f.ReturnLineId.ToString(), 0, original.Uid,
                 reversedHistories.Single(x => x.ReversesHistoryId == f.InventoryHistoryId).Id,
-                f.TotalValue, original.ValuationStatus ?? ProductionPoolValuationService.Unvalued);
+                effective.TotalCost, original.ValuationStatus ?? ProductionPoolValuationService.Unvalued);
         }).ToArray();
         var movements = await production.ApplyAsync(context, legs, ct); await db.SaveChangesAsync(ct);
         await ProductionPoolValuationService.RecordAsync(context, movements, ct);
-        var reversedMaterials = new List<(ProductionStockReturnFact OriginalFact, ProductionMaterialMovement Reversal, long ProductionMovementId)>();
+        var reversedMaterials = new List<(ProductionStockReturnFact OriginalFact, ProductionMaterialMovement Reversal, long ProductionMovementId, decimal EffectiveTotal)>();
         foreach (var fact in facts)
         {
             var originalMaterial = await db.ProductionMaterialMovements.SingleAsync(x => x.Uid == fact.ProductionMaterialMovementId, ct);
+            var effective = effectiveCosts[fact.ProductionMovementId];
             var reversal = new ProductionMaterialMovement
             {
                 CompanyCode = originalMaterial.CompanyCode, BranchCode = originalMaterial.BranchCode,
@@ -543,7 +565,7 @@ public sealed partial class ProductionStockReturnService
                 InventoryHistoryId = reversedHistories.Single(x => x.ReversesHistoryId == fact.InventoryHistoryId).Id,
                 ProductionBalLotId = originalMaterial.ProductionBalLotId,
                 ProductionBalLotMovementId = movements.Single(x => x.OriginalMovementId == fact.ProductionMovementId).Uid,
-                UnitCost = originalMaterial.UnitCost, TotalCost = originalMaterial.TotalCost, PostingLinkId = link.Uid,
+                UnitCost = effective.UnitCost, TotalCost = effective.TotalCost, PostingLinkId = link.Uid,
                 StockPostingId = context.Posting.Id, SourceLineId = fact.ReturnLineId.ToString(), SplitOrdinal = 0,
                 OriginalMovementId = originalMaterial.Uid, ReversesMaterialMovementId = originalMaterial.Uid,
                 SourceIssueMovementId = originalMaterial.SourceIssueMovementId, Reason = "ROLLBACK",
@@ -551,7 +573,8 @@ public sealed partial class ProductionStockReturnService
             };
             db.ProductionMaterialMovements.Add(reversal);
             reversedMaterials.Add((fact, reversal,
-                movements.Single(x => x.OriginalMovementId == fact.ProductionMovementId).Uid));
+                movements.Single(x => x.OriginalMovementId == fact.ProductionMovementId).Uid,
+                effective.TotalCost));
         }
 
         // ProductionMaterialMovement.Uid is database-generated. Persist reversal movements first so
@@ -567,7 +590,7 @@ public sealed partial class ProductionStockReturnService
                 ProductionMaterialMovementId = reversed.Reversal.Uid,
                 InventoryHistoryId = reversedHistories.Single(x => x.ReversesHistoryId == fact.InventoryHistoryId).Id,
                 DestinationBalanceId = fact.DestinationBalanceId, SourceIssueMovementId = fact.SourceIssueMovementId,
-                BaseQty = fact.BaseQty, TotalValue = fact.TotalValue, ReversesFactId = fact.Id
+                BaseQty = fact.BaseQty, TotalValue = reversed.EffectiveTotal, ReversesFactId = fact.Id
             });
         }
         await db.SaveChangesAsync(ct);

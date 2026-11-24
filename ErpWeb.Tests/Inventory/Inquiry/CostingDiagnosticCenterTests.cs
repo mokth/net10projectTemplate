@@ -522,6 +522,115 @@ public sealed partial class CostingDiagnosticCenterTests : IAsyncLifetime
         Assert.Contains("preview-only", plan.BlockingReason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Replay_preflight_blocks_legacy_counts_unsealed_postings_and_invalid_bases_and_passes_clean_v2_branch()
+    {
+        var diagnostics = new CostingDiagnosticService(_factory, new Tenant(), new Access(viewCost: true));
+        var clean = await diagnostics.CheckReplayReadinessAsync();
+        Assert.True(clean.IsReadyForReplay);
+        Assert.Empty(clean.Findings);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints = ON;");
+            db.IvPeriodCloseHdrs.Add(new IvPeriodCloseHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ",
+                PeriodFrom = new DateTime(2026, 9, 1), PeriodTo = new DateTime(2026, 9, 30),
+                Status = IvPeriodCloseStatuses.Closed, ClosedBy = "tester", ClosedOn = new DateTime(2026, 9, 30)
+            });
+            var closedLegacy = new IvStockCountHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "SC-CLOSED",
+                CountDate = new DateTime(2026, 9, 15), Status = IvStockCountStatuses.Posted,
+                CreatedBy = "tester", CreatedDate = DateTime.UtcNow, RowVersion = [1]
+            };
+            closedLegacy.Lines.Add(new IvStockCountLine
+            {
+                LineNumber = 1, BalLocId = 1, ICode = "ITEM1", WHCode = "MAIN", LocCode = "BIN1",
+                IStatus = "ACTIVE", StdUom = "EA", SystemQty = 5m, PhysicalQty = 5m, RowVersion = [1]
+            });
+
+            var legacyZero = new IvStockCountHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "SC-LEGACY-ZERO",
+                CountDate = new DateTime(2026, 10, 5), Status = IvStockCountStatuses.Posted,
+                PostedBatchNo = null, CreatedBy = "tester", CreatedDate = DateTime.UtcNow, RowVersion = [1]
+            };
+            legacyZero.Lines.Add(new IvStockCountLine
+            {
+                LineNumber = 1, BalLocId = 1, ICode = "ITEM1", WHCode = "MAIN", LocCode = "BIN1",
+                IStatus = "ACTIVE", StdUom = "EA", SystemQty = 5m, PhysicalQty = 5m, RowVersion = [1]
+            });
+
+            var legacyVar = new IvStockCountHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "SC-LEGACY-VAR",
+                CountDate = new DateTime(2026, 10, 6), Status = IvStockCountStatuses.Posted,
+                PostedBatchNo = 9001, CreatedBy = "tester", CreatedDate = DateTime.UtcNow, RowVersion = [1]
+            };
+            legacyVar.Lines.Add(new IvStockCountLine
+            {
+                LineNumber = 1, BalLocId = 1, ICode = "ITEM1", WHCode = "MAIN", LocCode = "BIN1",
+                IStatus = "ACTIVE", StdUom = "EA", SystemQty = 5m, PhysicalQty = 6m, RowVersion = [1]
+            });
+
+            var expiredRev = new ItemStandardCostRevision
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", ItemCode = "ITEM1", Revision = 1,
+                EffectiveFrom = new DateTime(2026, 10, 1), EffectiveTo = new DateTime(2026, 10, 10),
+                TotalStandardCost = 4m, Status = ItemStandardCostRevisionStatuses.Approved,
+                CreatedAtUtc = DateTime.UtcNow, CreatedBy = "tester"
+            };
+            db.ItemStandardCostRevisions.Add(expiredRev);
+            var v2Bad = new IvStockCountHdr
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", CountNo = "SC-V2-BAD",
+                CountDate = new DateTime(2026, 10, 10), Status = IvStockCountStatuses.RolledBack,
+                CreatedBy = "tester", CreatedDate = DateTime.UtcNow, RowVersion = [1]
+            };
+            var v2Line = new IvStockCountLine
+            {
+                LineNumber = 1, BalLocId = 1, ICode = "ITEM1", WHCode = "MAIN", LocCode = "BIN1",
+                IStatus = "ACTIVE", StdUom = "EA", SystemQty = 5m, PhysicalQty = 5m, RowVersion = [1]
+            };
+            v2Bad.Lines.Add(v2Line);
+            db.IvStockCountHdrs.AddRange(closedLegacy, legacyZero, legacyVar, v2Bad);
+            await db.SaveChangesAsync();
+
+            var unsealedId = await AddPostingAsync("MR", "1", isSealed: false, sequence: 101);
+            var anchorId = await AddPostingAsync("IV_STOCK_COUNT", "10", isSealed: true,
+                effective: ErpWeb.Core.StockLedger.StockReplayEventKey.CountEndOfDay(new DateTime(2026, 10, 10)),
+                sourceDocumentNo: "SC-V2-BAD", sequence: 102);
+            Assert.True(unsealedId > 0);
+            db.StockCountCostBases.Add(new StockCountCostBasis
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", StockCountLineId = v2Line.Id,
+                FrozenFallbackUnitCost = 4m, CostBasisKind = StockCountCostBasisKinds.StandardRevision,
+                StandardCostRevisionId = expiredRev.Id, CreatedAtUtc = DateTime.UtcNow
+            });
+            db.StockCountReplayGenerations.Add(new StockCountReplayGeneration
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", StockCountLineId = v2Line.Id,
+                AnchorPostingId = anchorId, WritePostingId = anchorId,
+                EffectiveAt = ErpWeb.Core.StockLedger.StockReplayEventKey.CountEndOfDay(new DateTime(2026, 10, 10)),
+                AnchorPostingSequence = 102, SignedAdjustmentQty = 0m,
+                IsRemoval = false, CreatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var report = await diagnostics.CheckReplayReadinessAsync();
+        Assert.False(report.IsReadyForReplay);
+        Assert.DoesNotContain(report.Findings, f => f.CountNo == "SC-CLOSED");
+        Assert.Contains(report.Findings, f => f.Code == ReplayPreflightFindingCodes.LegacyZeroCountUnordered && f.CountNo == "SC-LEGACY-ZERO");
+        Assert.Contains(report.Findings, f => f.Code == ReplayPreflightFindingCodes.LegacyCountUnanchored && f.CountNo == "SC-LEGACY-VAR");
+        Assert.Contains(report.Findings, f => f.Code == ReplayPreflightFindingCodes.UnsealedStockPosting);
+        Assert.Contains(report.Findings, f => f.Code == ReplayPreflightFindingCodes.CountBasisInvalid && f.CountNo == "SC-V2-BAD");
+        Assert.Contains(report.Findings, f => f.Code == ReplayPreflightFindingCodes.CountActiveStatusMismatch && f.CountNo == "SC-V2-BAD");
+    }
+
     private static Task<CostingRepairOwnershipResult> Resolve(ICostingRepairOwnershipResolver resolver, long postingId) =>
         resolver.ResolveAsync(new CostingRepairNode(postingId, "ignored", "ignored", "ignored"));
 
