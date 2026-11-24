@@ -43,7 +43,6 @@ public static class StockReplayWacMrRootWriter
                 System.Globalization.CultureInfo.InvariantCulture)
             || context.Posting.PostingRole != "PRIMARY"
             || context.Posting.DocumentRevision != authority.DocumentRevision
-            || context.Posting.PostingSequence != physical.Candidate.Key.OriginalPostingSequence
             || context.Posting.EffectiveAt != authority.EffectiveAt
             || plan.ItemCode != authority.ItemCode
             || physical.Candidate.SignedDelta != authority.Quantity
@@ -51,6 +50,11 @@ public static class StockReplayWacMrRootWriter
             || plan.Projection.Candidate.SignedValue != authority.Value
             || plan.Candidate.ReplaySignedQuantity != authority.Quantity)
             throw Invalid("The WAC receipt root differs from its approved draft or projection.");
+        if (context.Posting.PostingSequence != physical.Candidate.Key.OriginalPostingSequence)
+            throw new StockLedgerException(new StockLedgerError(
+                StockLedgerErrorCodes.StaleDocument,
+                "The branch posting sequence changed after replay planning.",
+                Retryable: true) { IsBranchWatermarkDrift = true });
 
         var permit = await StockReplayWacInsertionPlanner.PrepareWithinRootAsync(
             context, plan, cancellationToken);

@@ -188,9 +188,13 @@ public static class StockReplayFifoCountSheetInsertionPlanner
         if (context.CompanyCode != sheet.CompanyCode
             || context.BranchCode != sheet.BranchCode
             || context.Epoch.Id != sheet.LedgerEpochId
-            || context.Posting.EffectiveAt != sheet.EffectiveAt
-            || context.Posting.PostingSequence != sheet.BranchWatermark + 1)
+            || context.Posting.EffectiveAt != sheet.EffectiveAt)
             throw Stale("FIFO count sheet belongs to another root.");
+        if (context.Posting.PostingSequence != sheet.BranchWatermark + 1)
+            throw new StockLedgerException(new StockLedgerError(
+                StockLedgerErrorCodes.StaleDocument,
+                "FIFO count sheet belongs to another root.",
+                Retryable: true) { IsBranchWatermarkDrift = true });
         if (await new StockCostMethodResolver().ResolveAsync(context.Db,
                 sheet.CompanyCode, sheet.BranchCode, sheet.EffectiveAt,
                 cancellationToken) != StockCostMethods.Fifo)

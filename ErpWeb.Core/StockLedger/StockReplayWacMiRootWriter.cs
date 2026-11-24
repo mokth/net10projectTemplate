@@ -31,9 +31,13 @@ public static class StockReplayWacMiRootWriter
             || context.Posting.SourceDocumentNo != batchNo.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)
             || context.Posting.PostingRole != "PRIMARY"
-            || context.Posting.EffectiveAt != candidate.Key.EffectiveAt
-            || context.Posting.PostingSequence != candidate.Key.OriginalPostingSequence)
+            || context.Posting.EffectiveAt != candidate.Key.EffectiveAt)
             throw Invalid("The WAC MI root differs from its projected issue.");
+        if (context.Posting.PostingSequence != candidate.Key.OriginalPostingSequence)
+            throw new StockLedgerException(new StockLedgerError(
+                StockLedgerErrorCodes.StaleDocument,
+                "The branch posting sequence changed after replay planning.",
+                Retryable: true) { IsBranchWatermarkDrift = true });
         var permit = await StockReplayWacInsertionPlanner.PrepareWithinRootAsync(
             context, plan, cancellationToken);
         var db = context.Db;

@@ -225,9 +225,10 @@ public static class StockReplayPhysicalPlanner
             || context.Posting.SourceDocumentType != "IV_STOCK_COUNT"
             || context.Posting.SourceDocumentId
                 != plan.CountHeaderId.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            || context.Posting.EffectiveAt != plan.EffectiveAt
-            || context.Posting.PostingSequence != checked(plan.BranchWatermark + 1))
+            || context.Posting.EffectiveAt != plan.EffectiveAt)
             throw Stale("The count anchor changed after physical planning.");
+        if (context.Posting.PostingSequence != checked(plan.BranchWatermark + 1))
+            throw StaleWatermark("The count anchor changed after physical planning.");
         var countedIds = await context.Db.IvStockCountLines.AsNoTracking()
             .Where(l => l.StockCountId == plan.CountHeaderId && l.PhysicalQty != null)
             .Select(l => l.Id).ToArrayAsync(cancellationToken);
@@ -499,10 +500,11 @@ public static class StockReplayPhysicalPlanner
         if (context.CompanyCode != plan.CompanyCode
             || context.BranchCode != plan.BranchCode
             || context.Epoch.Id != plan.LedgerEpochId
-            || context.Posting.EffectiveAt != plan.Candidate.Key.EffectiveAt
-            || context.Posting.PostingSequence != plan.Candidate.Key.OriginalPostingSequence
+            || context.Posting.EffectiveAt != plan.Candidate.Key.EffectiveAt)
+            throw Stale("The branch posting context changed after replay planning.");
+        if (context.Posting.PostingSequence != plan.Candidate.Key.OriginalPostingSequence
             || context.Posting.PostingSequence != checked(plan.BranchWatermark + 1))
-            throw Stale("The branch posting sequence changed after replay planning.");
+            throw StaleWatermark("The branch posting sequence changed after replay planning.");
 
         var db = context.Db;
         var balance = await db.IvBalLocs.AsNoTracking()
@@ -660,9 +662,10 @@ public static class StockReplayPhysicalPlanner
         if (context.CompanyCode != plan.CompanyCode
             || context.BranchCode != plan.BranchCode
             || context.Epoch.Id != plan.LedgerEpochId
-            || context.Posting.EffectiveAt != plan.RemovedActiveEvent.Key.EffectiveAt
-            || context.Posting.PostingSequence != checked(plan.BranchWatermark + 1))
-            throw Stale("The branch posting sequence changed after removal planning.");
+            || context.Posting.EffectiveAt != plan.RemovedActiveEvent.Key.EffectiveAt)
+            throw Stale("The branch posting context changed after removal planning.");
+        if (context.Posting.PostingSequence != checked(plan.BranchWatermark + 1))
+            throw StaleWatermark("The branch posting sequence changed after removal planning.");
 
         var db = context.Db;
         var balance = await db.IvBalLocs.AsNoTracking()
@@ -737,6 +740,12 @@ public static class StockReplayPhysicalPlanner
 
     private static StockLedgerException Stale(string message) =>
         new(new StockLedgerError(StockLedgerErrorCodes.StaleDocument, message, Retryable: true));
+
+    private static StockLedgerException StaleWatermark(string message) =>
+        new(new StockLedgerError(StockLedgerErrorCodes.StaleDocument, message, Retryable: true)
+        {
+            IsBranchWatermarkDrift = true
+        });
 
     private static async Task EnsureTailOpenAsync(
         AppDbContext db, string companyCode, string branchCode,

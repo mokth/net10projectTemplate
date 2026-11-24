@@ -90,7 +90,7 @@ Classification rules:
 
 ## Shared gates and readers
 
-- `StockPostingCoordinator.ExecuteAsync`/`BeginInTransactionAsync` acquire the branch lock before the callback. A read-only impact plan must be built by the caller before that entry; a stale plan must be retried outside the lock.
+- `StockPostingCoordinator.ExecuteAsync`/`BeginInTransactionAsync` acquire the branch lock before the callback. A read-only impact plan must be built by the caller before that entry; a stale plan caused solely by unrelated branch watermark drift (`StockLedgerError.IsBranchWatermarkDrift == true`) is now retried up to 3 attempts strictly outside the lock via `StockReplayStalePlanRetry` across all Inventory replay routes (`IvInventoryPostingService`) and Stock Count replay (`IvStockCountService`), while any draft edit or same-item/pile change immediately refuses retry.
 - Caller-owned V2 postings now have an abort/SQL-session cleanup seam, including direct Production and Procurement coordinator users and Inventory/Sales wrappers. SQL Server pooled-connection failure tests are still required; SQLite cannot verify the session marker.
 - `IvInventoryPostingService.Chronology` contains `ValidateBalanceStockDate` and `ValidateNoLaterDayMovementsAsync`; `InventoryValuationService` contains `RejectBackdatedPoolsAsync`. They stay on the non-replay path until an under-lock physical and financial proof replaces them.
 - `StockValuationSnapshotBuilder` is the period-close financial reader. Its active FIFO issue check now excludes reversal facts. `IvPeriodCloseService` calls it.

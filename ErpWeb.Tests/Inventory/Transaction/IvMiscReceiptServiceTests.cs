@@ -4381,6 +4381,140 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         decimal CurrentUnitCost,
         decimal AverageUnitCost);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Backdated_wac_mr_retries_unrelated_branch_watermark_drift_and_rejects_concurrent_draft_edit(
+        bool mutateDraft)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedCompanyAsync(db);
+            await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", ICode = "A100",
+                WhCode = "MAIN", LocCode = "BIN1", LotNo = string.Empty,
+                IStatus = "ACTIVE", StdQty = 10m, StdUom = "EA",
+                TransDate = FixedToday.AddDays(-5)
+            });
+            await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 10m, 2m);
+        }
+
+        // Seed a later issue on FixedToday so our MR on FixedToday - 2 requires WAC replay.
+        int pileId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            pileId = await db.IvBalLocs.Select(b => b.Id).SingleAsync();
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday, enableBackdatedReplay: true);
+        var laterDraft = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = FixedToday,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                FrLotNo = string.Empty, Quantity = 4m, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", UnitPrice = 2m
+            }]
+        });
+        Assert.True(laterDraft.Succeeded, laterDraft.ErrorMessage);
+        Assert.True((await issue.PostAsync([laterDraft.BatchNo])).Succeeded);
+
+        var baseReceipt = CreateSut(withLedger: true, enableBackdatedReplay: true);
+        var draft = await baseReceipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(-2),
+            RefNo = "WM-DRIFT",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                Quantity = 10m, UnitPrice = 4m, PriceConfirmed = true,
+                Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+
+        // Inject an unrelated branch posting right before the first replay write context opens
+        // (after pre-lock planning captured BranchWatermark). If mutateDraft is true, also mutate
+        // the draft batch so the guard must refuse retry.
+        var injected = false;
+        var createCount = 0;
+        var interceptingFactory = new WatermarkDriftDbContextFactory(_factory, async () =>
+        {
+            createCount++;
+            if (injected || createCount != 6)
+                return;
+            injected = true;
+            await using var side = await _factory.CreateDbContextAsync();
+            var epochId = await side.StockLedgerEpochs.Select(e => e.Id).SingleAsync();
+            var seqRow = await side.StockPostingBranchSequences.SingleAsync(s =>
+                s.CompanyCode == "DEMO" && s.BranchCode == "HQ");
+            seqRow.LastSequence++;
+            seqRow.UpdatedAtUtc = DateTime.UtcNow;
+            var nextSeq = seqRow.LastSequence;
+            side.StockPostings.Add(new StockPosting
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", LedgerEpochId = epochId,
+                PostingSequence = nextSeq, RequestId = Guid.NewGuid(),
+                CommandType = "IV_POST_MR", RequestFingerprint = new string('U', 64),
+                SourceModule = "INVENTORY", SourceDocumentType = "MR",
+                SourceDocumentId = "999001", SourceDocumentNo = "999001",
+                DocumentRevision = 1, PostingRole = "PRIMARY",
+                SourceSnapshotJson = "{}", SourceSnapshotHash = new string('V', 64),
+                SourceSnapshotSchemaVersion = 1, EffectiveAt = FixedToday,
+                BusinessDate = FixedToday, PeriodKey = $"{FixedToday:yyyy-MM}",
+                PostedAtUtc = DateTime.UtcNow, PostedBy = "other-user",
+                SealedAtUtc = DateTime.UtcNow
+            });
+            if (mutateDraft)
+            {
+                var detail = await side.IvTrxBatchDetails.SingleAsync(d => d.BatchNo == draft.BatchNo);
+                detail.UnitPrice = 5m;
+            }
+            await side.SaveChangesAsync();
+        });
+
+        var postingWithDrift = InventoryLedgerTestFixture.CreateInventoryPosting(
+            interceptingFactory, enableBackdatedReplay: true);
+        var result = await postingWithDrift.PostAsync(IvTrxTypes.MiscellaneousReceipt, [draft.BatchNo]);
+
+        Assert.True(injected);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(0, await check.StockPostings.CountAsync(p => p.SealedAtUtc == null));
+        if (!mutateDraft)
+        {
+            Assert.True(result.Succeeded, result.ErrorMessage);
+            Assert.Equal(IvBatchStatuses.Posted,
+                (await check.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            // 10 @ 2 + 10 @ 4 = 20 @ 3; later 4 issued @ 3 = 12 -> final 16 @ 3 = 48.
+            Assert.Equal(16m, (await check.IvBalLocs.SingleAsync()).StdQty);
+            var state = await check.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal((16m, 48m), (state.OnHandBaseQty, state.InventoryValue));
+        }
+        else
+        {
+            Assert.False(result.Succeeded);
+            Assert.Equal(IvBatchStatuses.New,
+                (await check.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            Assert.Equal(6m, (await check.IvBalLocs.SingleAsync()).StdQty);
+            var state = await check.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal((6m, 12m), (state.OnHandBaseQty, state.InventoryValue));
+        }
+    }
+
+    private sealed class WatermarkDriftDbContextFactory(
+        IDbContextFactory<AppDbContext> inner, Func<Task> onCreateAsync) : IDbContextFactory<AppDbContext>
+    {
+        public AppDbContext CreateDbContext() => inner.CreateDbContext();
+
+        public async Task<AppDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        {
+            await onCreateAsync();
+            return await inner.CreateDbContextAsync(cancellationToken);
+        }
+    }
+
     private sealed record FifoLayerSnapshot(
         DateTime EffectiveAt,
         decimal OriginalQty,

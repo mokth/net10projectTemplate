@@ -343,44 +343,50 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         {
             try
             {
-                IvInventoryPostingBatchResult batchResult;
-                if (isMr || isCr)
+                async Task<IvInventoryPostingBatchResult> ExecuteBatchAsync(CancellationToken ct)
                 {
-                    var expectedTrxType = isCr ? IvTrxTypes.CustomerReturn : IvTrxTypes.MiscellaneousReceipt;
-                    batchResult = post
-                        ? await PostInventoryMRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken)
-                        : await RollBackInventoryMRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken);
+                    if (isMr || isCr)
+                    {
+                        var expectedTrxType = isCr ? IvTrxTypes.CustomerReturn : IvTrxTypes.MiscellaneousReceipt;
+                        return post
+                            ? await PostInventoryMRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, ct)
+                            : await RollBackInventoryMRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, ct);
+                    }
+                    if (isGr || isNg)
+                    {
+                        var expectedTrxType = isNg ? IvTrxTypes.NonStockGoodsReceive : IvTrxTypes.GoodsReceive;
+                        return post
+                            ? await PostGoodsReceiptAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, ct)
+                            : await RollBackGoodsReceiptAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, ct);
+                    }
+                    if (isMi || isSc || isVr)
+                    {
+                        var expectedTrxType = isSc
+                            ? IvTrxTypes.Scrap
+                            : isVr
+                                ? IvTrxTypes.VendorReturn
+                                : IvTrxTypes.MiscellaneousIssue;
+                        return post
+                            ? await PostInventoryMIAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, ct)
+                            : await RollBackInventoryMIAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, ct);
+                    }
+                    if (isAdj)
+                    {
+                        return post
+                            ? await PostInventoryADJAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, ct)
+                            : await RollBackInventoryADJAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, ct);
+                    }
+                    return post
+                        ? await PostInventoryTRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, ct)
+                        : await RollBackInventoryTRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, ct);
                 }
-                else if (isGr || isNg)
-                {
-                    var expectedTrxType = isNg ? IvTrxTypes.NonStockGoodsReceive : IvTrxTypes.GoodsReceive;
-                    batchResult = post
-                        ? await PostGoodsReceiptAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken)
-                        : await RollBackGoodsReceiptAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken);
-                }
-                else if (isMi || isSc || isVr)
-                {
-                    var expectedTrxType = isSc
-                        ? IvTrxTypes.Scrap
-                        : isVr
-                            ? IvTrxTypes.VendorReturn
-                            : IvTrxTypes.MiscellaneousIssue;
-                    batchResult = post
-                        ? await PostInventoryMIAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken)
-                        : await RollBackInventoryMIAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, expectedTrxType, cancellationToken);
-                }
-                else if (isAdj)
-                {
-                    batchResult = post
-                        ? await PostInventoryADJAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, cancellationToken)
-                        : await RollBackInventoryADJAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, cancellationToken);
-                }
-                else
-                {
-                    batchResult = post
-                        ? await PostInventoryTRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, cancellationToken)
-                        : await RollBackInventoryTRAsync(scope.CompanyCode, scope.BranchCode!, scope.UserId, batchNo, cancellationToken);
-                }
+
+                var batchResult = _openPeriodBackdatedReplayEnabled
+                    ? await StockReplayStalePlanRetry.ExecuteAsync(
+                        ct => CaptureBatchWatermarkGuardAsync(scope.CompanyCode, scope.BranchCode!, batchNo, ct),
+                        ExecuteBatchAsync,
+                        cancellationToken)
+                    : await ExecuteBatchAsync(cancellationToken);
 
                 results.Add(batchResult);
             }
@@ -5179,5 +5185,53 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         return await _qaPhysical.AssertAndClaimStockOutAsync(
             db, companyCode, branchCode, trxType, batchNo, needs, cancellationToken);
+    }
+
+    private async Task<string?> CaptureBatchWatermarkGuardAsync(
+        string companyCode,
+        string branchCode,
+        int batchNo,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var batch = await db.IvTrxBatches.AsNoTracking()
+            .Where(b => b.CompanyCode == companyCode && b.BranchCode == branchCode && b.BatchNo == batchNo)
+            .Select(b => new
+            {
+                b.Id, b.TrxType, b.BatchStatus, b.TrxDtTime,
+                b.ModifiedDate, b.DeletedAtUtc, b.ForceCloseDate, b.PostedCount
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (batch is null)
+            return null;
+        var details = await db.IvTrxBatchDetails.AsNoTracking()
+            .Where(d => d.BatchId == batch.Id)
+            .OrderBy(d => d.Id)
+            .Select(d => new
+            {
+                d.Id, d.TrxLineNo, d.DocumentRevision, d.ICode,
+                d.FromBalLocId, d.ToBalLocId, d.FrStdQty, d.ToStdQty,
+                d.UnitPrice, d.Cost, d.PoNo, d.PoRelNo, d.PoLineNo
+            })
+            .ToArrayAsync(cancellationToken);
+        var items = details.Select(d => d.ICode).Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        var states = items.Length == 0 ? [] : await db.StockCostStates.AsNoTracking()
+            .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode && items.Contains(s.ItemCode))
+            .OrderBy(s => s.ItemCode).ThenBy(s => s.CostMethod)
+            .Select(s => new
+            {
+                s.ItemCode, s.CostMethod, s.OnHandBaseQty, s.InventoryValue,
+                s.LastValuationFactId, s.LastPostingSequence
+            })
+            .ToArrayAsync(cancellationToken);
+        var piles = items.Length == 0 ? [] : await db.IvBalLocs.AsNoTracking()
+            .Where(b => b.CompanyCode == companyCode && b.BranchCode == branchCode && items.Contains(b.ICode))
+            .OrderBy(b => b.Id)
+            .Select(b => new { b.Id, b.StdQty, b.RowVersion })
+            .ToArrayAsync(cancellationToken);
+        return StockPostingFingerprint.Create(
+            new { Kind = "BATCH_WATERMARK_GUARD", batch, details, states, piles },
+            new { }).RequestFingerprint;
     }
 }

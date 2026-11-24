@@ -112,9 +112,13 @@ public sealed partial class IvInventoryPostingService
             || root.Posting.DocumentRevision != authority.DocumentRevision
             || root.Posting.PostingRole != "PRIMARY"
             || root.Posting.EffectiveAt != authority.EffectiveAt
-            || root.Posting.PostingSequence != key.OriginalPostingSequence
             || root.Epoch.Id != sourcePlan.LedgerEpochId)
             throw InvalidWacTransfer("The WAC transfer root differs from its draft.");
+        if (root.Posting.PostingSequence != key.OriginalPostingSequence)
+            throw new StockLedgerException(new StockLedgerError(
+                StockLedgerErrorCodes.StaleDocument,
+                "The branch posting sequence changed after replay planning.",
+                Retryable: true) { IsBranchWatermarkDrift = true });
         if (await IvPeriodCloseGuard.EnsureOpenAsync(write, companyCode,
                 branchCode, batch.TrxDtTime, cancellationToken) is string lockedClosed)
         {

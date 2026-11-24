@@ -40,6 +40,13 @@ public sealed record StockLedgerError(string Code, string Message, bool Retryabl
     /// an operator and never used to infer a document by string parsing.
     /// </summary>
     public long? EventId { get; init; }
+
+    /// <summary>
+    /// True only when under-lock replay validation failed solely because the branch posting sequence
+    /// watermark advanced after pre-lock planning. Never set for draft edits, pile changes, cost-state
+    /// changes, or policy/period refusals.
+    /// </summary>
+    public bool IsBranchWatermarkDrift { get; init; }
 }
 
 /// <summary>Narrow replay-step classification carried as optional metadata. No arithmetic effect.</summary>

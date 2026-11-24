@@ -1129,8 +1129,10 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             try
             {
-                if (await TryPostBackdatedCountAsync(context, id,
-                        costApprovals ?? [], cancellationToken) is { } replayResult)
+                if (await StockReplayStalePlanRetry.ExecuteAsync(
+                        ct => CaptureCountWatermarkGuardAsync(context.CompanyCode!, context.BranchCode!, id, ct),
+                        ct => TryPostBackdatedCountAsync(context, id, costApprovals ?? [], ct),
+                        cancellationToken) is { } replayResult)
                     return replayResult;
             }
             catch (StockLedgerException ex)
@@ -1481,8 +1483,10 @@ public sealed partial class IvStockCountService : IIvStockCountService
         {
             try
             {
-                if (await TryRollBackBackdatedCountAsync(context, id,
-                        reason, cancellationToken) is { } replayResult)
+                if (await StockReplayStalePlanRetry.ExecuteAsync(
+                        ct => CaptureCountWatermarkGuardAsync(context.CompanyCode!, context.BranchCode!, id, ct),
+                        ct => TryRollBackBackdatedCountAsync(context, id, reason, ct),
+                        cancellationToken) is { } replayResult)
                     return replayResult;
             }
             catch (StockLedgerException ex)

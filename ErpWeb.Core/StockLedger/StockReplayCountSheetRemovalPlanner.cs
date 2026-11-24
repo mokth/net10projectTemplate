@@ -182,9 +182,13 @@ public static class StockReplayCountSheetRemovalPlanner
             || context.Posting.ReversesPostingId != plan.AnchorPostingId
             || context.Posting.DocumentRevision
                 != plan.AnchorDocumentRevision
-            || context.Posting.EffectiveAt != plan.EffectiveAt
-            || context.Posting.PostingSequence != plan.BranchWatermark + 1)
+            || context.Posting.EffectiveAt != plan.EffectiveAt)
             throw Stale("The count removal plan belongs to another root.");
+        if (context.Posting.PostingSequence != plan.BranchWatermark + 1)
+            throw new StockLedgerException(new StockLedgerError(
+                StockLedgerErrorCodes.StaleDocument,
+                "The count removal plan belongs to another root.",
+                Retryable: true) { IsBranchWatermarkDrift = true });
 
         var header = await context.Db.IvStockCountHdrs.AsNoTracking()
             .Where(h => h.Id == plan.CountHeaderId

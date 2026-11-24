@@ -255,9 +255,13 @@ public sealed partial class IvInventoryPostingService
             || root.Posting.PostingRole != "PRIMARY"
             || root.Posting.DocumentRevision != authority.Revision
             || root.Posting.EffectiveAt != authority.EffectiveAt
-            || root.Posting.PostingSequence != key.OriginalPostingSequence
             || root.Epoch.Id != physical.LedgerEpochId)
             throw InvalidStandardTransfer("The Standard MI root differs from its draft.");
+        if (root.Posting.PostingSequence != key.OriginalPostingSequence)
+            throw new StockLedgerException(new StockLedgerError(
+                StockLedgerErrorCodes.StaleDocument,
+                "The branch posting sequence changed after replay planning.",
+                Retryable: true) { IsBranchWatermarkDrift = true });
         if (await IvPeriodCloseGuard.EnsureOpenAsync(write, companyCode,
                 branchCode, authority.EffectiveAt, cancellationToken)
             is string lockedClosed)

@@ -2599,4 +2599,76 @@ public sealed class StockLedgerInfrastructureTests : IAsyncDisposable
     {
         public AppDbContext CreateDbContext() => new(options);
     }
+
+    [Fact]
+    public async Task Stale_plan_retry_only_retries_unrelated_watermark_drift_and_never_swallows_draft_edits()
+    {
+        // 1. Retries on IsBranchWatermarkDrift = true when document/item guard is unchanged.
+        var attempts = 0;
+        var result = await StockReplayStalePlanRetry.ExecuteAsync(
+            _ => Task.FromResult<string?>("GUARD-HASH-1"),
+            _ =>
+            {
+                attempts++;
+                if (attempts < 2)
+                    throw new StockLedgerException(new StockLedgerError(
+                        StockLedgerErrorCodes.StaleDocument,
+                        "The branch posting sequence changed after replay planning.",
+                        Retryable: true) { IsBranchWatermarkDrift = true });
+                return Task.FromResult("OK");
+            });
+        Assert.Equal("OK", result);
+        Assert.Equal(2, attempts);
+
+        // 2. Never retries when IsBranchWatermarkDrift = false (e.g. pile/cost-state conflict).
+        var nonWatermarkAttempts = 0;
+        var nonWatermark = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayStalePlanRetry.ExecuteAsync<string>(
+                _ => Task.FromResult<string?>("GUARD-HASH-1"),
+                _ =>
+                {
+                    nonWatermarkAttempts++;
+                    throw new StockLedgerException(new StockLedgerError(
+                        StockLedgerErrorCodes.StaleDocument,
+                        "Pile 1 changed after replay planning.",
+                        Retryable: true));
+                }));
+        Assert.Equal(StockLedgerErrorCodes.StaleDocument, nonWatermark.Error.Code);
+        Assert.False(nonWatermark.Error.IsBranchWatermarkDrift);
+        Assert.Equal(1, nonWatermarkAttempts);
+
+        // 3. Never swallows a concurrent draft edit / same-item mutation even if watermark also drifted.
+        var guardReads = 0;
+        var draftEditAttempts = 0;
+        var draftEdit = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayStalePlanRetry.ExecuteAsync<string>(
+                _ => Task.FromResult<string?>(++guardReads == 1 ? "GUARD-V1" : "GUARD-V2-EDITED"),
+                _ =>
+                {
+                    draftEditAttempts++;
+                    throw new StockLedgerException(new StockLedgerError(
+                        StockLedgerErrorCodes.StaleDocument,
+                        "The branch posting sequence changed after replay planning.",
+                        Retryable: true) { IsBranchWatermarkDrift = true });
+                }));
+        Assert.Equal(StockLedgerErrorCodes.StaleDocument, draftEdit.Error.Code);
+        Assert.Equal(1, draftEditAttempts);
+
+        // 4. Stops cleanly after DefaultMaxAttempts on continuous drift.
+        var cappedAttempts = 0;
+        var capped = await Assert.ThrowsAsync<StockLedgerException>(() =>
+            StockReplayStalePlanRetry.ExecuteAsync<string>(
+                _ => Task.FromResult<string?>("GUARD-HASH-1"),
+                _ =>
+                {
+                    cappedAttempts++;
+                    throw new StockLedgerException(new StockLedgerError(
+                        StockLedgerErrorCodes.StaleDocument,
+                        "The branch posting sequence changed after replay planning.",
+                        Retryable: true) { IsBranchWatermarkDrift = true });
+                }));
+        Assert.Equal(StockLedgerErrorCodes.StaleDocument, capped.Error.Code);
+        Assert.True(capped.Error.IsBranchWatermarkDrift);
+        Assert.Equal(StockReplayStalePlanRetry.DefaultMaxAttempts, cappedAttempts);
+    }
 }

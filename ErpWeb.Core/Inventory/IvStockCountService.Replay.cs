@@ -10,6 +10,37 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvStockCountService
 {
+    private async Task<string?> CaptureCountWatermarkGuardAsync(
+        string companyCode, string branchCode, int countId, CancellationToken cancellationToken)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var header = await db.IvStockCountHdrs.AsNoTracking()
+            .Where(h => h.Id == countId && h.CompanyCode == companyCode && h.BranchCode == branchCode)
+            .Select(h => new { h.Id, h.Status, h.CountDate, h.RowVersion })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (header is null)
+            return null;
+        var lines = await db.IvStockCountLines.AsNoTracking()
+            .Where(l => l.StockCountId == countId)
+            .OrderBy(l => l.Id)
+            .Select(l => new { l.Id, l.BalLocId, l.ICode, l.PhysicalQty, l.RowVersion })
+            .ToArrayAsync(cancellationToken);
+        var items = lines.Select(l => l.ICode).Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        var pileIds = lines.Select(l => l.BalLocId).Distinct().OrderBy(x => x).ToArray();
+        var states = items.Length == 0 ? [] : await db.StockCostStates.AsNoTracking()
+            .Where(s => s.CompanyCode == companyCode && s.BranchCode == branchCode && items.Contains(s.ItemCode))
+            .OrderBy(s => s.ItemCode).ThenBy(s => s.CostMethod)
+            .Select(s => new { s.ItemCode, s.CostMethod, s.OnHandBaseQty, s.InventoryValue, s.LastValuationFactId, s.LastPostingSequence })
+            .ToArrayAsync(cancellationToken);
+        var piles = pileIds.Length == 0 ? [] : await db.IvBalLocs.AsNoTracking()
+            .Where(b => b.CompanyCode == companyCode && b.BranchCode == branchCode && pileIds.Contains(b.Id))
+            .OrderBy(b => b.Id)
+            .Select(b => new { b.Id, b.StdQty, b.RowVersion })
+            .ToArrayAsync(cancellationToken);
+        return StockPostingFingerprint.Create(new { Kind = "COUNT_WATERMARK_GUARD", header, lines, states, piles }, new { }).RequestFingerprint;
+    }
+
     private sealed record QaCountProjection(int BalanceId, decimal CurrentQuantity,
         byte[] RowVersion, decimal FinalQuantity);
 

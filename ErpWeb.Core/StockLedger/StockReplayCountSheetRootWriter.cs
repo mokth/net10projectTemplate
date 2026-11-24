@@ -90,10 +90,14 @@ public static class StockReplayCountSheetRootWriter
             || context.CompanyCode != plan.PhysicalSheet.CompanyCode
             || context.BranchCode != plan.PhysicalSheet.BranchCode
             || context.Epoch.Id != plan.PhysicalSheet.LedgerEpochId
-            || context.Posting.PostingSequence != plan.PhysicalSheet.BranchWatermark + 1
             || new object?[] { plan.Wac, plan.Standard, plan.Fifo }
                 .Count(x => x is not null) != 1)
             throw Invalid("The count sheet plan does not match its unsealed root.");
+        if (context.Posting.PostingSequence != plan.PhysicalSheet.BranchWatermark + 1)
+            throw new StockLedgerException(new StockLedgerError(
+                StockLedgerErrorCodes.StaleDocument,
+                "The branch posting sequence changed after replay planning.",
+                Retryable: true) { IsBranchWatermarkDrift = true });
         var method = await new StockCostMethodResolver().ResolveAsync(context.Db,
             context.CompanyCode, context.BranchCode, context.Posting.EffectiveAt,
             cancellationToken);
