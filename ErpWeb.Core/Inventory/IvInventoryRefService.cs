@@ -3,6 +3,8 @@ using ErpWeb.Core.Admin;
 using ErpWeb.Core.EInvoice;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Services;
+using ErpWeb.Core.StockLedger;
+using ErpWeb.Core.Subcon;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Repositories.Inventory;
@@ -208,15 +210,21 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                     "Row version is required for update.");
             }
 
+            await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+            await new BranchStockTransactionLock().AcquireAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, cancellationToken);
+
             var tracked = await _common.GetWarehouseTrackedAsync(
                 db, ctx.CompanyCode!, ctx.BranchCode!, code, cancellationToken);
             if (tracked is null)
             {
+                await tx.RollbackAsync(cancellationToken);
                 return FailVm<IvWarehouseEditVm>(IvMasterErrorCode.NotFound, "Warehouse not found.");
             }
 
             if (!KeysEqual(tracked.WarehouseCode, code))
             {
+                await tx.RollbackAsync(cancellationToken);
                 return FailVm<IvWarehouseEditVm>(
                     IvMasterErrorCode.Validation,
                     "Code cannot be changed.",
@@ -225,19 +233,31 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
 
             if (!RowVersionsEqual(tracked.RowVersion, model.RowVersion))
             {
+                await tx.RollbackAsync(cancellationToken);
                 return FailVm<IvWarehouseEditVm>(
                     IvMasterErrorCode.Concurrency,
                     "This warehouse was modified by another user.");
             }
 
+            var nextType = NormalizeOptional(model.WarehouseType);
+            var custodyError = await SubconCustodyGuardService.Instance.AssertWarehouseMutationAllowedAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, tracked.WarehouseCode,
+                tracked.WarehouseType, nextType, model.IsActive, cancellationToken);
+            if (custodyError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return FailVm<IvWarehouseEditVm>(IvMasterErrorCode.Validation, custodyError, "WarehouseType");
+            }
+
             db.Entry(tracked).Property(x => x.RowVersion).OriginalValue = model.RowVersion;
             tracked.WarehouseDesc = desc;
-            tracked.WarehouseType = NormalizeOptional(model.WarehouseType);
+            tracked.WarehouseType = nextType;
             tracked.WarehouseRemark = TruncateOptional(model.WarehouseRemark, 250);
             tracked.IsActive = model.IsActive;
             tracked.ModifiedDate = now;
             tracked.ModifiedBy = user;
             await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<IvWarehouseEditVm>.Ok(MapWarehouse(tracked));
         }
         catch (DbUpdateConcurrencyException)
@@ -255,24 +275,79 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
         }
     }
 
-    public Task<IvMasterOperationResult<object>> SetWarehouseActiveAsync(
+    public async Task<IvMasterOperationResult<object>> SetWarehouseActiveAsync(
         IReadOnlyList<IvMasterKeyToken> items,
         bool isActive,
-        CancellationToken cancellationToken = default) =>
-        SetActiveBranchAsync(
-            MenuCodes.InventoryWarehouse,
-            items,
-            isActive,
-            async (db, company, branch, codes, ct) =>
-                await _common.GetWarehousesTrackedAsync(db, company, branch, codes, ct),
-            (e, code) => string.Equals(e.WarehouseCode, code, StringComparison.OrdinalIgnoreCase),
-            (e, active, now, user) =>
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = await RequireBranchScopeAsync(MenuCodes.InventoryWarehouse, PermissionCodes.Edit, cancellationToken);
+        if (ctx.Error is not null)
+        {
+            return FailObj(ctx.Error.Value);
+        }
+
+        var tokens = NormalizeTokens(items);
+        if (tokens.Count == 0)
+        {
+            return FailObj(IvMasterErrorCode.Validation, "No records selected.");
+        }
+
+        var codes = tokens.Select(t => t.Code).ToList();
+        var now = _dates.Now;
+        var user = Truncate(ctx.UserId!, 10);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await new BranchStockTransactionLock().AcquireAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, cancellationToken);
+
+            var entities = await _common.GetWarehousesTrackedAsync(db, ctx.CompanyCode!, ctx.BranchCode!, codes, cancellationToken);
+            if (entities.Count != tokens.Count)
             {
-                e.IsActive = active;
-                e.ModifiedDate = now;
-                e.ModifiedBy = user;
-            },
-            cancellationToken);
+                await tx.RollbackAsync(cancellationToken);
+                return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
+            }
+
+            foreach (var token in tokens)
+            {
+                var entity = entities.FirstOrDefault(e => string.Equals(e.WarehouseCode, token.Code, StringComparison.OrdinalIgnoreCase));
+                if (entity is null || !RowVersionsEqual(entity.RowVersion, token.RowVersion))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
+                }
+
+                var custodyError = await SubconCustodyGuardService.Instance.AssertWarehouseMutationAllowedAsync(
+                    db, ctx.CompanyCode!, ctx.BranchCode!, entity.WarehouseCode,
+                    entity.WarehouseType, entity.WarehouseType, isActive, cancellationToken);
+                if (custodyError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailObj(IvMasterErrorCode.Validation, custodyError);
+                }
+
+                db.Entry(entity).Property(x => x.RowVersion).OriginalValue = token.RowVersion;
+                entity.IsActive = isActive;
+                entity.ModifiedDate = now;
+                entity.ModifiedBy = user;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return IvMasterOperationResult<object>.Ok();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
 
     public async Task<DeleteCheckResult> CanDeleteWarehousesAsync(
         IReadOnlyList<string> codes,
@@ -296,19 +371,93 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
         return BuildDeleteCheck(list, refs);
     }
 
-    public Task<IvMasterOperationResult<object>> DeleteWarehousesAsync(
+    public async Task<IvMasterOperationResult<object>> DeleteWarehousesAsync(
         IReadOnlyList<IvMasterKeyToken> items,
-        CancellationToken cancellationToken = default) =>
-        DeleteBranchAsync(
-            MenuCodes.InventoryWarehouse,
-            items,
-            async (db, company, branch, codes, ct) =>
-                await _common.GetWarehousesTrackedAsync(db, company, branch, codes, ct),
-            (e, code) => string.Equals(e.WarehouseCode, code, StringComparison.OrdinalIgnoreCase),
-            async (db, company, branch, codes, ct) =>
-                await _common.CountWarehouseReferencesBulkAsync(db, company, branch, codes, ct),
-            (db, entities) => db.IvWarehouses.RemoveRange(entities),
-            cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var ctx = await RequireBranchScopeAsync(MenuCodes.InventoryWarehouse, PermissionCodes.Delete, cancellationToken);
+        if (ctx.Error is not null)
+        {
+            return FailObj(ctx.Error.Value);
+        }
+
+        var tokens = NormalizeTokens(items);
+        if (tokens.Count == 0)
+        {
+            return FailObj(IvMasterErrorCode.Validation, "No records selected.");
+        }
+
+        var codes = tokens.Select(t => t.Code).ToList();
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await new BranchStockTransactionLock().AcquireAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, cancellationToken);
+
+            var entities = await _common.GetWarehousesTrackedAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, codes, cancellationToken);
+            if (entities.Count != tokens.Count)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
+            }
+
+            foreach (var token in tokens)
+            {
+                var entity = entities.FirstOrDefault(e =>
+                    string.Equals(e.WarehouseCode, token.Code, StringComparison.OrdinalIgnoreCase));
+                if (entity is null || !RowVersionsEqual(entity.RowVersion, token.RowVersion))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
+                }
+
+                var custodyError = await SubconCustodyGuardService.Instance.AssertWarehouseMutationAllowedAsync(
+                    db, ctx.CompanyCode!, ctx.BranchCode!, entity.WarehouseCode,
+                    entity.WarehouseType, entity.WarehouseType, nextIsActive: false, cancellationToken);
+                if (custodyError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailObj(IvMasterErrorCode.InUse, custodyError);
+                }
+
+                db.Entry(entity).Property(x => x.RowVersion).OriginalValue = token.RowVersion;
+            }
+
+            var refs = await _common.CountWarehouseReferencesBulkAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, codes, cancellationToken);
+            var check = BuildDeleteCheck(codes, refs);
+            if (!check.CanDelete)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvMasterOperationResult<object>.Fail(
+                    IvMasterErrorCode.InUse,
+                    check.Message ?? "One or more warehouses are in use.",
+                    deleteCheck: check);
+            }
+
+            db.IvWarehouses.RemoveRange(entities);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return IvMasterOperationResult<object>.Ok();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
+        }
+        catch (DbUpdateException ex) when (IsForeignKey(ex))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailObj(IvMasterErrorCode.InUse, "One or more warehouses are in use.");
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
 
     // ===================== Location =====================
 
@@ -479,15 +628,21 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                     "Row version is required for update.");
             }
 
+            await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+            await new BranchStockTransactionLock().AcquireAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, cancellationToken);
+
             var tracked = await _common.GetLocationTrackedAsync(
                 db, ctx.CompanyCode!, ctx.BranchCode!, wh, code, cancellationToken);
             if (tracked is null)
             {
+                await tx.RollbackAsync(cancellationToken);
                 return FailVm<IvLocationEditVm>(IvMasterErrorCode.NotFound, "Location not found.");
             }
 
             if (!KeysEqual(tracked.WarehouseCode, wh) || !KeysEqual(tracked.LocCode, code))
             {
+                await tx.RollbackAsync(cancellationToken);
                 return FailVm<IvLocationEditVm>(
                     IvMasterErrorCode.Validation,
                     "Location code or warehouse cannot be changed.",
@@ -496,9 +651,19 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
 
             if (!RowVersionsEqual(tracked.RowVersion, model.RowVersion))
             {
+                await tx.RollbackAsync(cancellationToken);
                 return FailVm<IvLocationEditVm>(
                     IvMasterErrorCode.Concurrency,
                     "This location was modified by another user.");
+            }
+
+            var custodyError = await SubconCustodyGuardService.Instance.AssertLocationMutationAllowedAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, tracked.WarehouseCode, tracked.LocCode,
+                model.IsActive, cancellationToken);
+            if (custodyError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return FailVm<IvLocationEditVm>(IvMasterErrorCode.Validation, custodyError, "IsActive");
             }
 
             db.Entry(tracked).Property(x => x.RowVersion).OriginalValue = model.RowVersion;
@@ -507,6 +672,7 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
             tracked.ModifiedDate = now;
             tracked.ModifiedBy = user;
             await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
             return IvMasterOperationResult<IvLocationEditVm>.Ok(MapLocation(tracked));
         }
         catch (DbUpdateConcurrencyException)
@@ -556,10 +722,14 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await new BranchStockTransactionLock().AcquireAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, cancellationToken);
+
             var entities = await _common.GetLocationsTrackedAsync(
                 db, ctx.CompanyCode!, ctx.BranchCode!, keys, cancellationToken);
             if (entities.Count != tokens.Count)
             {
+                await tx.RollbackAsync(cancellationToken);
                 return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
             }
 
@@ -570,7 +740,17 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                     string.Equals(e.LocCode, token.Code, StringComparison.OrdinalIgnoreCase));
                 if (entity is null || !RowVersionsEqual(entity.RowVersion, token.RowVersion))
                 {
+                    await tx.RollbackAsync(cancellationToken);
                     return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
+                }
+
+                var custodyError = await SubconCustodyGuardService.Instance.AssertLocationMutationAllowedAsync(
+                    db, ctx.CompanyCode!, ctx.BranchCode!, entity.WarehouseCode, entity.LocCode,
+                    isActive, cancellationToken);
+                if (custodyError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailObj(IvMasterErrorCode.Validation, custodyError);
                 }
 
                 db.Entry(entity).Property(x => x.RowVersion).OriginalValue = token.RowVersion;
@@ -656,10 +836,14 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await new BranchStockTransactionLock().AcquireAsync(
+                db, ctx.CompanyCode!, ctx.BranchCode!, cancellationToken);
+
             var entities = await _common.GetLocationsTrackedAsync(
                 db, ctx.CompanyCode!, ctx.BranchCode!, locKeys, cancellationToken);
             if (entities.Count != tokens.Count)
             {
+                await tx.RollbackAsync(cancellationToken);
                 return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
             }
 
@@ -670,7 +854,17 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
                     string.Equals(e.LocCode, token.Code, StringComparison.OrdinalIgnoreCase));
                 if (entity is null || !RowVersionsEqual(entity.RowVersion, token.RowVersion))
                 {
+                    await tx.RollbackAsync(cancellationToken);
                     return FailObj(IvMasterErrorCode.Concurrency, StaleBulkMessage());
+                }
+
+                var custodyError = await SubconCustodyGuardService.Instance.AssertLocationMutationAllowedAsync(
+                    db, ctx.CompanyCode!, ctx.BranchCode!, entity.WarehouseCode, entity.LocCode,
+                    nextIsActive: false, cancellationToken);
+                if (custodyError is not null)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailObj(IvMasterErrorCode.InUse, custodyError);
                 }
 
                 db.Entry(entity).Property(x => x.RowVersion).OriginalValue = token.RowVersion;
@@ -682,6 +876,7 @@ public sealed class IvInventoryRefService : IIvInventoryRefService
             var check = BuildDeleteCheck(displayKeys, refs);
             if (!check.CanDelete)
             {
+                await tx.RollbackAsync(cancellationToken);
                 return IvMasterOperationResult<object>.Fail(
                     IvMasterErrorCode.InUse,
                     check.Message ?? "One or more locations are in use.",

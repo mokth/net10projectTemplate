@@ -44,4 +44,30 @@ public interface ISubconCustodyGuard
         string branchCode,
         int batchId,
         CancellationToken cancellationToken = default);
+
+    Task<string?> AssertWarehouseMutationAllowedAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string warehouseCode,
+        string? priorWarehouseType,
+        string? nextWarehouseType,
+        bool nextIsActive,
+        CancellationToken cancellationToken = default);
+
+    Task<string?> AssertLocationMutationAllowedAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        string warehouseCode,
+        string locCode,
+        bool nextIsActive,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> HasSubconOwnedTransferAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        IReadOnlyCollection<int> transferBatchNos,
+        CancellationToken cancellationToken = default);
 }

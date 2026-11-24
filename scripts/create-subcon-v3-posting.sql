@@ -31,7 +31,7 @@ IF COL_LENGTH(N'dbo.SubconPolicy', N'FeeCapitalizationEnabled') IS NULL
         CONSTRAINT DF_SubconPolicy_FeeCapitalizationEnabled DEFAULT (0);
 GO
 IF COL_LENGTH(N'dbo.SubconPolicy', N'DefaultCustodyWarehouseCode') IS NULL
-    ALTER TABLE dbo.SubconPolicy ADD DefaultCustodyWarehouseCode nvarchar(10) NULL;
+    ALTER TABLE dbo.SubconPolicy ADD DefaultCustodyWarehouseCode nvarchar(20) NULL;
 GO
 
 /* 2. SubconDispatch: Job link, revision, and posting/rollback audit fields */
@@ -79,7 +79,7 @@ IF COL_LENGTH(N'dbo.SubconDispatchLine', N'StockStatus') IS NULL
     ALTER TABLE dbo.SubconDispatchLine ADD StockStatus nvarchar(10) NULL;
 GO
 IF COL_LENGTH(N'dbo.SubconDispatchLine', N'CustodyWarehouseCode') IS NULL
-    ALTER TABLE dbo.SubconDispatchLine ADD CustodyWarehouseCode nvarchar(10) NULL;
+    ALTER TABLE dbo.SubconDispatchLine ADD CustodyWarehouseCode nvarchar(20) NULL;
 GO
 IF COL_LENGTH(N'dbo.SubconDispatchLine', N'CustodyLocationCode') IS NULL
     ALTER TABLE dbo.SubconDispatchLine ADD CustodyLocationCode nvarchar(10) NULL;
@@ -122,7 +122,7 @@ IF COL_LENGTH(N'dbo.SubconReceiptLine', N'ConvFactor') IS NULL
     ALTER TABLE dbo.SubconReceiptLine ADD ConvFactor decimal(18,6) NULL;
 GO
 IF COL_LENGTH(N'dbo.SubconReceiptLine', N'ToWarehouseCode') IS NULL
-    ALTER TABLE dbo.SubconReceiptLine ADD ToWarehouseCode nvarchar(10) NULL;
+    ALTER TABLE dbo.SubconReceiptLine ADD ToWarehouseCode nvarchar(20) NULL;
 GO
 IF COL_LENGTH(N'dbo.SubconReceiptLine', N'ToLocationCode') IS NULL
     ALTER TABLE dbo.SubconReceiptLine ADD ToLocationCode nvarchar(10) NULL;
@@ -201,7 +201,7 @@ BEGIN
         BaseUom              nvarchar(10)         NOT NULL,
         StockStatus          nvarchar(10)         NOT NULL,
         CustodyBalLocId      int                  NOT NULL,
-        CustodyWarehouseCode nvarchar(10)         NOT NULL,
+        CustodyWarehouseCode nvarchar(20)         NOT NULL,
         CustodyLocationCode  nvarchar(10)         NOT NULL,
         DispatchedBaseQty    decimal(18,4)        NOT NULL,
         ReturnedBaseQty      decimal(18,4)        NOT NULL CONSTRAINT DF_SubconCustodyAlloc_Returned DEFAULT (0),

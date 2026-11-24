@@ -355,6 +355,12 @@ public sealed partial class IvInventoryPostingService
                 || h.StockPostingId is not > 0
                 || !MatchesPhysical(h)))
             return "Backdated FIFO transfer has a later movement outside unchanged Inventory MR/MI/transfer tails.";
+        var subconTransferBatchNos = histories.Where(h => h.TrxType == IvTrxTypes.StockTransfer)
+            .Select(h => h.BatchNo).Distinct().ToArray();
+        if (subconTransferBatchNos.Length > 0
+            && await ErpWeb.Core.Subcon.SubconCustodyGuardService.Instance.HasSubconOwnedTransferAsync(
+                db, companyCode, branchCode, subconTransferBatchNos, cancellationToken))
+            return "Backdated FIFO transfer cannot yet cross a subcontractor custody transfer.";
         var thirdLegs = histories.Where(h => h.TrxType == IvTrxTypes.StockTransfer)
             .SelectMany(h => new[]
             {

@@ -2,6 +2,7 @@ using System.Text.Json;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
@@ -102,7 +103,7 @@ public sealed class SubconApplicationService : ISubconApplicationService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
-        var custodyWh = TrimTo(command.DefaultCustodyWarehouseCode, 10);
+        var custodyWh = TrimTo(command.DefaultCustodyWarehouseCode, 20);
         var enableInventoryCustody = command.InventoryCustodyPostEnabled || command.InventoryModeEnabled;
         if (enableInventoryCustody)
         {
@@ -159,6 +160,237 @@ public sealed class SubconApplicationService : ISubconApplicationService
         published.ModifiedBy = TruncateUser(scope.UserId);
         await db.SaveChangesAsync(cancellationToken);
         return SubconResult.OkPolicy(MapPolicy(published));
+    }
+
+    public async Task<SubconResult> GetSupplierCustodyMapsAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = RequireBranch();
+        if (scope is null)
+        {
+            return SubconResult.Fail(SubconMessages.CompanyBranchRequired);
+        }
+
+        if (!await CanAsync(MenuCodes.SubconSettings, PermissionCodes.Access, cancellationToken)
+            && !await CanAsync(MenuCodes.SubconWorkbench, PermissionCodes.Access, cancellationToken))
+        {
+            return SubconResult.Fail(SubconMessages.NotAuthorized);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var maps = await db.SubconSupplierCustodyMaps.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode!)
+            .OrderBy(x => x.SupplierCode)
+            .ToListAsync(cancellationToken);
+
+        var suppCodes = maps.Select(x => x.SupplierCode).Distinct().ToArray();
+        var suppNames = suppCodes.Length == 0
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : await db.PoSuppliers.AsNoTracking()
+                .Where(s => s.CompanyCode == scope.CompanyCode && suppCodes.Contains(s.SuppCode))
+                .ToDictionaryAsync(s => s.SuppCode, s => s.SuppName ?? string.Empty, StringComparer.OrdinalIgnoreCase, cancellationToken);
+
+        var rows = maps.Select(m => new SubconSupplierCustodyMapDto
+        {
+            Uid = m.Uid,
+            SupplierCode = m.SupplierCode,
+            SupplierName = suppNames.GetValueOrDefault(m.SupplierCode),
+            CustodyWarehouseCode = m.CustodyWarehouseCode,
+            CustodyLocationCode = m.CustodyLocationCode,
+            IsActive = m.IsActive,
+            RowVersion = m.RowVersion
+        }).ToArray();
+
+        return SubconResult.OkSupplierCustodyMaps(rows);
+    }
+
+    public async Task<SubconResult> SaveSupplierCustodyMapAsync(
+        SubconSupplierCustodyMapSaveCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = RequireWrite();
+        if (scope is null)
+        {
+            return SubconResult.Fail(SubconMessages.CompanyBranchRequired);
+        }
+
+        if (!await CanAsync(MenuCodes.SubconSettings, PermissionCodes.Edit, cancellationToken))
+        {
+            return SubconResult.Fail(SubconMessages.NotAuthorized);
+        }
+
+        var suppCode = (command.SupplierCode ?? string.Empty).Trim();
+        var whCode = (command.CustodyWarehouseCode ?? string.Empty).Trim();
+        var locCode = (command.CustodyLocationCode ?? string.Empty).Trim();
+
+        if (suppCode.Length == 0 || suppCode.Length > 20)
+        {
+            return SubconResult.Fail(SubconMessages.SupplierRequired);
+        }
+
+        if (whCode.Length == 0 || whCode.Length > 20)
+        {
+            return SubconResult.Fail(SubconMessages.CustodyWarehouseRequired);
+        }
+
+        if (locCode.Length == 0 || locCode.Length > 10)
+        {
+            return SubconResult.Fail(SubconMessages.SupplierCustodyMapRequired);
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await new BranchStockTransactionLock().AcquireAsync(
+                db, scope.CompanyCode, scope.BranchCode!, cancellationToken);
+
+            var supplier = await db.PoSuppliers.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode && x.SuppCode == suppCode,
+                    cancellationToken);
+            if (supplier is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SubconResult.Fail(SubconMessages.SupplierRequired);
+            }
+
+            var wh = await db.IvWarehouses.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                           && x.BranchCode == scope.BranchCode!
+                                           && x.WarehouseCode == whCode
+                                           && x.IsActive,
+                    cancellationToken);
+            if (wh is null || !SubconCustodyGuardService.IsCustodyWarehouseType(wh.WarehouseType))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SubconResult.Fail(SubconMessages.CustodyWarehouseRequired);
+            }
+
+            var loc = await db.IvLocations.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                           && x.BranchCode == scope.BranchCode!
+                                           && x.WarehouseCode == wh.WarehouseCode
+                                           && x.LocCode == locCode
+                                           && x.IsActive,
+                    cancellationToken);
+            if (loc is null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SubconResult.Fail($"{SubconMessages.LocationInvalid} ({wh.WarehouseCode}/{locCode})");
+            }
+
+            var existing = await db.SubconSupplierCustodyMaps
+                .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                           && x.BranchCode == scope.BranchCode!
+                                           && x.SupplierCode == supplier.SuppCode,
+                    cancellationToken);
+
+            var now = DateTime.UtcNow;
+            var userId = TruncateUser(scope.UserId);
+
+            if (existing is not null)
+            {
+                if (command.RowVersion is { Length: > 0 } && Stale(existing.RowVersion, command.RowVersion))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SubconResult.Fail(SubconMessages.ChangedReload);
+                }
+
+                var binChanged = !string.Equals(existing.CustodyWarehouseCode, wh.WarehouseCode, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(existing.CustodyLocationCode, loc.LocCode, StringComparison.OrdinalIgnoreCase);
+                var deactivating = existing.IsActive && !command.IsActive;
+
+                if (binChanged || deactivating)
+                {
+                    var hasOutstanding = await db.SubconCustodyAllocations.AsNoTracking()
+                        .AnyAsync(a => a.CompanyCode == scope.CompanyCode
+                                       && a.BranchCode == scope.BranchCode!
+                                       && a.SupplierCode == supplier.SuppCode
+                                       && a.IsActive
+                                       && (a.DispatchedBaseQty - a.ReturnedBaseQty - a.ConsumedBaseQty - a.ScrapBaseQty) > 0m,
+                            cancellationToken);
+                    if (hasOutstanding)
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return SubconResult.Fail(SubconMessages.SupplierCustodyRemapBlocked);
+                    }
+                }
+            }
+
+            if (command.IsActive)
+            {
+                var otherMapped = await db.SubconSupplierCustodyMaps.AsNoTracking()
+                    .AnyAsync(x => x.CompanyCode == scope.CompanyCode
+                                   && x.BranchCode == scope.BranchCode!
+                                   && x.IsActive
+                                   && x.CustodyWarehouseCode == wh.WarehouseCode
+                                   && x.CustodyLocationCode == loc.LocCode
+                                   && x.SupplierCode != supplier.SuppCode,
+                        cancellationToken);
+                if (otherMapped)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SubconResult.Fail($"{SubconMessages.CustodyBinCollision} ({wh.WarehouseCode}/{loc.LocCode})");
+                }
+
+                var otherAllocationInBin = await db.SubconCustodyAllocations.AsNoTracking()
+                    .AnyAsync(a => a.CompanyCode == scope.CompanyCode
+                                   && a.BranchCode == scope.BranchCode!
+                                   && a.IsActive
+                                   && a.CustodyWarehouseCode == wh.WarehouseCode
+                                   && a.CustodyLocationCode == loc.LocCode
+                                   && a.SupplierCode != supplier.SuppCode
+                                   && (a.DispatchedBaseQty - a.ReturnedBaseQty - a.ConsumedBaseQty - a.ScrapBaseQty) > 0m,
+                        cancellationToken);
+                if (otherAllocationInBin)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return SubconResult.Fail($"{SubconMessages.CustodyBinCollision} ({wh.WarehouseCode}/{loc.LocCode})");
+                }
+            }
+
+            if (existing is null)
+            {
+                existing = new SubconSupplierCustodyMap
+                {
+                    CompanyCode = scope.CompanyCode,
+                    BranchCode = scope.BranchCode!,
+                    SupplierCode = supplier.SuppCode,
+                    CustodyWarehouseCode = wh.WarehouseCode,
+                    CustodyLocationCode = loc.LocCode,
+                    IsActive = command.IsActive,
+                    CreatedDate = now,
+                    CreatedBy = userId
+                };
+                db.SubconSupplierCustodyMaps.Add(existing);
+            }
+            else
+            {
+                existing.CustodyWarehouseCode = wh.WarehouseCode;
+                existing.CustodyLocationCode = loc.LocCode;
+                existing.IsActive = command.IsActive;
+                existing.ModifiedDate = now;
+                existing.ModifiedBy = userId;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+
+            return SubconResult.OkSupplierCustodyMap(new SubconSupplierCustodyMapDto
+            {
+                Uid = existing.Uid,
+                SupplierCode = existing.SupplierCode,
+                SupplierName = supplier.SuppName,
+                CustodyWarehouseCode = existing.CustodyWarehouseCode,
+                CustodyLocationCode = existing.CustodyLocationCode,
+                IsActive = existing.IsActive,
+                RowVersion = existing.RowVersion
+            }, info: $"Saved custody mapping for {existing.SupplierCode} -> {existing.CustodyWarehouseCode}/{existing.CustodyLocationCode}.");
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     public async Task<SubconResult> GetWorkbenchAsync(SubconListQuery query, CancellationToken cancellationToken = default)
@@ -664,7 +896,7 @@ public sealed class SubconApplicationService : ISubconApplicationService
                 DispatchDocNo = (x.DispatchDocNo ?? string.Empty).Trim(),
                 DispatchLineNo = x.DispatchLineNo,
                 Qty = decimal.Round(x.Qty, 4, MidpointRounding.AwayFromZero),
-                ToWarehouseCode = TrimTo(x.ToWarehouseCode, 10),
+                ToWarehouseCode = TrimTo(x.ToWarehouseCode, 20),
                 ToLocationCode = TrimTo(x.ToLocationCode, 10)
             })
             .ToArray();

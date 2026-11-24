@@ -494,8 +494,14 @@ public sealed partial class ProductionFinishedGoodReceiptService(
 
     private static async Task ValidateDestinationAsync(AppDbContext db, InventoryTenantScope scope, string warehouse, string location, CancellationToken ct)
     {
-        if (!await db.IvWarehouses.AnyAsync(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.WarehouseCode == warehouse && x.IsActive, ct))
+        var wh = await db.IvWarehouses.AsNoTracking()
+            .Where(x => x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode && x.WarehouseCode == warehouse && x.IsActive)
+            .Select(x => new { x.WarehouseType })
+            .FirstOrDefaultAsync(ct);
+        if (wh is null)
             throw new FgException("Select an active warehouse in the current branch.");
+        if (ErpWeb.Core.Subcon.SubconCustodyGuardService.IsCustodyWarehouseType(wh.WarehouseType))
+            throw new FgException(ErpWeb.Core.Subcon.SubconCustodyConstants.DestinationCustodyBlocked);
         if (location.Length > 0 && !await db.IvLocations.AnyAsync(x =>
             x.CompanyCode == scope.CompanyCode && x.BranchCode == scope.BranchCode
             && x.WarehouseCode == warehouse && x.LocCode == location && x.IsActive, ct))

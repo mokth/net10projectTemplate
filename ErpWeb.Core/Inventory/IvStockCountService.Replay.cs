@@ -886,6 +886,9 @@ public sealed partial class IvStockCountService
                         && p.SourceDocumentNo == h.BatchNo.ToString(
                             System.Globalization.CultureInfo.InvariantCulture)))))
                 return "Historical WAC count has a transfer without its exact posted Inventory owner.";
+            if (await ErpWeb.Core.Subcon.SubconCustodyGuardService.Instance.HasSubconOwnedTransferAsync(
+                    db, histories[0].CompanyCode, histories[0].BranchCode, numbers, cancellationToken))
+                return "Historical WAC count cannot yet replay across a subcontractor custody transfer.";
         }
         return null;
     }

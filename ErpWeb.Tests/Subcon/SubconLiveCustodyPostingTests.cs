@@ -71,7 +71,8 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
                 WarehouseCode = "MAIN",
                 WarehouseDesc = "Main Store",
                 WarehouseType = "NORMAL",
-                IsActive = true
+                IsActive = true,
+                RowVersion = [1]
             },
             new IvWarehouse
             {
@@ -80,7 +81,8 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
                 WarehouseCode = "SUBCON",
                 WarehouseDesc = "Subcontractor Custody",
                 WarehouseType = SubconCustodyConstants.CustodyWarehouseType,
-                IsActive = true
+                IsActive = true,
+                RowVersion = [1]
             });
         db.IvLocations.AddRange(
             new IvLocation
@@ -90,7 +92,8 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
                 WarehouseCode = "MAIN",
                 LocCode = "BIN1",
                 LocDesc = "Main Bin 1",
-                IsActive = true
+                IsActive = true,
+                RowVersion = [1]
             },
             new IvLocation
             {
@@ -99,7 +102,8 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
                 WarehouseCode = "SUBCON",
                 LocCode = "SUP01",
                 LocDesc = "SUP01 Custody Bin",
-                IsActive = true
+                IsActive = true,
+                RowVersion = [1]
             });
         db.MsUoms.AddRange(
             new MsUom { CompanyCode = _scope.CompanyCode, UomCode = "EA", UomDesc = "Each", IsActive = true },
@@ -638,6 +642,655 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
         var conflictDifferent = await svc.PostDispatchAsync(new SubconKeyCommand { DocNo = d2.Dispatch!.DocNo, RowVersion = d2.Dispatch.RowVersion, RequestId = reqId });
         Assert.False(conflictDifferent.Succeeded);
         Assert.Equal(SubconMessages.RequestIdConflict, conflictDifferent.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task H01_Warehouse_and_location_master_mutations_are_blocked_when_custody_stock_or_references_exist()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC");
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+        var refService = CreateInventoryRefService();
+
+        var d1 = await PostSimpleDispatchAsync(svc, qty: 30m);
+
+        // Fetch current RowVersions for SUBCON, MAIN, and SUBCON/SUP01.
+        var subconWh = await refService.GetWarehouseAsync("SUBCON");
+        Assert.True(subconWh.Succeeded, subconWh.Message);
+        var mainWh = await refService.GetWarehouseAsync("MAIN");
+        Assert.True(mainWh.Succeeded, mainWh.Message);
+        var subconLoc = await refService.GetLocationAsync("SUBCON", "SUP01");
+        Assert.True(subconLoc.Succeeded, subconLoc.Message);
+
+        // 1. Demoting SUBCON -> NORMAL while stock/allocations/policy exist MUST fail.
+        var demote = await refService.SaveWarehouseAsync(new IvWarehouseEditVm
+        {
+            Code = "SUBCON",
+            Desc = subconWh.Data!.Desc,
+            WarehouseType = "NORMAL",
+            IsActive = true,
+            RowVersion = subconWh.Data.RowVersion
+        }, isNew: false);
+        Assert.False(demote.Succeeded);
+        Assert.Contains("subcontractor custody", demote.Message!, StringComparison.OrdinalIgnoreCase);
+
+        // 2. Deactivating SUBCON via SaveWarehouseAsync MUST fail.
+        var deactivateViaSave = await refService.SaveWarehouseAsync(new IvWarehouseEditVm
+        {
+            Code = "SUBCON",
+            Desc = subconWh.Data.Desc,
+            WarehouseType = SubconCustodyConstants.CustodyWarehouseType,
+            IsActive = false,
+            RowVersion = subconWh.Data.RowVersion
+        }, isNew: false);
+        Assert.False(deactivateViaSave.Succeeded);
+
+        // 3. Deactivating SUBCON via SetWarehouseActiveAsync MUST fail.
+        var deactivateViaToggle = await refService.SetWarehouseActiveAsync(
+            [new IvMasterKeyToken { Code = "SUBCON", RowVersion = subconWh.Data.RowVersion ?? [] }],
+            isActive: false);
+        Assert.False(deactivateViaToggle.Succeeded);
+
+        // 4. Promoting occupied MAIN (70 EA on hand) -> SUBCON MUST fail.
+        var promoteOccupied = await refService.SaveWarehouseAsync(new IvWarehouseEditVm
+        {
+            Code = "MAIN",
+            Desc = mainWh.Data!.Desc,
+            WarehouseType = SubconCustodyConstants.CustodyWarehouseType,
+            IsActive = true,
+            RowVersion = mainWh.Data.RowVersion
+        }, isNew: false);
+        Assert.False(promoteOccupied.Succeeded);
+        Assert.Contains("stock", promoteOccupied.Message!, StringComparison.OrdinalIgnoreCase);
+
+        // 5. Deactivating SUBCON/SUP01 location via SaveLocationAsync & SetLocationActiveAsync MUST fail.
+        var deactivateLocSave = await refService.SaveLocationAsync(new IvLocationEditVm
+        {
+            WarehouseCode = "SUBCON",
+            Code = "SUP01",
+            Desc = subconLoc.Data!.Desc,
+            IsActive = false,
+            RowVersion = subconLoc.Data.RowVersion
+        }, isNew: false);
+        Assert.False(deactivateLocSave.Succeeded);
+
+        var deactivateLocToggle = await refService.SetLocationActiveAsync(
+            [new IvMasterKeyToken { Code = "SUP01", ParentCode = "SUBCON", RowVersion = subconLoc.Data.RowVersion ?? [] }],
+            isActive: false);
+        Assert.False(deactivateLocToggle.Succeeded);
+
+        // 6. After receiving all 30 EA back and clearing policy reference, demoting SUBCON -> NORMAL succeeds.
+        var rDraft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today,
+            SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = d1.DocNo, DispatchLineNo = 1, Qty = 30m }]
+        });
+        Assert.True(rDraft.Succeeded, rDraft.ErrorMessage);
+        Assert.True((await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = rDraft.Receipt!.DocNo, RowVersion = rDraft.Receipt.RowVersion })).Succeeded);
+
+        var curPolicy = await svc.GetPolicyAsync();
+        var disablePolicy = await svc.SavePolicyAsync(new SubconPolicySaveCommand
+        {
+            SubconEnabled = false,
+            InventoryModeEnabled = false,
+            InventoryCustodyPostEnabled = false,
+            DefaultCustodyWarehouseCode = null,
+            RowVersion = curPolicy.Policy!.RowVersion
+        });
+        Assert.True(disablePolicy.Succeeded, disablePolicy.ErrorMessage);
+
+        var subconAfter = await refService.GetWarehouseAsync("SUBCON");
+        var demoteClean = await refService.SaveWarehouseAsync(new IvWarehouseEditVm
+        {
+            Code = "SUBCON",
+            Desc = subconAfter.Data!.Desc,
+            WarehouseType = "NORMAL",
+            IsActive = true,
+            RowVersion = subconAfter.Data.RowVersion
+        }, isNew: false);
+        Assert.True(demoteClean.Succeeded, demoteClean.Message);
+    }
+
+    [Fact]
+    public async Task H02_Posting_and_rollback_fail_closed_when_V2_ledger_epoch_or_coordinator_is_inactive()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC");
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+
+        var draft = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            TrxDate = Today,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "SUP01",
+            Lines = [new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "A100", Uom = "EA", Qty = 10m, WarehouseCode = "MAIN", LocationCode = "BIN1" }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+
+        // Sub-case A: transition StockLedgerEpoch out of ACTIVE -> Post MUST fail closed with zero mutations.
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var epoch = await db.StockLedgerEpochs.SingleAsync();
+            epoch.Status = StockLedgerEpochStatuses.Prepared;
+            await db.SaveChangesAsync();
+        }
+
+        var blockedPost = await svc.PostDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = draft.Dispatch!.DocNo,
+            RowVersion = draft.Dispatch.RowVersion
+        });
+        Assert.False(blockedPost.Succeeded);
+        Assert.Equal(SubconBlockedReasons.V2LedgerRequired, blockedPost.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(100m, await db.IvBalLocs.Where(b => b.WhCode == "MAIN").Select(b => b.StdQty).SingleAsync());
+            Assert.Equal(0, await db.IvTrxBatches.CountAsync());
+            Assert.Equal(0, await db.SubconPostingLinks.CountAsync());
+            Assert.Equal(SubconStatuses.New, await db.SubconDispatches.Where(d => d.DocNo == draft.Dispatch.DocNo).Select(d => d.Status).SingleAsync());
+
+            // Reactivate epoch so we can post and test Sub-case B (null coordinator on rollback).
+            var epoch = await db.StockLedgerEpochs.SingleAsync();
+            epoch.Status = StockLedgerEpochStatuses.Active;
+            await db.SaveChangesAsync();
+        }
+
+        var posted = await svc.PostDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = draft.Dispatch.DocNo,
+            RowVersion = draft.Dispatch.RowVersion
+        });
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+
+        // Sub-case B: posting service wired WITHOUT V2 coordinator -> Rollback MUST fail closed.
+        var noCoordPosting = new IvInventoryPostingService(
+            _factory, _tenant.Object, _access.Object,
+            new IvStockPostingRepository(), new IvStockCommonRepository(_factory),
+            new ErpWeb.Model.Repositories.Purchase.PoOrderRepository(), NullLogger<IvInventoryPostingService>.Instance,
+            new FixedCurrentDateService(Today),
+            historyWriter: null,
+            coordinator: null,
+            approval: ErpWeb.Tests.Procurement.Transaction.TestDisabledProcurementApprovalGuard.Instance);
+        var noCoordAdapter = new SubconInventoryTransferAdapter(
+            _factory, noCoordPosting, new RunningNumberService(), new IvUomConversionService(_factory), new InventorySoftReservationReader());
+        var noCoordSvc = new SubconApplicationService(
+            _factory, _tenant.Object, _access.Object, new RunningNumberService(), noCoordAdapter, new SubconBlockedProductionSourceAdapter());
+
+        var blockedRollback = await noCoordSvc.RollbackDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = posted.Dispatch!.DocNo,
+            RowVersion = posted.Dispatch.RowVersion
+        });
+        Assert.False(blockedRollback.Succeeded);
+        Assert.Equal(SubconBlockedReasons.V2LedgerRequired, blockedRollback.ErrorMessage);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(SubconStatuses.Posted, await db.SubconDispatches.Where(d => d.DocNo == posted.Dispatch.DocNo).Select(d => d.Status).SingleAsync());
+            Assert.Equal(10m, await db.IvBalLocs.Where(b => b.WhCode == "SUBCON" && b.LocCode == "SUP01").Select(b => b.StdQty).SingleAsync());
+        }
+    }
+
+    [Fact]
+    public async Task M01_Long_supplier_code_requires_explicit_map_prevents_bin_collision_and_blocks_remap_while_outstanding()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PoSuppliers.AddRange(
+                new PoSupplier { CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!, SuppCode = "LONG_SUPPLIER_123456", SuppName = "Twenty Char Subcon", IsActive = true },
+                new PoSupplier { CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!, SuppCode = "SUP02", SuppName = "Second Subcon", IsActive = true });
+            db.IvWarehouses.Add(new IvWarehouse
+            {
+                CompanyCode = _scope.CompanyCode,
+                BranchCode = _scope.BranchCode!,
+                WarehouseCode = "SUBCON_EXTENDED_20CH",
+                WarehouseDesc = "Extended 20-char Custody WH",
+                WarehouseType = SubconCustodyConstants.CustodyWarehouseType,
+                IsActive = true
+            });
+            db.IvLocations.AddRange(
+                new IvLocation { CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!, WarehouseCode = "SUBCON_EXTENDED_20CH", LocCode = "LSUP01", LocDesc = "Long Supplier Bin 1", IsActive = true },
+                new IvLocation { CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!, WarehouseCode = "SUBCON_EXTENDED_20CH", LocCode = "LSUP02", LocDesc = "Long Supplier Bin 2", IsActive = true });
+            await db.SaveChangesAsync();
+        }
+
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+
+        // 1. Unmapped 20-char supplier MUST fail closed (never truncate to 10 chars).
+        var longDraft = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            TrxDate = Today,
+            Mode = SubconModes.Inventory,
+            SupplierCode = "LONG_SUPPLIER_123456",
+            Lines = [new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "A100", Uom = "EA", Qty = 25m, WarehouseCode = "MAIN", LocationCode = "BIN1" }]
+        });
+        Assert.True(longDraft.Succeeded, longDraft.ErrorMessage);
+
+        var unmappedPost = await svc.PostDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = longDraft.Dispatch!.DocNo,
+            RowVersion = longDraft.Dispatch.RowVersion
+        });
+        Assert.False(unmappedPost.Succeeded);
+        Assert.Contains("10-character", unmappedPost.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+
+        // 2. Map 20-char supplier to 20-char SUBCON warehouse + 10-char location -> succeeds.
+        var map1 = await svc.SaveSupplierCustodyMapAsync(new SubconSupplierCustodyMapSaveCommand
+        {
+            SupplierCode = "LONG_SUPPLIER_123456",
+            CustodyWarehouseCode = "SUBCON_EXTENDED_20CH",
+            CustodyLocationCode = "LSUP01",
+            IsActive = true
+        });
+        Assert.True(map1.Succeeded, map1.ErrorMessage);
+
+        // 3. Mapping another supplier to the same active bin MUST fail with collision.
+        var collision = await svc.SaveSupplierCustodyMapAsync(new SubconSupplierCustodyMapSaveCommand
+        {
+            SupplierCode = "SUP02",
+            CustodyWarehouseCode = "SUBCON_EXTENDED_20CH",
+            CustodyLocationCode = "LSUP01",
+            IsActive = true
+        });
+        Assert.False(collision.Succeeded);
+        Assert.Contains("already mapped", collision.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+
+        // 4. Posting Send-Out now routes into SUBCON_EXTENDED_20CH / LSUP01.
+        var postedLong = await svc.PostDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = longDraft.Dispatch.DocNo,
+            RowVersion = longDraft.Dispatch.RowVersion
+        });
+        Assert.True(postedLong.Succeeded, postedLong.ErrorMessage);
+        Assert.Equal("SUBCON_EXTENDED_20CH", postedLong.Dispatch!.Lines[0].CustodyWarehouseCode);
+        Assert.Equal("LSUP01", postedLong.Dispatch.Lines[0].CustodyLocationCode);
+
+        // 5. Remapping or deactivating while stock is outstanding MUST be blocked.
+        var blockedRemap = await svc.SaveSupplierCustodyMapAsync(new SubconSupplierCustodyMapSaveCommand
+        {
+            SupplierCode = "LONG_SUPPLIER_123456",
+            CustodyWarehouseCode = "SUBCON_EXTENDED_20CH",
+            CustodyLocationCode = "LSUP02",
+            IsActive = true,
+            RowVersion = map1.SupplierCustodyMap!.RowVersion
+        });
+        Assert.False(blockedRemap.Succeeded);
+        Assert.Equal(SubconMessages.SupplierCustodyRemapBlocked, blockedRemap.ErrorMessage);
+
+        // 6. Receive back all 25 EA -> remapping now succeeds.
+        var rDraft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today,
+            SupplierCode = "LONG_SUPPLIER_123456",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = postedLong.Dispatch.DocNo, DispatchLineNo = 1, Qty = 25m }]
+        });
+        Assert.True(rDraft.Succeeded, rDraft.ErrorMessage);
+        Assert.True((await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = rDraft.Receipt!.DocNo, RowVersion = rDraft.Receipt.RowVersion })).Succeeded);
+
+        var allowedRemap = await svc.SaveSupplierCustodyMapAsync(new SubconSupplierCustodyMapSaveCommand
+        {
+            SupplierCode = "LONG_SUPPLIER_123456",
+            CustodyWarehouseCode = "SUBCON_EXTENDED_20CH",
+            CustodyLocationCode = "LSUP02",
+            IsActive = true,
+            RowVersion = map1.SupplierCustodyMap.RowVersion
+        });
+        Assert.True(allowedRemap.Succeeded, allowedRemap.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task M02_Rollback_dispatch_and_receipt_recover_idempotently_on_retry_with_same_RequestId()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC");
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+
+        var d1 = await PostSimpleDispatchAsync(svc, qty: 20m);
+        var d2 = await PostSimpleDispatchAsync(svc, qty: 10m);
+
+        var r1Draft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today,
+            SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = d1.DocNo, DispatchLineNo = 1, Qty = 10m }]
+        });
+        var r1Posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = r1Draft.Receipt!.DocNo, RowVersion = r1Draft.Receipt.RowVersion });
+        Assert.True(r1Posted.Succeeded, r1Posted.ErrorMessage);
+
+        var r2Draft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today,
+            SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = d2.DocNo, DispatchLineNo = 1, Qty = 5m }]
+        });
+        var r2Posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = r2Draft.Receipt!.DocNo, RowVersion = r2Draft.Receipt.RowVersion });
+        Assert.True(r2Posted.Succeeded, r2Posted.ErrorMessage);
+
+        // 1. Roll back tail receipt r2 + timeout-after-commit retry with SAME RequestId & stale pre-rollback RowVersion.
+        var revReceiptReqId = Guid.NewGuid();
+        var rbR2 = await svc.RollbackReceiptAsync(new SubconKeyCommand
+        {
+            DocNo = r2Posted.Receipt!.DocNo,
+            RowVersion = r2Posted.Receipt.RowVersion,
+            RequestId = revReceiptReqId
+        });
+        Assert.True(rbR2.Succeeded, rbR2.ErrorMessage);
+        Assert.Equal(SubconStatuses.New, rbR2.Receipt!.Status);
+        Assert.Equal(1, rbR2.Receipt.DocumentRevision);
+
+        var rbR2Retry = await svc.RollbackReceiptAsync(new SubconKeyCommand
+        {
+            DocNo = r2Posted.Receipt.DocNo,
+            RowVersion = r2Posted.Receipt.RowVersion,
+            RequestId = revReceiptReqId
+        });
+        Assert.True(rbR2Retry.Succeeded, rbR2Retry.ErrorMessage);
+        Assert.Equal(SubconStatuses.New, rbR2Retry.Receipt!.Status);
+        Assert.Equal(1, rbR2Retry.Receipt.DocumentRevision);
+
+        // Reusing revReceiptReqId on a DIFFERENT receipt (r1) MUST fail with RequestIdConflict.
+        var rbR1Conflict = await svc.RollbackReceiptAsync(new SubconKeyCommand
+        {
+            DocNo = r1Posted.Receipt!.DocNo,
+            RowVersion = r1Posted.Receipt.RowVersion,
+            RequestId = revReceiptReqId
+        });
+        Assert.False(rbR1Conflict.Succeeded);
+        Assert.Equal(SubconMessages.RequestIdConflict, rbR1Conflict.ErrorMessage);
+
+        // Roll back r1 (now tail!) and delete both receipt drafts so d2 is tail & unreferenced.
+        var rbR1 = await svc.RollbackReceiptAsync(new SubconKeyCommand
+        {
+            DocNo = r1Posted.Receipt.DocNo,
+            RowVersion = r1Posted.Receipt.RowVersion,
+            RequestId = Guid.NewGuid()
+        });
+        Assert.True(rbR1.Succeeded, rbR1.ErrorMessage);
+        Assert.True((await svc.DeleteReceiptDraftAsync(new SubconKeyCommand { DocNo = rbR2.Receipt.DocNo, RowVersion = rbR2.Receipt.RowVersion })).Succeeded);
+        Assert.True((await svc.DeleteReceiptDraftAsync(new SubconKeyCommand { DocNo = rbR1.Receipt.DocNo, RowVersion = rbR1.Receipt.RowVersion })).Succeeded);
+
+        // 2. Roll back tail dispatch d2 + timeout-after-commit retry with SAME RequestId & stale pre-rollback RowVersion.
+        var revDispatchReqId = Guid.NewGuid();
+        var rbD2 = await svc.RollbackDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = d2.DocNo,
+            RowVersion = d2.RowVersion,
+            RequestId = revDispatchReqId
+        });
+        Assert.True(rbD2.Succeeded, rbD2.ErrorMessage);
+        Assert.Equal(SubconStatuses.New, rbD2.Dispatch!.Status);
+        Assert.Equal(1, rbD2.Dispatch.DocumentRevision);
+
+        var rbD2Retry = await svc.RollbackDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = d2.DocNo,
+            RowVersion = d2.RowVersion,
+            RequestId = revDispatchReqId
+        });
+        Assert.True(rbD2Retry.Succeeded, rbD2Retry.ErrorMessage);
+        Assert.Equal(SubconStatuses.New, rbD2Retry.Dispatch!.Status);
+        Assert.Equal(1, rbD2Retry.Dispatch.DocumentRevision);
+
+        // Reusing revDispatchReqId on a DIFFERENT dispatch (d1) MUST fail with RequestIdConflict.
+        var rbD1Conflict = await svc.RollbackDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = d1.DocNo,
+            RowVersion = d1.RowVersion,
+            RequestId = revDispatchReqId
+        });
+        Assert.False(rbD1Conflict.Succeeded);
+        Assert.Equal(SubconMessages.RequestIdConflict, rbD1Conflict.ErrorMessage);
+
+        // Confirm exactly one REVERSAL link exists for r2 and one for d2 (no duplicates).
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(1, await db.SubconPostingLinks.CountAsync(x => x.DocNo == r2Posted.Receipt.DocNo && x.PostingRole == SubconPostingRoles.Reversal));
+        Assert.Equal(1, await db.SubconPostingLinks.CountAsync(x => x.DocNo == d2.DocNo && x.PostingRole == SubconPostingRoles.Reversal));
+    }
+
+    [Fact]
+    public async Task M03_Interleaved_multi_dispatch_FIFO_receipts_and_rollback_preserve_branch_pooled_FIFO_layers()
+    {
+        // Opening FIFO pool: Layer 1 = 40 @ 5.00 (200), Layer 2 = 60 @ 8.00 (480) => Total = 100 EA, Value = 680.00.
+        await SeedCostMethodAndOpeningStockAsync("FIFO");
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+
+        var d1 = await PostSimpleDispatchAsync(svc, qty: 35m);
+        var d2 = await PostSimpleDispatchAsync(svc, qty: 45m);
+
+        // Interleaved partial return from d2 (15 EA), tail rollback & repost of d2's receipt, then return from d1 (20 EA).
+        var rD2Draft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today,
+            SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = d2.DocNo, DispatchLineNo = 1, Qty = 15m }]
+        });
+        var rD2Posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = rD2Draft.Receipt!.DocNo, RowVersion = rD2Draft.Receipt.RowVersion });
+        Assert.True(rD2Posted.Succeeded, rD2Posted.ErrorMessage);
+
+        var rD2Rolled = await svc.RollbackReceiptAsync(new SubconKeyCommand { DocNo = rD2Posted.Receipt!.DocNo, RowVersion = rD2Posted.Receipt.RowVersion });
+        Assert.True(rD2Rolled.Succeeded, rD2Rolled.ErrorMessage);
+
+        var rD2Reposted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = rD2Rolled.Receipt!.DocNo, RowVersion = rD2Rolled.Receipt.RowVersion });
+        Assert.True(rD2Reposted.Succeeded, rD2Reposted.ErrorMessage);
+
+        var rD1Draft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today,
+            SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = d1.DocNo, DispatchLineNo = 1, Qty = 20m }]
+        });
+        var rD1Posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = rD1Draft.Receipt!.DocNo, RowVersion = rD1Draft.Receipt.RowVersion });
+        Assert.True(rD1Posted.Succeeded, rD1Posted.ErrorMessage);
+
+        // Non-tail rollback of rD2 while rD1 is posted AFTER it MUST be refused by V2 chronology guard.
+        var nonTailBlocked = await svc.RollbackReceiptAsync(new SubconKeyCommand { DocNo = rD2Reposted.Receipt!.DocNo, RowVersion = rD2Reposted.Receipt.RowVersion });
+        Assert.False(nonTailBlocked.Succeeded);
+
+        // Verify exact stock split (MAIN = 55, SUBCON = 45), branch-pooled FIFO layers unchanged, and zero allocation variance.
+        await AssertStockAndValueAsync(mainQty: 55m, subconQty: 45m, expectedValue: 680m, method: "FIFO");
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var layers = await db.StockFifoLayers.AsNoTracking()
+            .Where(l => l.CompanyCode == _scope.CompanyCode && l.BranchCode == _scope.BranchCode && l.ItemCode == "A100")
+            .OrderBy(l => l.CurrentUnitCost)
+            .ToListAsync();
+        Assert.Equal(2, layers.Count);
+        Assert.Equal(40m, layers[0].RemainingQty);
+        Assert.Equal(5m, layers[0].CurrentUnitCost);
+        Assert.Equal(60m, layers[1].RemainingQty);
+        Assert.Equal(8m, layers[1].CurrentUnitCost);
+
+        var recon = await svc.GetCustodyReconciliationAsync("SUP01");
+        Assert.True(recon.Succeeded, recon.ErrorMessage);
+        var row = Assert.Single(recon.Reconciliation!);
+        Assert.Equal(80m, row.AllocatedDispatchedBaseQty);
+        Assert.Equal(35m, row.AllocatedReturnedBaseQty);
+        Assert.Equal(45m, row.AllocatedOutstandingBaseQty);
+        Assert.Equal(45m, row.PhysicalCustodyBaseQty);
+        Assert.True(row.IsReconciled);
+    }
+
+    [Fact]
+    public async Task Backdated_MR_targeting_subcon_custody_warehouse_is_blocked_even_with_replay_enabled()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-3));
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+        var dispatch = await PostSimpleDispatchAsync(svc, qty: 20m);
+
+        var mr = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, Today, enableBackdatedReplay: true);
+        var draft = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = Today.AddDays(-1),
+            RefNo = "BAD-SUBCON-MR",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "SUBCON", ToLocation = "SUP01",
+                Quantity = 5m, UnitPrice = 6m, PriceConfirmed = true,
+                Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+
+        var posted = await mr.PostAsync([draft.BatchNo]);
+        Assert.False(posted.Succeeded);
+        Assert.Contains("custody", posted.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        await AssertStockAndValueAsync(mainQty: 80m, subconQty: 20m, expectedValue: 500m, method: "WAC");
+
+        // Subcon dispatch remains cleanly rollback-able after the blocked MR.
+        var rolled = await svc.RollbackDispatchAsync(new SubconKeyCommand { DocNo = dispatch.DocNo, RowVersion = dispatch.RowVersion });
+        Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+        await AssertStockAndValueAsync(mainQty: 100m, subconQty: 0m, expectedValue: 500m, method: "WAC");
+    }
+
+    [Theory]
+    [InlineData("WAC")]
+    [InlineData("STANDARD")]
+    public async Task Backdated_MR_and_StockCount_cannot_reprice_or_strand_later_subcon_custody_transfer(string method)
+    {
+        await SeedCostMethodAndOpeningStockAsync(method, openingDate: Today.AddDays(-3));
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+        var dispatch = await PostSimpleDispatchAsync(svc, qty: 20m);
+
+        var mr = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, Today, enableBackdatedReplay: true);
+        var draft = await mr.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = Today.AddDays(-1),
+            RefNo = "BACKDATED-BEFORE-SUBCON",
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                Quantity = 10m, UnitPrice = 8m, PriceConfirmed = true,
+                Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+
+        var posted = await mr.PostAsync([draft.BatchNo]);
+        Assert.False(posted.Succeeded);
+        if (method == "WAC")
+            Assert.Contains("subcontractor custody transfer", posted.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        else
+            Assert.Contains("unsupported descendant", posted.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        await AssertStockAndValueAsync(mainQty: 80m, subconQty: 20m, expectedValue: 500m, method: method);
+
+        if (method == "WAC")
+        {
+            var count = InventoryLedgerTestFixture.CreateStockCount(_factory, Today, enableBackdatedReplay: true);
+            var savedCount = await count.SaveAsync(new IvStockCountSaveRequest
+            {
+                CountDate = Today.AddDays(-1), WHCode = "MAIN", IncludeZeroQty = true
+            });
+            Assert.True(savedCount.Succeeded, savedCount.ErrorMessage);
+            Assert.True((await count.GenerateAsync(savedCount.Id, discardCounts: false)).Succeeded);
+            var line = Assert.Single((await count.GetAsync(savedCount.CountNo!)).Document!.Lines);
+            Assert.True((await count.SaveCountsAsync(savedCount.Id,
+                [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = 105m }], null)).Succeeded);
+
+            var countPost = await count.PostAsync(savedCount.Id);
+            Assert.False(countPost.Succeeded);
+            Assert.Contains("subcontractor custody transfer", countPost.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            await AssertStockAndValueAsync(mainQty: 80m, subconQty: 20m, expectedValue: 500m, method: "WAC");
+        }
+
+        // Subcon Send-Out rollback must NOT be stranded because no foreign replay repriced its TR.
+        var rolled = await svc.RollbackDispatchAsync(new SubconKeyCommand { DocNo = dispatch.DocNo, RowVersion = dispatch.RowVersion });
+        Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+        await AssertStockAndValueAsync(mainQty: 100m, subconQty: 0m, expectedValue: 500m, method: method);
+    }
+
+    [Fact]
+    public async Task Warehouse_and_location_delete_are_blocked_when_referenced_by_subcon_policy_or_map()
+    {
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+        var mapSave = await svc.SaveSupplierCustodyMapAsync(new SubconSupplierCustodyMapSaveCommand
+        {
+            SupplierCode = "SUP01",
+            CustodyWarehouseCode = "SUBCON",
+            CustodyLocationCode = "SUP01",
+            IsActive = true
+        });
+        Assert.True(mapSave.Succeeded, mapSave.ErrorMessage);
+
+        var refSvc = CreateInventoryRefService();
+        byte[] whRv;
+        byte[] locRv;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            whRv = (await db.IvWarehouses.AsNoTracking().SingleAsync(w => w.WarehouseCode == "SUBCON")).RowVersion;
+            locRv = (await db.IvLocations.AsNoTracking().SingleAsync(l => l.WarehouseCode == "SUBCON" && l.LocCode == "SUP01")).RowVersion;
+        }
+
+        var delWh = await refSvc.DeleteWarehousesAsync([new IvMasterKeyToken { Code = "SUBCON", RowVersion = whRv }]);
+        Assert.False(delWh.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, delWh.ErrorCode);
+
+        var delLoc = await refSvc.DeleteLocationsAsync([new IvMasterKeyToken { ParentCode = "SUBCON", Code = "SUP01", RowVersion = locRv }]);
+        Assert.False(delLoc.Succeeded);
+        Assert.Equal(IvMasterErrorCode.InUse, delLoc.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Sales_shipment_allocation_excludes_subcon_custody_warehouse()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC");
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+        await PostSimpleDispatchAsync(svc, qty: 20m);
+
+        var sp = new IvSpShipmentService(new IvStockPostingRepository(), new IvStockTransactionRepository(), new RunningNumberService());
+        await using var db = await _factory.CreateDbContextAsync();
+        await using var tx = await db.Database.BeginTransactionAsync();
+        var result = await sp.CreateOrReplaceShipmentAsync(
+            db,
+            new IvSpCreateOrReplaceCommand
+            {
+                CompanyCode = _scope.CompanyCode,
+                BranchCode = _scope.BranchCode!,
+                LocationCode = _scope.LocationCode ?? "HQ",
+                UserId = "TEST",
+                DocumentNo = "DO-SUBCON-TEST",
+                DocumentDate = Today,
+                DoNo = "DO-SUBCON-TEST",
+                OverwriteExisting = true,
+                RequiredLines =
+                [
+                    new IvSpRequiredLine
+                    {
+                        Line = 1, ICode = "A100", IDesc = "Item A100",
+                        FrWarehouse = "SUBCON", StdQty = 5m, StdUom = "EA",
+                        UnitPrice = 10m, StockControl = true, LinkDo = false
+                    }
+                ]
+            });
+        await tx.RollbackAsync();
+        Assert.True(result.HasIncompleteLines || !result.Succeeded);
+        Assert.Empty(result.Lots);
+        if (result.Lines.Count > 0)
+            Assert.Equal(IvSpLineStatus.NoStock, Assert.Single(result.Lines).Status);
+    }
+
+    private IvInventoryRefService CreateInventoryRefService()
+    {
+        var lookups = new Mock<ErpWeb.Core.Admin.IAdLookupService>();
+        lookups.Setup(x => x.ValidateAssignmentAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        return new IvInventoryRefService(
+            _factory,
+            _tenant.Object,
+            _access.Object,
+            new FixedCurrentDateService(Today),
+            new IvStockCommonRepository(_factory),
+            lookups.Object);
     }
 
     private (SubconApplicationService Service, IvInventoryPostingService Posting, SubconInventoryTransferAdapter Adapter) CreateServices()

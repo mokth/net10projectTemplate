@@ -97,11 +97,24 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                         cancellationToken);
                 if (priorByReq is not null)
                 {
-                    await tx.RollbackAsync(cancellationToken);
                     if (priorByReq.DocId != entity.Uid)
+                    {
+                        await tx.RollbackAsync(cancellationToken);
                         return SubconResult.Fail(SubconMessages.RequestIdConflict);
-                    if (SubconStatuses.IsPosted(entity.Status))
-                        return SubconResult.OkDispatch(MapPostedDispatch(entity, priorByReq));
+                    }
+
+                    var primarySealed = await IsLinkedPostingSealedAsync(
+                        db, scope, priorByReq.StockPostingId, SubconPostingRoles.Primary, cancellationToken);
+                    await tx.RollbackAsync(cancellationToken);
+                    if (primarySealed
+                        && SubconStatuses.IsPosted(entity.Status)
+                        && entity.DocumentRevision == priorByReq.DocumentRevision)
+                    {
+                        return SubconResult.OkDispatch(
+                            MapPostedDispatch(entity, priorByReq),
+                            info: $"Posted send-out {entity.DocNo} (TR Batch {priorByReq.TrxBatchNo}).");
+                    }
+
                     return SubconResult.Fail(SubconMessages.ChangedReload);
                 }
             }
@@ -137,38 +150,13 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                 return SubconResult.Fail(SubconMessages.LineRequired);
             }
 
-            // Resolve and validate supplier custody warehouse + supplier location.
-            var custodyWh = (policy.DefaultCustodyWarehouseCode ?? string.Empty).Trim();
-            if (custodyWh.Length == 0)
+            // Resolve and validate supplier custody warehouse + location (explicit map first; fallback only for <=10-char unmapped suppliers).
+            var (binOk, custodyWh, custodyLoc, binErr) = await ResolveSupplierCustodyBinAsync(
+                db, scope, policy, entity.SupplierCode, cancellationToken);
+            if (!binOk)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return SubconResult.Fail(SubconMessages.CustodyWarehouseRequired);
-            }
-
-            var whRow = await db.IvWarehouses.AsNoTracking()
-                .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
-                                           && x.BranchCode == scope.BranchCode
-                                           && x.WarehouseCode == custodyWh
-                                           && x.IsActive,
-                    cancellationToken);
-            if (whRow is null || !SubconCustodyGuardService.IsCustodyWarehouseType(whRow.WarehouseType))
-            {
-                await tx.RollbackAsync(cancellationToken);
-                return SubconResult.Fail(SubconMessages.CustodyWarehouseRequired);
-            }
-
-            var custodyLoc = entity.SupplierCode.Trim();
-            var locExists = await db.IvLocations.AsNoTracking()
-                .AnyAsync(x => x.CompanyCode == scope.CompanyCode
-                               && x.BranchCode == scope.BranchCode
-                               && x.WarehouseCode == custodyWh
-                               && x.LocCode == custodyLoc
-                               && x.IsActive,
-                    cancellationToken);
-            if (!locExists)
-            {
-                await tx.RollbackAsync(cancellationToken);
-                return SubconResult.Fail($"{SubconMessages.CustodyLocationRequired} ({custodyWh}/{custodyLoc})");
+                return SubconResult.Fail(binErr!);
             }
 
             // Validate every line, convert UOM -> BaseQty, resolve non-lot source IvBalLoc, and check soft reservations.
@@ -322,15 +310,16 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
             db.IvTrxBatches.Add(batch);
             await db.SaveChangesAsync(cancellationToken);
 
-            // Open ONE V2 StockPosting root for this TR batch.
+            // Open ONE V2 StockPosting root for this TR batch (fail closed if V2 ledger/coordinator is inactive).
             var begin = await _inventoryPosting.BeginPostingInTransactionAsync(
                 db, scope.CompanyCode, scope.BranchCode, batch.BatchNo,
                 reversal: false, effectiveAt: batch.TrxDtTime, cancellationToken);
             postingContext = begin.Context;
-            if (begin.Error is not null)
+            var beginFailure = ValidateBeginPosting(begin);
+            if (beginFailure is not null)
             {
                 await AbortAndRollbackAsync(postingContext, tx);
-                return SubconResult.Fail(begin.Error.Message);
+                return SubconResult.Fail(beginFailure);
             }
 
             var postResult = await _inventoryPosting.PostStockTransferInTransactionAsync(
@@ -461,6 +450,40 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                 return SubconResult.Fail(SubconMessages.DispatchNotFound);
             }
 
+            // Idempotent timeout recovery when caller supplies an explicit RequestId for rollback.
+            if (command.RequestId is { } explicitReqId && explicitReqId != Guid.Empty)
+            {
+                var priorByReq = await db.SubconPostingLinks.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                               && x.BranchCode == scope.BranchCode
+                                               && x.DocKind == SubconPostingDocKinds.Dispatch
+                                               && x.PostingRole == SubconPostingRoles.Reversal
+                                               && x.RequestId == explicitReqId,
+                        cancellationToken);
+                if (priorByReq is not null)
+                {
+                    if (priorByReq.DocId != entity.Uid)
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return SubconResult.Fail(SubconMessages.RequestIdConflict);
+                    }
+
+                    var reversalSealed = await IsLinkedPostingSealedAsync(
+                        db, scope, priorByReq.StockPostingId, SubconPostingRoles.Reversal, cancellationToken);
+                    await tx.RollbackAsync(cancellationToken);
+                    if (reversalSealed
+                        && SubconStatuses.CanEdit(entity.Status)
+                        && entity.DocumentRevision == priorByReq.DocumentRevision + 1)
+                    {
+                        return SubconResult.OkDispatch(
+                            MapPostedDispatch(entity, null),
+                            info: $"Rolled back send-out {entity.DocNo} (TR Batch {priorByReq.TrxBatchNo}).");
+                    }
+
+                    return SubconResult.Fail(SubconMessages.ChangedReload);
+                }
+            }
+
             if (!SubconModes.IsInventory(entity.Mode))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -519,10 +542,11 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                 db, scope.CompanyCode, scope.BranchCode, activeLink.TrxBatchNo,
                 reversal: true, effectiveAt: activeLink.EffectiveAt, cancellationToken);
             postingContext = begin.Context;
-            if (begin.Error is not null)
+            var beginFailure = ValidateBeginPosting(begin);
+            if (beginFailure is not null)
             {
                 await AbortAndRollbackAsync(postingContext, tx);
-                return SubconResult.Fail(begin.Error.Message);
+                return SubconResult.Fail(beginFailure);
             }
 
             var rollbackResult = await _inventoryPosting.RollBackStockTransferInTransactionAsync(
@@ -636,11 +660,24 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                         cancellationToken);
                 if (priorByReq is not null)
                 {
-                    await tx.RollbackAsync(cancellationToken);
                     if (priorByReq.DocId != entity.Uid)
+                    {
+                        await tx.RollbackAsync(cancellationToken);
                         return SubconResult.Fail(SubconMessages.RequestIdConflict);
-                    if (SubconStatuses.IsPosted(entity.Status))
-                        return SubconResult.OkReceipt(MapPostedReceipt(entity, priorByReq));
+                    }
+
+                    var primarySealed = await IsLinkedPostingSealedAsync(
+                        db, scope, priorByReq.StockPostingId, SubconPostingRoles.Primary, cancellationToken);
+                    await tx.RollbackAsync(cancellationToken);
+                    if (primarySealed
+                        && SubconStatuses.IsPosted(entity.Status)
+                        && entity.DocumentRevision == priorByReq.DocumentRevision)
+                    {
+                        return SubconResult.OkReceipt(
+                            MapPostedReceipt(entity, priorByReq),
+                            info: $"Posted receive-back {entity.DocNo} (TR Batch {priorByReq.TrxBatchNo}).");
+                    }
+
                     return SubconResult.Fail(SubconMessages.ChangedReload);
                 }
             }
@@ -837,10 +874,11 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                 db, scope.CompanyCode, scope.BranchCode, batch.BatchNo,
                 reversal: false, effectiveAt: batch.TrxDtTime, cancellationToken);
             postingContext = begin.Context;
-            if (begin.Error is not null)
+            var beginFailure = ValidateBeginPosting(begin);
+            if (beginFailure is not null)
             {
                 await AbortAndRollbackAsync(postingContext, tx);
-                return SubconResult.Fail(begin.Error.Message);
+                return SubconResult.Fail(beginFailure);
             }
 
             var postResult = await _inventoryPosting.PostStockTransferInTransactionAsync(
@@ -938,6 +976,40 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                 return SubconResult.Fail(SubconMessages.ReceiptNotFound);
             }
 
+            // Idempotent timeout recovery when caller supplies an explicit RequestId for receipt rollback.
+            if (command.RequestId is { } explicitReqId && explicitReqId != Guid.Empty)
+            {
+                var priorByReq = await db.SubconPostingLinks.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                               && x.BranchCode == scope.BranchCode
+                                               && x.DocKind == SubconPostingDocKinds.Receipt
+                                               && x.PostingRole == SubconPostingRoles.Reversal
+                                               && x.RequestId == explicitReqId,
+                        cancellationToken);
+                if (priorByReq is not null)
+                {
+                    if (priorByReq.DocId != entity.Uid)
+                    {
+                        await tx.RollbackAsync(cancellationToken);
+                        return SubconResult.Fail(SubconMessages.RequestIdConflict);
+                    }
+
+                    var reversalSealed = await IsLinkedPostingSealedAsync(
+                        db, scope, priorByReq.StockPostingId, SubconPostingRoles.Reversal, cancellationToken);
+                    await tx.RollbackAsync(cancellationToken);
+                    if (reversalSealed
+                        && SubconStatuses.CanEdit(entity.Status)
+                        && entity.DocumentRevision == priorByReq.DocumentRevision + 1)
+                    {
+                        return SubconResult.OkReceipt(
+                            MapPostedReceipt(entity, null),
+                            info: $"Rolled back receive-back {entity.DocNo} (TR Batch {priorByReq.TrxBatchNo}).");
+                    }
+
+                    return SubconResult.Fail(SubconMessages.ChangedReload);
+                }
+            }
+
             if (!SubconStatuses.IsPosted(entity.Status))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -972,10 +1044,11 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                 db, scope.CompanyCode, scope.BranchCode, activeLink.TrxBatchNo,
                 reversal: true, effectiveAt: activeLink.EffectiveAt, cancellationToken);
             postingContext = begin.Context;
-            if (begin.Error is not null)
+            var beginFailure = ValidateBeginPosting(begin);
+            if (beginFailure is not null)
             {
                 await AbortAndRollbackAsync(postingContext, tx);
-                return SubconResult.Fail(begin.Error.Message);
+                return SubconResult.Fail(beginFailure);
             }
 
             var rollbackResult = await _inventoryPosting.RollBackStockTransferInTransactionAsync(
@@ -1052,6 +1125,114 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
             await AbortAndRollbackAsync(postingContext, tx);
             throw;
         }
+    }
+
+    private static string? ValidateBeginPosting(StockPostingBeginResult begin)
+    {
+        if (begin.Error is not null)
+            return begin.Error.Message;
+        if (!begin.LedgerEnabled || begin.Context is null)
+            return SubconBlockedReasons.V2LedgerRequired;
+        if (begin.WasReplay)
+            return SubconMessages.ChangedReload;
+        return null;
+    }
+
+    private static async Task<bool> IsLinkedPostingSealedAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        long? stockPostingId,
+        string expectedRole,
+        CancellationToken cancellationToken)
+    {
+        if (stockPostingId is not > 0)
+            return false;
+
+        return await db.StockPostings.AsNoTracking()
+            .AnyAsync(p => p.Id == stockPostingId.Value
+                           && p.CompanyCode == scope.CompanyCode
+                           && p.BranchCode == scope.BranchCode
+                           && p.PostingRole == expectedRole
+                           && p.SealedAtUtc != null,
+                cancellationToken);
+    }
+
+    private static async Task<(bool Ok, string CustodyWh, string CustodyLoc, string? Error)> ResolveSupplierCustodyBinAsync(
+        AppDbContext db,
+        InventoryTenantScope scope,
+        SubconPolicy policy,
+        string rawSupplierCode,
+        CancellationToken cancellationToken)
+    {
+        var supplierCode = (rawSupplierCode ?? string.Empty).Trim();
+        var activeMap = await db.SubconSupplierCustodyMaps.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                       && x.BranchCode == scope.BranchCode
+                                       && x.SupplierCode == supplierCode
+                                       && x.IsActive,
+                cancellationToken);
+
+        string custodyWh;
+        string custodyLoc;
+        if (activeMap is not null)
+        {
+            custodyWh = activeMap.CustodyWarehouseCode.Trim();
+            custodyLoc = activeMap.CustodyLocationCode.Trim();
+        }
+        else
+        {
+            custodyWh = (policy.DefaultCustodyWarehouseCode ?? string.Empty).Trim();
+            if (custodyWh.Length == 0)
+                return (false, string.Empty, string.Empty, SubconMessages.CustodyWarehouseRequired);
+
+            if (supplierCode.Length > 10)
+            {
+                return (false, string.Empty, string.Empty,
+                    $"{SubconMessages.SupplierCustodyMapRequired} (Supplier '{supplierCode}' exceeds the 10-character location code limit.)");
+            }
+
+            custodyLoc = supplierCode;
+        }
+
+        var whRow = await db.IvWarehouses.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                       && x.BranchCode == scope.BranchCode
+                                       && x.WarehouseCode == custodyWh
+                                       && x.IsActive,
+                cancellationToken);
+        if (whRow is null || !SubconCustodyGuardService.IsCustodyWarehouseType(whRow.WarehouseType))
+            return (false, string.Empty, string.Empty, SubconMessages.CustodyWarehouseRequired);
+
+        if (activeMap is null)
+        {
+            var binClaimedByOther = await db.SubconSupplierCustodyMaps.AsNoTracking()
+                .AnyAsync(x => x.CompanyCode == scope.CompanyCode
+                               && x.BranchCode == scope.BranchCode
+                               && x.IsActive
+                               && x.CustodyWarehouseCode == whRow.WarehouseCode
+                               && x.CustodyLocationCode == custodyLoc
+                               && x.SupplierCode != supplierCode,
+                    cancellationToken);
+            if (binClaimedByOther)
+                return (false, string.Empty, string.Empty, $"{SubconMessages.CustodyBinCollision} ({whRow.WarehouseCode}/{custodyLoc})");
+        }
+
+        var locRow = await db.IvLocations.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.CompanyCode == scope.CompanyCode
+                                       && x.BranchCode == scope.BranchCode
+                                       && x.WarehouseCode == whRow.WarehouseCode
+                                       && x.LocCode == custodyLoc
+                                       && x.IsActive,
+                cancellationToken);
+        if (locRow is null)
+        {
+            var prefix = activeMap is not null
+                ? SubconMessages.SupplierCustodyMapRequired
+                : SubconMessages.CustodyLocationRequired;
+            return (false, string.Empty, string.Empty, $"{prefix} ({whRow.WarehouseCode}/{custodyLoc})");
+        }
+
+        return (true, whRow.WarehouseCode, locRow.LocCode, null);
     }
 
     private async Task AbortAndRollbackAsync(

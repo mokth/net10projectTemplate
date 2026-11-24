@@ -107,6 +107,9 @@ public static class SubconBlockedReasons
 
     public const string HistoricalReplayBlocked =
         "Backdated subcontracting posting or rollback with later stock or valuation movements is not enabled yet.";
+
+    public const string V2LedgerRequired =
+        "Active V2 Stock Ledger epoch and valuation coordinator are required before subcontracting custody posting or rollback can proceed.";
 }
 
 public static class SubconMessages
@@ -122,6 +125,12 @@ public static class SubconMessages
         "Configure an active subcontractor custody warehouse (WarehouseType = SUBCON) in Subcontracting Settings before posting.";
     public const string CustodyLocationRequired =
         "Create an active location matching the supplier code in the subcontractor custody warehouse before posting.";
+    public const string SupplierCustodyMapRequired =
+        "Map this supplier to an active subcontractor custody warehouse and location (up to 10 characters) in Subcontracting Settings before posting.";
+    public const string CustodyBinCollision =
+        "This subcontractor custody warehouse/location bin is already mapped to another supplier.";
+    public const string SupplierCustodyRemapBlocked =
+        "Cannot change or deactivate a supplier custody mapping while outstanding subcontracting stock remains in that custody bin.";
     public const string ReceiveDestinationCustodyForbidden =
         "Receive-back destination must be a company warehouse, not a subcontractor custody warehouse.";
     public const string UomConversionInvalid = "Unable to convert quantity to the item's base UOM.";

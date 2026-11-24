@@ -1617,6 +1617,12 @@ public sealed partial class IvInventoryPostingService
                         && p.SourceDocumentNo == h.BatchNo.ToString(
                             System.Globalization.CultureInfo.InvariantCulture)))))
             return "Backdated WAC replay has a movement without its exact posted Inventory owner.";
+        var transferBatchNos = histories.Where(h => h.TrxType == IvTrxTypes.StockTransfer)
+            .Select(h => h.BatchNo).Distinct().ToArray();
+        if (transferBatchNos.Length > 0
+            && await ErpWeb.Core.Subcon.SubconCustodyGuardService.Instance.HasSubconOwnedTransferAsync(
+                db, histories[0].CompanyCode, histories[0].BranchCode, transferBatchNos, cancellationToken))
+            return "Backdated WAC replay cannot yet cross a subcontractor custody transfer.";
         var salesIds = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut)
             .Select(h => h.Id).ToArray();
         var returnIds = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn)

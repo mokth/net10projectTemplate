@@ -46,8 +46,9 @@
         {
             <p class="iv-guidance">Configure an active warehouse with WarehouseType = <code>SUBCON</code> (and one location per supplier code) before enabling non-lot same-SKU custody posting. All other capabilities remain frozen.</p>
             <ul class="qa-settings-help">
-                <li>Run <code>scripts/create-subcon-foundation.sql</code>, <code>scripts/create-subcon-v2-jobs.sql</code>, <code>scripts/create-subcon-v3-posting.sql</code>, and <code>scripts/init-subcon-menu.sql</code> on SQL Server tenants.</li>
+                <li>Run <code>scripts/create-subcon-foundation.sql</code>, <code>scripts/create-subcon-v2-jobs.sql</code>, <code>scripts/create-subcon-v3-posting.sql</code>, <code>scripts/create-subcon-v4-hardening.sql</code>, and <code>scripts/init-subcon-menu.sql</code> on SQL Server tenants.</li>
                 <li>Posting and rollback require both Subcon and <code>INV_STOCK_TRANSFER</code> permissions.</li>
+                <li>Suppliers with codes longer than 10 characters must be explicitly mapped to a 10-character custody location below.</li>
                 <li>Backdated subcontracting movements with later stock/valuation dependencies remain blocked atomically.</li>
             </ul>
             <DxFormLayout SizeMode="SizeMode.Small">
@@ -109,5 +110,89 @@
             </footer>
         }
     </section>
+
+    @if (!IsLoading)
+    {
+        <section class="iv-card">
+            <h2 class="iv-card__title">Supplier Custody Bin Mapping</h2>
+            <p class="iv-guidance">Assign each subcontractor a dedicated active warehouse (<code>WarehouseType = SUBCON</code>) and location (up to 10 characters). Required for supplier codes longer than 10 characters; optional override for shorter codes.</p>
+            <DxFormLayout SizeMode="SizeMode.Small">
+                <DxFormLayoutItem Caption="Supplier *" ColSpanMd="4">
+                    <Template>
+                        <PoSupplierPicker @bind-SuppCode="@MapSupplierCode"
+                                          Selected="@OnMapSupplierSelected"
+                                          Enabled="@CanEdit"
+                                          NullText="Search supplier"
+                                          InputCssClass="required-field" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Custody warehouse *" ColSpanMd="3">
+                    <Template>
+                        <IvCodeComboBox Data="@Warehouses"
+                                        Value="@MapWarehouseCode"
+                                        ValueChanged="@OnMapWarehouseChangedAsync"
+                                        ValueExpression="@(() => MapWarehouseCode)"
+                                        Enabled="@CanEdit"
+                                        NullText="Select SUBCON warehouse"
+                                        InputCssClass="required-field" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Custody location *" ColSpanMd="3">
+                    <Template>
+                        <IvCodeComboBox Data="@MapLocations"
+                                        Value="@MapLocationCode"
+                                        ValueChanged="@(v => MapLocationCode = v)"
+                                        ValueExpression="@(() => MapLocationCode)"
+                                        Enabled="@(CanEdit && !string.IsNullOrWhiteSpace(MapWarehouseCode))"
+                                        NullText="Select location"
+                                        InputCssClass="required-field" />
+                    </Template>
+                </DxFormLayoutItem>
+                <DxFormLayoutItem Caption="Status" ColSpanMd="2">
+                    <Template>
+                        <DxCheckBox @bind-Checked="@MapIsActive" Enabled="@CanEdit">Active</DxCheckBox>
+                    </Template>
+                </DxFormLayoutItem>
+            </DxFormLayout>
+            <div class="iv-footer__actions" style="margin: 0.5rem 0 1rem;">
+                <DxButton RenderStyle="ButtonRenderStyle.Secondary"
+                          Text="Clear"
+                          Click="@ClearSupplierMapEditor"
+                          Enabled="@CanEdit" />
+                <PermissionAuthorize MenuCode="@MenuCodes.SubconSettings" Permission="@PermissionCodes.Edit">
+                    <DxButton RenderStyle="ButtonRenderStyle.Primary"
+                              Text="@(IsSavingMap ? "Saving…" : "Save mapping")"
+                              IconCssClass="fa-solid fa-floppy-disk"
+                              Click="@OnSaveSupplierMapAsync"
+                              Enabled="@CanSaveMap" />
+                </PermissionAuthorize>
+            </div>
+            <DxGrid Data="@SupplierMaps"
+                    KeyFieldName="@nameof(SubconSupplierCustodyMapDto.Uid)"
+                    ColumnResizeMode="GridColumnResizeMode.NextColumn"
+                    TextWrapEnabled="false"
+                    ShowAllRows="true"
+                    EmptyDataAreaText="No explicit supplier custody bin mappings configured yet.">
+                <Columns>
+                    <DxGridDataColumn Caption="Action" Width="90px" MinWidth="80" FixedPosition="GridColumnFixedPosition.Left" AllowSort="false" AllowGroup="false">
+                        <CellDisplayTemplate Context="cell">
+                            @{
+                                var row = (SubconSupplierCustodyMapDto)cell.DataItem;
+                            }
+                            <DxButton RenderStyle="ButtonRenderStyle.Link"
+                                      Text="Edit"
+                                      Enabled="@CanEdit"
+                                      Click="@(() => EditSupplierMapAsync(row))" />
+                        </CellDisplayTemplate>
+                    </DxGridDataColumn>
+                    <DxGridDataColumn FieldName="@nameof(SubconSupplierCustodyMapDto.SupplierCode)" Caption="Supplier Code" Width="180px" MinWidth="130" />
+                    <DxGridDataColumn FieldName="@nameof(SubconSupplierCustodyMapDto.SupplierName)" Caption="Supplier Name" MinWidth="200" />
+                    <DxGridDataColumn FieldName="@nameof(SubconSupplierCustodyMapDto.CustodyWarehouseCode)" Caption="Custody Warehouse" Width="170px" MinWidth="130" />
+                    <DxGridDataColumn FieldName="@nameof(SubconSupplierCustodyMapDto.CustodyLocationCode)" Caption="Custody Location" Width="140px" MinWidth="110" />
+                    <DxGridDataColumn FieldName="@nameof(SubconSupplierCustodyMapDto.IsActive)" Caption="Active" Width="90px" MinWidth="80" />
+                </Columns>
+            </DxGrid>
+        </section>
+    }
 </div>
 </MenuAuthorize>

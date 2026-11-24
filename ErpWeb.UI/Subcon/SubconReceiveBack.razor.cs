@@ -20,6 +20,8 @@ public partial class SubconReceiveBack : PageBase
     private const int DispatchLookupPageSize = 20;
 
     private bool _isDirty;
+    private Guid? _pendingPostRequestId;
+    private Guid? _pendingRollbackRequestId;
 
     protected bool IsSubmitting;
     protected bool LinePopupVisible;
@@ -52,6 +54,8 @@ public partial class SubconReceiveBack : PageBase
 
     protected override async Task OnPageInitializedAsync()
     {
+        _pendingPostRequestId = null;
+        _pendingRollbackRequestId = null;
         CanEditAfterView = await AccessRights.CanAsync(MenuCodes.SubconReceiveBack, PermissionCodes.Edit);
         CanPostPermission =
             (await AccessRights.CanAsync(MenuCodes.SubconReceiveBack, PermissionCodes.Post)
@@ -258,13 +262,23 @@ public partial class SubconReceiveBack : PageBase
         ErrorMessage = null;
         StatusMessage = null;
         IsSubmitting = true;
-        var result = await Subcon.PostReceiptAsync(new SubconKeyCommand
+        _pendingPostRequestId ??= Guid.NewGuid();
+        SubconResult result;
+        try
         {
-            DocNo = Header.DocNo,
-            RowVersion = Header.RowVersion,
-            RequestId = Guid.NewGuid()
-        });
-        IsSubmitting = false;
+            result = await Subcon.PostReceiptAsync(new SubconKeyCommand
+            {
+                DocNo = Header.DocNo,
+                RowVersion = Header.RowVersion,
+                RequestId = _pendingPostRequestId
+            });
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+
+        _pendingPostRequestId = null;
         if (!result.Succeeded || result.Receipt is null)
         {
             ErrorMessage = result.ErrorMessage;
@@ -287,13 +301,23 @@ public partial class SubconReceiveBack : PageBase
         ErrorMessage = null;
         StatusMessage = null;
         IsSubmitting = true;
-        var result = await Subcon.RollbackReceiptAsync(new SubconKeyCommand
+        _pendingRollbackRequestId ??= Guid.NewGuid();
+        SubconResult result;
+        try
         {
-            DocNo = Header.DocNo,
-            RowVersion = Header.RowVersion,
-            RequestId = Guid.NewGuid()
-        });
-        IsSubmitting = false;
+            result = await Subcon.RollbackReceiptAsync(new SubconKeyCommand
+            {
+                DocNo = Header.DocNo,
+                RowVersion = Header.RowVersion,
+                RequestId = _pendingRollbackRequestId
+            });
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+
+        _pendingRollbackRequestId = null;
         if (!result.Succeeded || result.Receipt is null)
         {
             ErrorMessage = result.ErrorMessage;

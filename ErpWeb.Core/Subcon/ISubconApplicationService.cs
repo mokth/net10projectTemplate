@@ -6,6 +6,10 @@ public interface ISubconApplicationService
 
     Task<SubconResult> SavePolicyAsync(SubconPolicySaveCommand command, CancellationToken cancellationToken = default);
 
+    Task<SubconResult> GetSupplierCustodyMapsAsync(CancellationToken cancellationToken = default);
+
+    Task<SubconResult> SaveSupplierCustodyMapAsync(SubconSupplierCustodyMapSaveCommand command, CancellationToken cancellationToken = default);
+
     Task<SubconResult> GetWorkbenchAsync(SubconListQuery query, CancellationToken cancellationToken = default);
 
     Task<SubconResult> SearchAsync(SubconListQuery query, CancellationToken cancellationToken = default);

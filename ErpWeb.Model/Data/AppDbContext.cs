@@ -393,6 +393,7 @@ public class AppDbContext : DbContext
     public DbSet<SubconSupplierAssignment> SubconSupplierAssignments => Set<SubconSupplierAssignment>();
     public DbSet<SubconPostingLink> SubconPostingLinks => Set<SubconPostingLink>();
     public DbSet<SubconCustodyAllocation> SubconCustodyAllocations => Set<SubconCustodyAllocation>();
+    public DbSet<SubconSupplierCustodyMap> SubconSupplierCustodyMaps => Set<SubconSupplierCustodyMap>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

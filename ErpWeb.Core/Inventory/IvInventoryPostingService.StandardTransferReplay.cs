@@ -289,6 +289,12 @@ public sealed partial class IvInventoryPostingService
                         && h.TrxType == IvTrxTypes.IssueToProduction
                         && h.Id == productionPlan.HistoryId))))
             return "A later Standard movement has no original Inventory history.";
+        var subconTransferBatchNos = histories.Where(h => h.TrxType == IvTrxTypes.StockTransfer)
+            .Select(h => h.BatchNo).Distinct().ToArray();
+        if (subconTransferBatchNos.Length > 0
+            && await ErpWeb.Core.Subcon.SubconCustodyGuardService.Instance.HasSubconOwnedTransferAsync(
+                db, companyCode, branchCode, subconTransferBatchNos, cancellationToken))
+            return "Backdated Standard replay cannot yet cross a subcontractor custody transfer.";
         var salesIds = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut)
             .Select(h => h.Id).ToArray();
         var returns = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn).ToArray();

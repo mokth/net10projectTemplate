@@ -147,16 +147,41 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         if (_coordinator is null)
             return (null, null);
 
-        var batchDate = await db.IvTrxBatches.AsNoTracking()
+        var batchInfo = await db.IvTrxBatches.AsNoTracking()
             .Where(x => x.CompanyCode == companyCode && x.BranchCode == branchCode && x.BatchNo == batchNo)
-            .Select(x => (DateTime?)x.TrxDtTime)
+            .Select(x => new { x.Id, x.TrxType, x.TrxDtTime })
             .FirstOrDefaultAsync(cancellationToken);
-        if (batchDate is null)
+        if (batchInfo is null)
             return (null, IvInventoryPostingBatchResult.Fail(batchNo, "Batch was not found."));
+
+        if (await _subconCustody.AssertBatchNotSubconOwnedAsync(
+                db, companyCode, branchCode, batchInfo.Id, cancellationToken) is string subconOwnedErr)
+            return (null, IvInventoryPostingBatchResult.Fail(batchNo, subconOwnedErr));
+
+        if (!reversal)
+        {
+            var batchDetails = await db.IvTrxBatchDetails.AsNoTracking()
+                .Where(d => d.BatchId == batchInfo.Id)
+                .Select(d => new { d.FromBalLocId, d.ToWarehouse })
+                .ToArrayAsync(cancellationToken);
+            var sourceIds = batchDetails
+                .Where(d => d.FromBalLocId is > 0)
+                .Select(d => d.FromBalLocId!.Value)
+                .ToArray();
+            var destWhs = batchDetails
+                .Where(d => !string.IsNullOrWhiteSpace(d.ToWarehouse))
+                .Select(d => d.ToWarehouse!)
+                .ToArray();
+            if (await _subconCustody.AssertStockMovementAllowedAsync(
+                    db, companyCode, branchCode, batchInfo.TrxType ?? string.Empty,
+                    sourceIds, destWhs, isAuthorizedSubconCaller: false,
+                    cancellationToken) is string custodyErr)
+                return (null, IvInventoryPostingBatchResult.Fail(batchNo, custodyErr));
+        }
 
         // Ledger effective time must match the inventory document date so V2 history
         // does not create later-day chronology that blocks re-post after rollback.
-        var effectiveAt = batchDate.Value;
+        var effectiveAt = batchInfo.TrxDtTime;
         var begin = await BeginPostingInTransactionAsync(
             db, companyCode, branchCode, batchNo, reversal, effectiveAt, cancellationToken);
         if (begin.Error is not null)

@@ -13,6 +13,8 @@ public sealed class SubconResult
     public SubconDispatchLineLookupPage? DispatchLineLookup { get; init; }
     public SubconJobDto? Job { get; init; }
     public IReadOnlyList<SubconCustodyReconciliationRow>? Reconciliation { get; init; }
+    public IReadOnlyList<SubconSupplierCustodyMapDto>? SupplierCustodyMaps { get; init; }
+    public SubconSupplierCustodyMapDto? SupplierCustodyMap { get; init; }
     public bool CanUseProductionMode { get; init; }
 
     public static SubconResult Fail(string message) => new() { Succeeded = false, ErrorMessage = message };
@@ -28,6 +30,12 @@ public sealed class SubconResult
 
     public static SubconResult OkReconciliation(IReadOnlyList<SubconCustodyReconciliationRow> rows) =>
         new() { Succeeded = true, Reconciliation = rows };
+
+    public static SubconResult OkSupplierCustodyMaps(IReadOnlyList<SubconSupplierCustodyMapDto> rows) =>
+        new() { Succeeded = true, SupplierCustodyMaps = rows };
+
+    public static SubconResult OkSupplierCustodyMap(SubconSupplierCustodyMapDto row, string? info = null) =>
+        new() { Succeeded = true, SupplierCustodyMap = row, InfoMessage = info };
 
     public static SubconResult OkList(SubconListPage page, bool canUseProductionMode = false) =>
         new() { Succeeded = true, ListPage = page, CanUseProductionMode = canUseProductionMode };
@@ -70,6 +78,26 @@ public sealed class SubconPolicySaveCommand
     public bool ProductionWipEnabled { get; init; }
     public bool FeeCapitalizationEnabled { get; init; }
     public string? DefaultCustodyWarehouseCode { get; init; }
+    public byte[]? RowVersion { get; init; }
+}
+
+public sealed class SubconSupplierCustodyMapDto
+{
+    public long Uid { get; init; }
+    public string SupplierCode { get; init; } = string.Empty;
+    public string? SupplierName { get; init; }
+    public string CustodyWarehouseCode { get; init; } = string.Empty;
+    public string CustodyLocationCode { get; init; } = string.Empty;
+    public bool IsActive { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
+public sealed class SubconSupplierCustodyMapSaveCommand
+{
+    public string SupplierCode { get; init; } = string.Empty;
+    public string CustodyWarehouseCode { get; init; } = string.Empty;
+    public string CustodyLocationCode { get; init; } = string.Empty;
+    public bool IsActive { get; init; } = true;
     public byte[]? RowVersion { get; init; }
 }
 

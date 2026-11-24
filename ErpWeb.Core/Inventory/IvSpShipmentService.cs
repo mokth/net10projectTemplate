@@ -875,24 +875,26 @@ public sealed class IvSpShipmentService : IIvSpShipmentService
         string warehouse,
         DateTime invDate,
         CancellationToken cancellationToken) =>
-        db.IvBalLocs
-            .AsNoTracking()
-            .Where(x =>
-                x.CompanyCode == companyCode
-                && x.BranchCode == branchCode
-                && x.ICode == iCode
-                && x.WhCode == warehouse
-                && (x.LocationCode == tenantLocation
-                    || x.LocationCode == null
-                    || x.LocationCode == "")
-                && x.StdQty > 0
-                && x.IStatus == IvItemStatuses.Active
-                && x.TransDate != null
-                && x.TransDate < invDate.Date.AddDays(1))
-            .OrderBy(x => x.TransDate)
-            .ThenBy(x => x.LotNo)
-            .ThenBy(x => x.Id)
-            .ToListAsync(cancellationToken);
+        (from x in db.IvBalLocs.AsNoTracking()
+         join wh in db.IvWarehouses.AsNoTracking()
+             on new { x.CompanyCode, x.BranchCode, WarehouseCode = x.WhCode }
+             equals new { wh.CompanyCode, wh.BranchCode, wh.WarehouseCode } into whs
+         from wh in whs.DefaultIfEmpty()
+         where x.CompanyCode == companyCode
+               && x.BranchCode == branchCode
+               && x.ICode == iCode
+               && x.WhCode == warehouse
+               && (x.LocationCode == tenantLocation
+                   || x.LocationCode == null
+                   || x.LocationCode == "")
+               && x.StdQty > 0
+               && x.IStatus == IvItemStatuses.Active
+               && x.TransDate != null
+               && x.TransDate < invDate.Date.AddDays(1)
+               && (wh == null || wh.WarehouseType == null || wh.WarehouseType.ToUpper() != "SUBCON")
+         orderby x.TransDate, x.LotNo, x.Id
+         select x)
+        .ToListAsync(cancellationToken);
 
     private async Task<decimal> SumOtherNewSpReservationsAsync(
         AppDbContext db,

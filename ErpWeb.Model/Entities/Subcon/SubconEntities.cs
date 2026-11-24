@@ -308,3 +308,20 @@ public class SubconCustodyAllocation
     public SubconDispatchLine DispatchLine { get; set; } = null!;
     public SubconPostingLink PostingLink { get; set; } = null!;
 }
+
+/// <summary>Explicit branch-scoped mapping from 20-char SupplierCode to (SUBCON warehouse, 10-char IvLocation.LocCode).</summary>
+public class SubconSupplierCustodyMap
+{
+    public long Uid { get; set; }
+    public string CompanyCode { get; set; } = string.Empty;
+    public string BranchCode { get; set; } = string.Empty;
+    public string SupplierCode { get; set; } = string.Empty;
+    public string CustodyWarehouseCode { get; set; } = string.Empty;
+    public string CustodyLocationCode { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedDate { get; set; }
+    public string CreatedBy { get; set; } = string.Empty;
+    public DateTime? ModifiedDate { get; set; }
+    public string? ModifiedBy { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
