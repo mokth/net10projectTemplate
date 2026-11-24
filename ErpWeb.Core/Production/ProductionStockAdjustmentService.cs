@@ -601,6 +601,9 @@ public sealed class ProductionStockAdjustmentService(
                 link.Status = ProductionPostingLinkStatuses.Pending;
             }
             context.Posting.ProductionPostingLinkId = link.Uid;
+            if (!reversal)
+                context.CostMethod = await new StockCostMethodResolver().ResolveAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, context.Posting.EffectiveAt, ct);
             IReadOnlyCollection<ProductionStockLeg> legs;
             IReadOnlyDictionary<string, ProductionInboundValuationAuthority> authorities = new Dictionary<string, ProductionInboundValuationAuthority>();
             if (reversal) legs = await BuildReversalLegsAsync(context, doc, pools, originalFacts, link, ct);

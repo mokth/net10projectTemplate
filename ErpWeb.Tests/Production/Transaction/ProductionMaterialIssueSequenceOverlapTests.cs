@@ -946,6 +946,38 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public Task Backdated_wac_receipt_reprices_material_padj_in_and_out_authorities(
+        bool goodsReceipt) => BackdatedReceiptAndProductionIssueAsync(goodsReceipt, true, 906, false);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Backdated_fifo_receipt_reprices_material_padj_in_and_out_authorities(
+        bool goodsReceipt) => BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, true, 906);
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public Task Backdated_wac_receipt_reprices_output_wip_padj_with_manual_or_zero_authority(
+        bool goodsReceipt, bool zeroCost) => BackdatedReceiptAndProductionIssueAsync(goodsReceipt, true, zeroCost ? 908 : 907, false);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Backdated_fifo_receipt_reprices_output_wip_padj_with_manual_authority(
+        bool goodsReceipt) => BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, true, 907);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Backdated_standard_receipt_preserves_output_wip_padj_with_standard_authority(
+        bool goodsReceipt) => BackdatedReceiptAndProductionIssueAsync(goodsReceipt, true, 908, true);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public Task Backdated_wac_and_standard_goods_receipt_respects_qa_gate_and_restores_allocation(
         bool standard) => BackdatedReceiptAndProductionIssueAsync(true, true, 73, standard);
 
@@ -1129,7 +1161,11 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                     await db.Database.ExecuteSqlRawAsync("SET IDENTITY_INSERT dbo.IvBalLoc OFF");
             }
             if (standard)
+            {
                 await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "RM001", 2m);
+                if (consumeAt == 908)
+                    await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "WIP-OUT", 5m);
+            }
         }
 
         IvMiscReceiptService? earlierReceipt = null;
@@ -1413,19 +1449,50 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.True(result.Succeeded, result.Message);
             consumedOutputId = created.Data.Uid;
         }
-        if (consumeAt is 9 or 11 or 13 or 14 or 15 or 16 or 17 or 20 or 22 or 24 or 25 or 26 or 27 or 28 or 29 or 30 or 31 or 34 or 35 or 36 or 37 or 38 or 39 or 40 or 41 or 42 or 43 or 44 or 45 or 46 or 47 or 48 or 49 or 50 or 52 or 53 or 54 or 55 or 56 or 57 or 58 or 59 or 60 or 61 or 62 or 63 or 64 or 65 or 66 or 67 or 68 or 69 or 70 or 74 or 75 or 76 or 77 or 78 or 79 or 80 or 81 or 82 or 83 or 84 or 157 or 158 or 159 or 160 or 161 or 162 or 163 or >= 165 and <= 180 or 901 or 904)
+        if (consumeAt is 9 or 11 or 13 or 14 or 15 or 16 or 17 or 20 or 22 or 24 or 25 or 26 or 27 or 28 or 29 or 30 or 31 or 34 or 35 or 36 or 37 or 38 or 39 or 40 or 41 or 42 or 43 or 44 or 45 or 46 or 47 or 48 or 49 or 50 or 52 or 53 or 54 or 55 or 56 or 57 or 58 or 59 or 60 or 61 or 62 or 63 or 64 or 65 or 66 or 67 or 68 or 69 or 70 or 74 or 75 or 76 or 77 or 78 or 79 or 80 or 81 or 82 or 83 or 84 or 157 or 158 or 159 or 160 or 161 or 162 or 163 or >= 165 and <= 180 or 901 or 904 or 907 or 908)
             await ConsumeIssueAsync();
         List<PostedPadj>? postedPadjs = null;
-        if (consumeAt is 902 or 903)
+        if (consumeAt is 902 or 903 or 906 or 907 or 908)
         {
             var padjNumbers = new TestRunningNumberService();
             postedPadjs = [];
             if (consumeAt == 902)
                 postedPadjs.Add(await PostPadjOutAsync(graph.OrderId, issue.Data.BatchNo, 2m, businessDate.AddHours(13), padjNumbers));
-            else
+            else if (consumeAt == 903)
             {
                 postedPadjs.Add(await PostPadjOutAsync(graph.OrderId, issue.Data.BatchNo, 1m, businessDate.AddHours(13), padjNumbers));
                 postedPadjs.Add(await PostPadjOutAsync(graph.OrderId, issue.Data.BatchNo, 2m, businessDate.AddHours(14), padjNumbers));
+            }
+            else if (consumeAt == 906)
+            {
+                long matPoolId;
+                await using (var db = await _factory.CreateDbContextAsync())
+                {
+                    var mat = await db.ProductionMaterialMovements.SingleAsync(m =>
+                        m.InventoryBatchNo == issue.Data.BatchNo && m.MovementType == ProductionMaterialMovementTypes.Issue);
+                    matPoolId = await db.ProductionBalLots.Where(l => l.OriginalIssueMovementId == mat.Uid).Select(l => l.Uid).SingleAsync();
+                }
+                postedPadjs.Add(await PostPadjOnPoolAsync(graph.OrderId, matPoolId, 2m, businessDate.AddHours(13), padjNumbers));
+                postedPadjs.Add(await PostPadjOnPoolAsync(graph.OrderId, matPoolId, -6m, businessDate.AddHours(14), padjNumbers));
+                postedPadjs.Add(await PostPadjOnPoolAsync(graph.OrderId, matPoolId, 3m, businessDate.AddHours(15), padjNumbers));
+            }
+            else
+            {
+                long wipPoolId;
+                await using (var db = await _factory.CreateDbContextAsync())
+                    wipPoolId = await db.ProductionBalLotMovements
+                        .Where(m => m.ProductionOutputId == consumedOutputId && m.MovementType == ProductionBalLotMovementTypes.Produce)
+                        .Select(m => m.ProductionBalLotId).SingleAsync();
+                postedPadjs.Add(await PostPadjOnPoolAsync(graph.OrderId, wipPoolId, 2m, businessDate.AddHours(14), padjNumbers));
+                postedPadjs.Add(await PostPadjOnPoolAsync(graph.OrderId, wipPoolId, -6m, businessDate.AddHours(15), padjNumbers));
+                if (consumeAt == 907)
+                    postedPadjs.Add(await PostPadjOnPoolAsync(graph.OrderId, wipPoolId, 2m, businessDate.AddHours(16), padjNumbers,
+                        proposedUnitCost: 7m, costEvidenceType: InventoryCostEvidenceTypes.ManualApproved, costOverrideReason: "Approved manual WIP cost"));
+                else if (standard)
+                    postedPadjs.Add(await PostPadjOnPoolAsync(graph.OrderId, wipPoolId, 2m, businessDate.AddHours(16), padjNumbers));
+                else
+                    postedPadjs.Add(await PostPadjOnPoolAsync(graph.OrderId, wipPoolId, 2m, businessDate.AddHours(16), padjNumbers,
+                        proposedUnitCost: 0m, costEvidenceType: InventoryCostEvidenceTypes.ZeroCostApproved, costOverrideReason: "Approved zero WIP cost"));
             }
         }
         PostedWorkOrderTransfer? postedTransfer = null;
@@ -3164,6 +3231,32 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.NotNull(postedPrtn);
             await AssertPrtnReplayCycleAsync(
                 postedPrtn!, issue.Data.BatchNo, receiptBatchNo, goodsReceipt,
+                PostReceiptAsync, RollbackReceiptAsync);
+            return;
+        }
+        if (consumeAt == 906)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            Assert.NotNull(postedPadjs);
+            await AssertMaterialPadjInOutCycleAsync(
+                postedPadjs!, issue.Data.BatchNo, goodsReceipt,
+                expectedPostedStockValue: 75.6m, expectedPostedIssueCost: 14.4m,
+                expectedOriginalStockValue: 32m, expectedOriginalIssueCost: 8m,
+                PostReceiptAsync, RollbackReceiptAsync);
+            return;
+        }
+        if (consumeAt is 907 or 908)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            Assert.NotNull(postedPadjs);
+            var fixedInValue = consumeAt == 907 ? 14m : standard ? 10m : 0m;
+            await AssertOutputWipPadjCycleAsync(
+                postedPadjs!, consumedOutputId, goodsReceipt,
+                expectedPostedStockValue: standard ? 42m : 75.6m,
+                expectedPostedProduceCost: standard ? 12m : 18.4m,
+                expectedOriginalStockValue: 32m,
+                expectedOriginalProduceCost: 12m,
+                expectedFixedInValue: fixedInValue,
                 PostReceiptAsync, RollbackReceiptAsync);
             return;
         }
@@ -5172,11 +5265,44 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.True(result.Succeeded, result.Message);
             consumedOutputId = created.Data.Uid;
         }
-        if (scenario is 6 or 8 or 10 or 11 or 12 or 13 or 14 or 15 or 16 or 19 or 20 or 21 or 22 or 23 or 24 or 25 or 26 or 27 or 28 or 29 or 30 or 31 or 32 or 36 or 37 or 38 or 39 or 40 or 41 or 42 or 43 or 44 or 45 or 56 or 904)
+        if (scenario is 6 or 8 or 10 or 11 or 12 or 13 or 14 or 15 or 16 or 19 or 20 or 21 or 22 or 23 or 24 or 25 or 26 or 27 or 28 or 29 or 30 or 31 or 32 or 36 or 37 or 38 or 39 or 40 or 41 or 42 or 43 or 44 or 45 or 56 or 904 or 907)
             await ConsumeIssueAsync();
         List<PostedPadj>? fifoPostedPadjs = null;
         if (scenario == 902)
             fifoPostedPadjs = [await PostPadjOutAsync(graph.OrderId, issue.Data.BatchNo, 2m, new DateTime(2026, 10, 3, 13, 0, 0))];
+        else if (scenario == 906)
+        {
+            var padjNumbers = new TestRunningNumberService();
+            long matPoolId;
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                var mat = await db.ProductionMaterialMovements.SingleAsync(m =>
+                    m.InventoryBatchNo == issue.Data.BatchNo && m.MovementType == ProductionMaterialMovementTypes.Issue);
+                matPoolId = await db.ProductionBalLots.Where(l => l.OriginalIssueMovementId == mat.Uid).Select(l => l.Uid).SingleAsync();
+            }
+            fifoPostedPadjs =
+            [
+                await PostPadjOnPoolAsync(graph.OrderId, matPoolId, 2m, new DateTime(2026, 10, 3, 13, 0, 0), padjNumbers),
+                await PostPadjOnPoolAsync(graph.OrderId, matPoolId, -6m, new DateTime(2026, 10, 3, 14, 0, 0), padjNumbers),
+                await PostPadjOnPoolAsync(graph.OrderId, matPoolId, 3m, new DateTime(2026, 10, 3, 15, 0, 0), padjNumbers)
+            ];
+        }
+        else if (scenario == 907)
+        {
+            var padjNumbers = new TestRunningNumberService();
+            long wipPoolId;
+            await using (var db = await _factory.CreateDbContextAsync())
+                wipPoolId = await db.ProductionBalLotMovements
+                    .Where(m => m.ProductionOutputId == consumedOutputId && m.MovementType == ProductionBalLotMovementTypes.Produce)
+                    .Select(m => m.ProductionBalLotId).SingleAsync();
+            fifoPostedPadjs =
+            [
+                await PostPadjOnPoolAsync(graph.OrderId, wipPoolId, 2m, new DateTime(2026, 10, 3, 14, 0, 0), padjNumbers),
+                await PostPadjOnPoolAsync(graph.OrderId, wipPoolId, -6m, new DateTime(2026, 10, 3, 15, 0, 0), padjNumbers),
+                await PostPadjOnPoolAsync(graph.OrderId, wipPoolId, 2m, new DateTime(2026, 10, 3, 16, 0, 0), padjNumbers,
+                    proposedUnitCost: 7m, costEvidenceType: InventoryCostEvidenceTypes.ManualApproved, costOverrideReason: "Approved manual FIFO WIP cost")
+            ];
+        }
         PostedWorkOrderTransfer? fifoPostedTransfer = null;
         if (scenario == 904)
             fifoPostedTransfer = await PostWorkOrderTransferForOutputAsync(consumedOutputId, new DateTime(2026, 10, 3, 14, 0, 0));
@@ -6259,6 +6385,29 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 fifoPostedTransfer!, consumedOutputId, receiptBatch, goodsReceipt,
                 expectedPostedStockValue: 66m, expectedPostedTransferCost: 28m,
                 expectedOriginalStockValue: 32m, expectedOriginalTransferCost: 12m,
+                PostReceiptAsync, RollbackReceiptAsync);
+            return;
+        }
+        if (scenario == 906)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            Assert.NotNull(fifoPostedPadjs);
+            await AssertMaterialPadjInOutCycleAsync(
+                fifoPostedPadjs!, issue.Data.BatchNo, goodsReceipt,
+                expectedPostedStockValue: 66m, expectedPostedIssueCost: 24m,
+                expectedOriginalStockValue: 32m, expectedOriginalIssueCost: 8m,
+                PostReceiptAsync, RollbackReceiptAsync);
+            return;
+        }
+        if (scenario == 907)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            Assert.NotNull(fifoPostedPadjs);
+            await AssertOutputWipPadjCycleAsync(
+                fifoPostedPadjs!, consumedOutputId, goodsReceipt,
+                expectedPostedStockValue: 66m, expectedPostedProduceCost: 28m,
+                expectedOriginalStockValue: 32m, expectedOriginalProduceCost: 12m,
+                expectedFixedInValue: 14m,
                 PostReceiptAsync, RollbackReceiptAsync);
             return;
         }
@@ -8530,6 +8679,189 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 .Where(f => f.BatchId == posted.Data!.Id && f.ReversesFactId == null)
                 .Select(f => f.ProductionMovementId).SingleAsync();
         return new(service, posted.Data!, movementId, outQty);
+    }
+
+    private async Task<PostedPadj> PostPadjOnPoolAsync(
+        long orderId, long poolId, decimal signedQty, DateTime effectiveAt,
+        IRunningNumberService numbers,
+        decimal? proposedUnitCost = null, string? costEvidenceType = null, string? costOverrideReason = null)
+    {
+        int snapshotRevision;
+        string snapshotHash;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var order = await db.ProductionWorkOrders.SingleAsync(o => o.Uid == orderId);
+            snapshotRevision = order.SnapshotRevision;
+            snapshotHash = order.SnapshotHash ?? string.Empty;
+        }
+        var service = new ProductionStockAdjustmentService(
+            _factory, InventoryTenantTestHelper.CreateTenantContext(), Access(),
+            new FixedCurrentDateService(effectiveAt.Date, effectiveAt),
+            numbers, new BranchStockTransactionLock(),
+            ProductionLedgerTestFixture.CreateCoordinator(_factory),
+            new ProductionStockWriter(new StockMovementRegistry()),
+            new ItemStandardCostResolver());
+        var saved = await service.SaveAsync(new ProductionStockAdjustmentSaveRequest
+        {
+            WorkOrderId = orderId,
+            SnapshotRevision = snapshotRevision,
+            SnapshotHash = snapshotHash,
+            EffectiveDate = effectiveAt,
+            RefNo = $"PADJ-{signedQty}",
+            Lines = [new ProductionStockAdjustmentLineInput
+            {
+                ProductionBalLotId = poolId,
+                AdjustmentQty = signedQty,
+                Reason = ProductionStockAdjustmentReasons.All[0],
+                ProposedUnitCost = proposedUnitCost,
+                CostEvidenceType = costEvidenceType,
+                CostOverrideReason = costOverrideReason
+            }]
+        });
+        Assert.True(saved.Succeeded, saved.Message);
+        await using (var db = await _factory.CreateDbContextAsync())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE PrProductionStockAdjustment SET RowVersion = X'01' WHERE BatchId = {saved.Data!.Id};");
+        var draft = await service.GetAsync(saved.Data!.Id);
+        Assert.True(draft.Succeeded, draft.Message);
+        var posted = await service.PostAsync(new ProductionStockAdjustmentCommand(
+            draft.Data!.Id, draft.Data.RowVersion, Guid.NewGuid()));
+        Assert.True(posted.Succeeded, posted.Message);
+        long movementId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            movementId = await db.ProductionStockAdjustmentFacts
+                .Where(f => f.BatchId == posted.Data!.Id && f.ReversesFactId == null)
+                .Select(f => f.ProductionMovementId).SingleAsync();
+        return new(service, posted.Data!, movementId, Math.Abs(signedQty));
+    }
+
+    private async Task AssertMaterialPadjInOutCycleAsync(
+        IReadOnlyList<PostedPadj> padjs, int issueBatchNo, bool goodsReceipt,
+        decimal expectedPostedStockValue, decimal expectedPostedIssueCost,
+        decimal expectedOriginalStockValue, decimal expectedOriginalIssueCost,
+        Func<Task<(bool Succeeded, string? Error)>> postReceipt,
+        Func<Task<(bool Succeeded, string? Error)>> rollbackReceipt)
+    {
+        // Sequence: IP(4) -> PADJ IN(+2, CURRENT_PRODUCTION_POOL_COST) -> PADJ OUT(-6, POOLED_AVERAGE) -> PADJ IN(+3, ORIGINAL_ISSUE_COST)
+        async Task AssertStateAsync(decimal stockQty, decimal stockValue, decimal issueCost, decimal expectedRecvQty)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var stock = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+            Assert.Equal((stockQty, stockValue), (stock.OnHandBaseQty, stock.InventoryValue));
+            if (goodsReceipt)
+                Assert.Equal(expectedRecvQty, (await db.PoOrderDetails.SingleAsync()).RecvQty);
+            var material = await db.ProductionMaterialMovements.SingleAsync(m =>
+                m.InventoryBatchNo == issueBatchNo && m.MovementType == ProductionMaterialMovementTypes.Issue);
+            var pool = await db.ProductionBalLots.SingleAsync(l => l.OriginalIssueMovementId == material.Uid);
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == pool.Uid);
+            var issueMove = await db.ProductionBalLotMovements.SingleAsync(m =>
+                m.ProductionBalLotId == pool.Uid && m.MovementType == ProductionBalLotMovementTypes.Issue);
+            var ids = padjs.Select(p => p.MovementId).Append(issueMove.Uid).ToArray();
+            var effective = await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", ids);
+            var in1Cost = StockLedgerPrecision.Money(issueCost * 2m / 4m);
+            var outCost = StockLedgerPrecision.Money(issueCost + in1Cost);
+            var in2Cost = StockLedgerPrecision.Money(issueCost * 3m / 4m);
+            Assert.Equal(issueCost, effective[issueMove.Uid].TotalCost);
+            Assert.Equal(in1Cost, effective[padjs[0].MovementId].TotalCost);
+            Assert.Equal(outCost, effective[padjs[1].MovementId].TotalCost);
+            Assert.Equal(in2Cost, effective[padjs[2].MovementId].TotalCost);
+            Assert.Equal((3m, in2Cost, in2Cost), (pool.BaseQty, pool.TotalCost, valuation.TrackedValue));
+            var doc0 = await padjs[0].Service.GetAsync(padjs[0].Document.Id);
+            var doc1 = await padjs[1].Service.GetAsync(padjs[1].Document.Id);
+            var doc2 = await padjs[2].Service.GetAsync(padjs[2].Document.Id);
+            Assert.Equal(in1Cost, Assert.Single(doc0.Data!.Lines).TotalValue);
+            Assert.Equal(outCost, Assert.Single(doc1.Data!.Lines).TotalValue);
+            Assert.Equal(in2Cost, Assert.Single(doc2.Data!.Lines).TotalValue);
+        }
+
+        await AssertStateAsync(21m, expectedPostedStockValue, expectedPostedIssueCost, 5m);
+        Assert.True((await rollbackReceipt()).Succeeded);
+        await AssertStateAsync(16m, expectedOriginalStockValue, expectedOriginalIssueCost, 0m);
+        Assert.True((await postReceipt()).Succeeded);
+        await AssertStateAsync(21m, expectedPostedStockValue, expectedPostedIssueCost, 5m);
+
+        // Roll back the final ORIGINAL_ISSUE_COST ADJUST_IN and prove the restated value empties cleanly to 0.
+        var last = padjs[2];
+        await using (var db = await _factory.CreateDbContextAsync())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE PrProductionStockAdjustment SET RowVersion = X'01' WHERE BatchId = {last.Document.Id};");
+        var latestDoc = await last.Service.GetAsync(last.Document.Id);
+        Assert.True(latestDoc.Succeeded, latestDoc.Message);
+        var rolled = await last.Service.RollbackAsync(new ProductionStockAdjustmentCommand(
+            latestDoc.Data!.Id, latestDoc.Data.RowVersion, Guid.NewGuid(), "Reverse restated ORIGINAL_ISSUE_COST PADJ IN"));
+        Assert.True(rolled.Succeeded, rolled.Message);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var material = await db.ProductionMaterialMovements.SingleAsync(m =>
+                m.InventoryBatchNo == issueBatchNo && m.MovementType == ProductionMaterialMovementTypes.Issue);
+            var pool = await db.ProductionBalLots.SingleAsync(l => l.OriginalIssueMovementId == material.Uid);
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == pool.Uid);
+            Assert.Equal((0m, 0m, 0m), (pool.BaseQty, pool.TotalCost, valuation.TrackedValue));
+        }
+    }
+
+    private async Task AssertOutputWipPadjCycleAsync(
+        IReadOnlyList<PostedPadj> padjs, long outputId, bool goodsReceipt,
+        decimal expectedPostedStockValue, decimal expectedPostedProduceCost,
+        decimal expectedOriginalStockValue, decimal expectedOriginalProduceCost,
+        decimal expectedFixedInValue,
+        Func<Task<(bool Succeeded, string? Error)>> postReceipt,
+        Func<Task<(bool Succeeded, string? Error)>> rollbackReceipt)
+    {
+        // Sequence on OUTPUT WIP pool: PRODUCE(4) -> PADJ IN(+2, CURRENT_PRODUCTION_POOL_COST) -> PADJ OUT(-6) -> PADJ IN(+2, MANUAL/ZERO/STANDARD)
+        async Task AssertStateAsync(decimal stockQty, decimal stockValue, decimal produceCost, decimal expectedRecvQty)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var stock = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+            Assert.Equal((stockQty, stockValue), (stock.OnHandBaseQty, stock.InventoryValue));
+            if (goodsReceipt)
+                Assert.Equal(expectedRecvQty, (await db.PoOrderDetails.SingleAsync()).RecvQty);
+            var produce = await db.ProductionBalLotMovements.SingleAsync(m =>
+                m.ProductionOutputId == outputId && m.MovementType == ProductionBalLotMovementTypes.Produce);
+            var pool = await db.ProductionBalLots.SingleAsync(l => l.Uid == produce.ProductionBalLotId);
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == pool.Uid);
+            var ids = padjs.Select(p => p.MovementId).Append(produce.Uid).ToArray();
+            var effective = await ProductionEffectiveCostResolver.ResolveAsync(db, "DEMO", "HQ", ids);
+            var in1Cost = StockLedgerPrecision.Money(produceCost * 2m / 4m);
+            var outCost = StockLedgerPrecision.Money(produceCost + in1Cost);
+            Assert.Equal(produceCost, effective[produce.Uid].TotalCost);
+            Assert.Equal(in1Cost, effective[padjs[0].MovementId].TotalCost);
+            Assert.Equal(outCost, effective[padjs[1].MovementId].TotalCost);
+            Assert.Equal(expectedFixedInValue, effective[padjs[2].MovementId].TotalCost);
+            Assert.Null(effective[padjs[2].MovementId].RestatementFactId);
+            Assert.Equal((2m, expectedFixedInValue, expectedFixedInValue), (pool.BaseQty, pool.TotalCost, valuation.TrackedValue));
+            var doc0 = await padjs[0].Service.GetAsync(padjs[0].Document.Id);
+            var doc1 = await padjs[1].Service.GetAsync(padjs[1].Document.Id);
+            var doc2 = await padjs[2].Service.GetAsync(padjs[2].Document.Id);
+            Assert.Equal(in1Cost, Assert.Single(doc0.Data!.Lines).TotalValue);
+            Assert.Equal(outCost, Assert.Single(doc1.Data!.Lines).TotalValue);
+            Assert.Equal(expectedFixedInValue, Assert.Single(doc2.Data!.Lines).TotalValue);
+        }
+
+        await AssertStateAsync(21m, expectedPostedStockValue, expectedPostedProduceCost, 5m);
+        Assert.True((await rollbackReceipt()).Succeeded);
+        await AssertStateAsync(16m, expectedOriginalStockValue, expectedOriginalProduceCost, 0m);
+        Assert.True((await postReceipt()).Succeeded);
+        await AssertStateAsync(21m, expectedPostedStockValue, expectedPostedProduceCost, 5m);
+
+        // Roll back the final fixed-authority ADJUST_IN and prove the WIP pool returns cleanly to 0.
+        var last = padjs[2];
+        await using (var db = await _factory.CreateDbContextAsync())
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE PrProductionStockAdjustment SET RowVersion = X'01' WHERE BatchId = {last.Document.Id};");
+        var latestDoc = await last.Service.GetAsync(last.Document.Id);
+        Assert.True(latestDoc.Succeeded, latestDoc.Message);
+        var rolled = await last.Service.RollbackAsync(new ProductionStockAdjustmentCommand(
+            latestDoc.Data!.Id, latestDoc.Data.RowVersion, Guid.NewGuid(), "Reverse fixed-authority WIP PADJ IN"));
+        Assert.True(rolled.Succeeded, rolled.Message);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var produce = await db.ProductionBalLotMovements.SingleAsync(m =>
+                m.ProductionOutputId == outputId && m.MovementType == ProductionBalLotMovementTypes.Produce);
+            var pool = await db.ProductionBalLots.SingleAsync(l => l.Uid == produce.ProductionBalLotId);
+            var valuation = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == pool.Uid);
+            Assert.Equal((0m, 0m, 0m), (pool.BaseQty, pool.TotalCost, valuation.TrackedValue));
+        }
     }
 
     private async Task<PostedWorkOrderTransfer> PostWorkOrderTransferForOutputAsync(
