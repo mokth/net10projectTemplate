@@ -3147,6 +3147,185 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     public Task Sales_return_after_backdated_purchase_invoice_uses_corrected_delivery_cost() =>
         ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 1, returnAfterPurchase: true);
 
+    [Theory]
+    [InlineData("CN", 2, 48, 32, 16)]
+    [InlineData("DN", 2, 72, 48, 24)]
+    public async Task Backdated_purchase_credit_note_reprices_partially_billed_delivery_and_rolls_back(
+        string cdnType, decimal unitAdj, decimal expectedDoCogs, decimal expectedFinalValue, decimal expectedPerInvoiceCogs)
+    {
+        var day1 = new DateTime(2026, 9, 1, 8, 0, 0);
+        var day2 = new DateTime(2026, 9, 1, 9, 0, 0);
+        var day3 = new DateTime(2026, 9, 1, 10, 0, 0);
+        var day5 = FixedToday;
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedCompanyAsync(db);
+            await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 0m, 0m);
+            db.PoSuppliers.Add(new PoSupplier
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", SuppCode = "SUP01", SuppName = "Supplier",
+                Currency = "MYR", GlCode = "AP001", IsActive = true, RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            db.PoOrders.Add(new PoOrder
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-CDN-DO", PoRelNo = 1, PoDate = day1,
+                Status = PoOrderStatuses.New, VendCode = "SUP01", VendName = "Supplier",
+                CurCode = "MYR", OneTime = false, FinClosed = false
+            });
+            db.PoOrderDetails.Add(new PoOrderDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-CDN-DO", PoRelNo = 1, Line = 1,
+                ICode = "A100", IDesc = "Item A", OneTime = false, PoQty = 10m, PoPurQty = 10m,
+                RecvQty = 0m, ReturnQty = 0m, BalanceQty = 10m, OverRecvQty = 0m, InvoicedQty = 0m,
+                StdUom = "EA", PurchaseUom = "EA", PackSz = 1m, PoUnitPrice = 10m,
+                Amount = 100m, NetAmount = 100m, CurCode = "MYR"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        var access = Access();
+        var branchLock = new BranchStockTransactionLock();
+        var coordinator = new StockPostingCoordinator(_factory, tenant, branchLock,
+            new StockPeriodGuard(), new NoActiveStockFreezeGuard(), new InventoryValuationService());
+        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true);
+
+        // 1. GR 10 @ 10 on day1 -> stock 10 @ 10 = 100
+        var gr = new IvGoodsReceiptService(_factory, tenant, access.Object, new RunningNumberService(),
+            new FixedCurrentDateService(day5), new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+            new IvStockTransactionRepository(), new IvStockPostingRepository(), posting,
+            NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
+        var grDraft = await gr.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive, TrxDate = day1, RefNo = "GR-CDN-DO",
+            Lines = [new IvGoodsReceiptLineRequest { PoNo = "PO-CDN-DO", PoRelNo = 1, PoLineNo = 1, ToWarehouse = "MAIN", ToLocation = "BIN1", ToRecvQty = 10m }]
+        });
+        Assert.True(grDraft.Succeeded, grDraft.ErrorMessage);
+        Assert.True((await gr.PostAsync([grDraft.BatchNo])).Succeeded);
+
+        // 2. PI 10 @ 10 on day2
+        var pi = new PoInvoiceService(_factory, tenant, access.Object, new FakePoInvoiceDocumentNumberingService(),
+            new FixedCurrentDateService(day5), new PoInvoiceRepository(), new PoOrderRepository(), new PoCdnRepository(),
+            Options.Create(new PoOrderOptions()), NullLogger<PoInvoiceService>.Instance,
+            stockCoordinator: coordinator, costPostingCommands: new PurchaseCostPostingCommandFactory(),
+            costAdjustments: new PurchaseCostAdjustmentPostingService(coordinator, new StockValueAdjustmentWriter()),
+            receiptSettlements: new PurchaseReceiptCostSettlementService(), branchStockLock: branchLock,
+            configuration: new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenPeriodBackdatedReplayEnabled"] = "true" }).Build());
+        var piDraft = await pi.SaveNewAsync(new PoInvoiceSaveRequest
+        {
+            Type = PoInvoiceTypes.Invoice, DocDate = day2, VendorCode = "SUP01", InvNo = "SUP-PI-CDNDO",
+            Currency = "MYR", CurrRate = 1m, PriceTolerance = 20m,
+            Lines = [new PoInvoiceLineRequest { PoNo = "PO-CDN-DO", PoRelNo = 1, PoLineNo = 1, ICode = "A100", IDesc = "Item A", Qty = 10m, UnitPrice = 10m, SellingUom = "EA", TaxGroup = "SR", ItemGlCode = "GLPUR" }]
+        });
+        Assert.True(piDraft.Succeeded, piDraft.ErrorMessage);
+        var piDoc = (await pi.GetAsync(piDraft.DocNo!)).Document!;
+        Assert.True((await pi.PostAsync([new PoInvoiceKeyedRequest { DocNo = piDoc.DocNo, RowVersion = piDoc.RowVersion }])).Succeeded);
+
+        // 3. Ship DO of 6 on day5 -> COGS = 60, remaining = 4 @ 10 = 40; bill partially via TWO invoices (2 + 2)
+        var doRepo = new SaDoRepository();
+        var soRepo = new SaSoRepository();
+        var postingRepo = new IvStockPostingRepository();
+        var doService = new SaDoService(_factory, tenant, access.Object,
+            new FakeDocumentNumberingService(), new FixedCurrentDateService(day5),
+            doRepo, new SaCustRepository(_factory), new IvStockMasterRepository(_factory),
+            new IvStockCommonRepository(_factory), new IvStockTransactionRepository(), postingRepo,
+            posting, new IvSpShipmentService(postingRepo, new IvStockTransactionRepository(), new RunningNumberService()),
+            soRepo, new SaDocApplicationService(soRepo, doRepo),
+            new SaCustLookupService(_factory, tenant), NullLogger<SaDoService>.Instance);
+        var doDraft = await doService.SaveNewAsync(new SaDoSaveRequest
+        {
+            DoDate = day5, CustCode = "CUST01", Currency = "MYR", PayCode = "NET30", SalesRep = "SM1",
+            Lines = [new SaDoLineRequest { ICode = "A100", Qty = 6m, UnitPrice = 25m, FrWarehouse = "MAIN" }]
+        });
+        Assert.True(doDraft.Succeeded, doDraft.ErrorMessage);
+        var doToken = (await doService.GetAsync(doDraft.DoNo!)).Document!.RowVersion;
+        var doShip = await doService.AddShipmentAsync(doDraft.DoNo!, false, doToken);
+        Assert.True(doShip.Succeeded, doShip.ErrorMessage);
+        doToken = (await doService.GetAsync(doDraft.DoNo!)).Document!.RowVersion;
+        Assert.True((await doService.PostAsync([new SaDoKeyedRequest { DoNo = doDraft.DoNo!, RowVersion = doToken }])).Succeeded);
+
+        var invService = CreateSut(posting: posting, currentDate: new FixedCurrentDateService(day5),
+            numbering: new FakeDocumentNumberingService());
+        async Task<string> PostPartialLinkedInvoiceAsync(decimal qty)
+        {
+            var invDraft = await invService.SaveNewAsync(new SaInvoiceSaveRequest
+            {
+                InvDate = day5, CustCode = "CUST01", Currency = "MYR", PayCode = "NET30", SalesmanCode = "SM1",
+                Lines = [new SaInvoiceLineRequest
+                {
+                    ICode = "A100", Qty = qty, UnitPrice = 25m, FrWarehouse = "MAIN",
+                    LinkDo = true, DoNo = doDraft.DoNo, DoLine = 1
+                }]
+            });
+            Assert.True(invDraft.Succeeded, invDraft.ErrorMessage);
+            var posted = await invService.PostAsync([invDraft.InvNo!]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            return invDraft.InvNo!;
+        }
+        var inv1 = await PostPartialLinkedInvoiceAsync(2m);
+        var inv2 = await PostPartialLinkedInvoiceAsync(2m);
+
+        // 4. Backdated financial PO_CDN on day3 (before DO on day5) reprices DO + both partial invoices
+        var cdn = new PoCdnService(_factory, tenant, access.Object, new FakePoCdnDocumentNumberingService(),
+            new RunningNumberService(), new FixedCurrentDateService(day5), new PoCdnRepository(),
+            new PoInvoiceRepository(), postingRepo, new IvStockMasterRepository(_factory),
+            new IvStockCommonRepository(_factory), posting, NullLogger<PoCdnService>.Instance,
+            stockCoordinator: coordinator, costPostingCommands: new PurchaseCostPostingCommandFactory(),
+            costAdjustments: new PurchaseCostAdjustmentPostingService(coordinator, new StockValueAdjustmentWriter()),
+            cdnCostAdjustments: new PurchaseCdnCostAdjustmentService(), branchStockLock: branchLock,
+            configuration: new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenPeriodBackdatedReplayEnabled"] = "true" }).Build());
+        var cdnDraft = await cdn.SaveNewAsync(new PoCdnSaveRequest
+        {
+            Type = cdnType, DocDate = day3, VendorCode = "SUP01", InvNo = piDoc.DocNo,
+            ReturnStock = false, Currency = "MYR", ReasonCode = "PRICE_ADJUSTMENT",
+            SupplierDocNo = $"SUP-{cdnType}-DO", SupplierDocDate = day3, TaxGrCode = "SR",
+            Lines = [new PoCdnLineRequest { InvLineNo = 1, ICode = "A100", Qty = 10m, UnitPrice = unitAdj, ItemGlCode = "GLPUR" }]
+        });
+        Assert.True(cdnDraft.Succeeded, cdnDraft.ErrorMessage);
+
+        async Task<PoCdnKeyedRequest> CdnKeyAsync()
+        {
+            var doc = (await cdn.GetAsync(cdnDraft.DocNo!)).Document!;
+            return new PoCdnKeyedRequest { DocNo = doc.DocNo, RowVersion = doc.RowVersion };
+        }
+        var gpService = new SalesGrossProfitInquiryService(_factory, tenant);
+        var valQuery = new StockValuationQueryService(_factory, tenant);
+
+        async Task AssertCogsAsync(decimal doCogs, decimal finalValue, decimal perInvCogs)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal((4m, finalValue), (state.OnHandBaseQty, state.InventoryValue));
+            var spHistory = await db.IvTrxHistories.SingleAsync(h => h.TrxType == IvTrxTypes.SalesOut && h.InvNo == doDraft.DoNo && h.EntryRole == "ORIGINAL");
+            var activeFacts = (await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [spHistory]))[spHistory.Id];
+            Assert.Equal(doCogs, Assert.Single(activeFacts).CostAmount);
+
+            var row1 = Assert.Single((await gpService.SearchAsync(new SalesGrossProfitInquiryQuery { InvoiceNo = inv1 })).Rows);
+            var row2 = Assert.Single((await gpService.SearchAsync(new SalesGrossProfitInquiryQuery { InvoiceNo = inv2 })).Rows);
+            Assert.True(row1.CogsResolved);
+            Assert.True(row2.CogsResolved);
+            Assert.Equal(perInvCogs, row1.Cogs);
+            Assert.Equal(perInvCogs, row2.Cogs);
+            Assert.Equal(perInvCogs, (await valQuery.GetInvoiceCogsAsync(inv1)).TotalCogs);
+            Assert.Equal(perInvCogs, (await valQuery.GetInvoiceCogsAsync(inv2)).TotalCogs);
+        }
+
+        await AssertCogsAsync(60m, 40m, 20m);
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var post = await cdn.PostAsync([await CdnKeyAsync()]);
+            Assert.True(post.Succeeded, post.ErrorMessage);
+            await AssertCogsAsync(expectedDoCogs, expectedFinalValue, expectedPerInvoiceCogs);
+
+            var rollback = await cdn.RollbackAsync([await CdnKeyAsync()]);
+            Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+            await AssertCogsAsync(60m, 40m, 20m);
+        }
+    }
+
     [MultiWacReceiptSqlFact]
     [Trait(TestCategories.Name, TestCategories.SqlServer)]
     public async Task SqlServer_backdated_purchase_invoice_reprices_direct_sale_atomically()

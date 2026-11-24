@@ -21,7 +21,7 @@ public sealed partial class PoInvoiceService
         if (sales.Length == 0)
             return Array.Empty<InvoiceDirectSaleProof>();
         if (sales.Length != 1 || histories.Any(h =>
-                h.TrxType is not (IvTrxTypes.SalesOut or IvTrxTypes.MiscellaneousIssue
+                h.TrxType is not (IvTrxTypes.SalesOut or IvTrxTypes.MiscellaneousIssue or IvTrxTypes.Scrap
                     or IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)))
             return null;
         if (!string.IsNullOrWhiteSpace(sales[0].DoNo))
@@ -48,7 +48,7 @@ public sealed partial class PoInvoiceService
             invoice.CustCode, line.Id, line.Line, line.ICode, line.Qty, line.StdQty, line.StdUom, line.NetAmount)];
     }
 
-    private static async Task<bool> LockInvoiceDirectSalesAsync(AppDbContext db, string company, string branch,
+    internal static async Task<bool> LockInvoiceDirectSalesAsync(AppDbContext db, string company, string branch,
         IReadOnlyList<InvoiceDirectSaleProof>? sales, CancellationToken ct)
     {
         if (sales is null || sales.Count == 0)

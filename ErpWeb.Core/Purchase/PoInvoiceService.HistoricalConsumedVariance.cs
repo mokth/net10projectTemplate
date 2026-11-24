@@ -284,8 +284,8 @@ public sealed partial class PoInvoiceService
         var issues = await db.IvTrxHistories.AsNoTracking().Where(h => ids.Contains(h.Id)
             && h.CompanyCode == company && h.BranchCode == branch).ToArrayAsync(ct);
         if (issues.Length != ids.Length || issues.Any(h => h.ICode != item || h.LedgerEpochId != epochId
-                || h.LedgerVersion != 2 || h.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.MiscellaneousReceipt
-                    or IvTrxTypes.GoodsReceive or IvTrxTypes.SalesOut)
+                || h.LedgerVersion != 2 || h.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.Scrap
+                    or IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive or IvTrxTypes.SalesOut)
                 || h.EntryRole != "ORIGINAL" || h.BatchStatus != IvBatchStatuses.Posted
                 || h.ValuationStatus != StockValuationStatuses.Valued || h.StockPostingId is null))
             return null;
@@ -339,7 +339,7 @@ public sealed partial class PoInvoiceService
                     return null;
                 receipts.Add(receipt);
             }
-            else if (issue.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.SalesOut)
+            else if (issue.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.Scrap or IvTrxTypes.SalesOut)
                 || issue.FromBalLocId != balanceId || issue.ToBalLocId is not null)
                 return null;
             else if (step.SignedValue != movement.OldSignedValue)

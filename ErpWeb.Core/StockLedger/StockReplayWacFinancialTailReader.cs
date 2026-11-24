@@ -101,6 +101,12 @@ public static class StockReplayWacFinancialTailReader
             [], false, null, cancellationToken, permittedCdnTailId: noteFactId);
     }
 
+    internal static Task<StockReplayWacFinancialTail> ReadLaterForCdnAsync(
+        AppDbContext db, string companyCode, string branchCode, string itemCode,
+        StockReplayEventKey after, CancellationToken cancellationToken = default) =>
+        ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
+            [], false, null, cancellationToken, allowLaterPurchaseNotes: true);
+
     internal static Task<StockReplayWacFinancialTail> ReadLaterForCdnRemovalAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayEventKey after, long factId, CancellationToken cancellationToken = default)
@@ -108,14 +114,15 @@ public static class StockReplayWacFinancialTailReader
         if (factId <= 0 || factId >= long.MaxValue - int.MaxValue)
             throw Corrupt("The purchase credit/debit note has no valid value fact identity.");
         return ReadLaterCoreAsync(db, companyCode, branchCode, itemCode, after,
-            [], false, null, cancellationToken, factId);
+            [], false, null, cancellationToken, factId, allowLaterPurchaseNotes: true);
     }
 
     private static async Task<StockReplayWacFinancialTail> ReadLaterCoreAsync(
         AppDbContext db, string companyCode, string branchCode, string itemCode,
         StockReplayEventKey after, IReadOnlyCollection<long> excludedValueIds,
         bool excludeSaleCycle, long? permittedPurchaseFactId, CancellationToken cancellationToken,
-        long? permittedCdnAnchorId = null, StockReplayEventKey? removalKey = null, long? permittedCdnTailId = null)
+        long? permittedCdnAnchorId = null, StockReplayEventKey? removalKey = null, long? permittedCdnTailId = null,
+        bool allowLaterPurchaseNotes = false)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (string.IsNullOrWhiteSpace(companyCode)
@@ -487,13 +494,14 @@ public static class StockReplayWacFinancialTailReader
                         throw Corrupt($"Earlier purchase credit/debit note value fact {fact.Id} has invalid evidence.");
                     continue;
                 }
-                if (noteFact.Id == permittedCdnTailId)
+                if (noteFact.Id == permittedCdnTailId || allowLaterPurchaseNotes)
                 {
                     var target = removalKey ?? after;
                     if (noteKey.CompareTo(target) <= 0
                         || noteKey.EffectiveAt.Year != target.EffectiveAt.Year
                         || noteKey.EffectiveAt.Month != target.EffectiveAt.Month
-                        || await db.StockReplayRuns.AsNoTracking().AnyAsync(r => r.RootStockPostingId == noteOwner.Id, cancellationToken)
+                        || (noteFact.Id == permittedCdnTailId
+                            && await db.StockReplayRuns.AsNoTracking().AnyAsync(r => r.RootStockPostingId == noteOwner.Id, cancellationToken))
                         || !await StockReplayInvoiceIssueAudit.ValidateEarlierCdnAsync(db, companyCode, branchCode,
                             noteOwner, noteFact, cancellationToken))
                         throw Corrupt($"Later purchase credit/debit note value fact {fact.Id} has invalid evidence.");

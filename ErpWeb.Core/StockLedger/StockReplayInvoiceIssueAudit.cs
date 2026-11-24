@@ -172,7 +172,7 @@ internal static class StockReplayInvoiceIssueAudit
                 if (prior is null || history is null || owner is null || owner.SealedAtUtc is null
                     || owner.LedgerEpochId != root.LedgerEpochId || history.ICode != value.ItemCode
                     || history.LedgerVersion != 2 || history.LedgerEpochId != root.LedgerEpochId
-                    || history.EntryRole != "ORIGINAL" || history.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.SalesOut)
+                    || history.EntryRole != "ORIGINAL" || history.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.Scrap or IvTrxTypes.SalesOut)
                     || history.TrxDtTime < root.EffectiveAt || history.TrxDtTime.Year != root.EffectiveAt.Year
                     || history.TrxDtTime.Month != root.EffectiveAt.Month
                     || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != history.TrxType

@@ -15,7 +15,12 @@ public sealed partial class PoCdnService
         string PoNo, short PoRelNo, short PoLineNo, long? OriginalPostingId, long? OriginalFactId,
         PurchaseCostAdjustmentRequest InitialAdjustment,
         PurchaseCostAdjustmentRequest EffectiveAdjustment,
-        PoInvoiceService.InvoiceIssueReplay Replay);
+        PoInvoiceService.InvoiceIssueReplay Replay,
+        IReadOnlyList<string> LaterNoteDocNos);
+
+    private sealed record LaterPurchaseNoteProof(
+        string DocNo, int CostingRevision, byte[] RowVersion,
+        long AdjustmentId, long FactId, decimal InventoryAdjustmentAmount);
 
     private async Task<CdnIssueReplayPlan?> PreviewCdnIssueReplayAsync(
         UserContext write, string docNo, bool posting, CancellationToken ct)
@@ -66,11 +71,27 @@ public sealed partial class PoCdnService
             WHERE CompanyCode = {write.CompanyCode} AND BranchCode = {write.BranchCode}
                 AND PONo = {plan.PoNo} AND PORelNo = {plan.PoRelNo} AND Line = {plan.PoLineNo}")
             .AsNoTracking().ToArrayAsync(ct);
-        return invoices.Length == 1 && invoiceLines.Length > 0 && notes.Length == 1
-            && lines.Length == 1 && orders.Length == 1 && orderLines.Length == 1;
+        if (invoices.Length != 1 || invoiceLines.Length == 0 || notes.Length != 1
+            || lines.Length != 1 || orders.Length != 1 || orderLines.Length != 1)
+            return false;
+        foreach (var laterDocNo in plan.LaterNoteDocNos.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            var laterNotes = await db.PoCdns.FromSqlInterpolated($@"SELECT * FROM dbo.PoCdn WITH (UPDLOCK, HOLDLOCK, NOWAIT)
+                WHERE CompanyCode = {write.CompanyCode} AND BranchCode = {write.BranchCode} AND DocNo = {laterDocNo}")
+                .AsNoTracking().ToArrayAsync(ct);
+            if (laterNotes.Length != 1)
+                return false;
+        }
+        return await PoInvoiceService.LockInvoiceLaterGoodsReceiptOrdersAsync(
+                db, write.CompanyCode!, write.BranchCode!, plan.Replay.GoodsReceipts, ct)
+            && await PoInvoiceService.LockInvoiceDirectSalesAsync(
+                db, write.CompanyCode!, write.BranchCode!, plan.Replay.Sales, ct)
+            && await PoInvoiceService.LockInvoiceDeliverySalesAsync(
+                db, write.CompanyCode!, write.BranchCode!, plan.Replay.Deliveries, ct);
     }
 
-    // Financial CN/DN replay supports ordinary issues on one stock pile.
+    // Financial CN/DN replay supports ordinary issues, scrap, receipts, sales (direct invoices
+    // and unbilled/partially/fully billed DOs), and unchanged later financial purchase notes on one stock pile.
     // Other dependencies continue through the existing safety guard.
     private async Task<CdnIssueReplayPlan?> PlanCdnIssueReplayAsync(
         AppDbContext db, PoCdn cdn, PoInvoice invoice, bool posting, CancellationToken ct)
@@ -90,7 +111,10 @@ public sealed partial class PoCdnService
         var branch = cdn.BranchCode;
         var item = line.ICode.Trim();
         if (posting && !await db.IvTrxHistories.AsNoTracking().AnyAsync(h => h.CompanyCode == company
-                && h.BranchCode == branch && h.ICode == item && h.TrxType == IvTrxTypes.MiscellaneousIssue
+                && h.BranchCode == branch && h.ICode == item
+                && (h.TrxType == IvTrxTypes.MiscellaneousIssue
+                    || h.TrxType == IvTrxTypes.Scrap
+                    || h.TrxType == IvTrxTypes.SalesOut)
                 && h.EntryRole == "ORIGINAL" && h.TrxDtTime > cdn.DocDate, ct))
             return null;
         var invoiceLine = invoice.Details.Single(d => d.Line == line.InvLineNo);
@@ -278,17 +302,28 @@ public sealed partial class PoCdnService
                 key.EffectiveAt, key.OriginalPostingSequence, [item], ct))
             return null;
         var tail = posting
-            ? await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch, item, key, ct)
+            ? await StockReplayWacFinancialTailReader.ReadLaterForCdnAsync(db, company, branch, item, key, ct)
             : await StockReplayWacFinancialTailReader.ReadLaterForCdnRemovalAsync(db, company, branch, item, key, originalFact!.Id, ct);
         if (tail.LaterEvents.Count is 0 or > StockReplayInvoiceIssueAudit.MaxIssueCount
             || tail.CurrentQuantity != states[0].OnHandBaseQty || tail.CurrentValue != states[0].InventoryValue
-            || tail.LaterEvents.Any(e => e.EventId is not (> 0 and <= int.MaxValue)
-                || e.Key.EffectiveAt.Year != cdn.DocDate.Year || e.Key.EffectiveAt.Month != cdn.DocDate.Month))
+            || tail.LaterEvents.Any(e => e.Key.EffectiveAt.Year != cdn.DocDate.Year
+                || e.Key.EffectiveAt.Month != cdn.DocDate.Month))
             return null;
-        var historyIds = tail.LaterEvents.Select(e => (int)e.EventId).ToArray();
+        var physicalEvents = tail.LaterEvents.Where(e => e.EventId is > 0 and <= int.MaxValue).ToArray();
+        var laterValueEvents = tail.LaterEvents.Where(e => e.EventId > int.MaxValue && e.EventId < long.MaxValue).ToArray();
+        if (physicalEvents.Length == 0
+            || physicalEvents.Length + laterValueEvents.Length != tail.LaterEvents.Count
+            || laterValueEvents.Any(e => e.OldSignedQuantity != 0m || e.FixedSignedValue != e.OldSignedValue
+                || e.OldSignedValue == 0m))
+            return null;
+        var historyIds = physicalEvents.Select(e => (int)e.EventId).ToArray();
         if (await db.IvTrxHistories.AsNoTracking().CountAsync(h => historyIds.Contains(h.Id)
                 && h.CompanyCode == company && h.BranchCode == branch && h.ICode == item
-                && h.TrxType == IvTrxTypes.MiscellaneousIssue, ct) != historyIds.Length)
+                && (h.TrxType == IvTrxTypes.MiscellaneousIssue
+                    || h.TrxType == IvTrxTypes.Scrap
+                    || h.TrxType == IvTrxTypes.MiscellaneousReceipt
+                    || h.TrxType == IvTrxTypes.GoodsReceive
+                    || h.TrxType == IvTrxTypes.SalesOut), ct) != historyIds.Length)
             return null;
         var policies = await db.StockCostPolicyRevisions.AsNoTracking().Where(p => p.CompanyCode == company
             && p.BranchCode == branch && p.Status == StockCostPolicyStatuses.Active
@@ -377,12 +412,17 @@ public sealed partial class PoCdnService
             finalQuantity = projected.FinalQuantity;
             finalValue = projected.FinalValue;
         }
+        var projectedStepsById = projectedSteps.ToDictionary(s => s.EventId);
+        var laterNotes = await ProveLaterUnchangedPurchaseNotesAsync(db, company, branch, item,
+            epochs[0].Id, cdn.DocNo, laterValueEvents, projectedStepsById, ct);
+        if (laterNotes is null)
+            return null;
+        var physicalSteps = physicalEvents.Select(e => projectedStepsById[e.EventId]).ToArray();
         var proof = await PoInvoiceService.PlanInvoiceIssueChangesAsync(db, company, branch, item,
             epochs[0].Id, balances[0].Id, invoice.DocNo, invoiceLine.PoNo, invoiceLine.PoRelNo.Value,
             invoiceLine.PoLineNo.Value, invoiceLine.Qty, invoicePosted: true,
-            tail.LaterEvents, projectedSteps, ct);
-        if (proof is null || proof.GoodsReceipts.Count != 0
-            || proof.Sales.Count != 0 || proof.Deliveries.Count != 0)
+            physicalEvents, physicalSteps, ct);
+        if (proof is null)
             return null;
         var replay = new PoInvoiceService.InvoiceIssueReplay(proof.Changes, proof.EvidenceHash,
             proof.GoodsReceipts, proof.Sales, proof.Deliveries, effectiveAdjustment.InventoryAdjustmentAmount,
@@ -413,10 +453,88 @@ public sealed partial class PoCdnService
             Balance = new { balances[0].Id, balances[0].StdQty, balances[0].RowVersion },
             State = new { states[0].Id, states[0].OnHandBaseQty, states[0].InventoryValue,
                 states[0].LastValuationFactId, states[0].LastPostingSequence, states[0].RowVersion },
+            LaterNotes = laterNotes,
             initialAdjustment, effectiveAdjustment, tail.LaterEvents, projectedSteps, finalQuantity, finalValue, replay
         }).SourceSnapshotHash;
         return new(fingerprint, epochs[0].Id, watermark, invoice.DocNo, invoiceLine.PoNo,
             invoiceLine.PoRelNo.Value, invoiceLine.PoLineNo.Value, original?.Id, priorFact?.Id,
-            initialAdjustment, effectiveAdjustment, replay);
+            initialAdjustment, effectiveAdjustment, replay,
+            laterNotes.Select(n => n.DocNo).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToArray());
+    }
+
+    private static async Task<IReadOnlyList<LaterPurchaseNoteProof>?> ProveLaterUnchangedPurchaseNotesAsync(
+        AppDbContext db, string company, string branch, string item, long epochId,
+        string currentCdnDocNo, IReadOnlyList<StockReplayWacEvent> laterValueEvents,
+        IReadOnlyDictionary<long, StockReplayWacStep> projectedStepsById, CancellationToken ct)
+    {
+        if (laterValueEvents.Count == 0)
+            return [];
+        var proofs = new List<LaterPurchaseNoteProof>(laterValueEvents.Count);
+        foreach (var noteEvent in laterValueEvents.OrderBy(e => e.Key))
+        {
+            var originalFactId = long.MaxValue - noteEvent.EventId;
+            if (!projectedStepsById.TryGetValue(noteEvent.EventId, out var step)
+                || step.SignedQuantity != 0m || step.SignedValue != noteEvent.OldSignedValue)
+                return null;
+            var origFact = await db.StockValuationFacts.AsNoTracking()
+                .SingleOrDefaultAsync(f => f.Id == originalFactId && f.CompanyCode == company
+                    && f.BranchCode == branch && f.LedgerEpochId == epochId && f.ItemCode == item
+                    && f.SourceDocumentType == "PO_CDN" && f.BaseQty == 0m
+                    && f.CostMethod == StockCostMethods.MovingAverage
+                    && f.ValuationSource == StockValuationSources.PurchasePriceVariance, ct);
+            if (origFact is null || origFact.SourceDocumentNo == currentCdnDocNo)
+                return null;
+            var noteHeader = await db.PoCdns.AsNoTracking()
+                .Where(c => c.CompanyCode == company && c.BranchCode == branch
+                    && c.DocNo == origFact.SourceDocumentNo && c.Status == PoCdnStatuses.Posted
+                    && !c.ReturnStock && c.DeletedAtUtc == null)
+                .Select(c => new { c.DocNo, c.CostingRevision, c.RowVersion })
+                .SingleOrDefaultAsync(ct);
+            if (noteHeader is null)
+                return null;
+            var allAdjustments = await db.PurchaseCostAdjustments.AsNoTracking()
+                .Where(a => a.CompanyCode == company && a.BranchCode == branch
+                    && a.SourceDocumentType == "PO_CDN"
+                    && a.SourceDocumentNo == noteHeader.DocNo
+                    && a.SourceCostingRevision == noteHeader.CostingRevision)
+                .ToArrayAsync(ct);
+            var rootAdjustments = allAdjustments.Where(a => a.ReversesAdjustmentId == null).ToArray();
+            if (rootAdjustments.Length != 1)
+                return null;
+            var childGroups = allAdjustments.Where(a => a.ReversesAdjustmentId.HasValue)
+                .GroupBy(a => a.ReversesAdjustmentId!.Value).ToArray();
+            if (childGroups.Any(g => g.Count() != 1))
+                return null;
+            var childMap = childGroups.ToDictionary(g => g.Key, g => g.Single());
+            var chain = new List<PurchaseCostAdjustment> { rootAdjustments[0] };
+            while (childMap.TryGetValue(chain[^1].Id, out var child))
+            {
+                if (chain.Count >= 101 || chain.Any(a => a.Id == child.Id))
+                    return null;
+                chain.Add(child);
+            }
+            if (chain.Count != allAdjustments.Length || chain.Count % 2 == 0)
+                return null;
+            var generation = await StockReplayPurchaseVarianceGenerationReader.TryReadAsync(db, chain, ct);
+            if (generation is null || generation.OriginalFact.Id != originalFactId
+                || generation.Active.ItemCode != item
+                || generation.Active.InventoryAdjustmentAmount != noteEvent.OldSignedValue
+                || generation.ActiveFact.SignedValue != noteEvent.OldSignedValue)
+                return null;
+            // Prove that the later note's historical inventory-vs-consumed split does NOT change
+            // (in particular, does not clip at zero under the replayed pool value before that note).
+            var replayedSplit = StockPurchaseVarianceAllocator.Allocate(
+                generation.Active.TotalAdjustmentAmount,
+                generation.Active.BaseQty,
+                Math.Min(step.QuantityBefore, generation.Active.BaseQty),
+                step.ValueBefore,
+                StockCostMethods.MovingAverage);
+            if (replayedSplit.Inventory != noteEvent.OldSignedValue)
+                return null;
+            proofs.Add(new LaterPurchaseNoteProof(
+                noteHeader.DocNo, noteHeader.CostingRevision, noteHeader.RowVersion,
+                generation.Active.Id, generation.ActiveFact.Id, generation.Active.InventoryAdjustmentAmount));
+        }
+        return proofs;
     }
 }

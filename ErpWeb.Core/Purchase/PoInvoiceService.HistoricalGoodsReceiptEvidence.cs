@@ -95,7 +95,7 @@ public sealed partial class PoInvoiceService
         return proof;
     }
 
-    private static async Task<bool> LockInvoiceLaterGoodsReceiptOrdersAsync(AppDbContext db,
+    internal static async Task<bool> LockInvoiceLaterGoodsReceiptOrdersAsync(AppDbContext db,
         string company, string branch, IReadOnlyList<InvoiceGoodsReceiptPurchaseProof>? receipts, CancellationToken ct)
     {
         if (receipts is null || receipts.Count == 0)

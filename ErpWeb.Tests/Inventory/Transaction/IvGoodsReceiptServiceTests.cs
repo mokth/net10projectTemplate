@@ -2523,6 +2523,296 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 0m, 0m,
             invoiceUnitPrice: 11m, testBackdatedCreditNote: "cdn-replay", cdnReplayCase: "qa");
 
+    [Theory]
+    [InlineData("CN", "CN", 36, 54, 28, 42)]
+    [InlineData("DN", "CN", 44, 66, 36, 54)]
+    public async Task Multiple_financial_purchase_notes_replay_and_roll_back_in_either_order(
+        string note1Type, string note2Type,
+        decimal afterNote1IssueCost, decimal afterNote1FinalValue,
+        decimal afterBothIssueCost, decimal afterBothFinalValue)
+    {
+        var day1 = FixedToday.AddDays(-5);
+        var day2 = FixedToday.AddDays(-4);
+        var day3 = FixedToday.AddDays(-3);
+        var day4 = FixedToday.AddDays(-2);
+        var day5 = FixedToday;
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            db.PoOrders.Add(new PoOrder
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-MULTI-CDN", PoRelNo = 1, PoDate = day1,
+                Status = PoOrderStatuses.New, VendCode = "SUP01", VendName = "Supplier",
+                CurCode = "MYR", OneTime = false, FinClosed = false
+            });
+            db.PoOrderDetails.Add(new PoOrderDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-MULTI-CDN", PoRelNo = 1, Line = 1,
+                ICode = "A100", IDesc = "Item A", OneTime = false, PoQty = 10m, PoPurQty = 10m,
+                RecvQty = 0m, ReturnQty = 0m, BalanceQty = 10m, OverRecvQty = 0m, InvoicedQty = 0m,
+                StdUom = "EA", PurchaseUom = "EA", PackSz = 1m, PoUnitPrice = 10m,
+                Amount = 100m, NetAmount = 100m, CurCode = "MYR"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var branchLock = new BranchStockTransactionLock();
+        var coordinator = new StockPostingCoordinator(_factory, tenant, branchLock,
+            new StockPeriodGuard(), new NoActiveStockFreezeGuard(), new InventoryValuationService());
+        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true);
+        var gr = new IvGoodsReceiptService(_factory, tenant, access.Object, new RunningNumberService(),
+            new FixedCurrentDateService(day5), new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+            new IvStockTransactionRepository(), new IvStockPostingRepository(), posting,
+            NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
+        var grDraft = await gr.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive, TrxDate = day1, RefNo = "GR-MCDN",
+            Lines = [new IvGoodsReceiptLineRequest { PoNo = "PO-MULTI-CDN", PoRelNo = 1, PoLineNo = 1, ToWarehouse = "MAIN", ToLocation = "BIN1", ToRecvQty = 10m }]
+        });
+        Assert.True(grDraft.Succeeded, grDraft.ErrorMessage);
+        Assert.True((await gr.PostAsync([grDraft.BatchNo])).Succeeded);
+
+        var pi = new PoInvoiceService(_factory, tenant, access.Object, new FakePoInvoiceDocumentNumberingService(),
+            new FixedCurrentDateService(day5), new PoInvoiceRepository(), new PoOrderRepository(), new PoCdnRepository(),
+            Options.Create(new PoOrderOptions()), NullLogger<PoInvoiceService>.Instance,
+            stockCoordinator: coordinator, costPostingCommands: new PurchaseCostPostingCommandFactory(),
+            costAdjustments: new PurchaseCostAdjustmentPostingService(coordinator, new StockValueAdjustmentWriter()),
+            receiptSettlements: new PurchaseReceiptCostSettlementService(), branchStockLock: branchLock,
+            configuration: new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenPeriodBackdatedReplayEnabled"] = "true" }).Build());
+        var piDraft = await pi.SaveNewAsync(new PoInvoiceSaveRequest
+        {
+            Type = PoInvoiceTypes.Invoice, DocDate = day2, VendorCode = "SUP01", InvNo = "SUP-PI-MCDN",
+            Currency = "MYR", CurrRate = 1m, PriceTolerance = 20m,
+            Lines = [new PoInvoiceLineRequest { PoNo = "PO-MULTI-CDN", PoRelNo = 1, PoLineNo = 1, ICode = "A100", IDesc = "Item A", Qty = 10m, UnitPrice = 10m, SellingUom = "EA", TaxGroup = "SR", ItemGlCode = "GLPUR" }]
+        });
+        Assert.True(piDraft.Succeeded, piDraft.ErrorMessage);
+        var piDoc = (await pi.GetAsync(piDraft.DocNo!)).Document!;
+        Assert.True((await pi.PostAsync([new PoInvoiceKeyedRequest { DocNo = piDoc.DocNo, RowVersion = piDoc.RowVersion }])).Succeeded);
+
+        int pileId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            pileId = await db.IvBalLocs.Where(b => b.ICode == "A100").Select(b => b.Id).SingleAsync();
+
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, day5, enableBackdatedReplay: true);
+        var miDraft = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = day5,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                Quantity = 4m, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 10m
+            }]
+        });
+        Assert.True(miDraft.Succeeded, miDraft.ErrorMessage);
+        Assert.True((await issue.PostAsync([miDraft.BatchNo])).Succeeded);
+
+        var cdn = new PoCdnService(_factory, tenant, access.Object, new FakePoCdnDocumentNumberingService(),
+            new RunningNumberService(), new FixedCurrentDateService(day5), new PoCdnRepository(),
+            new PoInvoiceRepository(), new IvStockPostingRepository(), new IvStockMasterRepository(_factory),
+            new IvStockCommonRepository(_factory), posting, NullLogger<PoCdnService>.Instance,
+            stockCoordinator: coordinator, costPostingCommands: new PurchaseCostPostingCommandFactory(),
+            costAdjustments: new PurchaseCostAdjustmentPostingService(coordinator, new StockValueAdjustmentWriter()),
+            cdnCostAdjustments: new PurchaseCdnCostAdjustmentService(), branchStockLock: branchLock,
+            configuration: new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenPeriodBackdatedReplayEnabled"] = "true" }).Build());
+
+        // Note 1 on day4 (unitAdj = 1 -> +-10), Note 2 on day3 (BEFORE Note 1, unitAdj = 2 -> -20)
+        var note1Draft = await cdn.SaveNewAsync(new PoCdnSaveRequest
+        {
+            Type = note1Type, DocDate = day4, VendorCode = "SUP01", InvNo = piDoc.DocNo,
+            ReturnStock = false, Currency = "MYR", ReasonCode = "PRICE_ADJUSTMENT",
+            SupplierDocNo = "SUP-NOTE-1", SupplierDocDate = day4, TaxGrCode = "SR",
+            Lines = [new PoCdnLineRequest { InvLineNo = 1, ICode = "A100", Qty = 10m, UnitPrice = 1m, ItemGlCode = "GLPUR" }]
+        });
+        Assert.True(note1Draft.Succeeded, note1Draft.ErrorMessage);
+
+        var note2Draft = await cdn.SaveNewAsync(new PoCdnSaveRequest
+        {
+            Type = note2Type, DocDate = day3, VendorCode = "SUP01", InvNo = piDoc.DocNo,
+            ReturnStock = false, Currency = "MYR", ReasonCode = "PRICE_ADJUSTMENT",
+            SupplierDocNo = "SUP-NOTE-2", SupplierDocDate = day3, TaxGrCode = "SR",
+            Lines = [new PoCdnLineRequest { InvLineNo = 1, ICode = "A100", Qty = 10m, UnitPrice = 2m, ItemGlCode = "GLPUR" }]
+        });
+        Assert.True(note2Draft.Succeeded, note2Draft.ErrorMessage);
+
+        async Task<PoCdnKeyedRequest> KeyForAsync(string docNo)
+        {
+            var doc = (await cdn.GetAsync(docNo)).Document!;
+            return new PoCdnKeyedRequest { DocNo = doc.DocNo, RowVersion = doc.RowVersion };
+        }
+        async Task AssertPoolAsync(decimal expectedIssueCost, decimal expectedFinalValue)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal((6m, expectedFinalValue), (state.OnHandBaseQty, state.InventoryValue));
+            var history = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == miDraft.BatchNo && h.EntryRole == "ORIGINAL");
+            var facts = (await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]))[history.Id];
+            Assert.Equal(expectedIssueCost, Assert.Single(facts).CostAmount);
+        }
+
+        // Post Note 1 (day4), then post Note 2 (day3, BEFORE Note 1!)
+        var p1 = await cdn.PostAsync([await KeyForAsync(note1Draft.DocNo!)]);
+        Assert.True(p1.Succeeded, p1.ErrorMessage);
+        await AssertPoolAsync(afterNote1IssueCost, afterNote1FinalValue);
+
+        var p2 = await cdn.PostAsync([await KeyForAsync(note2Draft.DocNo!)]);
+        Assert.True(p2.Succeeded, p2.ErrorMessage);
+        await AssertPoolAsync(afterBothIssueCost, afterBothFinalValue);
+
+        // Roll back Note 2 FIRST (while later Note 1 stays active!)
+        var r2 = await cdn.RollbackAsync([await KeyForAsync(note2Draft.DocNo!)]);
+        Assert.True(r2.Succeeded, r2.ErrorMessage);
+        await AssertPoolAsync(afterNote1IssueCost, afterNote1FinalValue);
+
+        // Repost Note 2, then roll back Note 1 FIRST, then roll back Note 2
+        var rp2 = await cdn.PostAsync([await KeyForAsync(note2Draft.DocNo!)]);
+        Assert.True(rp2.Succeeded, rp2.ErrorMessage);
+        await AssertPoolAsync(afterBothIssueCost, afterBothFinalValue);
+
+        var r1 = await cdn.RollbackAsync([await KeyForAsync(note1Draft.DocNo!)]);
+        Assert.True(r1.Succeeded, r1.ErrorMessage);
+        await AssertPoolAsync(32m, 48m);
+
+        var r2Again = await cdn.RollbackAsync([await KeyForAsync(note2Draft.DocNo!)]);
+        Assert.True(r2Again.Succeeded, r2Again.ErrorMessage);
+        await AssertPoolAsync(40m, 60m);
+    }
+
+    [Theory]
+    [InlineData("CN", -20)]
+    [InlineData("DN", 20)]
+    public async Task Standard_cost_backdated_purchase_credit_note_posts_and_rolls_back_before_later_issue(
+        string cdnType, decimal expectedPpv)
+    {
+        var day1 = FixedToday.AddDays(-5);
+        var day2 = FixedToday.AddDays(-4);
+        var day3 = FixedToday.AddDays(-3);
+        var day5 = FixedToday;
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 10m);
+            db.PoOrders.Add(new PoOrder
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-STD-CDN", PoRelNo = 1, PoDate = day1,
+                Status = PoOrderStatuses.New, VendCode = "SUP01", VendName = "Supplier",
+                CurCode = "MYR", OneTime = false, FinClosed = false
+            });
+            db.PoOrderDetails.Add(new PoOrderDetail
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-STD-CDN", PoRelNo = 1, Line = 1,
+                ICode = "A100", IDesc = "Item A", OneTime = false, PoQty = 10m, PoPurQty = 10m,
+                RecvQty = 0m, ReturnQty = 0m, BalanceQty = 10m, OverRecvQty = 0m, InvoicedQty = 0m,
+                StdUom = "EA", PurchaseUom = "EA", PackSz = 1m, PoUnitPrice = 10m,
+                Amount = 100m, NetAmount = 100m, CurCode = "MYR"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var tenant = InventoryTenantTestHelper.CreateTenantContext();
+        var access = new Mock<IAccessRightService>();
+        access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var branchLock = new BranchStockTransactionLock();
+        var coordinator = new StockPostingCoordinator(_factory, tenant, branchLock,
+            new StockPeriodGuard(), new NoActiveStockFreezeGuard(), new InventoryValuationService());
+        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true);
+        var gr = new IvGoodsReceiptService(_factory, tenant, access.Object, new RunningNumberService(),
+            new FixedCurrentDateService(day5), new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+            new IvStockTransactionRepository(), new IvStockPostingRepository(), posting,
+            NullLogger<IvGoodsReceiptService>.Instance, approval: TestDisabledProcurementApprovalGuard.Instance);
+        var grDraft = await gr.SaveNewAsync(new IvGoodsReceiptSaveRequest
+        {
+            TrxType = IvTrxTypes.GoodsReceive, TrxDate = day1, RefNo = "GR-STD-CDN",
+            Lines = [new IvGoodsReceiptLineRequest { PoNo = "PO-STD-CDN", PoRelNo = 1, PoLineNo = 1, ToWarehouse = "MAIN", ToLocation = "BIN1", ToRecvQty = 10m }]
+        });
+        Assert.True(grDraft.Succeeded, grDraft.ErrorMessage);
+        Assert.True((await gr.PostAsync([grDraft.BatchNo])).Succeeded);
+
+        var pi = new PoInvoiceService(_factory, tenant, access.Object, new FakePoInvoiceDocumentNumberingService(),
+            new FixedCurrentDateService(day5), new PoInvoiceRepository(), new PoOrderRepository(), new PoCdnRepository(),
+            Options.Create(new PoOrderOptions()), NullLogger<PoInvoiceService>.Instance,
+            stockCoordinator: coordinator, costPostingCommands: new PurchaseCostPostingCommandFactory(),
+            costAdjustments: new PurchaseCostAdjustmentPostingService(coordinator, new StockValueAdjustmentWriter()),
+            receiptSettlements: new PurchaseReceiptCostSettlementService(), branchStockLock: branchLock,
+            configuration: new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenPeriodBackdatedReplayEnabled"] = "true" }).Build());
+        var piDraft = await pi.SaveNewAsync(new PoInvoiceSaveRequest
+        {
+            Type = PoInvoiceTypes.Invoice, DocDate = day2, VendorCode = "SUP01", InvNo = "SUP-PI-STDCDN",
+            Currency = "MYR", CurrRate = 1m, PriceTolerance = 20m,
+            Lines = [new PoInvoiceLineRequest { PoNo = "PO-STD-CDN", PoRelNo = 1, PoLineNo = 1, ICode = "A100", IDesc = "Item A", Qty = 10m, UnitPrice = 10m, SellingUom = "EA", TaxGroup = "SR", ItemGlCode = "GLPUR" }]
+        });
+        Assert.True(piDraft.Succeeded, piDraft.ErrorMessage);
+        var piDoc = (await pi.GetAsync(piDraft.DocNo!)).Document!;
+        Assert.True((await pi.PostAsync([new PoInvoiceKeyedRequest { DocNo = piDoc.DocNo, RowVersion = piDoc.RowVersion }])).Succeeded);
+
+        int pileId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            pileId = await db.IvBalLocs.Where(b => b.ICode == "A100").Select(b => b.Id).SingleAsync();
+
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, day5, enableBackdatedReplay: true);
+        var miDraft = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = day5,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                Quantity = 4m, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 10m
+            }]
+        });
+        Assert.True(miDraft.Succeeded, miDraft.ErrorMessage);
+        Assert.True((await issue.PostAsync([miDraft.BatchNo])).Succeeded);
+
+        var cdn = new PoCdnService(_factory, tenant, access.Object, new FakePoCdnDocumentNumberingService(),
+            new RunningNumberService(), new FixedCurrentDateService(day5), new PoCdnRepository(),
+            new PoInvoiceRepository(), new IvStockPostingRepository(), new IvStockMasterRepository(_factory),
+            new IvStockCommonRepository(_factory), posting, NullLogger<PoCdnService>.Instance,
+            stockCoordinator: coordinator, costPostingCommands: new PurchaseCostPostingCommandFactory(),
+            costAdjustments: new PurchaseCostAdjustmentPostingService(coordinator, new StockValueAdjustmentWriter()),
+            cdnCostAdjustments: new PurchaseCdnCostAdjustmentService(), branchStockLock: branchLock,
+            configuration: new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenPeriodBackdatedReplayEnabled"] = "true" }).Build());
+        var cdnDraft = await cdn.SaveNewAsync(new PoCdnSaveRequest
+        {
+            Type = cdnType, DocDate = day3, VendorCode = "SUP01", InvNo = piDoc.DocNo,
+            ReturnStock = false, Currency = "MYR", ReasonCode = "PRICE_ADJUSTMENT",
+            SupplierDocNo = $"SUP-STD-{cdnType}", SupplierDocDate = day3, TaxGrCode = "SR",
+            Lines = [new PoCdnLineRequest { InvLineNo = 1, ICode = "A100", Qty = 10m, UnitPrice = 2m, ItemGlCode = "GLPUR" }]
+        });
+        Assert.True(cdnDraft.Succeeded, cdnDraft.ErrorMessage);
+
+        async Task<PoCdnKeyedRequest> CdnKeyAsync()
+        {
+            var doc = (await cdn.GetAsync(cdnDraft.DocNo!)).Document!;
+            return new PoCdnKeyedRequest { DocNo = doc.DocNo, RowVersion = doc.RowVersion };
+        }
+
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var post = await cdn.PostAsync([await CdnKeyAsync()]);
+            Assert.True(post.Succeeded, post.ErrorMessage);
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+                Assert.Equal((6m, 60m), (state.OnHandBaseQty, state.InventoryValue));
+                var activeAdj = await db.PurchaseCostAdjustments.Where(a => a.SourceDocumentNo == cdnDraft.DocNo && a.ReversesAdjustmentId == null)
+                    .OrderByDescending(a => a.Id).FirstAsync();
+                Assert.Equal((0m, expectedPpv), (activeAdj.InventoryAdjustmentAmount, activeAdj.ConsumedVarianceAmount));
+            }
+            var rollback = await cdn.RollbackAsync([await CdnKeyAsync()]);
+            Assert.True(rollback.Succeeded, rollback.ErrorMessage);
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+                Assert.Equal((6m, 60m), (state.OnHandBaseQty, state.InventoryValue));
+            }
+        }
+    }
+
     [Fact]
     public Task Purchase_variance_can_roll_back_before_backdated_receipt_after_issue_rollback() =>
         ExerciseMiscReceiptBeforeInvoicedGoodsAsync(10m, 5.565217m, 122.434783m,
@@ -5072,9 +5362,11 @@ public class IvGoodsReceiptServiceTests : IAsyncLifetime
                 }
                 else if (cdnReplayCase == "extra")
                 {
-                    var extra = await receipt.SaveNewAsync(MiscRequest(FixedToday.AddDays(1), 1m, 10m));
+                    var nextMonthReceipt = InventoryLedgerTestFixture.CreateMiscReceipt(
+                        _factory, FixedToday.AddMonths(1), enableBackdatedReplay: true);
+                    var extra = await nextMonthReceipt.SaveNewAsync(MiscRequest(FixedToday.AddMonths(1), 1m, 10m));
                     Assert.True(extra.Succeeded, extra.ErrorMessage);
-                    var extraPost = await receipt.PostAsync([extra.BatchNo]);
+                    var extraPost = await nextMonthReceipt.PostAsync([extra.BatchNo]);
                     Assert.True(extraPost.Succeeded, extraPost.ErrorMessage);
                 }
                 if (cdnReplayCase is "closed" or "source" or "stale" or "extra")
