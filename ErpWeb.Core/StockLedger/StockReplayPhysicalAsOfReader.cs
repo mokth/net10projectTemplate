@@ -23,6 +23,39 @@ public static class StockReplayPhysicalAsOfReader
         ReadCoreAsync(db, companyCode, branchCode, balanceIds, asOf,
             excludePendingCountId: null, cutoffOverride: null, cancellationToken);
 
+    /// <summary>
+    /// Best-effort strict V2 as-of stock check for backdated outbound draft saves
+    /// when a later movement or zero-physical count has reduced the live balance to zero.
+    /// Returns 0 whenever no active V2 epoch covers <paramref name="asOf"/> or the timeline is unavailable.
+    /// </summary>
+    public static async Task<decimal> TryReadHistoricalAvailableQtyAsync(
+        AppDbContext db,
+        string companyCode,
+        string branchCode,
+        int balanceId,
+        DateTime asOf,
+        CancellationToken cancellationToken = default)
+    {
+        if (balanceId <= 0)
+            return 0m;
+        var hasEpoch = await db.StockLedgerEpochs.AsNoTracking().AnyAsync(e =>
+            e.CompanyCode == companyCode
+            && e.BranchCode == branchCode
+            && e.Status == StockLedgerEpochStatuses.Active
+            && e.EffectiveFrom <= asOf, cancellationToken);
+        if (!hasEpoch)
+            return 0m;
+        try
+        {
+            var result = await ReadAsync(db, companyCode, branchCode, [balanceId], asOf, cancellationToken);
+            return result.TryGetValue(balanceId, out var stock) ? stock.AsOfBaseQty : 0m;
+        }
+        catch (StockLedgerException)
+        {
+            return 0m;
+        }
+    }
+
     internal static Task<IReadOnlyDictionary<int, InventoryAsOfStock>> ReadAtKeyAsync(
         AppDbContext db, string companyCode, string branchCode,
         IReadOnlyCollection<int> balanceIds, StockReplayEventKey cutoff,

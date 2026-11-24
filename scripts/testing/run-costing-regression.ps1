@@ -111,6 +111,8 @@ $patterns = @(
     'Issue_before_count_respects_quality_holds',
     'Issue_before_count_rejects_historical_shortage_even_when_current_stock_is_sufficient',
     'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
+    'Wac_zero_physical_count_replays_earlier_issue_and_receipt_and_rolls_back',
+    'Standard_movements_before_single_pile_count_post_rollback_and_repost',
     'Public_backdated_WAC_count_replays_later_Inventory_transfer',
     'Public_backdated_WAC_count_replays_real_later_Inventory_MI_owner',
     'Public_backdated_WAC_count_preserves_real_later_Inventory_MR_value',

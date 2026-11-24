@@ -10922,4 +10922,304 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
             Assert.Equal((expectedTotalQty, expectedTotalValue), (state.OnHandBaseQty, state.InventoryValue));
         }
     }
+
+    [Theory]
+    [InlineData("MI", 40, -60)]
+    [InlineData("MI", 100, 0)]
+    [InlineData("MR", 20, -120)]
+    public async Task Wac_zero_physical_count_replays_earlier_issue_and_receipt_and_rolls_back(
+        string trxType, decimal movementQty, decimal expectedAdjustment)
+    {
+        var (lineId, pileId) = await PostCountForIssueAsync(countedQty: 0m);
+        var qa = new QaPhysicalHoldAuthorizationService();
+
+        if (trxType == "MI")
+        {
+            var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var draft = await SaveIssueBeforeCountAsync(issue, pileId, movementQty);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var posted = await issue.PostAsync([draft]);
+                Assert.True(posted.Succeeded, posted.ErrorMessage);
+                await AssertZeroCountStateAsync(expectedAdjustment);
+                var rolled = await issue.RollbackAsync([draft]);
+                Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+                await AssertZeroCountStateAsync(-100m);
+            }
+        }
+        else
+        {
+            var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var draft = await SaveReceiptBeforeCountAsync(receipt, movementQty, unitPrice: 5m);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var posted = await receipt.PostAsync([draft]);
+                Assert.True(posted.Succeeded, posted.ErrorMessage);
+                await AssertZeroCountStateAsync(expectedAdjustment);
+                var rolled = await receipt.RollbackAsync([draft]);
+                Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+                await AssertZeroCountStateAsync(-100m);
+            }
+        }
+
+        async Task AssertZeroCountStateAsync(decimal adjustment)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(0m, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((0m, 0m), (state.OnHandBaseQty, state.InventoryValue));
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
+            if (adjustment == 0m)
+                Assert.Null(active.AdjustmentHistoryId);
+            else
+                Assert.NotNull(active.AdjustmentHistoryId);
+        }
+    }
+
+    [Theory]
+    [InlineData("MI", 110, 10, 20)]
+    [InlineData("MI", 100, 10, 10)]
+    [InlineData("MI", 90, 10, 0)]
+    [InlineData("MI", 0, 40, -60)]
+    [InlineData("SC", 100, 15, 15)]
+    [InlineData("VR", 90, 10, 0)]
+    [InlineData("MR", 110, 10, 0)]
+    [InlineData("MR", 100, 15, -15)]
+    [InlineData("MR", 0, 20, -120)]
+    [InlineData("GR", 110, 10, 0)]
+    public async Task Standard_movements_before_single_pile_count_post_rollback_and_repost(
+        string trxType, decimal countedQty, decimal movementQty, decimal expectedAdjustment)
+    {
+        var (lineId, pileId) = await PostStandardCountForMovementAsync(countedQty);
+        var qa = new QaPhysicalHoldAuthorizationService();
+
+        if (trxType is "VR" or "GR")
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            db.PoSuppliers.Add(new PoSupplier
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                SuppCode = "SUP-STD", SuppName = "Standard Supplier",
+                Currency = "MYR", GlCode = "AP001",
+                IsActive = true, RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            db.PoOrders.Add(new PoOrder
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                PoNo = "PO-STD-CNT", PoRelNo = 1, PoDate = FixedToday.AddDays(-5),
+                Status = PoOrderStatuses.New, VendCode = "SUP-STD", VendName = "Standard Supplier",
+                CurCode = "MYR", OneTime = false, FinClosed = false
+            });
+            db.PoOrderDetails.Add(new PoOrderDetail
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                PoNo = "PO-STD-CNT", PoRelNo = 1, Line = 1,
+                ICode = "A100", IDesc = "Item A", OneTime = false,
+                PoQty = 50m, PoPurQty = 50m, RecvQty = trxType == "VR" ? 20m : 0m, ReturnQty = 0m,
+                BalanceQty = trxType == "VR" ? 30m : 50m, OverRecvQty = 0m, InvoicedQty = 0m,
+                StdUom = "EA", PurchaseUom = "EA", PackSz = 1m, PoUnitPrice = 3.5m,
+                Amount = 175m, NetAmount = 175m, CurCode = "MYR"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var initialAdjustment = countedQty - 100m;
+        if (trxType == "MI")
+        {
+            var svc = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var draft = await SaveIssueBeforeCountAsync(svc, pileId, movementQty);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                Assert.True((await svc.PostAsync([draft])).Succeeded);
+                await AssertStandardStateAsync(expectedAdjustment);
+                Assert.True((await svc.RollbackAsync([draft])).Succeeded);
+                await AssertStandardStateAsync(initialAdjustment);
+            }
+        }
+        else if (trxType == "SC")
+        {
+            var tenant = InventoryTenantTestHelper.CreateTenantContext();
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var scrap = new IvScrapService(
+                _factory, tenant, access.Object, new RunningNumberService(),
+                new FixedCurrentDateService(FixedToday),
+                new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+                new IvStockTransactionRepository(), new IvStockPostingRepository(),
+                posting, NullLogger<IvScrapService>.Instance);
+            var draft = await scrap.SaveNewAsync(new IvScrapSaveRequest
+            {
+                TrxDate = FixedToday.AddHours(12), RefNo = "STD-SC-CNT",
+                Lines = [new IvScrapLineRequest
+                {
+                    FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    Quantity = movementQty, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 2m,
+                    Reason = "DAMAGED"
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await scrap.PostAsync([draft.BatchNo]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertStandardStateAsync(expectedAdjustment);
+                var r = await scrap.RollbackAsync([draft.BatchNo]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertStandardStateAsync(initialAdjustment);
+            }
+        }
+        else if (trxType == "VR")
+        {
+            var tenant = InventoryTenantTestHelper.CreateTenantContext();
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var vr = new IvVendorReturnService(
+                _factory, tenant, access.Object, new RunningNumberService(),
+                new FixedCurrentDateService(FixedToday),
+                new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+                new IvStockTransactionRepository(), new IvStockPostingRepository(),
+                posting, NullLogger<IvVendorReturnService>.Instance);
+            var draft = await vr.SaveNewAsync(new IvVendorReturnSaveRequest
+            {
+                TrxDate = FixedToday.AddHours(12), RefNo = "STD-VR-CNT",
+                Lines = [new IvVendorReturnLineRequest
+                {
+                    PoNo = "PO-STD-CNT", PoRelNo = 1, PoLineNo = 1,
+                    FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = movementQty, Uom = "EA", IClassCode = "RAW",
+                    IStatus = "ACTIVE", UnitPrice = 2m
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await vr.PostAsync([draft.BatchNo]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertStandardStateAsync(expectedAdjustment, expectedPoReturn: movementQty);
+                var r = await vr.RollbackAsync([draft.BatchNo]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertStandardStateAsync(initialAdjustment, expectedPoReturn: 0m);
+            }
+        }
+        else if (trxType == "MR")
+        {
+            var svc = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var draft = await SaveReceiptBeforeCountAsync(svc, movementQty, unitPrice: 5m);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await svc.PostAsync([draft]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertStandardStateAsync(expectedAdjustment);
+                var r = await svc.RollbackAsync([draft]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertStandardStateAsync(initialAdjustment);
+            }
+        }
+        else
+        {
+            var tenant = InventoryTenantTestHelper.CreateTenantContext();
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var gr = new IvGoodsReceiptService(
+                _factory, tenant, access.Object, new RunningNumberService(),
+                new FixedCurrentDateService(FixedToday),
+                new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+                new IvStockTransactionRepository(), new IvStockPostingRepository(),
+                posting, NullLogger<IvGoodsReceiptService>.Instance,
+                approval: TestDisabledProcurementApprovalGuard.Instance);
+            var draft = await gr.SaveNewAsync(new IvGoodsReceiptSaveRequest
+            {
+                TrxType = IvTrxTypes.GoodsReceive,
+                TrxDate = FixedToday.AddDays(-1).AddHours(12),
+                RefNo = "STD-GR-CNT",
+                Lines = [new IvGoodsReceiptLineRequest
+                {
+                    PoNo = "PO-STD-CNT", PoRelNo = 1, PoLineNo = 1,
+                    ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    ToRecvQty = movementQty
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await gr.PostAsync([draft.BatchNo]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertStandardStateAsync(expectedAdjustment, expectedPoRecv: movementQty);
+                var r = await gr.RollbackAsync([draft.BatchNo]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertStandardStateAsync(initialAdjustment, expectedPoRecv: 0m);
+            }
+        }
+
+        async Task AssertStandardStateAsync(decimal adjustment,
+            decimal? expectedPoReturn = null, decimal? expectedPoRecv = null)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((countedQty, countedQty * 2m), (state.OnHandBaseQty, state.InventoryValue));
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
+            if (adjustment == 0m)
+                Assert.Null(active.AdjustmentHistoryId);
+            else
+            {
+                var history = await db.IvTrxHistories.SingleAsync(h => h.Id == active.AdjustmentHistoryId);
+                var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                Assert.Equal(Math.Abs(adjustment) * 2m, Assert.Single(facts[history.Id]).CostAmount);
+            }
+            if (expectedPoReturn.HasValue)
+                Assert.Equal(expectedPoReturn.Value,
+                    (await db.PoOrderDetails.SingleAsync(d => d.PoNo == "PO-STD-CNT" && d.Line == 1)).ReturnQty);
+            if (expectedPoRecv.HasValue)
+                Assert.Equal(expectedPoRecv.Value,
+                    (await db.PoOrderDetails.SingleAsync(d => d.PoNo == "PO-STD-CNT" && d.Line == 1)).RecvQty);
+        }
+    }
+
+    private async Task<(int LineId, int PileId)> PostStandardCountForMovementAsync(decimal countedQty)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+            db.StockCostStates.Remove(await db.StockCostStates.SingleAsync());
+            await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedStandardPolicyAsync(db);
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 100m, 2m, StockCostMethods.Standard);
+            await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "A100", 2m);
+            var bal = await db.IvBalLocs.SingleAsync();
+            bal.TransDate = FixedToday.AddDays(-2).AddHours(9);
+            await db.SaveChangesAsync();
+        }
+        var count = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday, enableBackdatedReplay: true);
+        var saved = await count.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.True((await count.GenerateAsync(saved.Id, discardCounts: false)).Succeeded);
+        var line = Assert.Single((await count.GetAsync(saved.CountNo!)).Document!.Lines);
+        Assert.True((await count.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = countedQty }], null)).Succeeded);
+        var posted = await count.PostAsync(saved.Id);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        return (line.Id, line.BalLocId);
+    }
 }

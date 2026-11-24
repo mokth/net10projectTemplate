@@ -686,8 +686,22 @@ public sealed partial class IvInventoryPostingService
         var writeDetails = await write.IvTrxBatchDetails
             .Where(d => d.BatchId == batch.Id)
             .ToListAsync(cancellationToken);
-        var qaError = await AssertQaPhysicalFromDetailsAsync(
-            write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails, cancellationToken);
+        string? qaError;
+        if (countProof is not null && physical.CurrentQuantity < Math.Abs(physical.Candidate.SignedDelta))
+        {
+            qaError = await _qaPhysical.AssertRemainingCoversHoldsAsync(
+                write, companyCode, branchCode, physical.BalLocId,
+                physical.Projection.FinalQuantity, cancellationToken);
+            if (qaError is null)
+                qaError = await AssertQaPhysicalFromDetailsAsync(
+                    write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails,
+                    cancellationToken, effectiveOnHandOverride: physical.Projection.Candidate.QuantityBefore);
+        }
+        else
+        {
+            qaError = await AssertQaPhysicalFromDetailsAsync(
+                write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails, cancellationToken);
+        }
         if (qaError is not null)
         {
             await tx.RollbackAsync(cancellationToken);

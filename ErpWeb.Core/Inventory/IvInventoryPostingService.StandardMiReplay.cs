@@ -46,6 +46,7 @@ public sealed partial class IvInventoryPostingService
         StockReplayStandardFinancialTail Tail,
         StockReplayStandardResult Projection,
         EffectiveStandardCost Revision,
+        CountReplayProof? CountProof,
         string Fingerprint);
 
     private static async Task<StandardMiDraft> ReadStandardMiDraftAsync(
@@ -107,8 +108,7 @@ public sealed partial class IvInventoryPostingService
         var key = physical.Candidate.Key;
         if (physical.BalLocId != authority.PileId
             || key.EffectiveAt != authority.EffectiveAt
-            || physical.Candidate.SignedDelta != -authority.Quantity
-            || StockReplayFifoTransferTailGuard.ChangesPhysicalTail(physical))
+            || physical.Candidate.SignedDelta != -authority.Quantity)
             return (null, "The Standard MI changes a later physical movement.");
         var revision = await new ItemStandardCostResolver().ResolveAsync(db,
             physical.CompanyCode, physical.BranchCode,
@@ -127,24 +127,32 @@ public sealed partial class IvInventoryPostingService
             physical.CompanyCode, physical.BranchCode,
             authority.ItemCode, candidate, tail.LaterEvents,
             cancellationToken);
-        var projection = StockReplayStandardSimulator.SimulateInsertion(
-            tail.CurrentQuantity, tail.CurrentValue,
-            candidate, tail.LaterEvents);
+        var projection = StockReplayStandardTailProjector.SimulateSinglePileInsertion(
+            tail, physical, candidate);
         var amount = StockLedgerPrecision.Money(
             authority.Quantity * revision.TotalStandardCost);
+        var countProof = await PlanSingleStandardCountReplayAsync(db,
+            physical.CompanyCode, physical.BranchCode, authority.ItemCode,
+            physical.BalLocId, authority.Quantity, authority.EffectiveAt,
+            physical.LaterEvents, tail.LaterEvents, projection.LaterSteps,
+            tail.CurrentQuantity, tail.CurrentValue,
+            projection.FinalQuantity, projection.FinalValue,
+            -amount, removingOwnerId: null, receipt: false, cancellationToken);
         if (projection.Candidate.SignedQuantity != -authority.Quantity
             || projection.Candidate.SignedValue != -amount
-            || projection.FinalQuantity != tail.CurrentQuantity
-                - authority.Quantity
-            || projection.FinalValue != tail.CurrentValue - amount
             || tail.LaterEvents.Count != projection.LaterSteps.Count
-            || tail.LaterEvents.Zip(projection.LaterSteps).Any(p =>
-                p.First.OldSignedQuantity != p.Second.SignedQuantity
-                || p.First.OldSignedValue != p.Second.SignedValue)
-            || await CheckStandardTransferDescendantsAsync(db,
-                physical.CompanyCode, physical.BranchCode,
-                authority.ItemCode, key, tail.LaterEvents,
-                cancellationToken) is not null)
+            || countProof is null && (
+                StockReplayFifoTransferTailGuard.ChangesPhysicalTail(physical)
+                || projection.FinalQuantity != tail.CurrentQuantity
+                    - authority.Quantity
+                || projection.FinalValue != tail.CurrentValue - amount
+                || tail.LaterEvents.Zip(projection.LaterSteps).Any(p =>
+                    p.First.OldSignedQuantity != p.Second.SignedQuantity
+                    || p.First.OldSignedValue != p.Second.SignedValue)
+                || await CheckStandardTransferDescendantsAsync(db,
+                    physical.CompanyCode, physical.BranchCode,
+                    authority.ItemCode, key, tail.LaterEvents,
+                    cancellationToken) is not null))
             return (null, "The Standard MI changes a later cost or has an unsupported descendant.");
         var fingerprint = StockPostingFingerprint.Create(new
         {
@@ -154,9 +162,10 @@ public sealed partial class IvInventoryPostingService
             Piles = tail.CurrentQuantityByPile.OrderBy(p => p.Key)
                 .Select(p => new { p.Key, p.Value,
                     Events = tail.PhysicalByPile[p.Key] }).ToArray(),
-            projection
+            projection,
+            CountFingerprint = countProof?.Fingerprint
         }, new { }).RequestFingerprint;
-        return (new(tail, projection, revision, fingerprint), null);
+        return (new(tail, projection, revision, countProof, fingerprint), null);
     }
 
     private async Task<IvInventoryPostingBatchResult?> TryPostBackdatedStandardMiAsync(
@@ -192,7 +201,9 @@ public sealed partial class IvInventoryPostingService
                 && f.BranchCode == branchCode
                 && f.ItemCode == details[0].ICode
                 && f.EffectiveAt > batch.TrxDtTime
-                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
+                && f.StockPosting!.SealedAtUtc != null, cancellationToken)
+            || await HasLaterStandardCountAsync(read, companyCode, branchCode,
+                details[0].ICode!, batch.TrxDtTime, cancellationToken);
         if (!hasLater)
             return null;
         if (await IvPeriodCloseGuard.EnsureOpenAsync(read, companyCode,
@@ -216,6 +227,12 @@ public sealed partial class IvInventoryPostingService
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (prepared.Plan!.CountProof is { } countProof
+            && !await LockCountReplaySourceAsync(write, companyCode, branchCode, countProof, cancellationToken))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The stock count is busy. Retry posting.");
+        }
         var ledger = await BeginStandaloneLedgerAsync(write, companyCode,
             branchCode, batchNo, reversal: false, cancellationToken);
         await using var postingScope = new StockPostingAbortScope(
@@ -261,13 +278,31 @@ public sealed partial class IvInventoryPostingService
         var writeDetails = await write.IvTrxBatchDetails
             .Where(d => d.BatchId == authority.BatchId)
             .ToListAsync(cancellationToken);
-        var qaError = await AssertQaPhysicalFromDetailsAsync(
-            write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails, cancellationToken);
+        string? qaError;
+        if (current.Plan.CountProof is not null && physical.CurrentQuantity < authority.Quantity)
+        {
+            qaError = await _qaPhysical.AssertRemainingCoversHoldsAsync(
+                write, companyCode, branchCode, physical.BalLocId,
+                physical.Projection.FinalQuantity, cancellationToken);
+            if (qaError is null)
+                qaError = await AssertQaPhysicalFromDetailsAsync(
+                    write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails,
+                    cancellationToken, effectiveOnHandOverride: physical.Projection.Candidate.QuantityBefore);
+        }
+        else
+        {
+            qaError = await AssertQaPhysicalFromDetailsAsync(
+                write, companyCode, branchCode, expectedTrxType, batchNo, writeDetails, cancellationToken);
+        }
         if (qaError is not null)
         {
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
         }
+        var countPermit = current.Plan.CountProof is null
+            ? null
+            : await StockReplayPhysicalPlanner.PrepareCountCorrectionsWithinRootAsync(
+                root, physical, cancellationToken);
         var historyId = await AppendStandardMiPhysicalAsync(root,
             physical, authority, cancellationToken);
         await AppendStandardMiValueAsync(root, authority,
@@ -294,10 +329,17 @@ public sealed partial class IvInventoryPostingService
             current.Plan.Projection.FinalValue,
             ImmutableDictionary<int, decimal>.Empty.Add(
                 physical.BalLocId, physical.Projection.FinalQuantity));
+        IReadOnlyList<int> countHistories = countPermit is null
+            ? []
+            : await ApplySingleStandardCountInsertionAsync(
+                root, permit, physical, current.Plan.Tail,
+                current.Plan.Projection, current.Plan.Fingerprint,
+                countPermit, cancellationToken);
         await StockReplayStandardCostStateWriter.ApplyAsync(root,
             permit, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(root,
-            [historyId], cancellationToken);
+            new[] { historyId }.Concat(countHistories).Distinct().ToArray(),
+            cancellationToken);
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);
         var operation = await write.IvTrxBatches.AsNoTracking()
@@ -498,14 +540,63 @@ public sealed partial class IvInventoryPostingService
             .AnyAsync(f => f.CompanyCode == companyCode
                 && f.BranchCode == branchCode && f.ItemCode == prior[0].ICode
                 && f.EffectiveAt > prior[0].TrxDtTime
-                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
+                && f.StockPosting!.SealedAtUtc != null, cancellationToken)
+            || await HasLaterStandardCountAsync(read, companyCode, branchCode,
+                prior[0].ICode, prior[0].TrxDtTime, cancellationToken);
         if (!hasLater)
             return null;
+        var priorHistory = prior[0];
+        if (priorHistory.FromBalLocId is not > 0 || priorHistory.FrStdQty is not > 0m)
+            return null;
+        var preparedOwner = await read.StockPostings.AsNoTracking()
+            .SingleOrDefaultAsync(p => p.Id == priorHistory.StockPostingId,
+                cancellationToken);
+        if (preparedOwner is null)
+            return null;
+        var preparedKey = new StockReplayEventKey(priorHistory.TrxDtTime,
+            StockReplayEventKey.OrdinaryClass, preparedOwner.PostingSequence,
+            $"H{priorHistory.Id:D10}", 0);
+        var preparedPhysical = await StockReplayPhysicalPlanner.BuildRemovalAsync(
+            read, companyCode, branchCode, priorHistory.FromBalLocId.Value,
+            new StockReplayPhysicalEvent(priorHistory.Id, preparedKey,
+                -priorHistory.FrStdQty.Value), cancellationToken);
+        var preparedTail = await StockReplayStandardFinancialTailReader.ReadLaterAsync(
+            read, companyCode, branchCode, priorHistory.ICode, preparedKey,
+            cancellationToken);
+        var preparedRevision = await new ItemStandardCostResolver().ResolveAsync(
+            read, companyCode, branchCode, priorHistory.ICode,
+            priorHistory.TrxDtTime, cancellationToken);
+        var preparedActive = (await StockReplayValuationGenerationResolver.ResolveAsync(
+            read, companyCode, branchCode, [priorHistory],
+            cancellationToken))[priorHistory.Id];
+        var preparedOriginal = StockReplayStandardHistoryEventFactory.Create(
+            priorHistory, priorHistory.Id, preparedKey, preparedActive,
+            preparedRevision);
+        var preparedAmount = StockLedgerPrecision.Money(
+            priorHistory.FrStdQty.Value * preparedRevision.TotalStandardCost);
+        var preparedProjection = StockReplayStandardTailProjector.SimulateSinglePileRemoval(
+            preparedTail, preparedPhysical, preparedOriginal);
+        var preparedCountProof = await PlanSingleStandardCountReplayAsync(
+            read, companyCode, branchCode, priorHistory.ICode,
+            preparedPhysical.BalLocId, priorHistory.FrStdQty.Value,
+            priorHistory.TrxDtTime, preparedPhysical.LaterEvents,
+            preparedTail.LaterEvents, preparedProjection.LaterSteps,
+            preparedTail.CurrentQuantity, preparedTail.CurrentValue,
+            preparedProjection.FinalQuantity, preparedProjection.FinalValue,
+            -preparedAmount, removingOwnerId: preparedOwner.Id, receipt: false,
+            cancellationToken);
 
         await using var write = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await write.Database.BeginTransactionAsync(cancellationToken);
         await new BranchStockTransactionLock().AcquireAsync(write,
             companyCode, branchCode, cancellationToken);
+        if (preparedCountProof is not null
+            && !await LockCountReplaySourceAsync(write, companyCode, branchCode,
+                preparedCountProof, cancellationToken))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The stock count is busy. Retry rollback.");
+        }
         var qaRestore = await _qaPhysical.RestoreStockOutAsync(
             write, companyCode, branchCode, batchNo, cancellationToken);
         if (qaRestore is not null)
@@ -616,13 +707,15 @@ public sealed partial class IvInventoryPostingService
             await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, closed);
         }
-        var key = new StockReplayEventKey(history.TrxDtTime,
-            StockReplayEventKey.OrdinaryClass, owner.PostingSequence,
-            $"H{history.Id:D10}", 0);
-        var physical = await StockReplayPhysicalPlanner.BuildRemovalAsync(
-            write, companyCode, branchCode, pileId.Value,
-            new StockReplayPhysicalEvent(history.Id, key, -quantity.Value),
-            cancellationToken);
+        if (owner.Id != preparedOwner.Id
+            || owner.PostingSequence != preparedOwner.PostingSequence
+            || pileId.Value != preparedPhysical.BalLocId
+            || -quantity.Value != preparedPhysical.RemovedActiveEvent.SignedDelta)
+            throw InvalidStandardTransfer("The Standard MI changed after rollback planning.");
+        await StockReplayPhysicalPlanner.ValidateWithinRootAsync(root,
+            preparedPhysical, cancellationToken);
+        var key = preparedKey;
+        var physical = preparedPhysical;
         var tail = await StockReplayStandardFinancialTailReader.ReadLaterAsync(
             write, companyCode, branchCode, history.ICode, key,
             cancellationToken);
@@ -636,10 +729,18 @@ public sealed partial class IvInventoryPostingService
             history, history.Id, key, active, revision);
         var amount = StockLedgerPrecision.Money(
             quantity.Value * revision.TotalStandardCost);
-        var projection = StockReplayStandardSimulator.SimulateRemoval(
-            tail.CurrentQuantity, tail.CurrentValue, original,
-            tail.LaterEvents);
-        if (active.Count != 1 || active[0].StockPostingId != owner.Id
+        var projection = StockReplayStandardTailProjector.SimulateSinglePileRemoval(
+            tail, physical, original);
+        var countProof = await PlanSingleStandardCountReplayAsync(
+            write, companyCode, branchCode, history.ICode,
+            physical.BalLocId, quantity.Value, history.TrxDtTime,
+            physical.LaterEvents, tail.LaterEvents, projection.LaterSteps,
+            tail.CurrentQuantity, tail.CurrentValue,
+            projection.FinalQuantity, projection.FinalValue,
+            -amount, removingOwnerId: owner.Id, receipt: false,
+            cancellationToken);
+        if (countProof?.Fingerprint != preparedCountProof?.Fingerprint
+            || active.Count != 1 || active[0].StockPostingId != owner.Id
             || active[0].OriginalValuationFactId is not null
             || active[0].ValuationSource != StockValuationSources.Standard
             || active[0].MovementCode !=
@@ -655,20 +756,25 @@ public sealed partial class IvInventoryPostingService
             || active[0].BaseCostAmount != amount
             || original.OldSignedQuantity != -quantity.Value
             || original.OldSignedValue != -amount
-            || physical.Projection.FinalQuantity
-                != physical.CurrentQuantity + quantity.Value
-            || projection.FinalQuantity != tail.CurrentQuantity
-                + quantity.Value
-            || projection.FinalValue != tail.CurrentValue + amount
             || tail.LaterEvents.Count != projection.LaterSteps.Count
-            || tail.LaterEvents.Zip(projection.LaterSteps).Any(p =>
-                p.First.OldSignedQuantity != p.Second.SignedQuantity
-                || p.First.OldSignedValue != p.Second.SignedValue)
-            || StockReplayFifoTransferTailGuard.ChangesPhysicalTail(physical)
-            || await CheckStandardTransferDescendantsAsync(write,
-                companyCode, branchCode, history.ICode, key,
-                tail.LaterEvents, cancellationToken) is not null)
+            || countProof is null && (
+                physical.Projection.FinalQuantity
+                    != physical.CurrentQuantity + quantity.Value
+                || projection.FinalQuantity != tail.CurrentQuantity
+                    + quantity.Value
+                || projection.FinalValue != tail.CurrentValue + amount
+                || tail.LaterEvents.Zip(projection.LaterSteps).Any(p =>
+                    p.First.OldSignedQuantity != p.Second.SignedQuantity
+                    || p.First.OldSignedValue != p.Second.SignedValue)
+                || StockReplayFifoTransferTailGuard.ChangesPhysicalTail(physical)
+                || await CheckStandardTransferDescendantsAsync(write,
+                    companyCode, branchCode, history.ICode, key,
+                    tail.LaterEvents, cancellationToken) is not null))
             throw InvalidStandardTransfer("The Standard MI rollback changes a later movement.");
+        var countPermit = countProof is null
+            ? null
+            : await StockReplayPhysicalPlanner.PrepareCountCorrectionsWithinRootAsync(
+                root, physical, cancellationToken);
         var result = await RollBackInventoryMICoreAsync(write,
             companyCode, branchCode, userId, batchNo,
             expectedTrxType, cancellationToken, root);
@@ -687,6 +793,21 @@ public sealed partial class IvInventoryPostingService
                 await tx.RollbackAsync(cancellationToken);
                 return IvInventoryPostingBatchResult.Fail(batchNo, poError);
             }
+        }
+        if (countPermit is not null)
+        {
+            var qaError = await _qaPhysical.AssertRemainingCoversHoldsAsync(write,
+                companyCode, branchCode, pileId.Value, physical.Projection.FinalQuantity,
+                cancellationToken);
+            if (qaError is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
+            }
+            var correctedBalance = await write.IvBalLocs.SingleAsync(b => b.Id == pileId.Value
+                && b.CompanyCode == companyCode && b.BranchCode == branchCode, cancellationToken);
+            correctedBalance.StdQty = physical.Projection.FinalQuantity;
+            correctedBalance.TransDate = physical.LaterEvents.Max(e => e.Key.EffectiveAt);
         }
         await write.SaveChangesAsync(cancellationToken);
         var finalPile = await write.IvBalLocs.AsNoTracking()
@@ -711,10 +832,15 @@ public sealed partial class IvInventoryPostingService
             projection.FinalQuantity, projection.FinalValue,
             ImmutableDictionary<int, decimal>.Empty.Add(
                 pileId.Value, physical.Projection.FinalQuantity));
+        IReadOnlyList<int> countHistories = countPermit is null
+            ? []
+            : await ApplySingleStandardCountRemovalAsync(
+                root, permit, physical, tail, projection,
+                physical.PlanHash, countPermit, cancellationToken);
         await StockReplayStandardCostStateWriter.ApplyAsync(root,
             permit, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(root,
-            [], cancellationToken);
+            countHistories, cancellationToken);
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);
         return result;

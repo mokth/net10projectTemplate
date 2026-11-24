@@ -296,11 +296,13 @@ public sealed class IvScrapService : IIvScrapService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var trxDateForValidation = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
         var validatedResult = await ValidateLinesAsync(
             db,
             request.Lines,
             context.CompanyCode!,
             context.BranchCode!,
+            trxDateForValidation,
             cancellationToken);
         if (validatedResult.ErrorMessage is not null)
         {
@@ -410,11 +412,13 @@ public sealed class IvScrapService : IIvScrapService
 
         var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
 
+        var trxDateForValidation = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
         var validatedResult = await ValidateLinesAsync(
             db,
             request.Lines,
             context.CompanyCode!,
             context.BranchCode!,
+            trxDateForValidation,
             cancellationToken);
         if (validatedResult.ErrorMessage is not null)
         {
@@ -619,6 +623,7 @@ public sealed class IvScrapService : IIvScrapService
         IReadOnlyList<IvScrapLineRequest>? lines,
         string companyCode,
         string branchCode,
+        DateTime trxDate,
         CancellationToken cancellationToken)
     {
         if (lines is null || lines.Count == 0)
@@ -645,6 +650,7 @@ public sealed class IvScrapService : IIvScrapService
                 line,
                 companyCode,
                 branchCode,
+                trxDate,
                 lineNo,
                 cancellationToken);
             if (error.ErrorMessage is not null)
@@ -704,6 +710,7 @@ public sealed class IvScrapService : IIvScrapService
         IvScrapLineRequest line,
         string companyCode,
         string branchCode,
+        DateTime trxDate,
         short lineNo,
         CancellationToken cancellationToken)
     {
@@ -745,7 +752,9 @@ public sealed class IvScrapService : IIvScrapService
             return ($"Line {lineNo}: balance record does not belong to item '{iCode}'.", null);
         }
 
-        if (bal.StdQty <= 0m)
+        if (bal.StdQty <= 0m
+            && await ErpWeb.Core.StockLedger.StockReplayPhysicalAsOfReader.TryReadHistoricalAvailableQtyAsync(
+                db, companyCode, branchCode, bal.Id, trxDate, cancellationToken) <= 0m)
         {
             return ($"Line {lineNo}: no stock available for item '{iCode}'.", null);
         }

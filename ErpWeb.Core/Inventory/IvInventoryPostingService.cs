@@ -1087,10 +1087,13 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                     batchNo,
                     $"Stock would go negative for {slice} (on hand {bal.StdQty}, rollback {deltaBySlice[slice]}).");
             }
-            var qaHoldError = await _qaPhysical.AssertRemainingCoversHoldsAsync(
-                db, companyCode, branchCode, bal.Id, next, cancellationToken);
-            if (qaHoldError is not null)
-                return IvInventoryPostingBatchResult.Fail(batchNo, qaHoldError);
+            if (!deferCountCorrectedBalance || next >= 0m)
+            {
+                var qaHoldError = await _qaPhysical.AssertRemainingCoversHoldsAsync(
+                    db, companyCode, branchCode, bal.Id, next, cancellationToken);
+                if (qaHoldError is not null)
+                    return IvInventoryPostingBatchResult.Fail(batchNo, qaHoldError);
+            }
         }
 
         var rollbackChronology = postingContext is null
@@ -5113,7 +5116,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string trxType,
         int batchNo,
         IReadOnlyList<IvTrxBatchDetail> details,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        decimal? effectiveOnHandOverride = null)
     {
         var ids = details
             .Where(d => d.FromBalLocId is > 0)
@@ -5157,9 +5161,9 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
                 ItemStatus = piles.TryGetValue(d.FromBalLocId.Value, out var pile)
                     ? pile.IStatus ?? string.Empty
                     : string.Empty,
-                OnHand = piles.TryGetValue(d.FromBalLocId.Value, out var onHand)
+                OnHand = effectiveOnHandOverride ?? (piles.TryGetValue(d.FromBalLocId.Value, out var onHand)
                     ? onHand.StdQty
-                    : 0m,
+                    : 0m),
                 Qty = IvQty.Round(d.FrStdQty ?? 0m),
                 BatchDetailId = d.Id
             })

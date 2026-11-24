@@ -14,7 +14,7 @@ public sealed record StockReplayStandardCountCorrectionValuationResult(
 /// </summary>
 public static class StockReplayStandardCountCorrectionValuationWriter
 {
-    public static async Task<StockReplayStandardCountCorrectionValuationResult> AppendAsync(
+    public static Task<StockReplayStandardCountCorrectionValuationResult> AppendAsync(
         StockPostingContext context,
         StockReplayStandardWritePermit standardPermit,
         StockReplayStandardCountSheetInsertionPlan plan,
@@ -23,14 +23,93 @@ public static class StockReplayStandardCountCorrectionValuationWriter
         int replacementPostingLineNo,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(standardPermit);
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(countPermit);
-        context.EnsureUnsealed();
         StockReplayStandardCountSheetInsertionPlanner.ValidatePreparedPlan(plan);
         var physical = plan.CountedPiles.SingleOrDefault(p =>
             p.BalLocId == countPermit.BalLocId);
+        if (physical is null)
+            throw Invalid("Changed Standard count has no matching prepared root.");
+        return AppendCoreAsync(context, standardPermit, plan.ItemCode, plan.PlanHash,
+            plan.Tail, plan.Projection.LaterSteps, plan.Projection.FinalQuantity,
+            plan.Projection.FinalValue, physical.PlanHash, countPermit,
+            countLineId, reversalPostingLineNo, replacementPostingLineNo,
+            cancellationToken);
+    }
+
+    public static Task<StockReplayStandardCountCorrectionValuationResult> AppendMovementInsertionAsync(
+        StockPostingContext context,
+        StockReplayStandardWritePermit standardPermit,
+        StockReplayPhysicalPlan physicalPlan,
+        StockReplayStandardFinancialTail tail,
+        StockReplayStandardResult projection,
+        string planHash,
+        StockCountCorrectionWritePermit countPermit,
+        int countLineId, int reversalPostingLineNo,
+        int replacementPostingLineNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(physicalPlan);
+        ArgumentNullException.ThrowIfNull(tail);
+        ArgumentNullException.ThrowIfNull(projection);
+        ArgumentNullException.ThrowIfNull(countPermit);
+        if (countPermit.ReversedCandidateHistoryId is not null
+            || physicalPlan.BalLocId != countPermit.BalLocId)
+            throw Invalid("Standard insertion cannot use a count removal permit.");
+        return AppendCoreAsync(context, standardPermit, standardPermit.ItemCode, planHash,
+            tail, projection.LaterSteps, projection.FinalQuantity,
+            projection.FinalValue, physicalPlan.PlanHash, countPermit,
+            countLineId, reversalPostingLineNo, replacementPostingLineNo,
+            cancellationToken);
+    }
+
+    public static Task<StockReplayStandardCountCorrectionValuationResult> AppendMovementRemovalAsync(
+        StockPostingContext context,
+        StockReplayStandardWritePermit standardPermit,
+        StockReplayPhysicalRemovalPlan physicalPlan,
+        StockReplayStandardFinancialTail tail,
+        StockReplayStandardRemovalResult projection,
+        string planHash,
+        StockCountCorrectionWritePermit countPermit,
+        int countLineId, int reversalPostingLineNo,
+        int replacementPostingLineNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(physicalPlan);
+        ArgumentNullException.ThrowIfNull(tail);
+        ArgumentNullException.ThrowIfNull(projection);
+        ArgumentNullException.ThrowIfNull(countPermit);
+        if (countPermit.ReversedCandidateHistoryId != physicalPlan.RemovedActiveEvent.EventId
+            || physicalPlan.BalLocId != countPermit.BalLocId)
+            throw Invalid("The Standard count correction does not reverse the planned movement.");
+        return AppendCoreAsync(context, standardPermit, standardPermit.ItemCode, planHash,
+            tail, projection.LaterSteps, projection.FinalQuantity,
+            projection.FinalValue, physicalPlan.PlanHash, countPermit,
+            countLineId, reversalPostingLineNo, replacementPostingLineNo,
+            cancellationToken);
+    }
+
+    private static async Task<StockReplayStandardCountCorrectionValuationResult> AppendCoreAsync(
+        StockPostingContext context,
+        StockReplayStandardWritePermit standardPermit,
+        string itemCode,
+        string planHash,
+        StockReplayStandardFinancialTail tail,
+        IReadOnlyList<StockReplayStandardStep> laterSteps,
+        decimal finalQuantity,
+        decimal finalValue,
+        string physicalPlanHash,
+        StockCountCorrectionWritePermit countPermit,
+        int countLineId, int reversalPostingLineNo,
+        int replacementPostingLineNo,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(standardPermit);
+        ArgumentNullException.ThrowIfNull(tail);
+        ArgumentNullException.ThrowIfNull(laterSteps);
+        ArgumentNullException.ThrowIfNull(countPermit);
+        context.EnsureUnsealed();
         if (context.CostMethod != StockCostMethods.Standard
             || context.Db.Database.CurrentTransaction is null
             || countLineId <= 0 || reversalPostingLineNo <= 0
@@ -45,13 +124,13 @@ public static class StockReplayStandardCountCorrectionValuationWriter
             || standardPermit.BranchCode != context.BranchCode
             || countPermit.CompanyCode != context.CompanyCode
             || countPermit.BranchCode != context.BranchCode
-            || standardPermit.ItemCode != plan.ItemCode
-            || standardPermit.PlanHash != plan.PlanHash
-            || standardPermit.CurrentQuantity != plan.Tail.CurrentQuantity
-            || standardPermit.CurrentValue != plan.Tail.CurrentValue
-            || standardPermit.FinalQuantity != plan.Projection.FinalQuantity
-            || standardPermit.FinalValue != plan.Projection.FinalValue
-            || physical is null || physical.PlanHash != countPermit.PlanHash
+            || standardPermit.ItemCode != itemCode
+            || standardPermit.PlanHash != planHash
+            || standardPermit.CurrentQuantity != tail.CurrentQuantity
+            || standardPermit.CurrentValue != tail.CurrentValue
+            || standardPermit.FinalQuantity != finalQuantity
+            || standardPermit.FinalValue != finalValue
+            || physicalPlanHash != countPermit.PlanHash
             || !standardPermit.ChangedPiles.TryGetValue(countPermit.BalLocId,
                 out var finalPile) || finalPile != countPermit.FinalQuantity)
             throw Invalid("Changed Standard count has no matching prepared root.");
@@ -60,11 +139,11 @@ public static class StockReplayStandardCountCorrectionValuationWriter
         if (corrections.Length != 1)
             throw Invalid($"Count line {countLineId} has no unique physical correction.");
         var correction = corrections[0];
-        var oldEvents = plan.Tail.LaterEvents.Where(e =>
+        var oldEvents = tail.LaterEvents.Where(e =>
             e.EventId == -correction.PreviousGenerationId
             && e.Kind == StockReplayStandardEventKinds.Count
             && e.Key.LineIdentity == $"C{countLineId:D10}").ToArray();
-        var steps = plan.Projection.LaterSteps.Where(s =>
+        var steps = laterSteps.Where(s =>
             s.EventId == -correction.PreviousGenerationId).ToArray();
         if (oldEvents.Length != 1 || steps.Length != 1
             || correction.NewSignedAdjustmentQty == correction.OldSignedAdjustmentQty
@@ -114,7 +193,7 @@ public static class StockReplayStandardCountCorrectionValuationWriter
                 cancellationToken);
         if (line is null || line.PhysicalQty != correction.PhysicalQty
             || line.BalLocId != countPermit.BalLocId
-            || line.ICode != plan.ItemCode
+            || line.ICode != itemCode
             || line.Status != IvStockCountStatuses.Posted
             || line.CompanyCode != context.CompanyCode
             || line.BranchCode != context.BranchCode
@@ -132,7 +211,7 @@ public static class StockReplayStandardCountCorrectionValuationWriter
             || (line.PhysicalQty > 0m) != (basis is not null))
             throw Invalid($"Count line {countLineId} lacks its sealed Standard owner.");
         var revision = await new ItemStandardCostResolver().ResolveAsync(db,
-            context.CompanyCode, context.BranchCode, plan.ItemCode,
+            context.CompanyCode, context.BranchCode, itemCode,
             prior.EffectiveAt, cancellationToken);
         StockValuationFact? oldFact = null;
         if (prior.AdjustmentHistoryId is int oldHistoryId)
@@ -158,7 +237,7 @@ public static class StockReplayStandardCountCorrectionValuationWriter
         var oldPhysical = new StockReplayPhysicalEvent(-prior.Id,
             oldEvent.Key, prior.SignedAdjustmentQty, line.PhysicalQty);
         if (oldEvent != StockReplayStandardCountEventFactory.CreateActive(
-                oldPhysical, prior, plan.ItemCode, revision,
+                oldPhysical, prior, itemCode, revision,
                 oldFact is null ? [] : [oldFact], basis, originalFact)
             || step.SignedValue != StockLedgerPrecision.Money(
                 step.SignedQuantity * revision.TotalStandardCost)
@@ -211,7 +290,7 @@ public static class StockReplayStandardCountCorrectionValuationWriter
             if (history.PostingLineNo != replacementPostingLineNo
                 || history.StockPostingId != context.Posting.Id
                 || history.LedgerEpochId != context.Epoch.Id
-                || history.ICode != plan.ItemCode
+                || history.ICode != itemCode
                 || history.EntryRole != "ORIGINAL"
                 || history.BatchStatus != IvBatchStatuses.Posted
                 || history.TrxDtTime != anchor.BusinessDate.Date
@@ -225,6 +304,11 @@ public static class StockReplayStandardCountCorrectionValuationWriter
                         || history.FrStdQty != quantity
                         || string.IsNullOrWhiteSpace(history.FrStdUom)))
                 throw Invalid("Standard count replacement ADJ differs from its projection.");
+            var baseCurrency = oldFact?.BaseCurrency
+                ?? await db.Companies.AsNoTracking()
+                    .Where(c => c.CompanyCode == context.CompanyCode)
+                    .Select(c => c.CurrencyCode)
+                    .SingleOrDefaultAsync(cancellationToken);
             replacement = new StockValuationFact
             {
                 CompanyCode = context.CompanyCode,
@@ -244,7 +328,7 @@ public static class StockReplayStandardCountCorrectionValuationWriter
                 EffectiveAt = prior.EffectiveAt,
                 BusinessDate = anchor.BusinessDate,
                 PeriodKey = anchor.PeriodKey,
-                ItemCode = plan.ItemCode,
+                ItemCode = itemCode,
                 WarehouseCode = direction > 0 ? history.ToWarehouse : history.FrWarehouse,
                 LocationCode = direction > 0 ? history.ToLocation : history.FrLocation,
                 LotId = direction > 0 ? history.ToLotId : history.FromLotId,
@@ -257,7 +341,7 @@ public static class StockReplayStandardCountCorrectionValuationWriter
                 CostMethod = StockCostMethods.Standard,
                 UnitCost = revision.TotalStandardCost,
                 CostAmount = amount,
-                BaseCurrency = oldFact?.BaseCurrency,
+                BaseCurrency = baseCurrency,
                 BaseCostAmount = amount,
                 ValuationSource = StockValuationSources.Standard,
                 ValuationStatus = StockValuationStatuses.Valued,

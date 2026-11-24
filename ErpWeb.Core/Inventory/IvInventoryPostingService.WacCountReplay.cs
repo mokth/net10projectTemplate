@@ -30,7 +30,7 @@ public sealed partial class IvInventoryPostingService
         var expectedAdjustment = IvQty.Round(movement.SignedDelta
             + (removing ? signedQuantity : -signedQuantity));
         if (movement.EventId >= 0 || movement.EventId == long.MinValue
-            || movement.AbsoluteCountQty is not > 0m
+            || movement.AbsoluteCountQty is not >= 0m
             || movement.Key.ClassPriority != StockReplayEventKey.CountClass
             || movement.Key.EffectiveAt.Year != movementAt.Year || movement.Key.EffectiveAt.Month != movementAt.Month
             || value.EventId != movement.EventId || value.Key != movement.Key

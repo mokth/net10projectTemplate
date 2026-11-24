@@ -303,11 +303,13 @@ public sealed class IvStockTransferService : IIvStockTransferService
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var trxDateForValidation = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
         var validatedResult = await ValidateLinesAsync(
             db,
             request.Lines,
             context.CompanyCode!,
             context.BranchCode!,
+            trxDateForValidation,
             priorToLotNoByLine: null,
             cancellationToken);
         if (validatedResult.ErrorMessage is not null)
@@ -424,11 +426,13 @@ public sealed class IvStockTransferService : IIvStockTransferService
 
         var existingDetails = await _postingRepo.LoadDetailsForBatchAsync(db, batch.Id, cancellationToken);
 
+        var trxDateForValidation = IvStockMovementRules.ResolveDraftMovementDate(request.TrxDate, _dates.Today);
         var validatedResult = await ValidateLinesAsync(
             db,
             request.Lines,
             context.CompanyCode!,
             context.BranchCode!,
+            trxDateForValidation,
             priorToLotNoByLine: existingDetails.ToDictionary(
                 d => d.TrxLineNo,
                 d => d.ToLotNo ?? string.Empty),
@@ -642,6 +646,7 @@ public sealed class IvStockTransferService : IIvStockTransferService
         IReadOnlyList<IvStockTransferLineRequest>? lines,
         string companyCode,
         string branchCode,
+        DateTime trxDate,
         IReadOnlyDictionary<short, string>? priorToLotNoByLine,
         CancellationToken cancellationToken)
     {
@@ -669,6 +674,7 @@ public sealed class IvStockTransferService : IIvStockTransferService
                 line,
                 companyCode,
                 branchCode,
+                trxDate,
                 lineNo,
                 priorToLotNoByLine,
                 cancellationToken);
@@ -749,6 +755,7 @@ public sealed class IvStockTransferService : IIvStockTransferService
         IvStockTransferLineRequest line,
         string companyCode,
         string branchCode,
+        DateTime trxDate,
         short lineNo,
         IReadOnlyDictionary<short, string>? priorToLotNoByLine,
         CancellationToken cancellationToken)
@@ -791,7 +798,9 @@ public sealed class IvStockTransferService : IIvStockTransferService
             return ($"Line {lineNo}: balance record does not belong to item '{iCode}'.", null);
         }
 
-        if (bal.StdQty <= 0m)
+        if (bal.StdQty <= 0m
+            && await ErpWeb.Core.StockLedger.StockReplayPhysicalAsOfReader.TryReadHistoricalAvailableQtyAsync(
+                db, companyCode, branchCode, bal.Id, trxDate, cancellationToken) <= 0m)
         {
             return ($"Line {lineNo}: no stock available for item '{iCode}'.", null);
         }
