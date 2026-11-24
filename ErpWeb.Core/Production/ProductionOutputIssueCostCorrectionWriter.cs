@@ -14,7 +14,8 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         StockPostingContext context, long issueId, long consumeId, long produceId,
         bool outputReversed, ProductionEffectiveCost expectedIssue, CancellationToken ct,
         long? activeFinishedGoodId = null, decimal activeFinishedGoodValue = 0m,
-        bool allowReversedFinishedGood = false)
+        bool allowReversedFinishedGood = false,
+        long? activeTransferOutId = null, decimal activeTransferOutValue = 0m)
     {
         context.EnsureUnsealed();
         var db = context.Db;
@@ -54,6 +55,8 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         var sourcePool = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == source.Uid, ct);
         var target = await db.ProductionBalLots.SingleAsync(l => l.Uid == produce.ProductionBalLotId, ct);
         var targetPool = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == target.Uid, ct);
+        if (activeFinishedGoodId is not null && activeTransferOutId is not null)
+            throw Invalid("Production output cannot combine finished-good and work-order transfer replay.");
         var finished = activeFinishedGoodId is long finishedId
             ? await db.ProductionBalLotMovements.AsNoTracking().SingleOrDefaultAsync(m => m.Uid == finishedId, ct)
             : null;
@@ -61,25 +64,40 @@ internal static class ProductionOutputIssueCostCorrectionWriter
             || finished is null || finished.MovementType != ProductionBalLotMovementTypes.FgReceiptOut
             || finished.ProductionBalLotId != target.Uid || finished.BaseQty > produce.BaseQty))
             throw Invalid("Production output has an unsupported finished-good dependency.");
+        var transferOut = activeTransferOutId is long transferId
+            ? await db.ProductionBalLotMovements.AsNoTracking().SingleOrDefaultAsync(m => m.Uid == transferId, ct)
+            : null;
+        if (activeTransferOutId is not null && (outputReversed
+            || transferOut is null || transferOut.MovementType != ProductionBalLotMovementTypes.TransferOut
+            || transferOut.ProductionBalLotId != target.Uid || transferOut.BaseQty != produce.BaseQty))
+            throw Invalid("Production output has an unsupported work-order transfer dependency.");
+        var downstreamQty = finished?.BaseQty ?? transferOut?.BaseQty ?? 0m;
+        var downstreamValue = finished is not null ? activeFinishedGoodValue
+            : transferOut is not null ? activeTransferOutValue : 0m;
         if (source.Uid == target.Uid || sourcePool.Status != ProductionPoolValuationService.Verified
             || targetPool.Status != ProductionPoolValuationService.Verified
             || sourcePool.TrackedBaseQty != source.BaseQty || sourcePool.TrackedValue != source.TotalCost
             || targetPool.TrackedBaseQty != target.BaseQty || targetPool.TrackedValue != target.TotalCost
             || source.TotalCost != expectedIssue.TotalCost - (outputReversed ? 0m : costs[consumeId].TotalCost)
             || source.BaseQty != issue.BaseQty - (outputReversed ? 0m : consume.BaseQty)
-            || target.BaseQty != (outputReversed ? 0m : produce.BaseQty - (finished?.BaseQty ?? 0m))
-            || target.TotalCost != (outputReversed ? 0m : costs[produceId].TotalCost - activeFinishedGoodValue))
+            || target.BaseQty != (outputReversed ? 0m : produce.BaseQty - downstreamQty)
+            || target.TotalCost != (outputReversed ? 0m : costs[produceId].TotalCost - downstreamValue))
             throw Invalid("Production output pools changed after replay planning.");
 
         var graph = await ProductionReplayDependencyPlanner.BuildAsync(db,
             context.CompanyCode, context.BranchCode, [issueId], ct);
+        var expectedOrderedCount = transferOut is not null ? 5 : finished is not null ? 4 : 3;
+        var expectedEdgeCount = transferOut is not null ? 4 : finished is not null ? 3 : 2;
         if (outputReversed && (graph.OrderedMovementIds.Count != 1 || graph.Edges.Count != 0)
-            || !outputReversed && (graph.OrderedMovementIds.Count != (finished is null ? 3 : 4)
-                || graph.Edges.Count != (finished is null ? 2 : 3)
+            || !outputReversed && (graph.OrderedMovementIds.Count != expectedOrderedCount
+                || graph.Edges.Count != expectedEdgeCount
                 || !graph.Edges.Any(e => e.ContributorMovementId == issueId && e.ConsumerMovementId == consumeId)
                 || !graph.Edges.Any(e => e.ContributorMovementId == consumeId && e.ConsumerMovementId == produceId)
                 || finished is not null && !graph.Edges.Any(e => e.ContributorMovementId == produceId
-                    && e.ConsumerMovementId == finished.Uid)))
+                    && e.ConsumerMovementId == finished.Uid)
+                || transferOut is not null && (!graph.Edges.Any(e => e.ContributorMovementId == produceId
+                        && e.ConsumerMovementId == transferOut.Uid)
+                    || graph.Edges.Count(e => e.ContributorMovementId == transferOut.Uid) != 1)))
             throw Invalid("Production output dependencies changed after replay planning.");
 
         var correctedConsume = consume.BaseQty == issue.BaseQty ? authority.TotalCost
@@ -112,7 +130,7 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         source.AverageUnitCost = source.BaseQty > 0m
             ? StockLedgerPrecision.Money(correctedSource / source.BaseQty) : 0m;
         sourcePool.TrackedValue = correctedSource;
-        if (!outputReversed && finished is null)
+        if (!outputReversed && finished is null && transferOut is null)
         {
             target.TotalCost = correctedProduce;
             target.AverageUnitCost = StockLedgerPrecision.Money(correctedProduce / produce.BaseQty);

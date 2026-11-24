@@ -3107,9 +3107,17 @@ public class SaInvoiceServiceTests : IAsyncLifetime
     public Task Purchase_invoice_before_delivery_reprices_cost_on_rollback() =>
         ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, purchaseBeforeSale: true);
 
-    [Fact]
-    public Task Backdated_purchase_invoice_rejects_partially_billed_delivery() =>
-        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(11m, viaDelivery: true, billingMode: 2);
+    [Theory]
+    [InlineData(11)]
+    [InlineData(9)]
+    public Task Backdated_purchase_invoice_reprices_partially_billed_delivery_and_rolls_back(decimal invoicePrice) =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(invoicePrice, viaDelivery: true, billingMode: 2);
+
+    [Theory]
+    [InlineData(11)]
+    [InlineData(9)]
+    public Task Backdated_purchase_invoice_reprices_two_partial_invoices_on_one_delivery_and_rolls_back(decimal invoicePrice) =>
+        ExerciseBackdatedPurchaseInvoiceBeforeSaleAsync(invoicePrice, viaDelivery: true, billingMode: 3);
 
     [Fact]
     public Task Backdated_purchase_invoice_rejects_damaged_delivery_billing() =>
@@ -3508,6 +3516,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
         SaDoService? delivery = null;
         string? deliveryNo = null;
         string? salesInvoiceNo = null;
+        string? secondSalesInvoiceNo = null;
         string saleHistoryNo;
         if (viaDelivery)
         {
@@ -3542,7 +3551,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                     InvDate = scenarioDate, CustCode = "CUST01", Currency = "MYR", PayCode = "NET30", SalesmanCode = "SM1",
                     Lines = [new SaInvoiceLineRequest
                     {
-                        ICode = "A100", Qty = billingMode == 2 ? 2m : 4m, UnitPrice = 10m,
+                        ICode = "A100", Qty = billingMode is 2 or 3 ? 2m : 4m, UnitPrice = 10m,
                         FrWarehouse = "MAIN", LinkDo = true, DoNo = deliveryNo, DoLine = 1
                     }]
                 });
@@ -3550,6 +3559,22 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 salesInvoiceNo = invoice.InvNo!;
                 var billed = await sale.PostAsync([salesInvoiceNo]);
                 Assert.True(billed.Succeeded, billed.ErrorMessage);
+                if (billingMode == 3)
+                {
+                    var second = await sale.SaveNewAsync(new SaInvoiceSaveRequest
+                    {
+                        InvDate = scenarioDate, CustCode = "CUST01", Currency = "MYR", PayCode = "NET30", SalesmanCode = "SM1",
+                        Lines = [new SaInvoiceLineRequest
+                        {
+                            ICode = "A100", Qty = 1m, UnitPrice = 10m,
+                            FrWarehouse = "MAIN", LinkDo = true, DoNo = deliveryNo, DoLine = 1
+                        }]
+                    });
+                    Assert.True(second.Succeeded, second.ErrorMessage);
+                    secondSalesInvoiceNo = second.InvNo!;
+                    var billedSecond = await sale.PostAsync([secondSalesInvoiceNo]);
+                    Assert.True(billedSecond.Succeeded, billedSecond.ErrorMessage);
+                }
             }
         }
         else
@@ -3623,11 +3648,29 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 (state.Qty, state.Value, state.Balance, state.Invoiced, state.SaleCost));
             if (salesInvoiceNo is not null)
             {
+                var expectedInvoiceCogs = billingMode is 2 or 3
+                    ? decimal.Round(saleCost * 0.5m, 6, MidpointRounding.AwayFromZero)
+                    : saleCost;
                 var inquiry = new SalesGrossProfitInquiryService(_factory, tenant);
                 var row = Assert.Single((await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery
                     { InvoiceNo = salesInvoiceNo })).Rows);
                 Assert.True(row.CogsResolved);
-                Assert.Equal(saleCost, row.Cogs);
+                Assert.Equal(expectedInvoiceCogs, row.Cogs);
+                var valuationQuery = new StockValuationQueryService(_factory, tenant);
+                var queryCogs = await valuationQuery.GetInvoiceCogsAsync(salesInvoiceNo);
+                Assert.True(queryCogs.IsFullyResolved);
+                Assert.Equal(expectedInvoiceCogs, queryCogs.TotalCogs);
+                if (secondSalesInvoiceNo is not null)
+                {
+                    var expectedSecondCogs = decimal.Round(saleCost * 0.25m, 6, MidpointRounding.AwayFromZero);
+                    var secondRow = Assert.Single((await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery
+                        { InvoiceNo = secondSalesInvoiceNo })).Rows);
+                    Assert.True(secondRow.CogsResolved);
+                    Assert.Equal(expectedSecondCogs, secondRow.Cogs);
+                    var secondQueryCogs = await valuationQuery.GetInvoiceCogsAsync(secondSalesInvoiceNo);
+                    Assert.True(secondQueryCogs.IsFullyResolved);
+                    Assert.Equal(expectedSecondCogs, secondQueryCogs.TotalCogs);
+                }
             }
             await using var db = await _factory.CreateDbContextAsync();
             var first = new DateTime(scenarioDate.Year, scenarioDate.Month, 1);
@@ -3642,11 +3685,29 @@ public class SaInvoiceServiceTests : IAsyncLifetime
                 (state.Qty, state.Value, state.Balance, state.Invoiced, state.SaleCost, state.IssueCost));
             if (salesInvoiceNo is not null)
             {
+                var expectedInvoiceCogs = billingMode is 2 or 3
+                    ? decimal.Round(saleCost * 0.5m, 6, MidpointRounding.AwayFromZero)
+                    : saleCost;
                 var inquiry = new SalesGrossProfitInquiryService(_factory, tenant);
                 var row = Assert.Single((await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery
                     { InvoiceNo = salesInvoiceNo })).Rows);
                 Assert.True(row.CogsResolved);
-                Assert.Equal(saleCost, row.Cogs);
+                Assert.Equal(expectedInvoiceCogs, row.Cogs);
+                var valuationQuery = new StockValuationQueryService(_factory, tenant);
+                var queryCogs = await valuationQuery.GetInvoiceCogsAsync(salesInvoiceNo);
+                Assert.True(queryCogs.IsFullyResolved);
+                Assert.Equal(expectedInvoiceCogs, queryCogs.TotalCogs);
+                if (secondSalesInvoiceNo is not null)
+                {
+                    var expectedSecondCogs = decimal.Round(saleCost * 0.25m, 6, MidpointRounding.AwayFromZero);
+                    var secondRow = Assert.Single((await inquiry.SearchAsync(new SalesGrossProfitInquiryQuery
+                        { InvoiceNo = secondSalesInvoiceNo })).Rows);
+                    Assert.True(secondRow.CogsResolved);
+                    Assert.Equal(expectedSecondCogs, secondRow.Cogs);
+                    var secondQueryCogs = await valuationQuery.GetInvoiceCogsAsync(secondSalesInvoiceNo);
+                    Assert.True(secondQueryCogs.IsFullyResolved);
+                    Assert.Equal(expectedSecondCogs, secondQueryCogs.TotalCogs);
+                }
             }
             await using var db = await _factory.CreateDbContextAsync();
             if (splitIssue)
@@ -3758,6 +3819,11 @@ public class SaInvoiceServiceTests : IAsyncLifetime
 
         async Task RollbackSaleAsync()
         {
+            if (secondSalesInvoiceNo is not null)
+            {
+                var secondRollback = await sale.RollbackAsync([secondSalesInvoiceNo]);
+                Assert.True(secondRollback.Succeeded, secondRollback.ErrorMessage);
+            }
             if (salesInvoiceNo is not null)
             {
                 var invoiceRollback = await sale.RollbackAsync([salesInvoiceNo]);
@@ -4285,7 +4351,7 @@ public class SaInvoiceServiceTests : IAsyncLifetime
             return;
         }
 
-        if (returnDraft || billingMode == 2 || receiptBeforeSale)
+        if (returnDraft || receiptBeforeSale)
         {
             var before = await CaptureAsync();
             Assert.False((await ChangeInvoiceAsync(posting: true)).Succeeded);

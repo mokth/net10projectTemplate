@@ -730,7 +730,10 @@ public sealed class ProductionStockAdjustmentService(
             else if (pool.Kind == ProductionBalLotKinds.MaterialIn && issues[pool.Uid] is ProductionMaterialMovement sourceIssue)
             {
                 var balanceIssue = await db.ProductionBalLotMovements.SingleAsync(x => x.Uid == sourceIssue.ProductionBalLotMovementId, ct);
-                total = StockLedgerPrecision.Money(balanceIssue.TotalCost * line.BaseQty / sourceIssue.BaseQty); unit = StockLedgerPrecision.Money(total / line.BaseQty);
+                var effectiveIssue = (await ProductionEffectiveCostResolver.ResolveAsync(
+                    db, scope.CompanyCode, scope.BranchCode!, [balanceIssue.Uid], ct))[balanceIssue.Uid];
+                total = StockLedgerPrecision.Money(effectiveIssue.TotalCost * line.BaseQty / sourceIssue.BaseQty);
+                unit = StockLedgerPrecision.Money(total / line.BaseQty);
                 basis = ProductionStockAdjustmentCostBasisCodes.OriginalIssueCost; issueId = sourceIssue.Uid;
             }
             else if (line.CostEvidenceType is InventoryCostEvidenceTypes.ManualApproved or InventoryCostEvidenceTypes.ZeroCostApproved)

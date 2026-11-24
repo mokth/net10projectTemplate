@@ -122,7 +122,8 @@ internal static class ProductionTerminalAdjustmentIssueCostCorrectionWriter
             || adjustmentFacts[0].BaseQty != adjustment.BaseQty
             || adjustmentFacts[0].TotalValue != adjustment.TotalCost
             || adjustmentFacts[0].UnitCost != adjustment.UnitCost
-            || adjustmentFacts[0].CostBasisCode != "POOLED_AVERAGE"
+            || adjustmentFacts[0].CostBasisCode is not ("POOLED_AVERAGE"
+                or ProductionStockAdjustmentCostBasisCodes.CurrentProductionPoolCost)
             || adjustmentFacts[0].ReversesFactId is not null)
             throw Invalid("Production material pool is not an isolated pool-average terminal adjustment.");
 

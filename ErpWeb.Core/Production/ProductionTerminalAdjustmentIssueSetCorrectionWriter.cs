@@ -128,7 +128,8 @@ internal static class ProductionTerminalAdjustmentIssueSetCorrectionWriter
                 || fact.BaseQty != movement.BaseQty
                 || fact.TotalValue != movement.TotalCost
                 || fact.UnitCost != movement.UnitCost
-                || fact.CostBasisCode != "POOLED_AVERAGE"
+                || fact.CostBasisCode is not ("POOLED_AVERAGE"
+                    or ProductionStockAdjustmentCostBasisCodes.CurrentProductionPoolCost)
                 || fact.ReversesFactId is not null
                 || evidence.Single(e => e.MovementId == id).Basis != "POOLED_AVERAGE"
                 || allocation is null
