@@ -5,6 +5,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
 
+internal sealed record TransferDownstreamStageCorrection(
+    long ConsumeMovementId,
+    long ProduceMovementId,
+    long? ActiveFinishedGoodId = null,
+    decimal ActiveFinishedGoodValue = 0m);
+
 internal sealed record ProductionWorkOrderTransferPairCorrectionResult(
     ProductionCostRestatementWriteResult Outbound,
     ProductionCostRestatementWriteResult Inbound,
@@ -21,12 +27,13 @@ internal static class ProductionWorkOrderTransferPairCostCorrectionWriter
         long transferId,
         ProductionEffectiveCost expectedOut,
         ProductionEffectiveCost expectedIn,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TransferDownstreamStageCorrection? downstream = null)
     {
         var correctedValue = await ProductionWorkOrderTransferSourceCostAuthority.ReadWithinRootAsync(
             context, transferId, cancellationToken);
         return await AppendWithinRootAsync(context, transferId, expectedOut, expectedIn,
-            correctedValue, cancellationToken);
+            correctedValue, cancellationToken, downstream);
     }
 
     public static async Task<ProductionWorkOrderTransferPairCorrectionResult> AppendWithinRootAsync(
@@ -35,7 +42,8 @@ internal static class ProductionWorkOrderTransferPairCostCorrectionWriter
         ProductionEffectiveCost expectedOut,
         ProductionEffectiveCost expectedIn,
         decimal correctedValue,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TransferDownstreamStageCorrection? downstream = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(expectedOut);
@@ -86,9 +94,17 @@ internal static class ProductionWorkOrderTransferPairCostCorrectionWriter
         var inbound = movements[expectedIn.MovementId];
         var graph = await ProductionReplayDependencyPlanner.BuildAsync(db,
             context.CompanyCode, context.BranchCode, [outbound.Uid], cancellationToken);
-        if (graph.OrderedMovementIds.Count != 2 || graph.Edges.Count != 1
-            || graph.Edges[0].ContributorMovementId != outbound.Uid
-            || graph.Edges[0].ConsumerMovementId != inbound.Uid
+        var expectedOrderedCount = downstream is null ? 2 : downstream.ActiveFinishedGoodId is not null ? 5 : 4;
+        var expectedEdgeCount = downstream is null ? 1 : downstream.ActiveFinishedGoodId is not null ? 4 : 3;
+        if (graph.OrderedMovementIds.Count != expectedOrderedCount || graph.Edges.Count != expectedEdgeCount
+            || !graph.Edges.Any(e => e.ContributorMovementId == outbound.Uid && e.ConsumerMovementId == inbound.Uid)
+            || downstream is not null && (!graph.Edges.Any(e => e.ContributorMovementId == inbound.Uid
+                    && e.ConsumerMovementId == downstream.ConsumeMovementId)
+                || !graph.Edges.Any(e => e.ContributorMovementId == downstream.ConsumeMovementId
+                    && e.ConsumerMovementId == downstream.ProduceMovementId)
+                || downstream.ActiveFinishedGoodId is long expectedFgId && !graph.Edges.Any(e =>
+                    e.ContributorMovementId == downstream.ProduceMovementId
+                    && e.ConsumerMovementId == expectedFgId))
             || outbound.MovementType != ProductionBalLotMovementTypes.TransferOut
             || inbound.MovementType != ProductionBalLotMovementTypes.TransferIn
             || outbound.DocumentType != ProductionDocumentTypes.WorkOrderTransfer
@@ -142,15 +158,6 @@ internal static class ProductionWorkOrderTransferPairCostCorrectionWriter
         var ownerSequence = await db.StockPostings.AsNoTracking()
             .Where(x => x.Id == ownerId).Select(x => x.PostingSequence)
             .SingleAsync(cancellationToken);
-        var beforeMovements = otherTargetMovements.Where(x => x.StockPostingId is long id
-            && otherOwners.TryGetValue(id, out var posting)
-            && posting.PostingSequence < ownerSequence).ToArray();
-        var beforeBase = beforeMovements.Sum(x => x.BaseQty);
-        var beforeOriginalValue = StockLedgerPrecision.Money(beforeMovements.Sum(x => x.TotalCost));
-        var otherBase = otherTargetMovements.Sum(x => x.BaseQty);
-        var otherQty = otherTargetMovements.Sum(x => x.Qty);
-        var otherEffectiveValue = StockLedgerPrecision.Money(otherTargetMovements.Sum(x =>
-            otherTargetCosts[x.Uid].TotalCost));
         var laterSourceMovement = await (from movement in db.ProductionBalLotMovements.AsNoTracking()
             join posting in db.StockPostings.AsNoTracking()
                 on movement.StockPostingId equals posting.Id
@@ -168,45 +175,15 @@ internal static class ProductionWorkOrderTransferPairCostCorrectionWriter
             || source.BaseQty != 0m || source.TotalCost != 0m || source.Qty != 0m
             || targetMovementIds.Length != otherTargetMovements.Length + 1
             || !targetMovementIds.Contains(inbound.Uid)
-            || target.BaseQty != otherBase + inbound.BaseQty
-            || target.Qty != otherQty + inbound.Qty
             || inboundDependencies.Length != 1 || inboundDependencies[0] != outbound.Uid
             || laterSourceMovement
             || fact.SourceBaseBefore != outbound.BaseQty || fact.SourceValueBefore != fact.TotalValue
             || fact.SourceBaseAfter != 0m || fact.SourceValueAfter != 0m
-            || fact.TargetBaseBefore != beforeBase || fact.TargetValueBefore != beforeOriginalValue
-            || fact.TargetBaseAfter != beforeBase + inbound.BaseQty
-            || fact.TargetValueAfter != StockLedgerPrecision.Money(beforeOriginalValue + fact.TotalValue)
-            || otherOwnerIds.Contains(0) || otherOwners.Count != otherOwnerIds.Length
-            || otherEvidence.Length != otherTargetMovements.Length
-            || otherTargetMovements.Any(x =>
-                x.ProductionBalLotId != target.Uid || x.OriginalMovementId is not null
-                || x.LedgerVersion != 2 || x.LedgerEpochId != context.Epoch.Id
-                || x.ValuationStatus != ProductionPoolValuationService.Verified
-                || x.BaseQty <= 0m || x.Qty <= 0m
-                || x.ItemCode != inbound.ItemCode || x.BaseUom != inbound.BaseUom
-                || x.Uom != target.Uom || x.ConversionFactorToBase != target.ConversionFactorToBase
-                || x.WorkOrderId != target.WorkOrderId
-                || x.RouteStepId != target.ProducingRouteStepId
-                || x.WorkOrderOperationId != target.WorkOrderOperationId
-                || movementRegistry.GetRequired(x.MovementType).Direction <= 0
-                || !otherOwners.TryGetValue(x.StockPostingId!.Value, out var otherOwner)
-                || otherOwner.CompanyCode != context.CompanyCode
-                || otherOwner.BranchCode != context.BranchCode
-                || otherOwner.LedgerEpochId != context.Epoch.Id
-                || otherOwner.SealedAtUtc is null
-                || otherOwner.PostingSequence == ownerSequence
-                || x.MovementDate != otherOwner.EffectiveAt
-                || otherEvidence.Count(e => e.MovementId == x.Uid
-                    && e.ProductionBalLotId == target.Uid
-                    && e.Generation == targetValuation.Generation
-                    && e.Status == ProductionPoolValuationService.Verified) != 1)
             || sourceValuation.Status != ProductionPoolValuationService.Verified
             || sourceValuation.TrackedBaseQty != 0m || sourceValuation.TrackedValue != 0m
             || targetValuation.Status != ProductionPoolValuationService.Verified
             || targetValuation.TrackedBaseQty != target.BaseQty
             || targetValuation.TrackedValue != target.TotalCost
-            || target.AverageUnitCost != StockLedgerPrecision.Money(target.TotalCost / target.BaseQty)
             || evidence.Length != 2
             || evidence.Count(x => x.MovementId == outbound.Uid
                 && x.ProductionBalLotId == source.Uid
@@ -218,24 +195,148 @@ internal static class ProductionWorkOrderTransferPairCostCorrectionWriter
                 && x.Status == ProductionPoolValuationService.Verified) != 1
             || current[outbound.Uid] != expectedOut || current[inbound.Uid] != expectedIn
             || expectedOut.TotalCost != expectedIn.TotalCost
-            || expectedOut.UnitCost != expectedIn.UnitCost
-            || target.TotalCost != StockLedgerPrecision.Money(otherEffectiveValue + expectedIn.TotalCost))
+            || expectedOut.UnitCost != expectedIn.UnitCost)
             throw Stale("Work Order Transfer pair or terminal target pool changed after planning.");
 
-        var correctedUnit = StockLedgerPrecision.Money(correctedValue / outbound.BaseQty);
-        var outResult = await ProductionCostRestatementWriter.AppendWithinRootAsync(
-            context, expectedOut, correctedValue, correctedUnit, cancellationToken);
-        var inResult = await ProductionCostRestatementWriter.AppendWithinRootAsync(
-            context, expectedIn, correctedValue, correctedUnit, cancellationToken);
-        if (outResult.Reversal is not null || outResult.Replacement is not null
-            || inResult.Reversal is not null || inResult.Replacement is not null)
+        if (downstream is null)
         {
-            target.TotalCost = StockLedgerPrecision.Money(otherEffectiveValue + correctedValue);
-            target.AverageUnitCost = StockLedgerPrecision.Money(target.TotalCost / target.BaseQty);
-            targetValuation.TrackedValue = target.TotalCost;
-            await db.SaveChangesAsync(cancellationToken);
+            var beforeMovements = otherTargetMovements.Where(x => x.StockPostingId is long id
+                && otherOwners.TryGetValue(id, out var posting)
+                && posting.PostingSequence < ownerSequence).ToArray();
+            var beforeBase = beforeMovements.Sum(x => x.BaseQty);
+            var beforeOriginalValue = StockLedgerPrecision.Money(beforeMovements.Sum(x => x.TotalCost));
+            var otherBase = otherTargetMovements.Sum(x => x.BaseQty);
+            var otherQty = otherTargetMovements.Sum(x => x.Qty);
+            var otherEffectiveValue = StockLedgerPrecision.Money(otherTargetMovements.Sum(x =>
+                otherTargetCosts[x.Uid].TotalCost));
+            if (target.BaseQty != otherBase + inbound.BaseQty
+                || target.Qty != otherQty + inbound.Qty
+                || fact.TargetBaseBefore != beforeBase || fact.TargetValueBefore != beforeOriginalValue
+                || fact.TargetBaseAfter != beforeBase + inbound.BaseQty
+                || fact.TargetValueAfter != StockLedgerPrecision.Money(beforeOriginalValue + fact.TotalValue)
+                || otherOwnerIds.Contains(0) || otherOwners.Count != otherOwnerIds.Length
+                || otherEvidence.Length != otherTargetMovements.Length
+                || otherTargetMovements.Any(x =>
+                    x.ProductionBalLotId != target.Uid || x.OriginalMovementId is not null
+                    || x.LedgerVersion != 2 || x.LedgerEpochId != context.Epoch.Id
+                    || x.ValuationStatus != ProductionPoolValuationService.Verified
+                    || x.BaseQty <= 0m || x.Qty <= 0m
+                    || x.ItemCode != inbound.ItemCode || x.BaseUom != inbound.BaseUom
+                    || x.Uom != target.Uom || x.ConversionFactorToBase != target.ConversionFactorToBase
+                    || x.WorkOrderId != target.WorkOrderId
+                    || x.RouteStepId != target.ProducingRouteStepId
+                    || x.WorkOrderOperationId != target.WorkOrderOperationId
+                    || movementRegistry.GetRequired(x.MovementType).Direction <= 0
+                    || !otherOwners.TryGetValue(x.StockPostingId!.Value, out var otherOwner)
+                    || otherOwner.CompanyCode != context.CompanyCode
+                    || otherOwner.BranchCode != context.BranchCode
+                    || otherOwner.LedgerEpochId != context.Epoch.Id
+                    || otherOwner.SealedAtUtc is null
+                    || otherOwner.PostingSequence == ownerSequence
+                    || x.MovementDate != otherOwner.EffectiveAt
+                    || otherEvidence.Count(e => e.MovementId == x.Uid
+                        && e.ProductionBalLotId == target.Uid
+                        && e.Generation == targetValuation.Generation
+                        && e.Status == ProductionPoolValuationService.Verified) != 1)
+                || target.AverageUnitCost != StockLedgerPrecision.Money(target.TotalCost / target.BaseQty)
+                || target.TotalCost != StockLedgerPrecision.Money(otherEffectiveValue + expectedIn.TotalCost))
+                throw Stale("Work Order Transfer pair or terminal target pool changed after planning.");
+
+            var correctedUnit = StockLedgerPrecision.Money(correctedValue / outbound.BaseQty);
+            var outResult = await ProductionCostRestatementWriter.AppendWithinRootAsync(
+                context, expectedOut, correctedValue, correctedUnit, cancellationToken);
+            var inResult = await ProductionCostRestatementWriter.AppendWithinRootAsync(
+                context, expectedIn, correctedValue, correctedUnit, cancellationToken);
+            if (outResult.Reversal is not null || outResult.Replacement is not null
+                || inResult.Reversal is not null || inResult.Replacement is not null)
+            {
+                target.TotalCost = StockLedgerPrecision.Money(otherEffectiveValue + correctedValue);
+                target.AverageUnitCost = StockLedgerPrecision.Money(target.TotalCost / target.BaseQty);
+                targetValuation.TrackedValue = target.TotalCost;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            return new(outResult, inResult, StockLedgerPrecision.Money(otherEffectiveValue + correctedValue));
         }
-        return new(outResult, inResult, StockLedgerPrecision.Money(otherEffectiveValue + correctedValue));
+
+        if (otherTargetMovements.Length != 1 || otherTargetMovements[0].Uid != downstream.ConsumeMovementId
+            || fact.TargetBaseBefore != 0m || fact.TargetValueBefore != 0m
+            || fact.TargetBaseAfter != inbound.BaseQty || fact.TargetValueAfter != fact.TotalValue
+            || downstream.ConsumeMovementId == downstream.ProduceMovementId
+            || otherTargetMovements[0].MovementType != ProductionBalLotMovementTypes.Consume
+            || otherTargetMovements[0].OriginalMovementId is not null
+            || otherTargetMovements[0].BaseQty <= 0m || otherTargetMovements[0].BaseQty > inbound.BaseQty
+            || target.BaseQty != inbound.BaseQty - otherTargetMovements[0].BaseQty
+            || target.Qty != inbound.Qty - otherTargetMovements[0].Qty)
+            throw Stale("Work Order Transfer downstream target pool changed after planning.");
+
+        var consume2 = otherTargetMovements[0];
+        var produce2 = await db.ProductionBalLotMovements.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Uid == downstream.ProduceMovementId, cancellationToken);
+        var finished = downstream.ActiveFinishedGoodId is long fgId
+            ? await db.ProductionBalLotMovements.AsNoTracking().SingleOrDefaultAsync(x => x.Uid == fgId, cancellationToken)
+            : null;
+        if (produce2 is null || produce2.MovementType != ProductionBalLotMovementTypes.Produce
+            || produce2.OriginalMovementId is not null
+            || produce2.ProductionOutputId != consume2.ProductionOutputId
+            || produce2.WorkOrderId != target.WorkOrderId
+            || produce2.BaseQty <= 0m
+            || downstream.ActiveFinishedGoodId is not null && (finished is null
+                || finished.MovementType != ProductionBalLotMovementTypes.FgReceiptOut
+                || finished.ProductionBalLotId != produce2.ProductionBalLotId
+                || finished.BaseQty > produce2.BaseQty))
+            throw Stale("Work Order Transfer downstream output changed after planning.");
+
+        var stage2 = await db.ProductionBalLots.SingleOrDefaultAsync(
+            x => x.Uid == produce2.ProductionBalLotId, cancellationToken);
+        var stage2Pool = await db.ProductionPoolValuationRows.SingleOrDefaultAsync(
+            x => x.ProductionBalLotId == produce2.ProductionBalLotId, cancellationToken);
+        var stage2Costs = await ProductionEffectiveCostResolver.ResolveAsync(
+            db, context.CompanyCode, context.BranchCode, [produce2.Uid], cancellationToken);
+        var consume2Cost = otherTargetCosts[consume2.Uid];
+        var produce2Cost = stage2Costs[produce2.Uid];
+        var currentTargetPoolValue = StockLedgerPrecision.Money(expectedIn.TotalCost - consume2Cost.TotalCost);
+        var expectedStage2Base = produce2.BaseQty - (finished?.BaseQty ?? 0m);
+        var expectedStage2Value = StockLedgerPrecision.Money(
+            produce2Cost.TotalCost - (finished is not null ? downstream.ActiveFinishedGoodValue : 0m));
+        if (stage2 is null || stage2Pool is null
+            || stage2.Uid == target.Uid || stage2.Uid == source.Uid
+            || stage2Pool.Status != ProductionPoolValuationService.Verified
+            || stage2Pool.TrackedBaseQty != stage2.BaseQty || stage2Pool.TrackedValue != stage2.TotalCost
+            || target.TotalCost != currentTargetPoolValue
+            || target.AverageUnitCost != (target.BaseQty > 0m ? StockLedgerPrecision.Money(target.TotalCost / target.BaseQty) : 0m)
+            || stage2.BaseQty != expectedStage2Base || stage2.TotalCost != expectedStage2Value)
+            throw Stale("Work Order Transfer downstream target or output pool changed after planning.");
+
+        var correctedConsume2 = consume2.BaseQty == inbound.BaseQty ? correctedValue
+            : StockLedgerPrecision.Money(correctedValue * consume2.BaseQty / inbound.BaseQty);
+        var correctedTargetValue = StockLedgerPrecision.Money(correctedValue - correctedConsume2);
+        var correctedProduce2 = StockLedgerPrecision.Money(
+            produce2Cost.TotalCost + correctedConsume2 - consume2Cost.TotalCost);
+        if (correctedTargetValue < 0m || correctedProduce2 < 0m
+            || target.BaseQty == 0m && correctedTargetValue != 0m)
+            throw Invalid("Work Order Transfer downstream correction would leave a negative or stranded pool value.");
+
+        var correctedTransferUnit = StockLedgerPrecision.Money(correctedValue / outbound.BaseQty);
+        var downstreamOut = await ProductionCostRestatementWriter.AppendWithinRootAsync(
+            context, expectedOut, correctedValue, correctedTransferUnit, cancellationToken);
+        var downstreamIn = await ProductionCostRestatementWriter.AppendWithinRootAsync(
+            context, expectedIn, correctedValue, correctedTransferUnit, cancellationToken);
+        await ProductionCostRestatementWriter.AppendWithinRootAsync(context, consume2Cost,
+            correctedConsume2, StockLedgerPrecision.Money(correctedConsume2 / consume2.BaseQty), cancellationToken);
+        await ProductionCostRestatementWriter.AppendWithinRootAsync(context, produce2Cost,
+            correctedProduce2, StockLedgerPrecision.Money(correctedProduce2 / produce2.BaseQty), cancellationToken);
+        target.TotalCost = correctedTargetValue;
+        target.AverageUnitCost = target.BaseQty > 0m
+            ? StockLedgerPrecision.Money(correctedTargetValue / target.BaseQty) : 0m;
+        targetValuation.TrackedValue = correctedTargetValue;
+        if (finished is null)
+        {
+            stage2.TotalCost = correctedProduce2;
+            stage2.AverageUnitCost = StockLedgerPrecision.Money(correctedProduce2 / produce2.BaseQty);
+            stage2Pool.TrackedValue = correctedProduce2;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        return new(downstreamOut, downstreamIn, correctedTargetValue);
     }
 
     private static StockLedgerException Invalid(string message) =>

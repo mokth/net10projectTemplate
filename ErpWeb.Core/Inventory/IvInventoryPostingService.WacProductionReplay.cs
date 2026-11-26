@@ -406,15 +406,20 @@ public sealed partial class IvInventoryPostingService
                 context, plan.EffectiveCost, cancellationToken);
         else if (plan.Output.ActiveWorkOrderTransfer is { } activeTransfer)
         {
+            var transferDownstream = activeTransfer.DownstreamOutput is null ? null
+                : new TransferDownstreamStageCorrection(
+                    activeTransfer.DownstreamOutput.ConsumeMovementId,
+                    activeTransfer.DownstreamOutput.ProduceMovementId);
             await ProductionOutputIssueCostCorrectionWriter.AppendWithinRootAsync(
                 context, plan.Output.IssueMovementId!.Value,
                 plan.Output.ConsumeMovementId!.Value, plan.Output.ProduceMovementId!.Value,
                 outputReversed: false, plan.EffectiveCost, cancellationToken,
                 activeTransferOutId: activeTransfer.OutMovementId,
-                activeTransferOutValue: activeTransfer.ExpectedOut.TotalCost);
+                activeTransferOutValue: activeTransfer.ExpectedOut.TotalCost,
+                transferDownstream: transferDownstream);
             await ProductionWorkOrderTransferPairCostCorrectionWriter.AppendFromSourceReceiptsWithinRootAsync(
                 context, activeTransfer.TransferId, activeTransfer.ExpectedOut,
-                activeTransfer.ExpectedIn, cancellationToken);
+                activeTransfer.ExpectedIn, cancellationToken, transferDownstream);
         }
         else if (plan.Output.OutputTerminalAdjustments is { } outputAdjustments)
         {

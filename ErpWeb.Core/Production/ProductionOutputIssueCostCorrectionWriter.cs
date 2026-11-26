@@ -26,7 +26,8 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         IReadOnlyCollection<long>? outputTerminalAdjustmentIds = null,
         decimal? outputTerminalAdjustmentPoolBaseQty = null,
         decimal? outputTerminalAdjustmentPoolValue = null,
-        HandoffStageCorrection? handoff = null)
+        HandoffStageCorrection? handoff = null,
+        TransferDownstreamStageCorrection? transferDownstream = null)
     {
         context.EnsureUnsealed();
         var db = context.Db;
@@ -160,10 +161,16 @@ internal static class ProductionOutputIssueCostCorrectionWriter
                     && e.ConsumerMovementId == finished.Uid))
                 throw Invalid("Production handoff dependencies changed after replay planning.");
         }
+        else if (transferDownstream is not null && activeTransferOutId is null)
+            throw Invalid("Work-order transfer downstream replay requires an active work-order transfer.");
         else
         {
-            var expectedOrderedCount = transferOut is not null ? 5 : finished is not null ? 4 : 3;
-            var expectedEdgeCount = transferOut is not null ? 4 : finished is not null ? 3 : 2;
+            var expectedOrderedCount = transferOut is not null
+                ? transferDownstream is not null ? (transferDownstream.ActiveFinishedGoodId is not null ? 8 : 7) : 5
+                : finished is not null ? 4 : 3;
+            var expectedEdgeCount = transferOut is not null
+                ? transferDownstream is not null ? (transferDownstream.ActiveFinishedGoodId is not null ? 7 : 6) : 4
+                : finished is not null ? 3 : 2;
             if (outputReversed && (graph.OrderedMovementIds.Count != 1 || graph.Edges.Count != 0)
                 || !outputReversed && (graph.OrderedMovementIds.Count != expectedOrderedCount
                     || graph.Edges.Count != expectedEdgeCount
@@ -173,7 +180,13 @@ internal static class ProductionOutputIssueCostCorrectionWriter
                         && e.ConsumerMovementId == finished.Uid)
                     || transferOut is not null && (!graph.Edges.Any(e => e.ContributorMovementId == produceId
                             && e.ConsumerMovementId == transferOut.Uid)
-                        || graph.Edges.Count(e => e.ContributorMovementId == transferOut.Uid) != 1)))
+                        || graph.Edges.Count(e => e.ContributorMovementId == transferOut.Uid) != 1)
+                    || transferDownstream is not null && (!graph.Edges.Any(e => e.ConsumerMovementId == transferDownstream.ConsumeMovementId)
+                        || !graph.Edges.Any(e => e.ContributorMovementId == transferDownstream.ConsumeMovementId
+                            && e.ConsumerMovementId == transferDownstream.ProduceMovementId)
+                        || transferDownstream.ActiveFinishedGoodId is long transferFgId && !graph.Edges.Any(e =>
+                            e.ContributorMovementId == transferDownstream.ProduceMovementId
+                            && e.ConsumerMovementId == transferFgId))))
                 throw Invalid("Production output dependencies changed after replay planning.");
         }
 

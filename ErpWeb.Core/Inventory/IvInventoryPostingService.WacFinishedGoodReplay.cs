@@ -74,13 +74,24 @@ public sealed partial class IvInventoryPostingService
         var output = plan.Output!;
         var fg = output.ActiveFinishedGood!;
         var handoff = output.HandoffOutput;
-        var ids = handoff is null
-            ? new[] { plan.MovementId, output.ConsumeMovementId!.Value, output.ProduceMovementId!.Value, fg.MovementId }
-            : new[]
+        var activeTransfer = output.ActiveWorkOrderTransfer;
+        var transferDownstream = activeTransfer?.DownstreamOutput;
+        if (handoff is not null && transferDownstream is not null)
+            throw ProductionReplayError("Production output cannot combine handoff and work-order transfer downstream finished-good replay.");
+        var ids = handoff is not null
+            ? new[]
             {
                 plan.MovementId, output.ConsumeMovementId!.Value, output.ProduceMovementId!.Value,
                 handoff.ConsumeMovementId, handoff.ProduceMovementId, fg.MovementId
-            };
+            }
+            : transferDownstream is not null
+                ? new[]
+                {
+                    plan.MovementId, output.ConsumeMovementId!.Value, output.ProduceMovementId!.Value,
+                    activeTransfer!.OutMovementId, activeTransfer.InMovementId,
+                    transferDownstream.ConsumeMovementId, transferDownstream.ProduceMovementId, fg.MovementId
+                }
+                : new[] { plan.MovementId, output.ConsumeMovementId!.Value, output.ProduceMovementId!.Value, fg.MovementId };
         var movements = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(m => ids.Contains(m.Uid))
             .ToDictionaryAsync(m => m.Uid, ct);
@@ -91,22 +102,34 @@ public sealed partial class IvInventoryPostingService
         var issue = movements[plan.MovementId];
         var consume1 = movements[output.ConsumeMovementId!.Value];
         var produce1 = movements[output.ProduceMovementId!.Value];
-        var consume = handoff is null ? consume1 : movements[handoff.ConsumeMovementId];
-        var produce = handoff is null ? produce1 : movements[handoff.ProduceMovementId];
+        var transferIn = transferDownstream is null ? null : movements[activeTransfer!.InMovementId];
+        var stage2 = handoff ?? transferDownstream;
+        var consume = stage2 is null ? consume1 : movements[stage2.ConsumeMovementId];
+        var produce = stage2 is null ? produce1 : movements[stage2.ProduceMovementId];
         var finished = movements[fg.MovementId];
-        var costIds = handoff is null
-            ? new[] { consume1.Uid, produce1.Uid }
-            : new[] { consume1.Uid, produce1.Uid, consume.Uid, produce.Uid };
+        var costIds = handoff is not null
+            ? new[] { consume1.Uid, produce1.Uid, consume.Uid, produce.Uid }
+            : transferDownstream is not null
+                ? new[]
+                {
+                    consume1.Uid, produce1.Uid, activeTransfer!.OutMovementId, activeTransfer.InMovementId,
+                    consume.Uid, produce.Uid
+                }
+                : new[] { consume1.Uid, produce1.Uid };
         var costs = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch, costIds, ct);
         var desiredIssue = projectedIssueValue;
         var desiredConsume1 = consume1.BaseQty == issue.BaseQty ? desiredIssue
             : StockLedgerPrecision.Money(desiredIssue * consume1.BaseQty / issue.BaseQty);
         var desiredProduce1 = StockLedgerPrecision.Money(costs[produce1.Uid].TotalCost
             + desiredConsume1 - costs[consume1.Uid].TotalCost);
-        var desiredConsume = handoff is null ? desiredConsume1
-            : consume.BaseQty == produce1.BaseQty ? desiredProduce1
-            : StockLedgerPrecision.Money(desiredProduce1 * consume.BaseQty / produce1.BaseQty);
-        var desiredProduce = handoff is null ? desiredProduce1
+        var stage2SourceCost = transferIn is not null
+            ? desiredProduce1
+            : desiredProduce1;
+        var stage2SourceBase = transferIn?.BaseQty ?? produce1.BaseQty;
+        var desiredConsume = stage2 is null ? desiredConsume1
+            : consume.BaseQty == stage2SourceBase ? stage2SourceCost
+            : StockLedgerPrecision.Money(stage2SourceCost * consume.BaseQty / stage2SourceBase);
+        var desiredProduce = stage2 is null ? desiredProduce1
             : StockLedgerPrecision.Money(costs[produce.Uid].TotalCost
                 + desiredConsume - costs[consume.Uid].TotalCost);
         var fact = await db.ProductionFinishedGoodFactRows.AsNoTracking()
@@ -364,14 +387,34 @@ public sealed partial class IvInventoryPostingService
         if (issue.BaseQty != plan.Quantity || issue.TotalCost != fg.ProjectedIssueValue)
             throw ProductionReplayError("The finished-good source changed after replay planning.");
         var handoff = output.HandoffOutput;
-        await ProductionOutputIssueCostCorrectionWriter.AppendWithinRootAsync(context,
-            output.IssueMovementId!.Value, output.ConsumeMovementId!.Value,
-            output.ProduceMovementId!.Value, false, plan.EffectiveCost, ct,
-            handoff is null ? fg.MovementId : null,
-            handoff is null ? fg.CurrentValue : 0m,
-            handoff: handoff is null ? null : new HandoffStageCorrection(
-                handoff.ConsumeMovementId, handoff.ProduceMovementId,
-                fg.MovementId, fg.CurrentValue));
+        var activeTransfer = output.ActiveWorkOrderTransfer;
+        var transferDownstream = activeTransfer?.DownstreamOutput;
+        if (transferDownstream is not null)
+        {
+            var transferStage = new TransferDownstreamStageCorrection(
+                transferDownstream.ConsumeMovementId, transferDownstream.ProduceMovementId,
+                fg.MovementId, fg.CurrentValue);
+            await ProductionOutputIssueCostCorrectionWriter.AppendWithinRootAsync(context,
+                output.IssueMovementId!.Value, output.ConsumeMovementId!.Value,
+                output.ProduceMovementId!.Value, false, plan.EffectiveCost, ct,
+                activeTransferOutId: activeTransfer!.OutMovementId,
+                activeTransferOutValue: activeTransfer.ExpectedOut.TotalCost,
+                transferDownstream: transferStage);
+            await ProductionWorkOrderTransferPairCostCorrectionWriter.AppendFromSourceReceiptsWithinRootAsync(
+                context, activeTransfer.TransferId, activeTransfer.ExpectedOut,
+                activeTransfer.ExpectedIn, ct, transferStage);
+        }
+        else
+        {
+            await ProductionOutputIssueCostCorrectionWriter.AppendWithinRootAsync(context,
+                output.IssueMovementId!.Value, output.ConsumeMovementId!.Value,
+                output.ProduceMovementId!.Value, false, plan.EffectiveCost, ct,
+                handoff is null ? fg.MovementId : null,
+                handoff is null ? fg.CurrentValue : 0m,
+                handoff: handoff is null ? null : new HandoffStageCorrection(
+                    handoff.ConsumeMovementId, handoff.ProduceMovementId,
+                    fg.MovementId, fg.CurrentValue));
+        }
         var delta = await ProductionFinishedGoodWacReceiptCorrection.AppendWithinRootAsync(context,
             fg.HistoryId, fg.ReceiptFactId, fg.ProjectedValue, 1000001, 1000002, ct);
         if (delta is null || fg.ProjectedValue == fg.CurrentValue)
@@ -436,7 +479,9 @@ public sealed partial class IvInventoryPostingService
         {
             await ApplyFifoFinishedGoodCostStateAsync(context, fg, ct);
         }
-        var targetProduceId = handoff?.ProduceMovementId ?? output.ProduceMovementId!.Value;
+        var targetProduceId = handoff?.ProduceMovementId
+            ?? transferDownstream?.ProduceMovementId
+            ?? output.ProduceMovementId!.Value;
         var finalCost = (await ProductionEffectiveCostResolver.ResolveAsync(db,
             context.CompanyCode, context.BranchCode, [fg.MovementId, targetProduceId], ct));
         if (finalCost[fg.MovementId].TotalCost != fg.ProjectedValue

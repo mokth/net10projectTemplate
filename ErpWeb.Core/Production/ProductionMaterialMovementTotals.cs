@@ -172,5 +172,6 @@ public static class ProductionBalLotSignedQty
             or ProductionBalLotMovementTypes.ProduceReversal
             or ProductionBalLotMovementTypes.FgReceiptReversal or ProductionBalLotMovementTypes.ConsumeReversal
             or ProductionBalLotMovementTypes.ReturnReversal
+            or ProductionBalLotMovementTypes.TransferIn or ProductionBalLotMovementTypes.TransferOut
             or ProductionBalLotMovementTypes.AdjustIn or ProductionBalLotMovementTypes.AdjustOut;
 }
