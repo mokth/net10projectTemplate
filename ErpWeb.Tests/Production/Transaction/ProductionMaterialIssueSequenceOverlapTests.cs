@@ -952,6 +952,38 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public Task Backdated_standard_receipt_preserves_output_and_work_order_transfer_and_rolls_back(
+        bool goodsReceipt) => BackdatedReceiptAndProductionIssueAsync(goodsReceipt, true, 904, true);
+
+    [Theory]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    public Task Backdated_standard_receipt_preserves_active_finished_good_and_rolls_back(
+        bool goodsReceipt, bool finishedGoodFirst, bool receiptFirst) =>
+        BackdatedReceiptAndProductionIssueAsync(goodsReceipt, receiptFirst,
+            finishedGoodFirst ? 36 : 37, true);
+
+    [Theory]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    public Task Backdated_standard_receipt_preserves_reversed_finished_good_and_rolls_back(
+        bool goodsReceipt, bool finishedGoodFirst, bool outputFirst) =>
+        BackdatedReceiptAndProductionIssueAsync(goodsReceipt, !outputFirst,
+            finishedGoodFirst ? 28 : 29, true);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public Task Backdated_fifo_receipt_reprices_production_stock_return_and_rolls_back(
         bool goodsReceipt) => BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, true, 905);
 
@@ -1177,6 +1209,8 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "RM001", 2m);
                 if (consumeAt == 908)
                     await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "WIP-OUT", 5m);
+                if (consumeAt is 28 or 29 or 36 or 37)
+                    await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "FG001", 2.5m);
             }
         }
 
@@ -3232,7 +3266,8 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.NotNull(postedTransfer);
             await AssertWorkOrderTransferReplayCycleAsync(
                 postedTransfer!, consumedOutputId, receiptBatchNo, goodsReceipt,
-                expectedPostedStockValue: 75.6m, expectedPostedTransferCost: 18.4m,
+                expectedPostedStockValue: standard ? 42m : 75.6m,
+                expectedPostedTransferCost: standard ? 12m : 18.4m,
                 expectedOriginalStockValue: 32m, expectedOriginalTransferCost: 12m,
                 PostReceiptAsync, RollbackReceiptAsync);
             return;
@@ -4170,17 +4205,30 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 unchangedFinishedGood = await PostFinishedGoodAsync(graph.OrderId, consumedOutputId, businessDate);
             Assert.NotNull(unchangedFinishedGood);
             Assert.Equal(6m, unchangedFinishedGood.Value);
-            await AssertActiveFinishedGoodUnchangedAsync(unchangedFinishedGood);
+            async Task AssertFinishedGoodStateAsync()
+            {
+                if (!standard)
+                {
+                    await AssertActiveFinishedGoodUnchangedAsync(unchangedFinishedGood);
+                    return;
+                }
+                await using var check = await _factory.CreateDbContextAsync();
+                var fgState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
+                Assert.Equal((2m, 5m), (fgState.OnHandBaseQty, fgState.InventoryValue));
+                var variance = await check.ProductionStandardCostVariances.SingleAsync(v => v.ItemCode == "FG001");
+                Assert.Equal((6m, 5m, 1m), (variance.ActualProductionValue, variance.StandardInventoryValue, variance.VarianceAmount));
+            }
+            await AssertFinishedGoodStateAsync();
             if (!receiptFirst)
                 await RollbackFinishedGoodAsync(unchangedFinishedGood);
             var removed = await RollbackReceiptAsync();
             Assert.True(removed.Succeeded, removed.Error);
             if (receiptFirst)
-                await AssertActiveFinishedGoodUnchangedAsync(unchangedFinishedGood);
+                await AssertFinishedGoodStateAsync();
             var repeated = await PostReceiptAsync();
             Assert.True(repeated.Succeeded, repeated.Error);
             if (receiptFirst)
-                await AssertActiveFinishedGoodUnchangedAsync(unchangedFinishedGood);
+                await AssertFinishedGoodStateAsync();
             removed = await RollbackReceiptAsync();
             Assert.True(removed.Succeeded, removed.Error);
             if (receiptFirst)

@@ -128,11 +128,15 @@ public sealed partial class IvInventoryPostingService
 
         var valuations = await db.StockValuationFacts.AsNoTracking()
             .Where(v => v.InventoryHistoryId == history.Id).ToArrayAsync(ct);
+        var isStandard = costMethod == StockCostMethods.Standard;
         if (valuations.Length != 1 || valuations[0].StockPostingId != postId
             || valuations[0].CompanyCode != company || valuations[0].BranchCode != branch
             || valuations[0].LedgerEpochId != produce.LedgerEpochId || valuations[0].ItemCode != outbound.ItemCode
             || valuations[0].Direction != 1 || valuations[0].BaseQty != history.ToStdQty
-            || valuations[0].CostAmount != fact.TotalValue || valuations[0].BaseCostAmount != fact.TotalValue
+            || valuations[0].CostAmount < 0m
+            || valuations[0].BaseCostAmount != valuations[0].CostAmount
+            || (!isStandard && valuations[0].CostAmount != fact.TotalValue)
+            || (isStandard && valuations[0].ValuationSource != StockValuationSources.Standard)
             || valuations[0].CostMethod != costMethod
             || valuations[0].ValuationStatus != StockValuationStatuses.Valued
             || valuations[0].ReversesValuationFactId is not null || valuations[0].OriginalValuationFactId is not null
@@ -141,6 +145,22 @@ public sealed partial class IvInventoryPostingService
                 || v.OriginalValuationFactId == valuations[0].Id
                     && !hasRestatements, ct))
             throw ProductionReplayError("Finished-good receipt inventory value is not an unchanged original.");
+        long? standardVarianceId = null;
+        if (isStandard)
+        {
+            var variances = await db.ProductionStandardCostVariances.AsNoTracking()
+                .Where(v => v.InventoryValuationFactId == valuations[0].Id)
+                .ToArrayAsync(ct);
+            if (variances.Length != 1
+                || variances[0].CompanyCode != company || variances[0].BranchCode != branch
+                || variances[0].StockPostingId != postId || variances[0].ReversesVarianceId is not null
+                || variances[0].ItemCode != outbound.ItemCode || variances[0].BaseQty != valuations[0].BaseQty
+                || variances[0].ActualProductionValue != fact.TotalValue
+                || variances[0].StandardInventoryValue != valuations[0].CostAmount
+                || variances[0].VarianceAmount != StockLedgerPrecision.Money(fact.TotalValue - valuations[0].CostAmount))
+                throw ProductionReplayError("Standard finished-good receipt variance evidence is inconsistent.");
+            standardVarianceId = variances[0].Id;
+        }
 
         var evidence = await db.ProductionValuationEvidenceRows.AsNoTracking()
             .SingleOrDefaultAsync(e => e.MovementId == outbound.Uid, ct);
@@ -175,7 +195,8 @@ public sealed partial class IvInventoryPostingService
             outbound.Uid, postId, post.PostingSequence, post.EffectiveAt, post.DocumentRevision,
             outbound.Qty, outbound.BaseQty, outbound.TotalCost, outbound.UnitCost, Effective = effective,
             fact.Id, fact.BatchId, fact.SourceId, fact.InventoryHistoryId, fact.DestinationBalanceId,
-            ValuationId = valuations[0].Id, AllocationId = allocations[0].Id, EdgeId = edges[0].Id,
+            ValuationId = valuations[0].Id, StandardVarianceId = standardVarianceId,
+            AllocationId = allocations[0].Id, EdgeId = edges[0].Id,
             evidence.Generation
         }, new { }).RequestFingerprint;
         return new(fact.BatchId, outbound.Uid, outbound.Qty, outbound.BaseQty, effective.TotalCost,

@@ -176,21 +176,51 @@ public sealed partial class IvInventoryPostingService
                 && v.ReversesValuationFactId is null && v.OriginalValuationFactId is null
                 && v.CompanyCode == company && v.BranchCode == branch
                 && v.LedgerEpochId == produce.LedgerEpochId && v.ItemCode == outbound.ItemCode
-                && v.Direction == 1 && v.BaseQty == fact.BaseQty && v.CostAmount == fact.TotalValue
-                && v.BaseCostAmount == fact.TotalValue
+                && v.Direction == 1 && v.BaseQty == fact.BaseQty && v.CostAmount >= 0m
+                && v.BaseCostAmount == v.CostAmount
+                && (v.CostMethod == StockCostMethods.Standard
+                    ? v.ValuationSource == StockValuationSources.Standard
+                    : v.CostAmount == fact.TotalValue)
                 && v.ValuationStatus == StockValuationStatuses.Valued) != 1)
             throw ProductionReplayError("Finished-good inventory valuation is incomplete.");
         var valuation = valuations.Single(v => v.InventoryHistoryId == history.Id);
-        if (valuations.Count(v => v.InventoryHistoryId == reversedHistory.Id && v.StockPostingId == reverseId
-                && v.ReversesValuationFactId == valuation.Id && v.CompanyCode == company && v.BranchCode == branch
-                && v.LedgerEpochId == produce.LedgerEpochId && v.ItemCode == outbound.ItemCode
-                && v.Direction == -1 && v.BaseQty == valuation.BaseQty && v.CostAmount == valuation.CostAmount
-                && v.BaseCostAmount == valuation.BaseCostAmount
-                && v.CostMethod == valuation.CostMethod && v.ValuationStatus == StockValuationStatuses.Reversed) != 1
+        var reversalValuation = valuations.SingleOrDefault(v => v.InventoryHistoryId == reversedHistory.Id);
+        if (reversalValuation is null || reversalValuation.StockPostingId != reverseId
+            || reversalValuation.ReversesValuationFactId != valuation.Id
+            || reversalValuation.CompanyCode != company || reversalValuation.BranchCode != branch
+            || reversalValuation.LedgerEpochId != produce.LedgerEpochId || reversalValuation.ItemCode != outbound.ItemCode
+            || reversalValuation.Direction != -1 || reversalValuation.BaseQty != valuation.BaseQty
+            || reversalValuation.CostAmount != valuation.CostAmount
+            || reversalValuation.BaseCostAmount != valuation.BaseCostAmount
+            || reversalValuation.CostMethod != valuation.CostMethod
+            || reversalValuation.ValuationStatus != StockValuationStatuses.Reversed
             || await db.StockValuationFacts.AsNoTracking().CountAsync(v => v.ReversesValuationFactId == valuation.Id, ct) != 1
             || corrected is null && await db.StockValuationFacts.AsNoTracking().AnyAsync(v =>
                 v.OriginalValuationFactId == valuation.Id && v.ReversesValuationFactId == null, ct))
             throw ProductionReplayError("Finished-good inventory valuation reversal is inconsistent.");
+        if (valuation.CostMethod == StockCostMethods.Standard)
+        {
+            var variances = await db.ProductionStandardCostVariances.AsNoTracking()
+                .Where(v => v.InventoryValuationFactId == valuation.Id
+                    || v.InventoryValuationFactId == reversalValuation.Id)
+                .ToArrayAsync(ct);
+            var origVar = variances.SingleOrDefault(v => v.InventoryValuationFactId == valuation.Id);
+            var revVar = variances.SingleOrDefault(v => v.InventoryValuationFactId == reversalValuation.Id);
+            if (variances.Length != 2 || origVar is null || revVar is null
+                || origVar.CompanyCode != company || revVar.CompanyCode != company
+                || origVar.BranchCode != branch || revVar.BranchCode != branch
+                || origVar.StockPostingId != postId || revVar.StockPostingId != reverseId
+                || origVar.ReversesVarianceId is not null || revVar.ReversesVarianceId != origVar.Id
+                || origVar.ItemCode != outbound.ItemCode || revVar.ItemCode != outbound.ItemCode
+                || origVar.BaseQty != valuation.BaseQty || revVar.BaseQty != valuation.BaseQty
+                || origVar.ActualProductionValue != fact.TotalValue
+                || origVar.StandardInventoryValue != valuation.CostAmount
+                || origVar.VarianceAmount != StockLedgerPrecision.Money(fact.TotalValue - valuation.CostAmount)
+                || revVar.ActualProductionValue != -origVar.ActualProductionValue
+                || revVar.StandardInventoryValue != -origVar.StandardInventoryValue
+                || revVar.VarianceAmount != -origVar.VarianceAmount)
+                throw ProductionReplayError("Reversed Standard finished goods have inconsistent variance evidence.");
+        }
 
         long? closedFifoLayerId = null;
         if (valuation.CostMethod == StockCostMethods.Fifo)

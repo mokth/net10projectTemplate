@@ -256,15 +256,14 @@ public sealed partial class IvInventoryPostingService
                     candidateDate, outputPosting, produce, costs[produce.Uid], outputLot, outputPool,
                     downstreamMovements, allowRestatements, ct);
             }
-            else if (!allowRestatements)
-                throw ProductionReplayError("Production output has unsupported downstream history.");
             else if (!reversed && downstreamMovements.Length == 1
                 && downstreamMovements[0].MovementType == ProductionBalLotMovementTypes.FgReceiptOut)
             {
                 var issueMethods = await db.StockValuationFacts.AsNoTracking()
                     .Where(f => authority.ActiveValuationFactIds.Contains(f.Id))
                     .Select(f => f.CostMethod).Distinct().ToArrayAsync(ct);
-                if (issueMethods.Length != 1)
+                if (issueMethods.Length != 1
+                    || (!allowRestatements && issueMethods[0] != StockCostMethods.Standard))
                     throw ProductionReplayError("Production issue has inconsistent cost methods.");
                 activeFinishedGood = await VerifyActiveFinishedGoodAsync(db, company, branch,
                     candidateDate, produce, costs[produce.Uid], downstreamMovements[0], issueMethods[0], ct);
@@ -272,13 +271,31 @@ public sealed partial class IvInventoryPostingService
             else if (!reversed && downstreamMovements.Length == 1
                 && downstreamMovements[0].MovementType == ProductionBalLotMovementTypes.TransferOut)
             {
+                if (!allowRestatements)
+                {
+                    var issueMethods = await db.StockValuationFacts.AsNoTracking()
+                        .Where(f => authority.ActiveValuationFactIds.Contains(f.Id))
+                        .Select(f => f.CostMethod).Distinct().ToArrayAsync(ct);
+                    if (issueMethods.Length != 1 || issueMethods[0] != StockCostMethods.Standard)
+                        throw ProductionReplayError("Production output has unsupported downstream history.");
+                }
                 activeWorkOrderTransfer = await VerifyActiveWorkOrderTransferAsync(db, company, branch,
                     candidateDate, outputPosting, produce, costs[produce.Uid], downstreamMovements[0], ct);
             }
             else
             {
+                if (!allowRestatements)
+                {
+                    var issueMethods = await db.StockValuationFacts.AsNoTracking()
+                        .Where(f => authority.ActiveValuationFactIds.Contains(f.Id))
+                        .Select(f => f.CostMethod).Distinct().ToArrayAsync(ct);
+                    if (issueMethods.Length != 1 || issueMethods[0] != StockCostMethods.Standard)
+                        throw ProductionReplayError("Production output has unsupported downstream history.");
+                }
                 var verified = await VerifyReversedFinishedGoodAsync(db, company, branch,
                     candidateDate, produce, downstreamMovements, removingReceiptOwnerId, ct);
+                if (!allowRestatements && verified.Corrected is not null)
+                    throw ProductionReplayError("Corrected finished goods require restatement replay.");
                 reversedFinishedGoodHash = verified.Hash;
                 correctedReversedFinishedGood = verified.Corrected;
             }
