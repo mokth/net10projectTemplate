@@ -11222,4 +11222,281 @@ public sealed class IvStockCountLedgerAuthorityTests : IAsyncLifetime
         Assert.True(posted.Succeeded, posted.ErrorMessage);
         return (line.Id, line.BalLocId);
     }
+
+    [Theory]
+    [InlineData("MI", 100, 20, 20, 262.5, 52.5)]
+    [InlineData("MI", 90, 20, 10, 236.25, 26.25)]
+    [InlineData("MI", 80, 20, 0, 210, 0)]
+    [InlineData("MI", 0, 20, -80, 0, 210)]
+    [InlineData("SC", 100, 20, 20, 262.5, 52.5)]
+    [InlineData("VR", 80, 20, 0, 210, 0)]
+    [InlineData("MR", 100, 25, -25, 325, 50)]
+    [InlineData("MR", 110, 25, -15, 345, 30)]
+    [InlineData("MR", 0, 25, -125, 0, 375)]
+    [InlineData("GR", 100, 25, -25, 300, 50)]
+    public async Task Fifo_movements_before_single_pile_count_post_rollback_and_repost(
+        string trxType, decimal countedQty, decimal movementQty,
+        decimal expectedAdjustment, decimal expectedFinalValue, decimal expectedCountFactCost)
+    {
+        var (lineId, pileId) = await PostFifoCountForMovementAsync(countedQty);
+        var qa = new QaPhysicalHoldAuthorizationService();
+
+        if (trxType is "VR" or "GR")
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            db.PoSuppliers.Add(new PoSupplier
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                SuppCode = "SUP-FIFO", SuppName = "FIFO Supplier",
+                Currency = "MYR", GlCode = "AP001",
+                IsActive = true, RowVersion = Guid.NewGuid().ToByteArray()
+            });
+            db.PoOrders.Add(new PoOrder
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                PoNo = "PO-FIFO-CNT", PoRelNo = 1, PoDate = FixedToday.AddDays(-5),
+                Status = PoOrderStatuses.New, VendCode = "SUP-FIFO", VendName = "FIFO Supplier",
+                CurCode = "MYR", OneTime = false, FinClosed = false
+            });
+            db.PoOrderDetails.Add(new PoOrderDetail
+            {
+                CompanyCode = InventoryLedgerTestFixture.CompanyCode,
+                BranchCode = InventoryLedgerTestFixture.BranchCode,
+                PoNo = "PO-FIFO-CNT", PoRelNo = 1, Line = 1,
+                ICode = "A100", IDesc = "Item A", OneTime = false,
+                PoQty = 50m, PoPurQty = 50m, RecvQty = trxType == "VR" ? 25m : 0m, ReturnQty = 0m,
+                BalanceQty = trxType == "VR" ? 25m : 50m, OverRecvQty = 0m, InvoicedQty = 0m,
+                StdUom = "EA", PurchaseUom = "EA", PackSz = 1m, PoUnitPrice = 4m,
+                Amount = 200m, NetAmount = 200m, CurCode = "MYR"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var initialAdjustment = countedQty - 100m;
+        decimal initialValue = countedQty switch
+        {
+            110m => 275m,
+            100m => 250m,
+            90m => 230m,
+            80m => 210m,
+            0m => 0m,
+            _ => throw new ArgumentOutOfRangeException(nameof(countedQty))
+        };
+        decimal initialCountCost = countedQty switch
+        {
+            110m => 25m,
+            100m => 0m,
+            90m => 20m,
+            80m => 40m,
+            0m => 250m,
+            _ => throw new ArgumentOutOfRangeException(nameof(countedQty))
+        };
+
+        if (trxType == "MI")
+        {
+            var svc = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var draft = await SaveIssueBeforeCountAsync(svc, pileId, movementQty);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await svc.PostAsync([draft]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertFifoStateAsync(expectedAdjustment, expectedFinalValue, expectedCountFactCost);
+                var r = await svc.RollbackAsync([draft]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertFifoStateAsync(initialAdjustment, initialValue, initialCountCost);
+            }
+        }
+        else if (trxType == "SC")
+        {
+            var tenant = InventoryTenantTestHelper.CreateTenantContext();
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var scrap = new IvScrapService(
+                _factory, tenant, access.Object, new RunningNumberService(),
+                new FixedCurrentDateService(FixedToday),
+                new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+                new IvStockTransactionRepository(), new IvStockPostingRepository(),
+                posting, NullLogger<IvScrapService>.Instance);
+            var draft = await scrap.SaveNewAsync(new IvScrapSaveRequest
+            {
+                TrxDate = FixedToday.AddHours(12), RefNo = "FIFO-SC-CNT",
+                Lines = [new IvScrapLineRequest
+                {
+                    FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    Quantity = movementQty, Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", UnitPrice = 2m,
+                    Reason = "DAMAGED"
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await scrap.PostAsync([draft.BatchNo]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertFifoStateAsync(expectedAdjustment, expectedFinalValue, expectedCountFactCost);
+                var r = await scrap.RollbackAsync([draft.BatchNo]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertFifoStateAsync(initialAdjustment, initialValue, initialCountCost);
+            }
+        }
+        else if (trxType == "VR")
+        {
+            var tenant = InventoryTenantTestHelper.CreateTenantContext();
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var vr = new IvVendorReturnService(
+                _factory, tenant, access.Object, new RunningNumberService(),
+                new FixedCurrentDateService(FixedToday),
+                new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+                new IvStockTransactionRepository(), new IvStockPostingRepository(),
+                posting, NullLogger<IvVendorReturnService>.Instance);
+            var draft = await vr.SaveNewAsync(new IvVendorReturnSaveRequest
+            {
+                TrxDate = FixedToday.AddHours(12), RefNo = "FIFO-VR-CNT",
+                Lines = [new IvVendorReturnLineRequest
+                {
+                    PoNo = "PO-FIFO-CNT", PoRelNo = 1, PoLineNo = 1,
+                    FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = movementQty, Uom = "EA", IClassCode = "RAW",
+                    IStatus = "ACTIVE", UnitPrice = 2m
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await vr.PostAsync([draft.BatchNo]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertFifoStateAsync(expectedAdjustment, expectedFinalValue, expectedCountFactCost,
+                    expectedPoReturn: movementQty);
+                var r = await vr.RollbackAsync([draft.BatchNo]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertFifoStateAsync(initialAdjustment, initialValue, initialCountCost,
+                    expectedPoReturn: 0m);
+            }
+        }
+        else if (trxType == "MR")
+        {
+            var svc = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, FixedToday,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var draft = await SaveReceiptBeforeCountAsync(svc, movementQty, unitPrice: 5m);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await svc.PostAsync([draft]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertFifoStateAsync(expectedAdjustment, expectedFinalValue, expectedCountFactCost);
+                var r = await svc.RollbackAsync([draft]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertFifoStateAsync(initialAdjustment, initialValue, initialCountCost);
+            }
+        }
+        else
+        {
+            var tenant = InventoryTenantTestHelper.CreateTenantContext();
+            var access = new Mock<IAccessRightService>();
+            access.Setup(x => x.CanAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory,
+                enableBackdatedReplay: true, qaPhysical: qa);
+            var gr = new IvGoodsReceiptService(
+                _factory, tenant, access.Object, new RunningNumberService(),
+                new FixedCurrentDateService(FixedToday),
+                new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+                new IvStockTransactionRepository(), new IvStockPostingRepository(),
+                posting, NullLogger<IvGoodsReceiptService>.Instance,
+                approval: TestDisabledProcurementApprovalGuard.Instance);
+            var draft = await gr.SaveNewAsync(new IvGoodsReceiptSaveRequest
+            {
+                TrxType = IvTrxTypes.GoodsReceive,
+                TrxDate = FixedToday.AddDays(-1).AddHours(12),
+                RefNo = "FIFO-GR-CNT",
+                Lines = [new IvGoodsReceiptLineRequest
+                {
+                    PoNo = "PO-FIFO-CNT", PoRelNo = 1, PoLineNo = 1,
+                    ToWarehouse = "MAIN", ToLocation = "BIN1",
+                    ToRecvQty = movementQty
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            for (var cycle = 0; cycle < 2; cycle++)
+            {
+                var p = await gr.PostAsync([draft.BatchNo]);
+                Assert.True(p.Succeeded, p.ErrorMessage);
+                await AssertFifoStateAsync(expectedAdjustment, expectedFinalValue, expectedCountFactCost,
+                    expectedPoRecv: movementQty);
+                var r = await gr.RollbackAsync([draft.BatchNo]);
+                Assert.True(r.Succeeded, r.ErrorMessage);
+                await AssertFifoStateAsync(initialAdjustment, initialValue, initialCountCost,
+                    expectedPoRecv: 0m);
+            }
+        }
+
+        async Task AssertFifoStateAsync(decimal adjustment, decimal finalValue, decimal countFactCost,
+            decimal? expectedPoReturn = null, decimal? expectedPoRecv = null)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(countedQty, (await db.IvBalLocs.SingleAsync()).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((countedQty, finalValue), (state.OnHandBaseQty, state.InventoryValue));
+            var layers = await db.StockFifoLayers.ToListAsync();
+            Assert.Equal(countedQty, StockLedgerPrecision.Quantity(layers.Sum(l => l.RemainingQty)));
+            Assert.Equal(finalValue, StockLedgerPrecision.Money(layers.Sum(l => l.RemainingValue)));
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [lineId]))[lineId];
+            Assert.Equal(adjustment, active.SignedAdjustmentQty);
+            if (adjustment == 0m)
+                Assert.Null(active.AdjustmentHistoryId);
+            else
+            {
+                var history = await db.IvTrxHistories.SingleAsync(h => h.Id == active.AdjustmentHistoryId);
+                var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [history]);
+                Assert.Equal(countFactCost, StockLedgerPrecision.Money(facts[history.Id].Sum(f => f.CostAmount)));
+            }
+            if (expectedPoReturn.HasValue)
+                Assert.Equal(expectedPoReturn.Value,
+                    (await db.PoOrderDetails.SingleAsync(d => d.PoNo == "PO-FIFO-CNT" && d.Line == 1)).ReturnQty);
+            if (expectedPoRecv.HasValue)
+                Assert.Equal(expectedPoRecv.Value,
+                    (await db.PoOrderDetails.SingleAsync(d => d.PoNo == "PO-FIFO-CNT" && d.Line == 1)).RecvQty);
+        }
+    }
+
+    private async Task<(int LineId, int PileId)> PostFifoCountForMovementAsync(decimal countedQty)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints=ON;");
+            db.StockCostStates.Remove(await db.StockCostStates.SingleAsync());
+            await db.SaveChangesAsync();
+            (await db.StockCostPolicyRevisions.SingleAsync()).CostMethod = StockCostMethods.Fifo;
+            var bal = await db.IvBalLocs.SingleAsync();
+            bal.StdQty = 100m;
+            bal.TransDate = FixedToday.AddDays(-2).AddHours(9);
+            await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "A100",
+                [
+                    new FifoLayerSeed(50m, 2m, FixedToday.AddDays(-3)),
+                    new FifoLayerSeed(50m, 3m, FixedToday.AddDays(-2).AddHours(9))
+                ]);
+        }
+        var count = InventoryLedgerTestFixture.CreateStockCount(_factory, FixedToday, enableBackdatedReplay: true);
+        var saved = await count.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = FixedToday, WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        Assert.True((await count.GenerateAsync(saved.Id, discardCounts: false)).Succeeded);
+        var line = Assert.Single((await count.GetAsync(saved.CountNo!)).Document!.Lines);
+        Assert.True((await count.SaveCountsAsync(saved.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = countedQty }], null)).Succeeded);
+        var posted = await count.PostAsync(saved.Id);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        return (line.Id, line.BalLocId);
+    }
 }

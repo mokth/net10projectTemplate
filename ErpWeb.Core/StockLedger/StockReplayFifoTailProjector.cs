@@ -366,6 +366,28 @@ public static class StockReplayFifoTailProjector
                         };
                     }
                 }
+                if (repriceSalesReturns && receipt.ProductionReturn is { } prodBinding)
+                {
+                    var issue = projectedIssues.SingleOrDefault(i =>
+                        !i.IsCandidate && i.Key.LineIdentity == $"H{prodBinding.IssueHistoryId:D10}");
+                    if (issue is not null)
+                    {
+                        if (!issue.DepletesPool || issue.Quantity <= 0m
+                            || prodBinding.ReturnedQuantity <= 0m
+                            || prodBinding.ReturnedQuantity > issue.Quantity
+                            || prodBinding.ReturnedQuantity != receipt.OriginalQuantity
+                            || prodBinding.ReturnedValue != receipt.RemainingValue)
+                            throw Invalid("FIFO Production return repricing requires its exact issue generation.");
+                        var value = StockLedgerPrecision.Money(
+                            issue.Value * prodBinding.ReturnedQuantity / issue.Quantity);
+                        receipt = receipt with
+                        {
+                            AccumulatedAdjustment = StockLedgerPrecision.Money(value - receipt.OriginalValue),
+                            RemainingValue = value,
+                            CurrentUnitCost = StockLedgerPrecision.Money(value / receipt.OriginalQuantity)
+                        };
+                    }
+                }
                 layers.Add(receipt);
                 continue;
             }
@@ -390,7 +412,8 @@ public static class StockReplayFifoTailProjector
     {
         var previous = snapshot.Layers.ToDictionary(l => l.LayerId);
         return StockLedgerPrecision.Money(projected.Sum(layer =>
-            layer.SalesReturn is null || !previous.TryGetValue(layer.LayerId, out var old)
+            (layer.SalesReturn is null && layer.ProductionReturn is null)
+            || !previous.TryGetValue(layer.LayerId, out var old)
                 ? 0m : layer.AccumulatedAdjustment - old.AccumulatedAdjustment));
     }
 

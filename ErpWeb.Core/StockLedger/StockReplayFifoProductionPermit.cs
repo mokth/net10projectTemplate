@@ -18,6 +18,7 @@ public sealed class StockReplayFifoProductionPermit
     private readonly string _planHash;
     private readonly int _historyId;
 
+    internal int IssueHistoryId => _historyId;
     internal long MaterialMovementId { get; }
 
     internal StockReplayFifoProductionPermit(StockPostingContext context,

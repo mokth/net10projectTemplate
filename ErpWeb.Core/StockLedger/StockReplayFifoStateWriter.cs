@@ -158,14 +158,24 @@ public static class StockReplayFifoStateWriter
             .Where(f => adjustmentOriginIds.Contains(f.Id))
             .ToDictionaryAsync(f => f.Id, cancellationToken);
         var valueFacts = facts.Where(f => f.BaseQty == 0m).ToArray();
-        if (expectedAdjustments.Any(x => x.Before.SalesReturn is null
-                || !adjustmentOrigins.TryGetValue(x.Before.OriginFactId, out var origin)
-                || origin.BaseQty != x.Before.OriginalQuantity
-                || origin.CostAmount != x.Before.OriginalValue
-                || x.Before.SalesReturn.ReturnedValue != StockLedgerPrecision.Money(
-                    origin.CostAmount + x.Before.AccumulatedAdjustment)
-                || valueFacts.Count(f => StockReplayFifoSalesReturnValueAdjustment.Matches(
-                    f, origin, x.SignedValue)) != 1)
+        if (expectedAdjustments.Any(x =>
+            {
+                if (!adjustmentOrigins.TryGetValue(x.Before.OriginFactId, out var origin)
+                    || origin.BaseQty != x.Before.OriginalQuantity
+                    || origin.CostAmount != x.Before.OriginalValue)
+                    return true;
+                if (x.Before.SalesReturn is { } salesReturn)
+                    return salesReturn.ReturnedValue != StockLedgerPrecision.Money(
+                            origin.CostAmount + x.Before.AccumulatedAdjustment)
+                        || valueFacts.Count(f => StockReplayFifoSalesReturnValueAdjustment.Matches(
+                            f, origin, x.SignedValue)) != 1;
+                if (x.Before.ProductionReturn is { } prodReturn)
+                    return prodReturn.ReturnedValue != StockLedgerPrecision.Money(
+                            origin.CostAmount + x.Before.AccumulatedAdjustment)
+                        || valueFacts.Count(f => StockReplayFifoProductionReturnValueAdjustment.Matches(
+                            f, origin, x.SignedValue)) != 1;
+                return true;
+            })
             || valueFacts.Length != expectedAdjustments.Length)
             throw Invalid("FIFO return value facts do not match the prepared layer adjustments.");
         if (facts.Length == 0 || facts.Any(f =>
@@ -244,6 +254,17 @@ public static class StockReplayFifoStateWriter
                             && f.OriginalPostingId == l.OriginStockPostingId
                             && f.OriginalHistoryId == f.ReversedHistoryId
                             && f.PostingType == IvTrxTypes.CustomerReturn
+                            && f.PostingRole == "REVERSAL"
+                            && f.ReversesPostingId == l.OriginStockPostingId
+                            && f.BaseQty == l.OriginalQty
+                            && f.CostAmount == l.OriginalValue
+                        || f.MovementCode == "PRODUCTION_STOCK_RETURN_IN_REVERSAL"
+                            && f.ValuationSource == StockValuationSources.OriginalReversal
+                            && f.OriginalMovement == "PRODUCTION_STOCK_RETURN_IN"
+                            && f.OriginalType == ErpWeb.Model.Entities.Production.ProductionDocumentTypes.ProductionStockReturn
+                            && f.OriginalPostingId == l.OriginStockPostingId
+                            && f.OriginalHistoryId == f.ReversedHistoryId
+                            && f.PostingType == ErpWeb.Model.Entities.Production.ProductionDocumentTypes.ProductionStockReturn
                             && f.PostingRole == "REVERSAL"
                             && f.ReversesPostingId == l.OriginStockPostingId
                             && f.BaseQty == l.OriginalQty

@@ -878,7 +878,7 @@ public sealed class InventoryValuationService : IInventoryValuationService
                 ? await ReadActiveFifoReturnAllocationsAsync(context, original, cancellationToken)
                 : [];
             var historicalAdjustedReturn = false;
-            if (original.MovementCode == "SALE_RETURN_IN")
+            if (original.MovementCode is "SALE_RETURN_IN" or "PRODUCTION_STOCK_RETURN_IN")
             {
                 var returnLayer = layers.SingleOrDefault(l => l.OriginValuationFactId == original.Id);
                 if (returnLayer is null)
@@ -902,8 +902,11 @@ public sealed class InventoryValuationService : IInventoryValuationService
                         || reversalHistory.PostingLineNo is not int line)
                         throw LedgerError(StockLedgerErrorCodes.ReversalDependency,
                             $"FIFO return fact {original.Id} cannot reverse its value adjustment.");
-                    var delta = StockReplayFifoSalesReturnValueAdjustment.Create(
-                        context, original, adjustment, line, checked(original.SplitOrdinal + 1));
+                    var delta = original.MovementCode == "SALE_RETURN_IN"
+                        ? StockReplayFifoSalesReturnValueAdjustment.Create(
+                            context, original, adjustment, line, checked(original.SplitOrdinal + 1))
+                        : StockReplayFifoProductionReturnValueAdjustment.Create(
+                            context, original, adjustment, line, checked(original.SplitOrdinal + 1));
                     historicalAdjustedReturn = true;
                     returnLayer.RemainingValue = original.CostAmount;
                     returnLayer.AccumulatedAdjustment = 0m;

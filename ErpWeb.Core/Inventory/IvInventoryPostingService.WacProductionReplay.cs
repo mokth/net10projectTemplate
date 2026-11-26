@@ -102,7 +102,12 @@ public sealed partial class IvInventoryPostingService
                 && i.Key.CompareTo(candidateKey) > 0)
             .Select(i => StockReplayFifoMiRootWriter.HistoryId(i.Key)).ToArray();
         var plan = await PlanProductionLeafAsync(db, companyCode, branchCode, ids, cancellationToken,
-            candidateKey.EffectiveAt, allowOutput: true);
+            candidateKey.EffectiveAt, allowOutput: true, allowProductionReturn: true);
+        if (plan?.TerminalReturn is { } prtn
+            && !projection.BeforeCandidate.LaterReceipts.Any(l =>
+                l.ProductionReturn?.ReturnHistoryId == prtn.ReturnHistoryId
+                && l.ProductionReturn.IssueHistoryId == plan.HistoryId))
+            throw ProductionReplayError("Production stock return is missing from the FIFO replay tail.");
         if (plan?.Output is not null && plan.Output.ActiveFinishedGood is null
             && plan.Output.CorrectedReversedFinishedGood is null
             && plan.Output.ActiveWorkOrderTransfer is null
@@ -629,8 +634,8 @@ public sealed partial class IvInventoryPostingService
         TerminalProductionReturnReplayPlan prtn, CancellationToken cancellationToken)
     {
         var db = context.Db;
-        if (context.CostMethod != StockCostMethods.MovingAverage)
-            throw ProductionReplayError("Bounded Production stock return replay requires WAC valuation.");
+        if (context.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo))
+            throw ProductionReplayError("Bounded Production stock return replay requires WAC or FIFO valuation.");
         var authority = (await ProductionIssueEffectiveCostReader.ReadWithinRootAsync(
             context, [plan.MovementId], cancellationToken))[plan.MovementId];
         var correctedReturn = StockLedgerPrecision.Money(
@@ -644,8 +649,29 @@ public sealed partial class IvInventoryPostingService
             .SingleAsync(h => h.Id == prtn.ReturnHistoryId, cancellationToken);
         var activeReturnFacts = (await StockReplayValuationGenerationResolver.ResolveWithinReplayRootAsync(
             context, [returnHistory], cancellationToken))[returnHistory.Id];
-        if (activeReturnFacts.Count != 1 || activeReturnFacts[0].CostAmount != correctedReturn)
-            throw ProductionReplayError("Production stock return Inventory valuation does not match Production restatement.");
+        if (activeReturnFacts.Count != 1)
+            throw ProductionReplayError("Production stock return Inventory valuation has no unique active generation.");
+        if (context.CostMethod == StockCostMethods.MovingAverage)
+        {
+            if (activeReturnFacts[0].CostAmount != correctedReturn)
+                throw ProductionReplayError("Production stock return Inventory valuation does not match Production restatement.");
+        }
+        else
+        {
+            var originReturnFact = activeReturnFacts[0];
+            var adjustmentRows = await db.StockValuationFacts.AsNoTracking()
+                .Where(f => f.OriginalValuationFactId == originReturnFact.Id
+                    && f.InventoryHistoryId == null)
+                .ToArrayAsync(cancellationToken);
+            if (adjustmentRows.Any(f => f.MovementCode != StockReplayFifoProductionReturnValueAdjustment.Movement
+                    || f.ValuationSource != StockReplayFifoProductionReturnValueAdjustment.Source
+                    || !StockReplayFifoProductionReturnValueAdjustment.Matches(f, originReturnFact, f.SignedValue)))
+                throw ProductionReplayError("FIFO Production stock return Inventory value adjustment is inconsistent.");
+            var effectiveInvReturn = StockLedgerPrecision.Money(
+                originReturnFact.CostAmount + adjustmentRows.Sum(f => f.SignedValue));
+            if (effectiveInvReturn != correctedReturn)
+                throw ProductionReplayError("FIFO Production stock return Inventory valuation does not match Production restatement.");
+        }
 
         var lot = await db.ProductionBalLots.SingleAsync(l => l.Uid == plan.PoolId, cancellationToken);
         var pool = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == plan.PoolId, cancellationToken);

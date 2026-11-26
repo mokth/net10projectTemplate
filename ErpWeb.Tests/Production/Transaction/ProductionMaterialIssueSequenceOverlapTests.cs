@@ -946,6 +946,12 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public Task Backdated_fifo_receipt_reprices_production_stock_return_and_rolls_back(
+        bool goodsReceipt) => BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, true, 905);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public Task Backdated_wac_receipt_reprices_material_padj_in_and_out_authorities(
         bool goodsReceipt) => BackdatedReceiptAndProductionIssueAsync(goodsReceipt, true, 906, false);
 
@@ -5304,8 +5310,11 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             ];
         }
         PostedWorkOrderTransfer? fifoPostedTransfer = null;
+        PostedPrtn? fifoPostedPrtn = null;
         if (scenario == 904)
             fifoPostedTransfer = await PostWorkOrderTransferForOutputAsync(consumedOutputId, new DateTime(2026, 10, 3, 14, 0, 0));
+        else if (scenario == 905)
+            fifoPostedPrtn = await PostPrtnAsync(graph.OrderId, issue.Data.BatchNo, 2m, new DateTime(2026, 10, 3, 13, 0, 0));
         if (scenario == 10)
         {
             await using var inject = await _factory.CreateDbContextAsync();
@@ -6386,6 +6395,17 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 expectedPostedStockValue: 66m, expectedPostedTransferCost: 28m,
                 expectedOriginalStockValue: 32m, expectedOriginalTransferCost: 12m,
                 PostReceiptAsync, RollbackReceiptAsync);
+            return;
+        }
+        if (scenario == 905)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            Assert.NotNull(fifoPostedPrtn);
+            await AssertPrtnReplayCycleAsync(
+                fifoPostedPrtn!, issue.Data.BatchNo, receiptBatch, goodsReceipt,
+                PostReceiptAsync, RollbackReceiptAsync,
+                postedStockValue: 78m, postedIssueCost: 24m, postedReturnCost: 12m,
+                afterPrtnRollbackStockValue: 66m);
             return;
         }
         if (scenario == 906)
@@ -9172,7 +9192,11 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     private async Task AssertPrtnReplayCycleAsync(
         PostedPrtn postedPrtn, int issueBatchNo, int receiptBatchNo, bool goodsReceipt,
         Func<Task<(bool Succeeded, string? Error)>> postReceipt,
-        Func<Task<(bool Succeeded, string? Error)>> rollbackReceipt)
+        Func<Task<(bool Succeeded, string? Error)>> rollbackReceipt,
+        decimal postedStockValue = 82.8m,
+        decimal postedIssueCost = 14.4m,
+        decimal postedReturnCost = 7.2m,
+        decimal afterPrtnRollbackStockValue = 75.6m)
     {
         async Task AssertStateAsync(decimal stockQty, decimal stockValue, decimal issueCost,
             decimal returnCost, decimal remainingPoolCost, decimal expectedRecvQty)
@@ -9196,21 +9220,24 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             var returnHistory = await db.IvTrxHistories.SingleAsync(h => h.Id == postedPrtn.ReturnHistoryId);
             var activeReturnFact = Assert.Single((await StockReplayValuationGenerationResolver.ResolveAsync(
                 db, "DEMO", "HQ", [returnHistory]))[returnHistory.Id]);
-            Assert.Equal(returnCost, activeReturnFact.CostAmount);
+            var activeInvReturnTotal = StockLedgerPrecision.Money(activeReturnFact.CostAmount
+                + await db.StockValuationFacts.Where(f => f.OriginalValuationFactId == activeReturnFact.Id && f.InventoryHistoryId == null)
+                    .SumAsync(f => (decimal?)(f.Direction * f.CostAmount)) ?? 0m);
+            Assert.Equal(returnCost, activeInvReturnTotal);
             var doc = await postedPrtn.Service.GetAsync(postedPrtn.Document.Id);
             Assert.True(doc.Succeeded, doc.Message);
             Assert.Equal(returnCost, Assert.Single(doc.Data!.Lines).TotalValue);
         }
 
-        await AssertStateAsync(23m, 82.8m, 14.4m, 7.2m, 7.2m, 5m);
+        await AssertStateAsync(23m, postedStockValue, postedIssueCost, postedReturnCost, postedIssueCost - postedReturnCost, 5m);
         var removed = await rollbackReceipt();
         Assert.True(removed.Succeeded, removed.Error);
         await AssertStateAsync(18m, 36m, 8m, 4m, 4m, 0m);
         var reposted = await postReceipt();
         Assert.True(reposted.Succeeded, reposted.Error);
-        await AssertStateAsync(23m, 82.8m, 14.4m, 7.2m, 7.2m, 5m);
+        await AssertStateAsync(23m, postedStockValue, postedIssueCost, postedReturnCost, postedIssueCost - postedReturnCost, 5m);
 
-        // Replay-aware PRTN rollback reverses exact restated 7.2m out of Inventory and back into MATERIAL_IN.
+        // Replay-aware PRTN rollback reverses exact restated return cost out of Inventory and back into MATERIAL_IN.
         await using (var db = await _factory.CreateDbContextAsync())
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE PrProductionStockReturn SET RowVersion = X'01' WHERE BatchId = {postedPrtn.Document.Id};");
@@ -9222,12 +9249,12 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var stock = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
-            Assert.Equal((21m, 75.6m), (stock.OnHandBaseQty, stock.InventoryValue));
+            Assert.Equal((21m, afterPrtnRollbackStockValue), (stock.OnHandBaseQty, stock.InventoryValue));
             var material = await db.ProductionMaterialMovements.SingleAsync(m =>
                 m.InventoryBatchNo == issueBatchNo && m.MovementType == ProductionMaterialMovementTypes.Issue);
             var pool = await db.ProductionBalLots.SingleAsync(l => l.OriginalIssueMovementId == material.Uid);
             var valuation = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == pool.Uid);
-            Assert.Equal((4m, 14.4m, 14.4m), (pool.BaseQty, pool.TotalCost, valuation.TrackedValue));
+            Assert.Equal((4m, postedIssueCost, postedIssueCost), (pool.BaseQty, pool.TotalCost, valuation.TrackedValue));
         }
     }
 

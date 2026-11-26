@@ -35,7 +35,8 @@ public sealed partial class IvInventoryPostingService
             .AnyAsync(f => f.CompanyCode == companyCode
                 && f.BranchCode == branchCode && f.ItemCode == itemCode
                 && f.EffectiveAt > batch.TrxDtTime
-                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
+                && f.StockPosting!.SealedAtUtc != null, cancellationToken)
+            || await HasLaterStandardCountAsync(read, companyCode, branchCode, itemCode, batch.TrxDtTime, cancellationToken);
         if (!hasLaterValue)
             return null;
         var method = await read.StockCostStates.AsNoTracking()
@@ -76,6 +77,11 @@ public sealed partial class IvInventoryPostingService
         var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, authority.BalLocId,
             authority.EffectiveAt, authority.Quantity, cancellationToken);
+        if (physical.LaterEvents.Count == 1
+            && physical.LaterEvents[0].Key.ClassPriority == StockReplayEventKey.CountClass)
+            return await TryPostFifoSingleCountMrAsync(
+                companyCode, branchCode, batchNo, receiptType, authority,
+                physical, replayInvoice, cancellationToken);
         var key = physical.Candidate.Key;
         var financial = await StockReplayFifoInsertionPlanner.BuildMiscReceiptAsync(
             read, companyCode, branchCode, batchNo, physical,
@@ -305,7 +311,8 @@ public sealed partial class IvInventoryPostingService
                         && f.StockPosting!.PostingSequence > owner.PostingSequence)
                 && !(f.InventoryHistoryId == original.Id
                     && f.EffectiveAt == owner.EffectiveAt)
-                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
+                && f.StockPosting!.SealedAtUtc != null, cancellationToken)
+            || await HasLaterStandardCountAsync(read, companyCode, branchCode, original.ICode, owner.EffectiveAt, cancellationToken);
         if (!hasLaterValue)
             return null;
         if (!(await StockReplayInventoryRouteSelector.ReadRollbackAsync(read,
@@ -319,6 +326,23 @@ public sealed partial class IvInventoryPostingService
         var physical = await StockReplayPhysicalPlanner.BuildRemovalAsync(
             read, companyCode, branchCode, original.ToBalLocId.Value,
             removed, cancellationToken);
+        PoInvoice? singleCountInvoice = null;
+        if (physical.LaterEvents.Count == 1
+            && physical.LaterEvents[0].Key.ClassPriority == StockReplayEventKey.CountClass)
+        {
+            if (goodsReceipt)
+            {
+                var invCheck = await LoadSingleGrReplayInvoiceAsync(read,
+                    companyCode, branchCode, original.PoNo, original.PoRelNo, original.PoLineNo,
+                    original.ICode, original.TrxDtTime, cancellationToken, allowPostedCreditNote: true);
+                if (invCheck.Error is not null)
+                    return IvInventoryPostingBatchResult.Fail(batchNo, invCheck.Error);
+                singleCountInvoice = invCheck.Invoice;
+            }
+            return await TryRollBackFifoSingleCountMrAsync(
+                companyCode, branchCode, batchNo, receiptType, batch, original,
+                owner, physical, singleCountInvoice, cancellationToken);
+        }
         var financial = await StockReplayFifoRemovalPlanner.BuildAsync(
             read, companyCode, branchCode, original.ICode, physical,
             cancellationToken);
@@ -561,7 +585,8 @@ public sealed partial class IvInventoryPostingService
             .AnyAsync(f => f.CompanyCode == companyCode
                 && f.BranchCode == branchCode && f.ItemCode == itemCode
                 && f.EffectiveAt > batch.TrxDtTime
-                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
+                && f.StockPosting!.SealedAtUtc != null, cancellationToken)
+            || await HasLaterStandardCountAsync(read, companyCode, branchCode, itemCode, batch.TrxDtTime, cancellationToken);
         if (!hasLaterValue)
             return null;
         var method = await read.StockCostStates.AsNoTracking()
@@ -583,6 +608,10 @@ public sealed partial class IvInventoryPostingService
         var physical = await StockReplayInventoryCandidatePlanner.BuildSingleAsync(
             read, companyCode, branchCode, detail.FromBalLocId.Value,
             batch.TrxDtTime, -detail.FrStdQty.Value, cancellationToken);
+        if (physical.LaterEvents.Count == 1
+            && physical.LaterEvents[0].Key.ClassPriority == StockReplayEventKey.CountClass)
+            return await TryPostFifoSingleCountMiAsync(
+                companyCode, branchCode, batchNo, expectedTrxType, batch, detail, physical, cancellationToken);
         var key = physical.Candidate.Key;
         var financial = await StockReplayFifoInsertionPlanner.BuildAsync(
             read, companyCode, branchCode, itemCode, physical,
@@ -724,7 +753,8 @@ public sealed partial class IvInventoryPostingService
                         && f.StockPosting!.PostingSequence > owner.PostingSequence)
                 && !(f.InventoryHistoryId == original.Id
                     && f.EffectiveAt == owner.EffectiveAt)
-                && f.StockPosting!.SealedAtUtc != null, cancellationToken);
+                && f.StockPosting!.SealedAtUtc != null, cancellationToken)
+            || await HasLaterStandardCountAsync(read, companyCode, branchCode, original.ICode, owner.EffectiveAt, cancellationToken);
         if (!hasLaterValue)
             return null;
         // Corrections are written by a later posting but inherit the earlier
@@ -744,6 +774,10 @@ public sealed partial class IvInventoryPostingService
         var physical = await StockReplayPhysicalPlanner.BuildRemovalAsync(
             read, companyCode, branchCode, original.FromBalLocId.Value,
             removed, cancellationToken);
+        if (physical.LaterEvents.Count == 1
+            && physical.LaterEvents[0].Key.ClassPriority == StockReplayEventKey.CountClass)
+            return await TryRollBackFifoSingleCountMiAsync(
+                companyCode, branchCode, batchNo, expectedTrxType, batch, original, owner, physical, cancellationToken);
         var financial = await StockReplayFifoRemovalPlanner.BuildAsync(
             read, companyCode, branchCode, original.ICode, physical,
             cancellationToken);
@@ -903,8 +937,35 @@ public sealed partial class IvInventoryPostingService
                 && f.InventoryHistory != null
                 && f.InventoryHistory.TrxType == IvTrxTypes.CustomerReturn)
             .Select(f => new { f.Id, f.InventoryHistoryId }).ToArrayAsync(cancellationToken);
+        var prtnOrigins = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => tailReceiptFactIds.Contains(f.Id)
+                && f.InventoryHistory != null
+                && f.InventoryHistory.TrxType == IvTrxTypes.ProductionStockReturn)
+            .Select(f => new { f.Id, f.InventoryHistoryId }).ToArrayAsync(cancellationToken);
         if (allowBoundedProduction && (salesIds.Length > 0 || returnOrigins.Length > 0))
             return "Backdated receipt cannot yet replay Production and Sales dependencies together.";
+        if (!allowBoundedProduction && prtnOrigins.Length > 0)
+            return "Backdated FIFO Inventory replay has a later Production stock return outside bounded Production replay.";
+        StockReplayFifoLayerPosition? permittedProductionReturnLayer = null;
+        if (prtnOrigins.Length > 0)
+        {
+            if (prtnOrigins.Length != 1 || prtnOrigins[0].InventoryHistoryId is not int prtnHistoryId)
+                return "Backdated FIFO Production replay supports one terminal Production stock return.";
+            var prtnLayer = laterReceipts.Single(l => l.OriginFactId == prtnOrigins[0].Id);
+            var finalLayer = projection.FinalLayers.SingleOrDefault(l => l.LayerId == prtnLayer.LayerId);
+            if (prtnLayer.ProductionReturn is not { } prtnBinding
+                || prtnBinding.ReturnHistoryId != prtnHistoryId
+                || prtnBinding.ReturnedValue != StockLedgerPrecision.Money(
+                    prtnLayer.OriginalValue + prtnLayer.AccumulatedAdjustment)
+                || !histories.Any(h => h.Id == prtnBinding.IssueHistoryId
+                    && h.TrxType == IvTrxTypes.IssueToProduction)
+                || snapshot.ActiveConsumptions.Any(c => c.LayerId == prtnLayer.LayerId)
+                || finalLayer is null
+                || finalLayer.OriginalQuantity != prtnLayer.OriginalQuantity
+                || finalLayer.OriginalValue != prtnLayer.OriginalValue)
+                return "Backdated FIFO Production stock return layer has unsupported dependencies.";
+            permittedProductionReturnLayer = prtnLayer;
+        }
         SalesReturnPermit? permittedReturn = null;
         if (returnOrigins.Length > 0)
         {
@@ -996,12 +1057,19 @@ public sealed partial class IvInventoryPostingService
                 p.EffectiveAt, p.PostingSequence, p.SealedAtUtc })
             .ToArrayAsync(cancellationToken);
         if (receiptOwners.Length != receiptOwnerIds.Length
-            || receiptOwners.Any(p => p.SourceModule != "INVENTORY"
-                || p.SourceDocumentType != "OPENING"
-                    && p.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
-                    && p.SourceDocumentType != IvTrxTypes.GoodsReceive
-                    && !(permittedReturn is not null
-                        && p.SourceDocumentType == IvTrxTypes.CustomerReturn)
+            || receiptOwners.Any(p =>
+                !(permittedProductionReturnLayer is not null
+                    && p.Id == permittedProductionReturnLayer.OriginPostingId
+                    && p.SourceModule == "PRODUCTION"
+                    && p.SourceDocumentType == ErpWeb.Model.Entities.Production.ProductionDocumentTypes.ProductionStockReturn
+                    && p.PostingRole == "PRIMARY"
+                    && p.CommandType == ErpWeb.Model.Entities.Production.ProductionPostingCommandTypes.ProductionStockReturnPost)
+                && (p.SourceModule != "INVENTORY"
+                    || p.SourceDocumentType != "OPENING"
+                        && p.SourceDocumentType != IvTrxTypes.MiscellaneousReceipt
+                        && p.SourceDocumentType != IvTrxTypes.GoodsReceive
+                        && !(permittedReturn is not null
+                            && p.SourceDocumentType == IvTrxTypes.CustomerReturn))
                 || p.SealedAtUtc is null))
             return "Backdated FIFO Inventory replay has a later receipt outside opening stock or Inventory MR/GR.";
         var laterGrOwnerIds = receiptOwners.Where(p =>
@@ -1176,6 +1244,23 @@ public sealed partial class IvInventoryPostingService
                 return "Backdated FIFO Sales return has inconsistent value evidence.";
             }
         }
+        if (permittedProductionReturnLayer is not null)
+        {
+            var prtnOriginFact = await db.StockValuationFacts.AsNoTracking()
+                .SingleOrDefaultAsync(f => f.Id == permittedProductionReturnLayer.OriginFactId, cancellationToken);
+            if (prtnOriginFact is null)
+                return "Backdated FIFO Production stock return has incomplete value evidence.";
+            try
+            {
+                foreach (var adjustment in await StockReplayFifoProductionReturnValueAdjustment
+                    .ReadVerifiedAsync(db, prtnOriginFact, cancellationToken))
+                    returnAdjustmentIds.Add(adjustment.Id);
+            }
+            catch (StockLedgerException)
+            {
+                return "Backdated FIFO Production stock return has inconsistent value evidence.";
+            }
+        }
         var reversalIds = laterFacts.Where(f =>
                 !receiptFactIds.Contains(f.Id)
                 && !neutralizedFactIds.Contains(f.Id)
@@ -1204,7 +1289,7 @@ public sealed partial class IvInventoryPostingService
         return null;
     }
 
-    private static async Task<HashSet<long>?> ReadExactFifoReversalPairsAsync(
+    internal static async Task<HashSet<long>?> ReadExactFifoReversalPairsAsync(
         ErpWeb.Model.Data.AppDbContext db, string companyCode,
         string branchCode, string itemCode,
         IReadOnlyCollection<StockValuationFact> laterFacts,

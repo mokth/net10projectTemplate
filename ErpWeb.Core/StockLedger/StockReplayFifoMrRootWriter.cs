@@ -58,8 +58,12 @@ public static class StockReplayFifoMrRootWriter
             var adjustmentWritten = allowSales && issue.DepletesPool
                 && await StockReplayFifoSalesReturnAllocationWriter.AppendIfRequiredAsync(
                     context, plan.Snapshot, plan.Projection, issue, replacements, line + 2, cancellationToken);
+            var prodAdjustmentWritten = productionPermit is not null && issue.DepletesPool
+                && await StockReplayFifoProductionReturnValueAdjustment.AppendIfRequiredAsync(
+                    context, plan.Snapshot, plan.Projection, issue, replacements, productionPermit,
+                    line + (adjustmentWritten ? 3 : 2), cancellationToken);
             required.Add(StockReplayFifoMiRootWriter.HistoryId(issue.Key));
-            line += adjustmentWritten ? 3 : 2;
+            line += 2 + (adjustmentWritten ? 1 : 0) + (prodAdjustmentWritten ? 1 : 0);
         }
         await StockReplayFifoStateWriter.ApplyMiscReceiptInsertionAsync(
             context, plan, permit, receipt, cancellationToken);

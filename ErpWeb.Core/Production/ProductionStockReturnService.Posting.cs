@@ -462,25 +462,40 @@ public sealed partial class ProductionStockReturnService
         var activeValuations = await StockReplayValuationGenerationResolver.ResolveAsync(db,
             scope.CompanyCode, scope.BranchCode!, histories, ct);
         var historyIds = facts.Select(f => f.InventoryHistoryId).ToArray();
-        var originalValuationIds = await db.StockValuationFacts.AsNoTracking()
+        var originalValuationRows = await db.StockValuationFacts.AsNoTracking()
             .Where(x => x.InventoryHistoryId.HasValue
                 && historyIds.Contains(x.InventoryHistoryId.Value)
                 && x.StockPostingId == r.PostingId && x.ReversesValuationFactId == null)
-            .Select(x => x.Id).ToArrayAsync(ct);
-        if (await db.StockValuationFacts.AsNoTracking().AnyAsync(x =>
-                x.InventoryHistoryId == null && x.OriginalValuationFactId.HasValue
-                && originalValuationIds.Contains(x.OriginalValuationFactId.Value), ct))
+            .ToArrayAsync(ct);
+        var originalValuationIds = originalValuationRows.Select(x => x.Id).ToArray();
+        var valueOnlyAdjustments = await db.StockValuationFacts.AsNoTracking()
+            .Where(x => x.InventoryHistoryId == null && x.OriginalValuationFactId.HasValue
+                && originalValuationIds.Contains(x.OriginalValuationFactId.Value))
+            .ToArrayAsync(ct);
+        var costMethod = await new StockCostMethodResolver().ResolveAsync(
+            db, scope.CompanyCode, scope.BranchCode!, originalPosting.EffectiveAt, ct);
+        if (valueOnlyAdjustments.Any(x =>
+                costMethod != StockCostMethods.Fifo
+                || x.MovementCode != "PRODUCTION_RETURN_VALUE"
+                || x.ValuationSource != "FIFO_PRODUCTION_RETURN_REPLAY"))
             throw new ReturnException("The posted return has unreversed value-only Inventory adjustments and requires replay-aware rollback.",
                 IvMasterErrorCode.InUse);
+        var valueAdjustmentByHistory = originalValuationRows.ToDictionary(
+            orig => orig.InventoryHistoryId!.Value,
+            orig => StockLedgerPrecision.Money(valueOnlyAdjustments
+                .Where(x => x.OriginalValuationFactId == orig.Id)
+                .Sum(x => x.SignedValue)));
         foreach (var fact in facts)
         {
             var effective = effectiveCosts[fact.ProductionMovementId];
             var activeInvFacts = activeValuations[fact.InventoryHistoryId];
-            var activeInvTotal = StockLedgerPrecision.Money(activeInvFacts.Sum(x => x.CostAmount));
+            var activeInvTotal = StockLedgerPrecision.Money(
+                activeInvFacts.Sum(x => x.CostAmount)
+                + valueAdjustmentByHistory.GetValueOrDefault(fact.InventoryHistoryId));
             if (activeInvFacts.Count != 1
                 || activeInvFacts[0].Direction != 1
                 || activeInvFacts[0].MovementCode != "PRODUCTION_STOCK_RETURN_IN"
-                || (context.CostMethod != StockCostMethods.Standard && activeInvTotal != effective.TotalCost))
+                || (costMethod != StockCostMethods.Standard && activeInvTotal != effective.TotalCost))
                 throw new ReturnException("The posted return Inventory and Production effective costs do not reconcile for rollback.",
                     IvMasterErrorCode.InUse);
         }
@@ -497,7 +512,9 @@ public sealed partial class ProductionStockReturnService
                 throw new ReturnException("The exact PRTN destination Inventory balance is missing.");
             var snapshot = snapshots.SingleOrDefault(x => x.DestinationBalanceId == balance.Id)
                 ?? throw new ReturnException("The original PRTN destination price snapshot is missing.");
-            var hasRestatedValuation = group.Any(f => activeValuations[f.InventoryHistoryId].Any(v => v.StockPostingId != r.PostingId));
+            var hasRestatedValuation = group.Any(f =>
+                activeValuations[f.InventoryHistoryId].Any(v => v.StockPostingId != r.PostingId)
+                || valueAdjustmentByHistory.GetValueOrDefault(f.InventoryHistoryId) != 0m);
             var matchesPostedSnapshot = balance.UnitPrice == snapshot.PostedUnitPrice
                 && balance.Cost == snapshot.PostedCost
                 && balance.PriceEvidence == snapshot.PostedPriceEvidence;
