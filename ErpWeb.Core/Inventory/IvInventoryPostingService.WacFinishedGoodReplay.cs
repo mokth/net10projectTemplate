@@ -12,18 +12,30 @@ namespace ErpWeb.Core.Inventory;
 public sealed partial class IvInventoryPostingService
 {
     private sealed record WacFinishedGoodCostPlan(
-        int BatchId, long MovementId, int HistoryId, long ReceiptFactId,
+        string CostMethod, int BatchId, long MovementId, int HistoryId, long ReceiptFactId,
         string ItemCode, int PileId, decimal Quantity, decimal CurrentValue,
         decimal ProjectedValue, decimal ProjectedIssueValue,
         decimal ProjectedProduceValue, ProductionEffectiveCost CurrentCost,
         string EvidenceHash);
 
+    private static Task<WacFinishedGoodCostPlan> PlanWacFinishedGoodCostAsync(
+        AppDbContext db, string company, string branch, ProductionLeafReplayPlan plan,
+        StockReplayWacStep issueStep, long? removingReceiptOwnerId,
+        int? insertingReceiptBatchId, CancellationToken ct)
+    {
+        if (issueStep.SignedQuantity != -plan.Quantity || issueStep.SignedValue > 0m)
+            throw ProductionReplayError("The finished-good issue projection is incomplete.");
+        return PlanWacFinishedGoodCostAsync(db, company, branch, plan, -issueStep.SignedQuantity,
+            -issueStep.SignedValue, StockCostMethods.MovingAverage, removingReceiptOwnerId,
+            insertingReceiptBatchId, ct);
+    }
+
     // Only one isolated output and its terminal FG receipt are admitted. This
     // pre-lock projection is rebuilt under the branch lock before any write.
     private static async Task<WacFinishedGoodCostPlan> PlanWacFinishedGoodCostAsync(
         AppDbContext db, string company, string branch, ProductionLeafReplayPlan plan,
-        StockReplayWacStep issueStep, long? removingReceiptOwnerId,
-        int? insertingReceiptBatchId, CancellationToken ct)
+        decimal projectedIssueQuantity, decimal projectedIssueValue, string costMethod,
+        long? removingReceiptOwnerId, int? insertingReceiptBatchId, CancellationToken ct)
     {
         var output = plan.Output!;
         var fg = output.ActiveFinishedGood!;
@@ -31,8 +43,9 @@ public sealed partial class IvInventoryPostingService
             .Where(m => m.Uid == plan.MovementId || m.Uid == output.ConsumeMovementId
                 || m.Uid == output.ProduceMovementId || m.Uid == fg.MovementId)
             .ToDictionaryAsync(m => m.Uid, ct);
-        if (movements.Count != 4 || issueStep.SignedQuantity != -plan.Quantity
-            || issueStep.SignedValue > 0m)
+        if (movements.Count != 4 || projectedIssueQuantity != plan.Quantity
+            || projectedIssueValue < 0m
+            || costMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo))
             throw ProductionReplayError("The finished-good issue projection is incomplete.");
         var issue = movements[plan.MovementId];
         var consume = movements[output.ConsumeMovementId!.Value];
@@ -40,7 +53,7 @@ public sealed partial class IvInventoryPostingService
         var finished = movements[fg.MovementId];
         var costs = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch,
             [consume.Uid, produce.Uid], ct);
-        var desiredIssue = -issueStep.SignedValue;
+        var desiredIssue = projectedIssueValue;
         var desiredConsume = consume.BaseQty == issue.BaseQty ? desiredIssue
             : StockLedgerPrecision.Money(desiredIssue * consume.BaseQty / issue.BaseQty);
         var desiredProduce = StockLedgerPrecision.Money(costs[produce.Uid].TotalCost
@@ -105,7 +118,7 @@ public sealed partial class IvInventoryPostingService
             s.CompanyCode == company && s.BranchCode == branch && s.ItemCode == finished.ItemCode, ct);
         var piles = await db.IvBalLocs.AsNoTracking().Where(b => b.CompanyCode == company
             && b.BranchCode == branch && b.ICode == finished.ItemCode).ToArrayAsync(ct);
-        if (state is null || state.CostMethod != StockCostMethods.MovingAverage
+        if (state is null || state.CostMethod != costMethod
             || state.OnHandBaseQty != fact.BaseQty || state.InventoryValue != fg.Value
             || state.AverageUnitCost != StockLedgerPrecision.Money(fg.Value / fact.BaseQty)
             || state.CurrentUnitCost != state.AverageUnitCost
@@ -113,19 +126,38 @@ public sealed partial class IvInventoryPostingService
             || state.LastPostingSequence != stateSequence
             || piles.Length != 1 || piles[0].Id != fact.DestinationBalanceId || piles[0].StdQty != fact.BaseQty)
             throw ProductionReplayError("Finished-good stock has later activity requiring full replay.");
-        var key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
-            owner.PostingSequence, $"H{history.Id:D10}", 0);
-        var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch,
-            finished.ItemCode, key, ct);
-        if (tail.CurrentQuantity != state.OnHandBaseQty || tail.CurrentValue != state.InventoryValue
-            || tail.LaterEvents.Count != (prior is null ? 0 : 1)
-            || prior is not null && (tail.LaterEvents[0].EventId != long.MaxValue - receipt.Id
-                || tail.LaterEvents[0].OldSignedValue != fg.Value - fact.TotalValue))
-            throw ProductionReplayError("Finished-good stock has a later WAC event requiring full replay.");
+        if (costMethod == StockCostMethods.MovingAverage)
+        {
+            var key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                owner.PostingSequence, $"H{history.Id:D10}", 0);
+            var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch,
+                finished.ItemCode, key, ct);
+            if (tail.CurrentQuantity != state.OnHandBaseQty || tail.CurrentValue != state.InventoryValue
+                || tail.LaterEvents.Count != (prior is null ? 0 : 1)
+                || prior is not null && (tail.LaterEvents[0].EventId != long.MaxValue - receipt.Id
+                    || tail.LaterEvents[0].OldSignedValue != fg.Value - fact.TotalValue))
+                throw ProductionReplayError("Finished-good stock has a later WAC event requiring full replay.");
+        }
+        else
+        {
+            var fifo = await StockReplayFifoActiveLayerReader.ReadAsync(db, company, branch,
+                finished.ItemCode, ct);
+            if (fifo.CurrentQuantity != state.OnHandBaseQty || fifo.CurrentValue != state.InventoryValue
+                || fifo.ActiveConsumptions.Count != 0 || fifo.Layers.Count != 1)
+                throw ProductionReplayError("Finished-good stock has a later FIFO event requiring full replay.");
+            var fgLayer = fifo.Layers[0];
+            if (fgLayer.OriginFactId != receipt.Id || fgLayer.OriginalQuantity != fact.BaseQty
+                || fgLayer.RemainingQuantity != fact.BaseQty || fgLayer.OriginalValue != fact.TotalValue
+                || fgLayer.RemainingValue != fg.Value
+                || fgLayer.AccumulatedAdjustment != StockLedgerPrecision.Money(fg.Value - fact.TotalValue)
+                || fgLayer.CurrentUnitCost != StockLedgerPrecision.Money(fg.Value / fact.BaseQty)
+                || fgLayer.Status != StockFifoLayerStatuses.Open)
+                throw ProductionReplayError("Finished-good FIFO layer does not reconcile before replay.");
+        }
 
         var hash = StockPostingFingerprint.Create(new
         {
-            fg.BatchId, fg.MovementId, desiredIssue, removingReceiptOwnerId, insertingReceiptBatchId
+            costMethod, fg.BatchId, fg.MovementId, desiredIssue, removingReceiptOwnerId, insertingReceiptBatchId
         }, new
         {
             fg.EffectiveCost, CurrentProduce = costs[produce.Uid], CurrentConsume = costs[consume.Uid],
@@ -134,7 +166,7 @@ public sealed partial class IvInventoryPostingService
             state.LastPostingSequence, StateVersion = Convert.ToHexString(state.RowVersion ?? []),
             PileId = piles[0].Id, piles[0].StdQty
         }).SourceSnapshotHash;
-        return new(fg.BatchId, fg.MovementId, history.Id, receipt.Id, finished.ItemCode,
+        return new(costMethod, fg.BatchId, fg.MovementId, history.Id, receipt.Id, finished.ItemCode,
             piles[0].Id, fact.BaseQty, fg.Value, desiredFg, desiredIssue, desiredProduce,
             fg.EffectiveCost, hash);
     }
@@ -174,14 +206,67 @@ public sealed partial class IvInventoryPostingService
         lot.AverageUnitCost = lot.BaseQty == 0m ? 0m : StockLedgerPrecision.Money(remaining / lot.BaseQty);
         pool.TrackedValue = remaining;
         await db.SaveChangesAsync(ct);
-        var permit = new StockReplayWacWritePermit(context, fg.ItemCode, fg.EvidenceHash,
-            fg.Quantity, fg.CurrentValue, fg.Quantity, fg.ProjectedValue, fg.PileId, fg.Quantity);
-        await StockReplayWacCostStateWriter.ApplyAsync(context, permit, ct);
+        if (fg.CostMethod == StockCostMethods.MovingAverage)
+        {
+            var permit = new StockReplayWacWritePermit(context, fg.ItemCode, fg.EvidenceHash,
+                fg.Quantity, fg.CurrentValue, fg.Quantity, fg.ProjectedValue, fg.PileId, fg.Quantity);
+            await StockReplayWacCostStateWriter.ApplyAsync(context, permit, ct);
+        }
+        else
+        {
+            await ApplyFifoFinishedGoodCostStateAsync(context, fg, ct);
+        }
         var finalCost = (await ProductionEffectiveCostResolver.ResolveAsync(db,
             context.CompanyCode, context.BranchCode, [fg.MovementId, output.ProduceMovementId.Value], ct));
         if (finalCost[fg.MovementId].TotalCost != fg.ProjectedValue
             || finalCost[output.ProduceMovementId.Value].TotalCost != fg.ProjectedProduceValue
             || pool.TrackedValue != remaining)
             throw ProductionReplayError("Finished-good and Production values failed replay reconciliation.");
+    }
+
+    private static async Task ApplyFifoFinishedGoodCostStateAsync(
+        StockPostingContext context, WacFinishedGoodCostPlan fg, CancellationToken ct)
+    {
+        var db = context.Db;
+        await db.SaveChangesAsync(ct);
+        var layer = await db.StockFifoLayers.SingleOrDefaultAsync(l =>
+            l.CompanyCode == context.CompanyCode && l.BranchCode == context.BranchCode
+            && l.ItemCode == fg.ItemCode && l.OriginValuationFactId == fg.ReceiptFactId, ct);
+        var state = await db.StockCostStates.SingleOrDefaultAsync(s =>
+            s.CompanyCode == context.CompanyCode && s.BranchCode == context.BranchCode
+            && s.ItemCode == fg.ItemCode, ct);
+        var piles = await db.IvBalLocs.AsNoTracking().Where(b => b.CompanyCode == context.CompanyCode
+            && b.BranchCode == context.BranchCode && b.ICode == fg.ItemCode)
+            .Select(b => new { b.Id, b.StdQty }).ToArrayAsync(ct);
+        if (layer is null || state is null || state.CostMethod != StockCostMethods.Fifo
+            || state.OnHandBaseQty != fg.Quantity || state.InventoryValue != fg.CurrentValue
+            || piles.Length != 1 || piles[0].Id != fg.PileId || piles[0].StdQty != fg.Quantity
+            || layer.OriginalQty != fg.Quantity || layer.RemainingQty != fg.Quantity
+            || layer.RemainingValue != fg.CurrentValue
+            || layer.Status != StockFifoLayerStatuses.Open
+            || await db.StockFifoLayerConsumptions.AsNoTracking().AnyAsync(c =>
+                c.FifoLayerId == layer.Id
+                && !db.StockFifoLayerConsumptions.Any(r => r.ReversesConsumptionId == c.Id), ct))
+            throw ProductionReplayError("Finished-good FIFO state changed after replay planning.");
+        var rootFacts = await db.StockValuationFacts.AsNoTracking().Where(f =>
+                f.StockPostingId == context.Posting.Id && f.ItemCode == fg.ItemCode)
+            .ToArrayAsync(ct);
+        if (rootFacts.Length == 0 || rootFacts.Any(f => f.CompanyCode != context.CompanyCode
+                || f.BranchCode != context.BranchCode || f.LedgerEpochId != context.Epoch.Id
+                || f.CostMethod != StockCostMethods.Fifo || f.BaseQty != 0m || f.CostAmount < 0m)
+            || StockLedgerPrecision.Money(rootFacts.Sum(f => f.SignedValue))
+                != StockLedgerPrecision.Money(fg.ProjectedValue - fg.CurrentValue))
+            throw ProductionReplayError("Finished-good FIFO valuation facts do not reconcile.");
+        var projectedUnit = StockLedgerPrecision.Money(fg.ProjectedValue / fg.Quantity);
+        layer.AccumulatedAdjustment = StockLedgerPrecision.Money(fg.ProjectedValue - layer.OriginalValue);
+        layer.RemainingValue = fg.ProjectedValue;
+        layer.CurrentUnitCost = projectedUnit;
+        state.InventoryValue = fg.ProjectedValue;
+        state.AverageUnitCost = projectedUnit;
+        state.CurrentUnitCost = projectedUnit;
+        state.LastValuationFactId = rootFacts.OrderByDescending(f => f.PostingLineNo)
+            .ThenByDescending(f => f.SplitOrdinal).First().Id;
+        state.LastPostingSequence = context.Posting.PostingSequence;
+        await db.SaveChangesAsync(ct);
     }
 }

@@ -29,7 +29,8 @@ internal static class ProductionFinishedGoodCorrectionHistory
         if (receipts.Length != 1 || owner.CompanyCode != company || owner.BranchCode != branch
             || owner.SealedAtUtc is null || movement.TotalCost != fact.TotalValue) return null;
         var receipt = receipts[0];
-        if (receipt.CostMethod != StockCostMethods.MovingAverage || receipt.CostAmount != fact.TotalValue
+        if (receipt.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
+            || receipt.CostAmount != fact.TotalValue
             || receipt.BaseQty != fact.BaseQty || receipt.BaseQty <= 0m) return null;
         var physicalDescendants = await db.StockValuationFacts.AsNoTracking().Where(v =>
             v.OriginalValuationFactId == receipt.Id && v.InventoryHistoryId != null).ToArrayAsync(ct);
@@ -133,7 +134,7 @@ internal static class ProductionFinishedGoodCorrectionHistory
                 || reverse.ValuationStatus != StockValuationStatuses.Reversed || reverse.ValuationSource != StockValuationSources.OriginalReversal
                 || reverse.ValuationVersion != delta.ValuationVersion || reverse.CompanyCode != company || reverse.BranchCode != branch
                 || reverse.LedgerEpochId != owner.LedgerEpochId || reverse.ItemCode != delta.ItemCode
-                || reverse.CostMethod != StockCostMethods.MovingAverage || reverse.EffectiveAt != delta.EffectiveAt
+                || reverse.CostMethod != receipt.CostMethod || reverse.EffectiveAt != delta.EffectiveAt
                 || reverse.BusinessDate != delta.BusinessDate || reverse.PeriodKey != delta.PeriodKey
                 || reverse.SourceLineId != delta.SourceLineId || reverse.SourceDocumentType != delta.SourceDocumentType
                 || reverse.SourceDocumentId != delta.SourceDocumentId || reverse.SourceDocumentNo != delta.SourceDocumentNo

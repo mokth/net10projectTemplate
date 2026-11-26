@@ -69,7 +69,8 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         var finished = activeFinishedGoodId is long finishedId
             ? await db.ProductionBalLotMovements.AsNoTracking().SingleOrDefaultAsync(m => m.Uid == finishedId, ct)
             : null;
-        if (activeFinishedGoodId is not null && (outputReversed || context.CostMethod != StockCostMethods.MovingAverage
+        if (activeFinishedGoodId is not null && (outputReversed
+            || context.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
             || finished is null || finished.MovementType != ProductionBalLotMovementTypes.FgReceiptOut
             || finished.ProductionBalLotId != target.Uid || finished.BaseQty > produce.BaseQty))
             throw Invalid("Production output has an unsupported finished-good dependency.");

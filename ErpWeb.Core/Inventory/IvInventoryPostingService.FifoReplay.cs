@@ -92,7 +92,7 @@ public sealed partial class IvInventoryPostingService
         if (reversedIssuePlan is not null && reversedIssuePlan.FinancialPlanHash != financial.PlanHash)
             return IvInventoryPostingBatchResult.Fail(batchNo, "The FIFO receipt changed while its reversed issue was planned. Retry posting.");
         var productionPlan = await PlanFifoProductionLeafAsync(read, companyCode, branchCode,
-            financial.Projection, key, cancellationToken);
+            financial.Projection, key, cancellationToken, insertingReceiptBatchId: batchNo);
         if (reversedIssuePlan is not null && (productionPlan is not null || replayInvoice is not null))
             return IvInventoryPostingBatchResult.Fail(batchNo, "This FIFO receipt has additional dependencies that cannot yet be replayed together.");
         if (productionPlan is not null && replayInvoice is not null)
@@ -124,7 +124,8 @@ public sealed partial class IvInventoryPostingService
                      batchNo, receiptType, rollback: false, cancellationToken) is { } reversedProduction)
             return reversedProduction;
         await RecheckFifoProductionLeafAsync(write, companyCode, branchCode,
-            financial.Projection, key, productionPlan, cancellationToken);
+            financial.Projection, key, productionPlan, cancellationToken,
+            insertingReceiptBatchId: batchNo);
         if (await CheckSimpleFifoInventoryTailAsync(write, financial, key,
                 cancellationToken, replayInvoice, allowBoundedSales: true,
                 allowEmpty: physical.LaterEvents.Count == 0,
@@ -247,6 +248,9 @@ public sealed partial class IvInventoryPostingService
             context, written.RequiredActiveHistoryIds, cancellationToken);
         await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
             context, financial, permit, written.Receipt, cancellationToken);
+        if (productionPlan?.FinishedGoodCost is { } fg)
+            await StockReplayFifoActiveLayerReader.ReadAsync(write, companyCode, branchCode,
+                fg.ItemCode, cancellationToken);
         if (reversedIssuePermit is not null)
             await VerifyFifoReversedIssueCorrectionWithinRootAsync(context, reversedIssuePermit, written.Receipt.LayerId, cancellationToken);
         postingScope.MarkCompleted();
@@ -364,7 +368,7 @@ public sealed partial class IvInventoryPostingService
             replayInvoice = invoiceCheck.Invoice;
         }
         var productionPlan = await PlanFifoProductionLeafAsync(read, companyCode, branchCode,
-            financial.Projection, key, cancellationToken);
+            financial.Projection, key, cancellationToken, removingReceiptOwnerId: owner.Id);
         if (reversedIssuePlan is not null && (productionPlan is not null || replayInvoice is not null))
             return IvInventoryPostingBatchResult.Fail(batchNo, "This FIFO receipt has additional dependencies that cannot yet be replayed together.");
         if (productionPlan is not null && replayInvoice is not null)
@@ -397,7 +401,8 @@ public sealed partial class IvInventoryPostingService
                      batchNo, receiptType, rollback: true, cancellationToken) is { } reversedProduction)
             return reversedProduction;
         await RecheckFifoProductionLeafAsync(write, companyCode, branchCode,
-            financial.Projection, key, productionPlan, cancellationToken);
+            financial.Projection, key, productionPlan, cancellationToken,
+            removingReceiptOwnerId: owner.Id);
         if (await CheckSimpleFifoInventoryTailAsync(write, original.ICode,
                 financial.Snapshot, financial.Projection, key,
                 cancellationToken, replayInvoice, allowBoundedSales: true,
@@ -553,6 +558,9 @@ public sealed partial class IvInventoryPostingService
             context, written.RequiredActiveHistoryIds, cancellationToken);
         await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
             context, financial, permit, cancellationToken);
+        if (productionPlan?.FinishedGoodCost is { } fg)
+            await StockReplayFifoActiveLayerReader.ReadAsync(write, companyCode, branchCode,
+                fg.ItemCode, cancellationToken);
         if (reversedIssuePermit is not null)
             await VerifyFifoReversedIssueCorrectionWithinRootAsync(context, reversedIssuePermit, insertedReceiptLayerId: null, cancellationToken);
         postingScope.MarkCompleted();

@@ -512,13 +512,20 @@ public sealed partial class ProductionStockReturnService
                 throw new ReturnException("The exact PRTN destination Inventory balance is missing.");
             var snapshot = snapshots.SingleOrDefault(x => x.DestinationBalanceId == balance.Id)
                 ?? throw new ReturnException("The original PRTN destination price snapshot is missing.");
+            var hasStandardReplayOverReturn = costMethod == StockCostMethods.Standard
+                && await db.StockReplayRuns.AsNoTracking().AnyAsync(run =>
+                    run.CompanyCode == scope.CompanyCode && run.BranchCode == scope.BranchCode
+                    && run.EarliestEffectiveAt <= originalPosting.EffectiveAt
+                    && run.LatestEffectiveAt >= originalPosting.EffectiveAt
+                    && db.StockPostings.Any(p => p.Id == run.RootStockPostingId
+                        && p.SealedAtUtc != null), ct);
             var hasRestatedValuation = group.Any(f =>
                 activeValuations[f.InventoryHistoryId].Any(v => v.StockPostingId != r.PostingId)
                 || valueAdjustmentByHistory.GetValueOrDefault(f.InventoryHistoryId) != 0m);
             var matchesPostedSnapshot = balance.UnitPrice == snapshot.PostedUnitPrice
                 && balance.Cost == snapshot.PostedCost
                 && balance.PriceEvidence == snapshot.PostedPriceEvidence;
-            var matchesReplayClearedSnapshot = hasRestatedValuation
+            var matchesReplayClearedSnapshot = (hasRestatedValuation || hasStandardReplayOverReturn)
                 && balance.UnitPrice == snapshot.PostedUnitPrice
                 && balance.Cost == snapshot.PostedCost
                 && balance.PriceEvidence is null;

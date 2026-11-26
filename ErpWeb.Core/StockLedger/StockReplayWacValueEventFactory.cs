@@ -230,7 +230,7 @@ public static class StockReplayWacValueEventFactory
             || receipt.PeriodKey != receiptOwner.PeriodKey
             || receipt.EffectiveAt != receiptHistory.TrxDtTime
             || receipt.Direction != 1 || receipt.BaseQty <= 0m
-            || receipt.CostMethod != StockCostMethods.MovingAverage
+            || receipt.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
             || receipt.ValuationStatus != StockValuationStatuses.Valued
             || receipt.ReversesValuationFactId is not null
             || receipt.CompanyCode != receiptHistory.CompanyCode
@@ -247,7 +247,7 @@ public static class StockReplayWacValueEventFactory
             || active.OriginalValuationFactId != receipt.Id
             || active.ReversesValuationFactId is not null
             || active.InventoryHistoryId is not null || active.BaseQty != 0m
-            || active.CostMethod != StockCostMethods.MovingAverage
+            || active.CostMethod != receipt.CostMethod
             || active.ValuationStatus != StockValuationStatuses.Valued
             || active.ItemCode != receipt.ItemCode
             || active.EffectiveAt != receipt.EffectiveAt

@@ -96,13 +96,15 @@ public sealed partial class IvInventoryPostingService
     private static async Task<ProductionLeafReplayPlan?> PlanFifoProductionLeafAsync(
         AppDbContext db, string companyCode, string branchCode,
         StockReplayFifoTailProjection projection, StockReplayEventKey candidateKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, long? removingReceiptOwnerId = null,
+        int? insertingReceiptBatchId = null)
     {
         var ids = projection.Issues.Where(i => !i.IsCandidate
                 && i.Key.CompareTo(candidateKey) > 0)
             .Select(i => StockReplayFifoMiRootWriter.HistoryId(i.Key)).ToArray();
         var plan = await PlanProductionLeafAsync(db, companyCode, branchCode, ids, cancellationToken,
-            candidateKey.EffectiveAt, allowOutput: true, allowProductionReturn: true);
+            candidateKey.EffectiveAt, allowOutput: true, removingReceiptOwnerId: removingReceiptOwnerId,
+            allowProductionReturn: true);
         if (plan?.TerminalReturn is { } prtn
             && !projection.BeforeCandidate.LaterReceipts.Any(l =>
                 l.ProductionReturn?.ReturnHistoryId == prtn.ReturnHistoryId
@@ -126,9 +128,16 @@ public sealed partial class IvInventoryPostingService
         {
             var issues = projection.Issues.Where(i => !i.IsCandidate && i.Key.CompareTo(candidateKey) > 0
                 && StockReplayFifoMiRootWriter.HistoryId(i.Key) == plan.HistoryId).ToArray();
-            if (issues.Length != 1 || issues[0].Quantity != plan.Quantity
-                || issues[0].Value != plan.EffectiveCost.TotalCost)
-                throw ProductionReplayError("The backdated receipt would change finished-good cost; full downstream replay is required.");
+            if (issues.Length != 1 || issues[0].Quantity != plan.Quantity)
+                throw ProductionReplayError("The backdated receipt changes finished-good source quantity.");
+            if (issues[0].Value != plan.EffectiveCost.TotalCost)
+                plan = plan with
+                {
+                    FinishedGoodCost = await PlanWacFinishedGoodCostAsync(
+                        db, companyCode, branchCode, plan, issues[0].Quantity, issues[0].Value,
+                        StockCostMethods.Fifo, removingReceiptOwnerId, insertingReceiptBatchId,
+                        cancellationToken)
+                };
         }
         return plan;
     }
@@ -269,10 +278,12 @@ public sealed partial class IvInventoryPostingService
     private static async Task RecheckFifoProductionLeafAsync(
         AppDbContext db, string companyCode, string branchCode,
         StockReplayFifoTailProjection projection, StockReplayEventKey candidateKey,
-        ProductionLeafReplayPlan? expected, CancellationToken cancellationToken)
+        ProductionLeafReplayPlan? expected, CancellationToken cancellationToken,
+        long? removingReceiptOwnerId = null, int? insertingReceiptBatchId = null)
     {
         var current = await PlanFifoProductionLeafAsync(db, companyCode, branchCode,
-            projection, candidateKey, cancellationToken);
+            projection, candidateKey, cancellationToken, removingReceiptOwnerId,
+            insertingReceiptBatchId);
         if (current != expected)
             throw new StockLedgerException(new StockLedgerError(
                 StockLedgerErrorCodes.StaleDocument,
@@ -634,8 +645,8 @@ public sealed partial class IvInventoryPostingService
         TerminalProductionReturnReplayPlan prtn, CancellationToken cancellationToken)
     {
         var db = context.Db;
-        if (context.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo))
-            throw ProductionReplayError("Bounded Production stock return replay requires WAC or FIFO valuation.");
+        if (context.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo or StockCostMethods.Standard))
+            throw ProductionReplayError("Bounded Production stock return replay requires WAC, FIFO, or Standard valuation.");
         var authority = (await ProductionIssueEffectiveCostReader.ReadWithinRootAsync(
             context, [plan.MovementId], cancellationToken))[plan.MovementId];
         var correctedReturn = StockLedgerPrecision.Money(
@@ -651,6 +662,22 @@ public sealed partial class IvInventoryPostingService
             context, [returnHistory], cancellationToken))[returnHistory.Id];
         if (activeReturnFacts.Count != 1)
             throw ProductionReplayError("Production stock return Inventory valuation has no unique active generation.");
+        if (context.CostMethod == StockCostMethods.Standard)
+        {
+            if (authority.TotalCost != plan.EffectiveCost.TotalCost
+                || authority.UnitCost != plan.EffectiveCost.UnitCost
+                || activeReturnFacts[0].CostMethod != StockCostMethods.Standard
+                || activeReturnFacts[0].CostAmount != correctedReturn
+                || correctedReturn != prtn.ExpectedReturn.TotalCost)
+                throw ProductionReplayError("Standard Production stock return values cannot change during bounded replay.");
+            var standardLot = await db.ProductionBalLots.AsNoTracking()
+                .SingleAsync(l => l.Uid == plan.PoolId, cancellationToken);
+            var standardPool = await db.ProductionPoolValuationRows.AsNoTracking()
+                .SingleAsync(p => p.ProductionBalLotId == plan.PoolId, cancellationToken);
+            if (standardLot.TotalCost != remainingValue || standardPool.TrackedValue != remainingValue)
+                throw ProductionReplayError("Standard Production stock return pool does not reconcile.");
+            return;
+        }
         if (context.CostMethod == StockCostMethods.MovingAverage)
         {
             if (activeReturnFacts[0].CostAmount != correctedReturn)

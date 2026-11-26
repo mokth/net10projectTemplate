@@ -946,6 +946,12 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public Task Backdated_standard_receipt_preserves_production_stock_return_and_rolls_back(
+        bool goodsReceipt) => BackdatedReceiptAndProductionIssueAsync(goodsReceipt, true, 905, true);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public Task Backdated_fifo_receipt_reprices_production_stock_return_and_rolls_back(
         bool goodsReceipt) => BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, true, 905);
 
@@ -3237,7 +3243,11 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.NotNull(postedPrtn);
             await AssertPrtnReplayCycleAsync(
                 postedPrtn!, issue.Data.BatchNo, receiptBatchNo, goodsReceipt,
-                PostReceiptAsync, RollbackReceiptAsync);
+                PostReceiptAsync, RollbackReceiptAsync,
+                postedStockValue: standard ? 46m : 82.8m,
+                postedIssueCost: standard ? 8m : 14.4m,
+                postedReturnCost: standard ? 4m : 7.2m,
+                afterPrtnRollbackStockValue: standard ? 42m : 75.6m);
             return;
         }
         if (consumeAt == 906)
@@ -4793,14 +4803,16 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, true, 10);
 
     [Theory]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    public Task Backdated_fifo_receipt_refuses_active_finished_good_consumption(
-        bool goodsReceipt, bool finishedGoodFirst) =>
-        BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, true,
-            finishedGoodFirst ? 11 : 12);
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    public Task Backdated_fifo_receipt_reprices_active_finished_good_and_restores_it_on_removal(
+        bool goodsReceipt, bool finishedGoodFirst, bool receiptFirst) =>
+        BackdatedFifoReceiptAndProductionIssueAsync(goodsReceipt, receiptFirst,
+            finishedGoodFirst ? receiptFirst ? 11 : 110 : 12);
 
     [Theory]
     [InlineData(false, true, false)]
@@ -5136,7 +5148,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                     CompanyCode = "DEMO", Version = 1, Enabled = true, IsPublished = true,
                     IncomingInspectionEnabled = true, CreatedDate = DateTime.UtcNow, CreatedBy = "tester"
                 });
-            if (scenario is 11 or 12 or 13 or 14 or 15 or 16 or 19 or 20 or 21 or 22 or 23 or 24 or 25 or 26 or 27 or 28 or 29 or 30)
+            if (scenario is 11 or 110 or 12 or 13 or 14 or 15 or 16 or 19 or 20 or 21 or 22 or 23 or 24 or 25 or 26 or 27 or 28 or 29 or 30)
                 await ConfigureFinishedGoodRouteAsync(db, graph.Process2Id);
             (await db.StockCostPolicyRevisions.SingleAsync()).CostMethod = StockCostMethods.Fifo;
             await db.StockCostStates.Where(s => s.ItemCode == "RM001").ExecuteDeleteAsync();
@@ -5178,7 +5190,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             var firstIssue = await earlierIssue.PostAsync([saved.BatchNo]);
             Assert.True(firstIssue.Succeeded, firstIssue.ErrorMessage);
         }
-        if (scenario == 23)
+        if (scenario is 11 or 110 or 23)
             await SeedTraceablePredecessorAsync(graph);
         var qaPhysical = scenario is 34 or 60 or 75 or 79 ? new QaPhysicalHoldAuthorizationService() : null;
         var qaReceipt = scenario == 35 ? new QaReceiptAuthorizationService() : null;
@@ -5271,7 +5283,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.True(result.Succeeded, result.Message);
             consumedOutputId = created.Data.Uid;
         }
-        if (scenario is 6 or 8 or 10 or 11 or 12 or 13 or 14 or 15 or 16 or 19 or 20 or 21 or 22 or 23 or 24 or 25 or 26 or 27 or 28 or 29 or 30 or 31 or 32 or 36 or 37 or 38 or 39 or 40 or 41 or 42 or 43 or 44 or 45 or 56 or 904 or 907)
+        if (scenario is 6 or 8 or 10 or 11 or 110 or 12 or 13 or 14 or 15 or 16 or 19 or 20 or 21 or 22 or 23 or 24 or 25 or 26 or 27 or 28 or 29 or 30 or 31 or 32 or 36 or 37 or 38 or 39 or 40 or 41 or 42 or 43 or 44 or 45 or 56 or 904 or 907)
             await ConsumeIssueAsync();
         List<PostedPadj>? fifoPostedPadjs = null;
         if (scenario == 902)
@@ -5767,7 +5779,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             return;
         }
         PostedFinishedGood? unchangedFinishedGood = null;
-        if (scenario is 21 or 23 or 24 or 25 or 27 or 28)
+        if (scenario is 11 or 110 or 21 or 23 or 24 or 25 or 27 or 28)
         {
             unchangedFinishedGood = await PostFinishedGoodAsync(graph.OrderId, consumedOutputId, new DateTime(2026, 10, 3));
             Assert.Equal(6m, unchangedFinishedGood.Value);
@@ -5784,8 +5796,6 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 Assert.Equal(6m, originalTrace.Data.Components.Sum(x => x.Amount));
             }
         }
-        if (scenario == 11)
-            Assert.Equal(6m, (await PostFinishedGoodAsync(graph.OrderId, consumedOutputId, new DateTime(2026, 10, 3))).Value);
         if (scenario is 13 or 15 or 16 or 19 or 29)
         {
             var finished = await PostFinishedGoodAsync(graph.OrderId, consumedOutputId, new DateTime(2026, 10, 3));
@@ -6535,7 +6545,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             await RollbackIssueAsync(8m);
             return;
         }
-        if (scenario is 11 or 15 or 16 or 24 or 27 or 28)
+        if (scenario is 15 or 16 or 24 or 27 or 28)
         {
             Assert.False(posted.Succeeded);
             await using var unchanged = await _factory.CreateDbContextAsync();
@@ -6547,6 +6557,70 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             Assert.Empty(await unchanged.ProductionCostRestatementFacts.ToArrayAsync());
             if (goodsReceipt)
                 Assert.Equal(0m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
+            return;
+        }
+        if (scenario is 11 or 110)
+        {
+            Assert.True(posted.Succeeded, posted.Error);
+            Assert.NotNull(unchangedFinishedGood);
+            async Task AssertFifoActiveFgAsync(decimal expectedRmQty, decimal expectedRmVal,
+                decimal expectedFgVal, decimal expectedAdjustment, decimal expectedRecvQty)
+            {
+                await using var check = await _factory.CreateDbContextAsync();
+                var rmState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+                var fgState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
+                var fgLayer = await check.StockFifoLayers.SingleAsync(l => l.ItemCode == "FG001");
+                var fgPile = await check.IvBalLocs.SingleAsync(b => b.ICode == "FG001");
+                var snap = await StockReplayFifoActiveLayerReader.ReadAsync(check, "DEMO", "HQ", "FG001");
+                Assert.Equal((expectedRmQty, expectedRmVal), (rmState.OnHandBaseQty, rmState.InventoryValue));
+                Assert.Equal((2m, expectedFgVal), (fgState.OnHandBaseQty, fgState.InventoryValue));
+                Assert.Equal(2m, fgPile.StdQty);
+                Assert.Equal((6m, expectedAdjustment, expectedFgVal, StockLedgerPrecision.Money(expectedFgVal / 2m), StockFifoLayerStatuses.Open),
+                    (fgLayer.OriginalValue, fgLayer.AccumulatedAdjustment, fgLayer.RemainingValue, fgLayer.CurrentUnitCost, fgLayer.Status));
+                Assert.Equal((2m, expectedFgVal), (snap.CurrentQuantity, snap.CurrentValue));
+                var doc = await unchangedFinishedGood!.Service.GetAsync(unchangedFinishedGood.Document.Id);
+                Assert.True(doc.Succeeded, doc.Message);
+                Assert.Equal(expectedFgVal, Assert.Single(doc.Data!.Lines).TotalValue);
+                var trace = await unchangedFinishedGood.Service.GetCostTraceAsync(
+                    unchangedFinishedGood.Document.Id, unchangedFinishedGood.Document.Lines.Single().SourceId);
+                Assert.True(trace.Succeeded, trace.Message);
+                Assert.Empty(trace.Data!.Warnings);
+                Assert.Equal(expectedFgVal, trace.Data.ExactPostedValue);
+                if (goodsReceipt)
+                    Assert.Equal(expectedRecvQty, (await check.PoOrderDetails.SingleAsync()).RecvQty);
+            }
+            await AssertFifoActiveFgAsync(21m, 66m, 14m, 8m, 5m);
+            if (scenario == 11)
+            {
+                var removedFirst = await RollbackReceiptAsync();
+                Assert.True(removedFirst.Succeeded, removedFirst.Error);
+                await AssertFifoActiveFgAsync(16m, 32m, 6m, 0m, 0m);
+                var reposted = await PostReceiptAsync();
+                Assert.True(reposted.Succeeded, reposted.Error);
+                await AssertFifoActiveFgAsync(21m, 66m, 14m, 8m, 5m);
+            }
+            await RollbackFinishedGoodAsync(unchangedFinishedGood!);
+            await using (var afterFgRollback = await _factory.CreateDbContextAsync())
+            {
+                var fgState = await afterFgRollback.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
+                var fgLayer = await afterFgRollback.StockFifoLayers.SingleAsync(l => l.ItemCode == "FG001");
+                Assert.Equal((0m, 0m), (fgState.OnHandBaseQty, fgState.InventoryValue));
+                Assert.Equal((StockFifoLayerStatuses.Closed, 0m, 0m, 0m, 0m),
+                    (fgLayer.Status, fgLayer.RemainingQty, fgLayer.RemainingValue, fgLayer.CurrentUnitCost, fgLayer.AccumulatedAdjustment));
+            }
+            var removed = await RollbackReceiptAsync();
+            Assert.True(removed.Succeeded, removed.Error);
+            var outputReversal = await outputs.RollbackAsync(new ProductionOutputRollbackRequest
+            {
+                OutputId = consumedOutputId, PostingRequestId = Guid.NewGuid().ToString("N"),
+                Reason = "verify FIFO finished-good rollback"
+            });
+            Assert.True(outputReversal.Succeeded, outputReversal.Message);
+            await RollbackIssueAsync(8m);
+            await using var restored = await _factory.CreateDbContextAsync();
+            var finalRm = await restored.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+            Assert.Equal((20m, 40m), (finalRm.OnHandBaseQty, finalRm.InventoryValue));
+            if (goodsReceipt) Assert.Equal(0m, (await restored.PoOrderDetails.SingleAsync()).RecvQty);
             return;
         }
         if (scenario == 29)
@@ -6625,48 +6699,34 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         {
             var finished = await PostFinishedGoodAsync(graph.OrderId, consumedOutputId, new DateTime(2026, 10, 3));
             Assert.Equal(14m, finished.Value);
-            await RollbackFinishedGoodAsync(finished);
+            var blockedFgFirst = await finished.Service.RollbackAsync(new(finished.Document.Id,
+                finished.Document.RowVersion, Guid.NewGuid(), "Attempt finished-goods-first rollback while source receipt is active"));
+            Assert.False(blockedFgFirst.Succeeded);
+            Assert.Contains("source receipt", blockedFgFirst.Message, StringComparison.OrdinalIgnoreCase);
             if (!receiptFirst)
             {
-                var outputReversal = await outputs.RollbackAsync(new ProductionOutputRollbackRequest
+                var blockedOutput = await outputs.RollbackAsync(new ProductionOutputRollbackRequest
                 {
                     OutputId = consumedOutputId, PostingRequestId = Guid.NewGuid().ToString("N"),
-                    Reason = "Verify reversed output replay restates reversed FG pair"
+                    Reason = "Attempt output rollback with finished goods still posted"
                 });
-                Assert.True(outputReversal.Succeeded, outputReversal.Message);
-            }
-            async Task AssertFifoReversedFgAsync(decimal expectedFg, decimal expectedRmQty, decimal expectedRmVal, string expectedBatchStatus)
-            {
-                await using var check = await _factory.CreateDbContextAsync();
-                var rmState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
-                Assert.Equal(expectedRmQty, rmState.OnHandBaseQty);
-                Assert.Equal(expectedRmVal, rmState.InventoryValue);
-                Assert.Equal(expectedRmQty, (await check.IvBalLocs.SingleAsync(b => b.Id == 59)).StdQty);
-                var layers = await check.StockFifoLayers.Where(l => l.ItemCode == "RM001").ToArrayAsync();
-                Assert.Equal(expectedRmQty, layers.Sum(l => l.RemainingQty));
-                Assert.Equal(expectedRmVal, layers.Sum(l => l.RemainingValue));
-                Assert.Equal(0m, (await check.StockCostStates.SingleAsync(s => s.ItemCode == "FG001")).InventoryValue);
-                Assert.Equal(expectedBatchStatus, (await check.IvTrxBatches.SingleAsync(b => b.BatchNo == receiptBatch)).BatchStatus);
-                var fgOut = await check.ProductionBalLotMovements.SingleAsync(m =>
-                    m.MovementType == ProductionBalLotMovementTypes.FgReceiptOut && m.OriginalMovementId == null);
-                var fgRev = await check.ProductionBalLotMovements.SingleAsync(m =>
-                    m.OriginalMovementId == fgOut.Uid && m.MovementType == ProductionBalLotMovementTypes.FgReceiptReversal);
-                var resolved = await ProductionEffectiveCostResolver.ResolveAsync(check, "DEMO", "HQ", [fgOut.Uid, fgRev.Uid]);
-                Assert.Equal(expectedFg, resolved[fgOut.Uid].TotalCost);
-                Assert.Equal(expectedFg, resolved[fgRev.Uid].TotalCost);
-                Assert.Equal(resolved[fgOut.Uid].UnitCost, resolved[fgRev.Uid].UnitCost);
+                Assert.False(blockedOutput.Succeeded);
             }
             var removed = await RollbackReceiptAsync();
             Assert.True(removed.Succeeded, removed.Error);
-            await AssertFifoReversedFgAsync(6m, 16m, 32m, IvBatchStatuses.New);
-            if (goodsReceipt) Assert.Equal(0m, (await (await _factory.CreateDbContextAsync()).PoOrderDetails.SingleAsync()).RecvQty);
-            var reposted = await PostReceiptAsync();
-            Assert.True(reposted.Succeeded, reposted.Error);
-            await AssertFifoReversedFgAsync(14m, 21m, 66m, IvBatchStatuses.Posted);
-            if (goodsReceipt) Assert.Equal(5m, (await (await _factory.CreateDbContextAsync()).PoOrderDetails.SingleAsync()).RecvQty);
-            var removedAgain = await RollbackReceiptAsync();
-            Assert.True(removedAgain.Succeeded, removedAgain.Error);
-            await AssertFifoReversedFgAsync(6m, 16m, 32m, IvBatchStatuses.New);
+            await RollbackFinishedGoodAsync(finished);
+            var outputReversal = await outputs.RollbackAsync(new ProductionOutputRollbackRequest
+            {
+                OutputId = consumedOutputId, PostingRequestId = Guid.NewGuid().ToString("N"),
+                Reason = "Verify source-first FIFO rollback"
+            });
+            Assert.True(outputReversal.Succeeded, outputReversal.Message);
+            await RollbackIssueAsync(8m);
+            await using var restored = await _factory.CreateDbContextAsync();
+            Assert.Equal((20m, 40m), ((await restored.StockCostStates.SingleAsync(s => s.ItemCode == "RM001")).OnHandBaseQty,
+                (await restored.StockCostStates.SingleAsync(s => s.ItemCode == "RM001")).InventoryValue));
+            Assert.Equal(0m, (await restored.StockCostStates.SingleAsync(s => s.ItemCode == "FG001")).InventoryValue);
+            if (goodsReceipt) Assert.Equal(0m, (await restored.PoOrderDetails.SingleAsync()).RecvQty);
             return;
         }
         if (scenario is 21 or 22 or 23 or 25 or 26)
@@ -6721,17 +6781,58 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         }
         if (scenario == 12)
         {
-            Assert.Equal(14m, (await PostFinishedGoodAsync(graph.OrderId, consumedOutputId, new DateTime(2026, 10, 3))).Value);
-            var blocked = await RollbackReceiptAsync();
-            Assert.False(blocked.Succeeded);
-            await using var unchanged = await _factory.CreateDbContextAsync();
-            var state = await unchanged.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
-            Assert.Equal(21m, state.OnHandBaseQty);
-            Assert.Equal(66m, state.InventoryValue);
-            Assert.Equal(IvBatchStatuses.Posted,
-                (await unchanged.IvTrxBatches.SingleAsync(b => b.BatchNo == receiptBatch)).BatchStatus);
-            if (goodsReceipt)
-                Assert.Equal(5m, (await unchanged.PoOrderDetails.SingleAsync()).RecvQty);
+            var postedFg = await PostFinishedGoodAsync(graph.OrderId, consumedOutputId, new DateTime(2026, 10, 3));
+            Assert.Equal(14m, postedFg.Value);
+            var removed = await RollbackReceiptAsync();
+            Assert.True(removed.Succeeded, removed.Error);
+            await using (var afterRemoval = await _factory.CreateDbContextAsync())
+            {
+                var rmState = await afterRemoval.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+                var fgState = await afterRemoval.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
+                var fgLayer = await afterRemoval.StockFifoLayers.SingleAsync(l => l.ItemCode == "FG001");
+                var snap = await StockReplayFifoActiveLayerReader.ReadAsync(afterRemoval, "DEMO", "HQ", "FG001");
+                Assert.Equal((16m, 32m), (rmState.OnHandBaseQty, rmState.InventoryValue));
+                Assert.Equal((2m, 6m), (fgState.OnHandBaseQty, fgState.InventoryValue));
+                Assert.Equal((14m, -8m, 6m, 3m),
+                    (fgLayer.OriginalValue, fgLayer.AccumulatedAdjustment, fgLayer.RemainingValue, fgLayer.CurrentUnitCost));
+                Assert.Equal((2m, 6m), (snap.CurrentQuantity, snap.CurrentValue));
+                if (goodsReceipt) Assert.Equal(0m, (await afterRemoval.PoOrderDetails.SingleAsync()).RecvQty);
+            }
+            var reposted = await PostReceiptAsync();
+            Assert.True(reposted.Succeeded, reposted.Error);
+            await using (var afterRepost = await _factory.CreateDbContextAsync())
+            {
+                var rmState = await afterRepost.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+                var fgState = await afterRepost.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
+                var fgLayer = await afterRepost.StockFifoLayers.SingleAsync(l => l.ItemCode == "FG001");
+                var snap = await StockReplayFifoActiveLayerReader.ReadAsync(afterRepost, "DEMO", "HQ", "FG001");
+                Assert.Equal((21m, 66m), (rmState.OnHandBaseQty, rmState.InventoryValue));
+                Assert.Equal((2m, 14m), (fgState.OnHandBaseQty, fgState.InventoryValue));
+                Assert.Equal((14m, 0m, 14m, 7m),
+                    (fgLayer.OriginalValue, fgLayer.AccumulatedAdjustment, fgLayer.RemainingValue, fgLayer.CurrentUnitCost));
+                Assert.Equal((2m, 14m), (snap.CurrentQuantity, snap.CurrentValue));
+            }
+            await using (var rv = await _factory.CreateDbContextAsync())
+                await rv.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE PrFinishedGoodReceipt SET RowVersion = X'01' WHERE BatchId = {postedFg.Document.Id};");
+            var loadedFg = await postedFg.Service.GetAsync(postedFg.Document.Id);
+            var blockedFgRollback = await postedFg.Service.RollbackAsync(new(
+                postedFg.Document.Id, loadedFg.Data!.RowVersion, Guid.NewGuid(), "Attempt premature FG rollback"));
+            Assert.False(blockedFgRollback.Succeeded);
+            var removedAgain = await RollbackReceiptAsync();
+            Assert.True(removedAgain.Succeeded, removedAgain.Error);
+            await RollbackFinishedGoodAsync(postedFg);
+            var outputReversal = await outputs.RollbackAsync(new ProductionOutputRollbackRequest
+            {
+                OutputId = consumedOutputId, PostingRequestId = Guid.NewGuid().ToString("N"),
+                Reason = "verify receipt-first FIFO finished-good rollback"
+            });
+            Assert.True(outputReversal.Succeeded, outputReversal.Message);
+            await RollbackIssueAsync(8m);
+            await using var restored = await _factory.CreateDbContextAsync();
+            var finalRm = await restored.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+            Assert.Equal((20m, 40m), (finalRm.OnHandBaseQty, finalRm.InventoryValue));
+            if (goodsReceipt) Assert.Equal(0m, (await restored.PoOrderDetails.SingleAsync()).RecvQty);
             return;
         }
         if (scenario is 13 or 14 or 19 or 20)

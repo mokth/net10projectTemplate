@@ -83,10 +83,17 @@ public sealed partial class IvInventoryPostingService
         var poolMovements = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(m => m.ProductionBalLotId == issue.ProductionBalLotId)
             .OrderBy(m => m.Uid).ToArrayAsync(ct);
-        if (poolMovements.Length == 1)
+        if (poolMovements.Length == 1
+            || poolMovements.Length == 2 && poolMovements.Any(m =>
+                m.Uid != issue.Uid
+                && m.MovementType == ProductionBalLotMovementTypes.Return
+                && m.DocumentType == ProductionDocumentTypes.ProductionStockReturn
+                && m.OriginalMovementId == null))
         {
-            var leaf = await PlanProductionLeafAsync(db, company, branch, ids, ct);
-            return new(ids[0], leaf!, string.Empty, leaf!.EffectiveAt, 1);
+            var leaf = await PlanProductionLeafAsync(db, company, branch, ids, ct,
+                candidateDate: candidateDate, allowOutput: poolMovements.Length == 2,
+                allowProductionReturn: poolMovements.Length == 2);
+            return new(ids[0], leaf!, string.Empty, leaf!.EffectiveAt, poolMovements.Length);
         }
 
         var authority = reversedIssueAuthority ?? (await ProductionIssueEffectiveCostReader.ReadAsync(

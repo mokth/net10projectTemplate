@@ -2,6 +2,7 @@ using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
+using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
@@ -290,8 +291,11 @@ public sealed partial class IvInventoryPostingService
                     && !(allowBoundedSales && h.TrxType is
                         (IvTrxTypes.SalesOut or IvTrxTypes.CustomerReturn))
                     && !(productionPlan is not null
-                        && h.TrxType == IvTrxTypes.IssueToProduction
-                        && h.Id == productionPlan.HistoryId))))
+                        && (h.TrxType == IvTrxTypes.IssueToProduction
+                                && h.Id == productionPlan.HistoryId
+                            || productionPlan.Leaf?.TerminalReturn is { } prtn
+                                && h.TrxType == IvTrxTypes.ProductionStockReturn
+                                && h.Id == prtn.ReturnHistoryId)))))
             return "A later Standard movement has no original Inventory history.";
         var subconTransferBatchNos = histories.Where(h => h.TrxType == IvTrxTypes.StockTransfer)
             .Select(h => h.BatchNo).Distinct().ToArray();
@@ -304,6 +308,8 @@ public sealed partial class IvInventoryPostingService
         var returns = histories.Where(h => h.TrxType == IvTrxTypes.CustomerReturn).ToArray();
         if (productionPlan is not null
             && (histories.Count(h => h.TrxType == IvTrxTypes.IssueToProduction) != 1
+                || histories.Count(h => h.TrxType == IvTrxTypes.ProductionStockReturn)
+                    != (productionPlan.Leaf?.TerminalReturn is null ? 0 : 1)
                 || salesIds.Length > 0 || returns.Length > 0 || replayInvoice is not null))
             return "Backdated Standard receipt cannot yet replay Production together with Sales or invoice settlement.";
         SalesReturnPermit? permittedReturn = null;
@@ -396,6 +402,7 @@ public sealed partial class IvInventoryPostingService
                 || f.CostMethod != StockCostMethods.Standard
                 || f.ValuationSource != StockValuationSources.Standard)))
             return "A later Standard movement has a corrected or inconsistent valuation.";
+        var terminalPrtnHistoryId = productionPlan?.Leaf?.TerminalReturn?.ReturnHistoryId;
         var ownerIds = histories.Select(h => h.StockPostingId!.Value)
             .Distinct().ToArray();
         var owners = await db.StockPostings.AsNoTracking()
@@ -406,7 +413,11 @@ public sealed partial class IvInventoryPostingService
                 p.CommandType, p.EffectiveAt, p.SealedAtUtc })
             .ToArrayAsync(cancellationToken);
         if (owners.Length != ownerIds.Length || owners.Any(p =>
-                p.SourceModule != "INVENTORY" || p.SealedAtUtc is null))
+                p.SealedAtUtc is null
+                || p.SourceModule != "INVENTORY"
+                    && !(terminalPrtnHistoryId is int prtnId
+                        && histories.Any(h => h.Id == prtnId && h.StockPostingId == p.Id)
+                        && p.SourceModule == "PRODUCTION")))
             return "A later Standard movement has a foreign or unsealed owner.";
         var byOwner = owners.ToDictionary(p => p.Id);
         var batchNumbers = histories.Select(h => h.BatchNo).Distinct().ToArray();
@@ -421,17 +432,22 @@ public sealed partial class IvInventoryPostingService
                 || !batches.Any(b => b.BatchNo == h.BatchNo
                     && b.TrxType == h.TrxType
                     && b.BatchStatus == IvBatchStatuses.Posted
-                    && owner.SourceDocumentType == h.TrxType
                     && owner.SourceDocumentId == b.Id.ToString(
                         System.Globalization.CultureInfo.InvariantCulture)
                     && owner.SourceDocumentNo == h.BatchNo.ToString(
                         System.Globalization.CultureInfo.InvariantCulture)
-                    && (h.TrxType != IvTrxTypes.GoodsReceive
-                        || active[h.Id][0].SourceDocumentId
-                            == owner.SourceDocumentId)
                     && owner.PostingRole == "PRIMARY"
-                    && owner.CommandType == $"IV_POST_{h.TrxType}"
-                    && owner.EffectiveAt == h.TrxDtTime)))
+                    && owner.EffectiveAt == h.TrxDtTime
+                    && (terminalPrtnHistoryId is int prtnId && h.Id == prtnId
+                        ? owner.SourceModule == "PRODUCTION"
+                            && owner.SourceDocumentType == ProductionDocumentTypes.ProductionStockReturn
+                            && owner.CommandType == ProductionPostingCommandTypes.ProductionStockReturnPost
+                        : owner.SourceModule == "INVENTORY"
+                            && owner.SourceDocumentType == h.TrxType
+                            && owner.CommandType == $"IV_POST_{h.TrxType}"
+                            && (h.TrxType != IvTrxTypes.GoodsReceive
+                                || active[h.Id][0].SourceDocumentId
+                                    == owner.SourceDocumentId)))))
             return "A later Standard movement has no exact posted Inventory owner.";
         return null;
     }

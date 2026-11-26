@@ -117,7 +117,7 @@ public sealed partial class IvInventoryPostingService
             || delta.UnitCost != StockLedgerPrecision.Money(delta.CostAmount / receipt.BaseQty)
             || reverseDelta.ReversesValuationFactId != delta.Id || reverseDelta.Direction != -delta.Direction
             || reverseDelta.CostAmount != delta.CostAmount || reverseDelta.BaseCostAmount != delta.BaseCostAmount
-            || reverseDelta.BaseQty != 0m || reverseDelta.CostMethod != StockCostMethods.MovingAverage
+            || reverseDelta.BaseQty != 0m || reverseDelta.CostMethod != receipt.CostMethod
             || reverseDelta.ValuationStatus != StockValuationStatuses.Reversed
             || reverseDelta.ValuationSource != StockValuationSources.OriginalReversal
             || reverseDelta.ValuationVersion != delta.ValuationVersion
@@ -132,7 +132,7 @@ public sealed partial class IvInventoryPostingService
             || reverseDelta.LocationCode != delta.LocationCode || reverseDelta.LotId != delta.LotId
             || reverseDelta.LotNo != delta.LotNo || reverseDelta.ItemStatus != delta.ItemStatus
             || reverseDelta.FromBalLocId != delta.FromBalLocId || reverseDelta.ToBalLocId != delta.ToBalLocId
-            || receipt.CostMethod != StockCostMethods.MovingAverage
+            || receipt.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
             || sourceRun.RootRequestId != sourceRoot.RequestId || reverseRun.RootRequestId != reverseOwner.RequestId
             || sourceRun.RootDocumentType != sourceRoot.SourceDocumentType || sourceRun.RootDocumentId != sourceRoot.SourceDocumentId
             || reverseRun.RootDocumentType != reverseOwner.SourceDocumentType || reverseRun.RootDocumentId != reverseOwner.SourceDocumentId
@@ -147,16 +147,26 @@ public sealed partial class IvInventoryPostingService
             s.CompanyCode == company && s.BranchCode == branch && s.ItemCode == receipt.ItemCode, ct);
         var piles = await db.IvBalLocs.AsNoTracking().Where(b => b.CompanyCode == company
             && b.BranchCode == branch && b.ICode == receipt.ItemCode).ToArrayAsync(ct);
-        if (state is null || state.CostMethod != StockCostMethods.MovingAverage
+        if (state is null || state.CostMethod != receipt.CostMethod
             || state.OnHandBaseQty != 0m || state.InventoryValue != 0m
             || state.LastValuationFactId != physicalReverse.Id || state.LastPostingSequence != reverseOwner.PostingSequence
             || piles.Length != 1 || piles[0].Id != fact.DestinationBalanceId || piles[0].StdQty != 0m)
             throw ProductionReplayError("Reversed finished goods have later stock activity requiring full replay.");
-        var key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
-            owner.PostingSequence, $"H{history.Id:D10}", 0);
-        var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch, receipt.ItemCode, key, ct);
-        if (tail.LaterEvents.Count != 0 || tail.CurrentQuantity != 0m || tail.CurrentValue != 0m)
-            throw ProductionReplayError("Reversed finished goods have a later WAC event requiring replay.");
+        if (receipt.CostMethod == StockCostMethods.MovingAverage)
+        {
+            var key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                owner.PostingSequence, $"H{history.Id:D10}", 0);
+            var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch, receipt.ItemCode, key, ct);
+            if (tail.LaterEvents.Count != 0 || tail.CurrentQuantity != 0m || tail.CurrentValue != 0m)
+                throw ProductionReplayError("Reversed finished goods have a later WAC event requiring replay.");
+        }
+        else
+        {
+            var fifo = await StockReplayFifoActiveLayerReader.ReadAsync(db, company, branch, receipt.ItemCode, ct);
+            if (fifo.ActiveConsumptions.Count != 0 || fifo.Layers.Count != 0
+                || fifo.CurrentQuantity != 0m || fifo.CurrentValue != 0m)
+                throw ProductionReplayError("Reversed finished goods have a later FIFO event requiring replay.");
+        }
         var hash = StockPostingFingerprint.Create(new { sourceRootId, outbound.Uid, ReversalId = reversal.Uid }, new
         {
             activeRow.Id, DeltaId = delta.Id, ReverseDeltaId = reverseDelta.Id, earlier.Count, earlier.LastFactId,
@@ -198,7 +208,8 @@ public sealed partial class IvInventoryPostingService
         context.EnsureUnsealed();
         var db = context.Db;
         var run = await db.StockReplayRuns.AsNoTracking().SingleAsync(r => r.RootStockPostingId == context.Posting.Id, ct);
-        if (db.Database.CurrentTransaction is null || context.CostMethod != StockCostMethods.MovingAverage
+        if (db.Database.CurrentTransaction is null
+            || context.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
             || context.Posting.SourceModule != "INVENTORY"
             || context.Posting.SourceDocumentType is not (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
             || context.Posting.PostingRole != "REVERSAL"

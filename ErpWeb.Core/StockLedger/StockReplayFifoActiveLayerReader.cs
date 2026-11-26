@@ -255,7 +255,8 @@ public static class StockReplayFifoActiveLayerReader
                             IvTrxTypes.MiscellaneousReceipt
                             or IvTrxTypes.GoodsReceive
                             or IvTrxTypes.CustomerReturn
-                            or IvTrxTypes.ProductionStockReturn)
+                            or IvTrxTypes.ProductionStockReturn
+                            or IvTrxTypes.FinishedGoods)
                             && (!removedCount
                                 || originalHistory.TrxType
                                     != IvTrxTypes.StockAdjustment)
@@ -264,6 +265,9 @@ public static class StockReplayFifoActiveLayerReader
                                 || origin.ValuationSource != StockValuationSources.OriginalSaleReturn)
                         || originalHistory.TrxType == IvTrxTypes.ProductionStockReturn
                             && (origin.MovementCode != "PRODUCTION_STOCK_RETURN_IN"
+                                || origin.ValuationSource != StockValuationSources.ProductionActual)
+                        || originalHistory.TrxType == IvTrxTypes.FinishedGoods
+                            && (origin.MovementCode != "FINISHED_GOOD_IN"
                                 || origin.ValuationSource != StockValuationSources.ProductionActual)
                         || removedCount
                             && (reversalHistory.TrxType
@@ -282,9 +286,11 @@ public static class StockReplayFifoActiveLayerReader
                             && (reversalOwner.PostingRole != "REVERSAL"
                                 || reversalOwner.ReversesPostingId
                                     != l.OriginStockPostingId)
-                        || originalHistory.TrxType == IvTrxTypes.CustomerReturn
+                        || originalHistory.TrxType is IvTrxTypes.CustomerReturn
+                            or IvTrxTypes.FinishedGoods
                             && reversal.MovementCode != origin.MovementCode + "_REVERSAL"
-                        || originalHistory.TrxType != IvTrxTypes.CustomerReturn
+                        || originalHistory.TrxType is not (IvTrxTypes.CustomerReturn
+                            or IvTrxTypes.FinishedGoods)
                             && reversal.MovementCode != origin.MovementCode
                             && (!(originalHistory.TrxType is IvTrxTypes.MiscellaneousReceipt
                                     or IvTrxTypes.GoodsReceive)
@@ -400,6 +406,10 @@ public static class StockReplayFifoActiveLayerReader
                 && origin.ValuationSource == StockValuationSources.ProductionActual)
                 returnAdjustments[origin.Id] = await StockReplayFifoProductionReturnValueAdjustment
                     .ReadVerifiedAsync(db, origin, cancellationToken);
+            else if (origin.MovementCode == "FINISHED_GOOD_IN"
+                && origin.ValuationSource == StockValuationSources.ProductionActual)
+                returnAdjustments[origin.Id] = await StockReplayWacReceiptRestatementWriter
+                    .ReadVerifiedFifoAdjustmentsAsync(db, origin, cancellationToken);
         }
         foreach (var layer in layers)
         {

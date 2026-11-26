@@ -1,5 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
 
@@ -28,7 +30,7 @@ public static class StockReplayWacReceiptRestatementWriter
     {
         ArgumentNullException.ThrowIfNull(context);
         context.EnsureUnsealed();
-        if (context.CostMethod != StockCostMethods.MovingAverage
+        if (context.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
             || receiptHistoryId <= 0 || receiptFactId <= 0
             || correctedReceiptAmount < 0m
             || StockLedgerPrecision.Money(correctedReceiptAmount)
@@ -58,7 +60,7 @@ public static class StockReplayWacReceiptRestatementWriter
             [history], cancellationToken))[receiptHistoryId];
         var receipt = activeReceiptFacts.SingleOrDefault(f => f.Id == receiptFactId);
         if (receipt is null || receipt.Direction != 1
-            || receipt.CostMethod != StockCostMethods.MovingAverage
+            || receipt.CostMethod != context.CostMethod
             || receipt.ReversesValuationFactId is not null
             || receipt.BaseCostAmount != receipt.CostAmount)
             throw Invalid($"Receipt fact {receiptFactId} has no active WAC authority.");
@@ -92,7 +94,7 @@ public static class StockReplayWacReceiptRestatementWriter
                 || f.BusinessDate != receipt.BusinessDate
                 || f.PeriodKey != receipt.PeriodKey
                 || f.BaseQty != 0m
-                || f.CostMethod != StockCostMethods.MovingAverage
+                || f.CostMethod != receipt.CostMethod
                 || f.Direction is not (-1 or 1)
                 || f.CostAmount < 0m
                 || StockLedgerPrecision.Money(f.CostAmount) != f.CostAmount)
@@ -175,7 +177,7 @@ public static class StockReplayWacReceiptRestatementWriter
             MovementCode = receipt.MovementCode,
             Direction = 1,
             BaseQty = 0m,
-            CostMethod = StockCostMethods.MovingAverage,
+            CostMethod = receipt.CostMethod,
             BaseCurrency = receipt.BaseCurrency,
             FromBalLocId = receipt.FromBalLocId,
             ToBalLocId = receipt.ToBalLocId,
@@ -212,6 +214,76 @@ public static class StockReplayWacReceiptRestatementWriter
             db.StockValuationFacts.Add(deltaFact);
         }
         return new(reversal, deltaFact);
+    }
+
+    internal static async Task<IReadOnlyList<StockValuationFact>> ReadVerifiedFifoAdjustmentsAsync(
+        AppDbContext db,
+        StockValuationFact origin,
+        CancellationToken cancellationToken = default)
+    {
+        if (origin.InventoryHistoryId is not int historyId || origin.BaseQty <= 0m
+            || origin.Direction != 1 || origin.CostMethod != StockCostMethods.Fifo
+            || origin.MovementCode != "FINISHED_GOOD_IN"
+            || origin.ValuationSource != StockValuationSources.ProductionActual)
+            throw Invalid($"Receipt fact {origin.Id} has invalid FIFO adjustment origin.");
+        var rows = await db.StockValuationFacts.AsNoTracking()
+            .Include(f => f.StockPosting)
+            .Where(f => f.OriginalValuationFactId == origin.Id && f.InventoryHistoryId == null)
+            .ToArrayAsync(cancellationToken);
+        if (rows.Length == 0)
+            return rows;
+        var history = await db.IvTrxHistories.AsNoTracking()
+            .SingleAsync(h => h.Id == historyId, cancellationToken);
+        var originOwner = await db.StockPostings.AsNoTracking()
+            .SingleAsync(p => p.Id == origin.StockPostingId, cancellationToken);
+        var byId = rows.ToDictionary(f => f.Id);
+        var reversedIds = new HashSet<long>();
+        foreach (var row in rows)
+        {
+            var posting = row.StockPosting;
+            if (posting is null || posting.SealedAtUtc is null
+                || posting.CompanyCode != origin.CompanyCode
+                || posting.BranchCode != origin.BranchCode
+                || posting.LedgerEpochId != origin.LedgerEpochId
+                || !(posting.SourceModule == "INVENTORY"
+                        && posting.SourceDocumentType is (IvTrxTypes.MiscellaneousReceipt or IvTrxTypes.GoodsReceive)
+                        && posting.PostingRole is ("PRIMARY" or "REVERSAL")
+                    || posting.SourceModule == "PRODUCTION"
+                        && posting.SourceDocumentType == ProductionDocumentTypes.FinishedGoodReceipt
+                        && posting.PostingRole == "REVERSAL"
+                        && posting.ReversesPostingId == origin.StockPostingId)
+                || row.CompanyCode != origin.CompanyCode || row.BranchCode != origin.BranchCode
+                || row.LedgerEpochId != origin.LedgerEpochId || row.CostMethod != StockCostMethods.Fifo
+                || row.MovementCode != origin.MovementCode || row.BaseQty != 0m
+                || row.ItemCode != origin.ItemCode || row.BaseCostAmount != row.CostAmount
+                || row.CostAmount < 0m || StockLedgerPrecision.Money(row.CostAmount) != row.CostAmount
+                || row.EffectiveAt != origin.EffectiveAt || row.BusinessDate != origin.BusinessDate
+                || row.PeriodKey != origin.PeriodKey || row.TransactionCurrency is not null
+                || row.TransactionCostAmount is not null || row.ExchangeRate is not null)
+                throw Invalid($"Receipt fact {origin.Id} has inconsistent FIFO value adjustment metadata.");
+            if (row.ReversesValuationFactId is long priorId)
+            {
+                if (!byId.TryGetValue(priorId, out var prior)
+                    || prior.ReversesValuationFactId is not null
+                    || !reversedIds.Add(priorId)
+                    || row.ValuationStatus != StockValuationStatuses.Reversed
+                    || row.ValuationSource != StockValuationSources.OriginalReversal
+                    || row.ValuationVersion != prior.ValuationVersion
+                    || row.Direction != -prior.Direction
+                    || row.CostAmount != prior.CostAmount)
+                    throw Invalid($"Receipt fact {origin.Id} has invalid FIFO value reversal lineage.");
+            }
+            else
+            {
+                if (row.ValuationSource != StockValuationSources.ProductionActual)
+                    throw Invalid($"Receipt fact {origin.Id} has unsupported FIFO value delta source.");
+                StockReplayWacValueEventFactory.CreateReceiptRestatement(
+                    row, origin, history, originOwner, posting);
+            }
+        }
+        if (rows.Count(f => f.ReversesValuationFactId is null && !reversedIds.Contains(f.Id)) > 1)
+            throw Invalid($"Receipt fact {origin.Id} has multiple active FIFO value adjustments.");
+        return rows;
     }
 
     private static StockLedgerException Invalid(string message) =>

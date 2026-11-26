@@ -37,7 +37,7 @@ public sealed partial class IvInventoryPostingService
                 : StockLedgerPrecision.Money(produceCost.TotalCost * outbound.BaseQty / produce.BaseQty))
             || outbound.UnitCost != StockLedgerPrecision.Money(outbound.TotalCost / outbound.BaseQty)
             || await db.ProductionBalLotMovements.AsNoTracking().AnyAsync(m => m.OriginalMovementId == outbound.Uid, ct)
-            || hasRestatements && costMethod != StockCostMethods.MovingAverage)
+            || hasRestatements && costMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo))
             throw ProductionReplayError("Finished-good receipt does not match the active Production output.");
 
         var post = await db.StockPostings.AsNoTracking().SingleOrDefaultAsync(p => p.Id == postId, ct);
