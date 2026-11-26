@@ -4,18 +4,23 @@ using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.Production;
 using ErpWeb.Core.Quality;
+using ErpWeb.Core.Sales;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.StockLedger.Costing;
 using ErpWeb.Model.Data;
+using ErpWeb.Model.Entities.CustomerProfile;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using ErpWeb.Model.Entities.Purchase;
 using ErpWeb.Model.Entities.Quality;
+using ErpWeb.Model.Entities.Sales;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
+using ErpWeb.Model.Repositories.Sales;
+using ErpWeb.Tests.Infrastructure.Fakes;
 using ErpWeb.Tests.Inventory.Transaction;
 using ErpWeb.Tests.Procurement.Transaction;
 using Microsoft.Data.Sqlite;
@@ -1020,6 +1025,399 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         bool goodsReceipt) => BackdatedReceiptAndProductionIssueAsync(goodsReceipt, true, 908, true);
 
     [Theory]
+    [InlineData(StockCostMethods.MovingAverage, false)]
+    [InlineData(StockCostMethods.MovingAverage, true)]
+    [InlineData(StockCostMethods.Fifo, false)]
+    [InlineData(StockCostMethods.Fifo, true)]
+    [InlineData(StockCostMethods.Standard, false)]
+    [InlineData(StockCostMethods.Standard, true)]
+    public Task Backdated_receipt_through_finished_good_reprices_or_preserves_downstream_inventory_and_sales(
+        string costMethod, bool goodsReceipt) =>
+        ExerciseFinishedGoodDownstreamConsumptionAsync(costMethod, goodsReceipt, unsupportedTransfer: false);
+
+    [Theory]
+    [InlineData(StockCostMethods.MovingAverage)]
+    [InlineData(StockCostMethods.Fifo)]
+    public Task Backdated_receipt_through_finished_good_rejects_unsupported_fg_transfer(
+        string costMethod) =>
+        ExerciseFinishedGoodDownstreamConsumptionAsync(costMethod, goodsReceipt: false, unsupportedTransfer: true);
+
+    private async Task ExerciseFinishedGoodDownstreamConsumptionAsync(
+        string costMethod, bool goodsReceipt, bool unsupportedTransfer)
+    {
+        var graph = await SeedTwoProcessWithMaterialAsync($"WO-FG-DOWN-{costMethod}-{(goodsReceipt ? "GR" : "MR")}");
+        await SeedBalanceAsync(59, 2m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedCompanyAsync(db);
+            await ConfigureFinishedGoodRouteAsync(db, graph.Process2Id);
+            await db.SaveChangesAsync();
+            db.MsUoms.Add(new() { CompanyCode = "DEMO", UomCode = "EA", IsActive = true });
+            db.IvClasses.Add(new() { CompanyCode = "DEMO", IClassCode = "RAW", IsActive = true });
+            (await db.IvStockMasters.SingleAsync(s => s.ICode == "RM001")).IClassCode = "RAW";
+            var fgMaster = await db.IvStockMasters.SingleAsync(s => s.ICode == "FG001");
+            fgMaster.IClassCode = "RAW";
+            fgMaster.SellingUom = "EA";
+            fgMaster.StdPackSize = 1m;
+            fgMaster.SellingPrice = 10m;
+            fgMaster.SellingGlCode = "GLSALE";
+            fgMaster.Classification = "CLASS-A";
+            fgMaster.DefWarehouse = "WH01";
+            db.IvLocations.Add(new IvLocation
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", WarehouseCode = "WH01",
+                LocCode = string.Empty, IsActive = true, RowVersion = [1]
+            });
+            if (unsupportedTransfer)
+            {
+                db.IvWarehouses.Add(new IvWarehouse
+                {
+                    CompanyCode = "DEMO", BranchCode = "HQ", WarehouseCode = "WH02",
+                    IsActive = true, RowVersion = [1]
+                });
+                db.IvLocations.Add(new IvLocation
+                {
+                    CompanyCode = "DEMO", BranchCode = "HQ", WarehouseCode = "WH02",
+                    LocCode = "BIN-B", IsActive = true, RowVersion = [1]
+                });
+            }
+            db.SaCurrencies.Add(new SaCurrency { CompanyCode = "DEMO", CurrCode = "MYR", IsActive = true });
+            db.IvMsCodes.Add(new IvMsCode { Code = "NET30", Name = "Net 30", CodeType = IvMsCodeTypes.PayCode });
+            db.SaPaymentTerms.Add(new SaPaymentTerm
+            {
+                CompanyCode = "DEMO", PayCode = "NET30", PayDesc = "Net 30", Days = 30, IsActive = true
+            });
+            db.SaSalesReps.Add(new SaSalesRep
+            {
+                CompanyCode = "DEMO", SrepCode = "SM1", SrepName = "Sales One", IsActive = true
+            });
+            db.SaTaxGroups.Add(new SaTaxGroup
+            {
+                CompanyCode = "DEMO", TaxGrCode = "ZR", TaxGrDesc = "Zero", Percentage = 0m, TaxGlCode = "GLTAX0"
+            });
+            db.SaCusts.Add(new SaCust
+            {
+                CompanyCode = "DEMO", CustCode = "CUST01", CustName = "Alpha", Currency = "MYR",
+                PayCode = "NET30", SalesmanCode = "SM1", GlCode = "GLAR01", TinNo = "TIN01",
+                CustBrn = "BRN01", Email = "alpha@example.com", Tel = "0123456789",
+                Address1 = "MAIN ADDR 1", Address4 = "MAIN ADDR 4", City = "MAIN CITY", Country = "MY",
+                InvName = "Alpha", InvAddress1 = "INV ADDR 1", InvCity = "INV CITY",
+                InvPostalCode = "50000", InvCountry = "MY", InvTel = "0123456789",
+                ShipAddress1 = "SHIP ADDR 1", ShipCity = "SHIP CITY",
+                CustType = "TRADE", CustGroupCode = "G1", AreaCode = "A1",
+                IndustryCode = "IND1", ChannelCode = "CH1", IsActive = true,
+                RowVersion = [1, 0, 0, 0, 0, 0, 0, 0]
+            });
+            (await db.StockCostPolicyRevisions.SingleAsync()).CostMethod = costMethod;
+            if (costMethod == StockCostMethods.Fifo)
+                await db.StockCostStates.Where(s => s.ItemCode == "RM001").ExecuteDeleteAsync();
+            else if (costMethod == StockCostMethods.Standard)
+            {
+                (await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001")).CostMethod = StockCostMethods.Standard;
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "RM001", 2m);
+                await InventoryLedgerTestFixture.SeedStandardCostAsync(db, "FG001", 2.5m);
+            }
+            if (goodsReceipt)
+                db.PoOrders.Add(new PoOrder
+                {
+                    CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-FG-DOWN",
+                    PoRelNo = 1, PoDate = new DateTime(2026, 9, 30), Status = "NEW",
+                    VendCode = "SUP01", CurCode = "MYR", RowVersion = [1],
+                    Details = [new PoOrderDetail
+                    {
+                        CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-FG-DOWN",
+                        PoRelNo = 1, Line = 1, ICode = "RM001", PoQty = 10m,
+                        PoPurQty = 10m, PoUnitPrice = 8m, NetAmount = 80m,
+                        PurchaseUom = "EA", StdUom = "EA", PackSz = 1m,
+                        CurCode = "MYR", ToWarehouse = "WH01"
+                    }]
+                });
+            await db.SaveChangesAsync();
+            if (costMethod == StockCostMethods.Fifo)
+                await InventoryLedgerTestFixture.SeedFifoPoolAsync(db, "RM001",
+                    [new FifoLayerSeed(2m, 2m, new DateTime(2026, 9, 1))]);
+        }
+
+        await SeedTraceablePredecessorAsync(graph);
+        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory, enableBackdatedReplay: true);
+        var day1 = new DateTime(2026, 10, 1);
+        var day2 = new DateTime(2026, 10, 2);
+        var day3 = new DateTime(2026, 10, 3);
+        var day4 = new DateTime(2026, 10, 4);
+
+        var laterReceipts = InventoryLedgerTestFixture.CreateMiscReceipt(
+            _factory, day3, enableBackdatedReplay: true);
+        var laterMr = await laterReceipts.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = day2,
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "RM001", ToWarehouse = "WH01", ToLocation = "BIN-A",
+                Quantity = 14m, UnitPrice = 2m, PriceConfirmed = true,
+                Uom = "EA", IClassCode = "RAW", IStatus = IvItemStatuses.Active, Reason = "ADJ"
+            }]
+        });
+        Assert.True(laterMr.Succeeded, laterMr.ErrorMessage);
+        Assert.True((await laterReceipts.PostAsync([laterMr.BatchNo])).Succeeded);
+
+        var outputs = CreateOutputService(day3);
+        var predecessor = await outputs.CreateAsync(OutputRequest(graph.Process1Id, 40m, day1.AddHours(8)));
+        Assert.True(predecessor.Succeeded, predecessor.Message);
+        Assert.True((await outputs.PostAsync(predecessor.Data!.Uid)).Succeeded);
+
+        var issues = CreateIssueService(posting, day3);
+        var issueSave = await CreateIssueSaveAsync(graph, 59, 4m);
+        issueSave.ProductionQtyThisIssue = 4m;
+        issueSave.TrxDateTime = day3.AddHours(12);
+        var issue = await issues.CreateAsync(issueSave);
+        Assert.True(issue.Succeeded, issue.Message);
+        Assert.True((await issues.PostAsync([issue.Data!.BatchNo])).Succeeded);
+
+        var producedOut = await outputs.CreateAsync(OutputRequest(graph.Process2Id, 4m, day3.AddHours(13)));
+        Assert.True(producedOut.Succeeded, producedOut.Message);
+        Assert.True((await outputs.PostAsync(producedOut.Data!.Uid)).Succeeded);
+
+        var finished = await PostFinishedGoodAsync(graph.OrderId, producedOut.Data!.Uid, day3);
+        int fgPileId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            fgPileId = (await db.IvBalLocs.SingleAsync(b => b.ICode == "FG001")).Id;
+
+        if (unsupportedTransfer)
+        {
+            var transferService = InventoryLedgerTestFixture.CreateStockTransfer(_factory, day4);
+            var trDraft = await transferService.SaveNewAsync(new IvStockTransferSaveRequest
+            {
+                TrxDate = day4,
+                Lines = [new IvStockTransferLineRequest
+                {
+                    FromBalLocId = fgPileId, ICode = "FG001", Quantity = 1m, Uom = "EA",
+                    FrWarehouse = "WH01", FrLocation = string.Empty,
+                    ToWarehouse = "WH02", ToLocation = "BIN-B",
+                    IClassCode = "RAW", IStatus = IvItemStatuses.Active
+                }]
+            });
+            Assert.True(trDraft.Succeeded, trDraft.ErrorMessage);
+            Assert.True((await transferService.PostAsync([trDraft.BatchNo])).Succeeded);
+
+            var mrService = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, day4, enableBackdatedReplay: true);
+            var mrDraft = await mrService.SaveNewAsync(new IvMiscReceiptSaveRequest
+            {
+                TrxDate = day1,
+                Lines = [new IvMiscReceiptLineRequest
+                {
+                    ICode = "RM001", ToWarehouse = "WH01", ToLocation = "BIN-A",
+                    Quantity = 4m, UnitPrice = 8m, PriceConfirmed = true,
+                    Uom = "EA", IClassCode = "RAW", IStatus = IvItemStatuses.Active, Reason = "ADJ"
+                }]
+            });
+            Assert.True(mrDraft.Succeeded, mrDraft.ErrorMessage);
+            var blocked = await mrService.PostAsync([mrDraft.BatchNo]);
+            Assert.False(blocked.Succeeded);
+            await using var check = await _factory.CreateDbContextAsync();
+            var rmState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+            var fgState = await check.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
+            Assert.Equal((12m, 24m), (rmState.OnHandBaseQty, rmState.InventoryValue));
+            Assert.Equal((2m, 6m), (fgState.OnHandBaseQty, fgState.InventoryValue));
+            Assert.Equal(IvBatchStatuses.New,
+                (await check.IvTrxBatches.SingleAsync(b => b.BatchNo == mrDraft.BatchNo)).BatchStatus);
+            Assert.Empty(await check.StockReplayRuns.ToArrayAsync());
+            return;
+        }
+
+        // Downstream FG001 Inventory MI (0.5 EA) + Sales DO (1.0 EA) + linked Sales Invoice (1.0 EA) on day4
+        var fgMiscIssue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, day4, enableBackdatedReplay: true);
+        var fgMiDraft = await fgMiscIssue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = day4,
+            Lines = [new IvMiscIssueLineRequest
+            {
+                FromBalLocId = fgPileId, ICode = "FG001", FrWarehouse = "WH01", FrLocation = string.Empty,
+                Quantity = 0.5m, Uom = "EA", IClassCode = "RAW", IStatus = IvItemStatuses.Active,
+                UnitPrice = 3m
+            }]
+        });
+        Assert.True(fgMiDraft.Succeeded, fgMiDraft.ErrorMessage);
+        var fgMiPosted = await fgMiscIssue.PostAsync([fgMiDraft.BatchNo]);
+        Assert.True(fgMiPosted.Succeeded, fgMiPosted.ErrorMessage);
+
+        var tenant = InventoryTenantTestHelper.CreateTenantContext(location: "SITE");
+        var access = Access();
+        var doRepo = new SaDoRepository();
+        var soRepo = new SaSoRepository();
+        var postingRepo = new IvStockPostingRepository();
+        var numbering = new FakeDocumentNumberingService();
+        var shipment = new IvSpShipmentService(postingRepo, new IvStockTransactionRepository(), new RunningNumberService());
+        var doService = new SaDoService(_factory, tenant, access, numbering,
+            new FixedCurrentDateService(day4), doRepo, new SaCustRepository(_factory),
+            new IvStockMasterRepository(_factory), new IvStockCommonRepository(_factory),
+            new IvStockTransactionRepository(), postingRepo, posting, shipment, soRepo,
+            new SaDocApplicationService(soRepo, doRepo), new SaCustLookupService(_factory, tenant),
+            NullLogger<SaDoService>.Instance);
+        var doDraft = await doService.SaveNewAsync(new SaDoSaveRequest
+        {
+            DoDate = day4, CustCode = "CUST01", Currency = "MYR", PayCode = "NET30", SalesRep = "SM1",
+            Lines = [new SaDoLineRequest { ICode = "FG001", Qty = 1m, UnitPrice = 10m, FrWarehouse = "WH01" }]
+        });
+        Assert.True(doDraft.Succeeded, doDraft.ErrorMessage);
+        var doToken = (await doService.GetAsync(doDraft.DoNo!)).Document!.RowVersion;
+        Assert.True((await doService.AddShipmentAsync(doDraft.DoNo!, false, doToken)).Succeeded);
+        doToken = (await doService.GetAsync(doDraft.DoNo!)).Document!.RowVersion;
+        var doPosted = await doService.PostAsync([new SaDoKeyedRequest { DoNo = doDraft.DoNo!, RowVersion = doToken }]);
+        Assert.True(doPosted.Succeeded, doPosted.ErrorMessage);
+
+        var invService = new SaInvoiceService(_factory, tenant, access, new RunningNumberService(),
+            numbering, new FixedCurrentDateService(day4), new SaInvoiceRepository(),
+            new SaCustRepository(_factory), new IvStockMasterRepository(_factory),
+            new IvStockCommonRepository(_factory), new IvStockTransactionRepository(), postingRepo,
+            posting, shipment, soRepo, new SaDocApplicationService(soRepo, doRepo),
+            new SaCustLookupService(_factory, tenant), NullLogger<SaInvoiceService>.Instance);
+        var invDraft = await invService.SaveNewAsync(new SaInvoiceSaveRequest
+        {
+            InvDate = day4, CustCode = "CUST01", Currency = "MYR", PayCode = "NET30", SalesmanCode = "SM1",
+            Lines = [new SaInvoiceLineRequest
+            {
+                ICode = "FG001", Qty = 1m, UnitPrice = 10m, FrWarehouse = "WH01",
+                LinkDo = true, DoNo = doDraft.DoNo, DoLine = 1
+            }]
+        });
+        Assert.True(invDraft.Succeeded, invDraft.ErrorMessage);
+        var invPosted = await invService.PostAsync([invDraft.InvNo!]);
+        Assert.True(invPosted.Succeeded, invPosted.ErrorMessage);
+
+        var gpService = new SalesGrossProfitInquiryService(_factory, tenant);
+        async Task AssertFgDownstreamAsync(
+            decimal expectedFgValue, decimal expectedMiCost, decimal expectedDoCogs,
+            decimal expectedRemainingVal, decimal expectedRmQty, decimal expectedRmVal)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var rmState = await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001");
+            Assert.Equal((expectedRmQty, expectedRmVal), (rmState.OnHandBaseQty, rmState.InventoryValue));
+            var fgState = await db.StockCostStates.SingleAsync(s => s.ItemCode == "FG001");
+            Assert.Equal((0.5m, expectedRemainingVal), (fgState.OnHandBaseQty, fgState.InventoryValue));
+            var miHist = await db.IvTrxHistories.SingleAsync(h =>
+                h.BatchNo == fgMiDraft.BatchNo && h.TrxType == IvTrxTypes.MiscellaneousIssue && h.EntryRole == "ORIGINAL");
+            var doHist = await db.IvTrxHistories.SingleAsync(h =>
+                h.InvNo == doDraft.DoNo && h.TrxType == IvTrxTypes.SalesOut && h.EntryRole == "ORIGINAL");
+            var resolved = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", [miHist, doHist]);
+            Assert.Equal(expectedMiCost, Assert.Single(resolved[miHist.Id]).CostAmount);
+            Assert.Equal(expectedDoCogs, Assert.Single(resolved[doHist.Id]).CostAmount);
+            if (costMethod == StockCostMethods.Fifo)
+            {
+                var fgLayers = await db.StockFifoLayers.Where(l => l.ItemCode == "FG001").ToArrayAsync();
+                Assert.Equal((0.5m, expectedRemainingVal),
+                    (fgLayers.Sum(l => l.RemainingQty), fgLayers.Sum(l => l.RemainingValue)));
+            }
+            if (costMethod == StockCostMethods.Standard)
+            {
+                var variance = await db.ProductionStandardCostVariances.SingleAsync(v => v.ItemCode == "FG001" && v.ReversesVarianceId == null);
+                Assert.Equal(6m - 5m, variance.VarianceAmount);
+            }
+            var trace = await finished.Service.GetCostTraceAsync(
+                finished.Document.Id, finished.Document.Lines.Single().SourceId);
+            Assert.True(trace.Succeeded, trace.Message);
+            Assert.Equal(expectedFgValue, trace.Data!.ExactPostedValue);
+            var gp = Assert.Single((await gpService.SearchAsync(new SalesGrossProfitInquiryQuery { InvoiceNo = invDraft.InvNo })).Rows);
+            Assert.True(gp.CogsResolved);
+            Assert.Equal(expectedDoCogs, gp.Cogs);
+            Assert.Equal(10m - expectedDoCogs, gp.GrossProfit);
+        }
+
+        var baselineFg = 6m;
+        var baselineMi = costMethod == StockCostMethods.Standard ? 1.25m : 1.5m;
+        var baselineDo = costMethod == StockCostMethods.Standard ? 2.5m : 3m;
+        var baselineRem = costMethod == StockCostMethods.Standard ? 1.25m : 1.5m;
+        await AssertFgDownstreamAsync(baselineFg, baselineMi, baselineDo, baselineRem, 12m, 24m);
+
+        // Post backdated RM001 MR/GR (4 EA @ $8 = $32 on day1)
+        IvMiscReceiptService? backdatedMrService = null;
+        IvGoodsReceiptService? backdatedGrService = null;
+        int backdatedBatchNo;
+        if (goodsReceipt)
+        {
+            backdatedGrService = new IvGoodsReceiptService(_factory, tenant, access, new RunningNumberService(),
+                new FixedCurrentDateService(day4), new IvStockMasterRepository(_factory),
+                new IvStockCommonRepository(_factory), new IvStockTransactionRepository(),
+                new IvStockPostingRepository(), posting, NullLogger<IvGoodsReceiptService>.Instance,
+                approval: TestDisabledProcurementApprovalGuard.Instance);
+            var draft = await backdatedGrService.SaveNewAsync(new IvGoodsReceiptSaveRequest
+            {
+                TrxType = IvTrxTypes.GoodsReceive, TrxDate = day1,
+                Lines = [new IvGoodsReceiptLineRequest
+                {
+                    PoNo = "PO-FG-DOWN", PoRelNo = 1, PoLineNo = 1,
+                    ToWarehouse = "WH01", ToLocation = "BIN-A", ToRecvQty = 4m
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            backdatedBatchNo = draft.BatchNo;
+            var posted = await backdatedGrService.PostAsync([backdatedBatchNo]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+        }
+        else
+        {
+            backdatedMrService = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, day4, enableBackdatedReplay: true);
+            var draft = await backdatedMrService.SaveNewAsync(new IvMiscReceiptSaveRequest
+            {
+                TrxDate = day1,
+                Lines = [new IvMiscReceiptLineRequest
+                {
+                    ICode = "RM001", ToWarehouse = "WH01", ToLocation = "BIN-A",
+                    Quantity = 4m, UnitPrice = 8m, PriceConfirmed = true,
+                    Uom = "EA", IClassCode = "RAW", IStatus = IvItemStatuses.Active, Reason = "ADJ"
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            backdatedBatchNo = draft.BatchNo;
+            var posted = await backdatedMrService.PostAsync([backdatedBatchNo]);
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+        }
+
+        var postFg = costMethod == StockCostMethods.MovingAverage ? 8.4m
+            : costMethod == StockCostMethods.Fifo ? 12m : 6m;
+        var postMi = costMethod == StockCostMethods.MovingAverage ? 2.1m
+            : costMethod == StockCostMethods.Fifo ? 3m : 1.25m;
+        var postDo = costMethod == StockCostMethods.MovingAverage ? 4.2m
+            : costMethod == StockCostMethods.Fifo ? 6m : 2.5m;
+        var postRem = costMethod == StockCostMethods.MovingAverage ? 2.1m
+            : costMethod == StockCostMethods.Fifo ? 3m : 1.25m;
+        var postRmVal = costMethod == StockCostMethods.MovingAverage ? 51.2m
+            : costMethod == StockCostMethods.Fifo ? 44m : 32m;
+        await AssertFgDownstreamAsync(postFg, postMi, postDo, postRem, 16m, postRmVal);
+
+        // Roll back backdated RM001 MR/GR -> must cleanly restore FG and downstream MI/DO/Invoice/State
+        if (goodsReceipt)
+        {
+            var rolledBackGr = await backdatedGrService!.RollbackAsync([backdatedBatchNo]);
+            Assert.True(rolledBackGr.Succeeded, rolledBackGr.ErrorMessage);
+        }
+        else
+        {
+            var rolledBackMr = await backdatedMrService!.RollbackAsync([backdatedBatchNo]);
+            Assert.True(rolledBackMr.Succeeded, rolledBackMr.ErrorMessage);
+        }
+        await AssertFgDownstreamAsync(baselineFg, baselineMi, baselineDo, baselineRem, 12m, 24m);
+
+        // Repost backdated MR after rollback to verify clean repeatability
+        if (!goodsReceipt)
+        {
+            var repostDraft = await backdatedMrService!.SaveNewAsync(new IvMiscReceiptSaveRequest
+            {
+                TrxDate = day1,
+                Lines = [new IvMiscReceiptLineRequest
+                {
+                    ICode = "RM001", ToWarehouse = "WH01", ToLocation = "BIN-A",
+                    Quantity = 4m, UnitPrice = 8m, PriceConfirmed = true,
+                    Uom = "EA", IClassCode = "RAW", IStatus = IvItemStatuses.Active, Reason = "ADJ"
+                }]
+            });
+            Assert.True(repostDraft.Succeeded, repostDraft.ErrorMessage);
+            var reposted = await backdatedMrService.PostAsync([repostDraft.BatchNo]);
+            Assert.True(reposted.Succeeded, reposted.ErrorMessage);
+            await AssertFgDownstreamAsync(postFg, postMi, postDo, postRem, 16m, postRmVal);
+        }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public Task Backdated_wac_and_standard_goods_receipt_respects_qa_gate_and_restores_allocation(
@@ -1168,6 +1566,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 });
             if (consumeAt is 26 or 27 or 28 or 29 or 30 or 31 or 34 or 35 or 36 or 37 or 38 or 39 or 40 or 41 or 42 or 43 or 44 or 45 or 46 or 47 or 48 or 49 or 50 or 52 or 53 or 54 or 55 or 56 or 57 or 58 or 59 or 60 or 61 or 62 or 63 or 64 or 65 or 66 or 67 or 68 or 74 or 901)
                 await ConfigureFinishedGoodRouteAsync(db, graph.Process2Id);
+            await db.SaveChangesAsync();
             if (standard)
             {
                 (await db.StockCostPolicyRevisions.SingleAsync()).CostMethod = StockCostMethods.Standard;
@@ -5198,6 +5597,7 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 });
             if (scenario is 11 or 110 or 12 or 13 or 14 or 15 or 16 or 19 or 20 or 21 or 22 or 23 or 24 or 25 or 26 or 27 or 28 or 29 or 30)
                 await ConfigureFinishedGoodRouteAsync(db, graph.Process2Id);
+            await db.SaveChangesAsync();
             (await db.StockCostPolicyRevisions.SingleAsync()).CostMethod = StockCostMethods.Fifo;
             await db.StockCostStates.Where(s => s.ItemCode == "RM001").ExecuteDeleteAsync();
             if (goodsReceipt)

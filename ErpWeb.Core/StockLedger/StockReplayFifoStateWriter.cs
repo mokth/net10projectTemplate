@@ -89,6 +89,23 @@ public static class StockReplayFifoStateWriter
             cancellationToken);
     }
 
+    internal static async Task ApplyFinishedGoodRevaluationAsync(
+        StockPostingContext context, string itemCode,
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayFifoTailProjection projection, string planHash,
+        int balLocId, decimal finalPileQuantity,
+        StockReplayFifoWritePermit permit, long fgOriginFactId,
+        CancellationToken cancellationToken = default)
+    {
+        var dates = projection.Issues.Select(i => i.Key.EffectiveAt.Date)
+            .Append(context.Posting.EffectiveAt.Date);
+        await StockReplayFifoIssueRepricingWriter.ValidateFifoPolicyAsync(
+            context, dates.Min(), dates.Max(), cancellationToken);
+        await ApplyCoreAsync(context, itemCode, snapshot, projection, planHash,
+            balLocId, finalPileQuantity, "REVALUE", permit, cancellationToken,
+            revaluedFgOriginFactId: fgOriginFactId);
+    }
+
     private static async Task ApplyCoreAsync(
         StockPostingContext context, string itemCode,
         StockReplayFifoActiveLayerSnapshot snapshot,
@@ -96,7 +113,8 @@ public static class StockReplayFifoStateWriter
         int balLocId, decimal finalPileQuantity, string operation,
         StockReplayFifoWritePermit permit, CancellationToken cancellationToken,
         StockReplayFifoMrReceiptValuation? receipt = null,
-        StockReplayFifoLayerPosition? removedReceipt = null)
+        StockReplayFifoLayerPosition? removedReceipt = null,
+        long? revaluedFgOriginFactId = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
@@ -158,7 +176,23 @@ public static class StockReplayFifoStateWriter
             .Where(f => adjustmentOriginIds.Contains(f.Id))
             .ToDictionaryAsync(f => f.Id, cancellationToken);
         var valueFacts = facts.Where(f => f.BaseQty == 0m).ToArray();
-        if (expectedAdjustments.Any(x =>
+        if (revaluedFgOriginFactId is long fgOriginId)
+        {
+            if (operation != "REVALUE"
+                || expectedAdjustments.Length != 1
+                || expectedAdjustments[0].Before.OriginFactId != fgOriginId
+                || !adjustmentOrigins.TryGetValue(fgOriginId, out var origin)
+                || origin.BaseQty != expectedAdjustments[0].Before.OriginalQuantity
+                || origin.CostAmount != expectedAdjustments[0].Before.OriginalValue
+                || origin.MovementCode != "FINISHED_GOOD_IN"
+                || origin.ValuationSource != StockValuationSources.ProductionActual
+                || valueFacts.Length is not (1 or 2)
+                || valueFacts.Any(f => f.OriginalValuationFactId != fgOriginId)
+                || StockLedgerPrecision.Money(valueFacts.Sum(f => f.SignedValue))
+                    != expectedAdjustments[0].SignedValue)
+                throw Invalid("FIFO finished-good value facts do not match the prepared layer adjustment.");
+        }
+        else if (expectedAdjustments.Any(x =>
             {
                 if (!adjustmentOrigins.TryGetValue(x.Before.OriginFactId, out var origin)
                     || origin.BaseQty != x.Before.OriginalQuantity

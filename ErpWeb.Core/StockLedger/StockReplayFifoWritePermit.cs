@@ -93,6 +93,32 @@ public sealed class StockReplayFifoWritePermit
         ChangedPileFinalQuantity = 0m;
     }
 
+    internal StockReplayFifoWritePermit(
+        StockPostingContext context,
+        string itemCode,
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayFifoTailProjection projection,
+        string planHash,
+        int changedPileId,
+        decimal changedPileFinalQuantity)
+    {
+        Operation = "REVALUE";
+        CompanyCode = context.CompanyCode;
+        BranchCode = context.BranchCode;
+        LedgerEpochId = context.Epoch.Id;
+        RootPostingId = context.Posting.Id;
+        RootPostingSequence = context.Posting.PostingSequence;
+        ItemCode = itemCode;
+        PlanHash = planHash;
+        SnapshotHash = snapshot.SnapshotHash;
+        CurrentQuantity = snapshot.CurrentQuantity;
+        CurrentValue = snapshot.CurrentValue;
+        FinalQuantity = projection.FinalQuantity;
+        FinalValue = projection.FinalValue;
+        ChangedPileId = changedPileId;
+        ChangedPileFinalQuantity = changedPileFinalQuantity;
+    }
+
     public string Operation { get; }
     public string CompanyCode { get; }
     public string BranchCode { get; }

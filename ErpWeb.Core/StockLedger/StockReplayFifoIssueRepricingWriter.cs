@@ -84,6 +84,33 @@ public static class StockReplayFifoIssueRepricingWriter
             allowSales: allowSales, productionPermit: productionPermit);
     }
 
+    internal static async Task<IReadOnlyList<StockValuationFact>> AppendRevaluedLayerTailAsync(
+        StockPostingContext context,
+        string itemCode,
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayFifoTailProjection projection,
+        string planHash,
+        StockReplayFifoWritePermit permit,
+        StockReplayEventKey issueKey,
+        int reversalPostingLineNo,
+        int replacementPostingLineNo,
+        CancellationToken cancellationToken = default,
+        bool allowSales = false)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(projection);
+        ArgumentNullException.ThrowIfNull(permit);
+        if (permit.Operation != "REVALUE")
+            throw Invalid("FIFO layer revaluation tail requires a REVALUE root permit.");
+        var dates = projection.Issues.Select(i => i.Key.EffectiveAt.Date)
+            .Append(context.Posting.EffectiveAt.Date);
+        await ValidateFifoPolicyAsync(context, dates.Min(), dates.Max(), cancellationToken);
+        return await AppendCoreAsync(context, itemCode, snapshot, projection.Issues,
+            planHash, "REVALUE", permit, issueKey, reversalPostingLineNo, replacementPostingLineNo,
+            null, cancellationToken, allowSales: allowSales);
+    }
+
     internal static async Task<IReadOnlyList<StockValuationFact>> AppendCountAsync(
         StockPostingContext context,
         StockReplayFifoCountSheetInsertionPlan plan,

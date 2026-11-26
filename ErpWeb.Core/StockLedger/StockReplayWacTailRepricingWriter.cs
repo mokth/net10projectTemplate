@@ -291,6 +291,30 @@ public static class StockReplayWacTailRepricingWriter
             allowProductionReturn: allowProductionReturn);
     }
 
+    internal static Task<StockReplayWacTailRepricingResult> AppendValueDeltaTailAsync(
+        StockPostingContext context, StockReplayWacWritePermit permit,
+        IReadOnlyList<StockReplayWacEvent> laterEvents,
+        IReadOnlyList<StockReplayWacStep> laterSteps,
+        int firstRootPostingLineNo, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(permit);
+        ArgumentNullException.ThrowIfNull(laterEvents);
+        ArgumentNullException.ThrowIfNull(laterSteps);
+        context.EnsureUnsealed();
+        if (firstRootPostingLineNo <= 0
+            || permit.RootPostingId != context.Posting.Id
+            || permit.RootPostingSequence != context.Posting.PostingSequence
+            || permit.LedgerEpochId != context.Epoch.Id
+            || permit.CompanyCode != context.CompanyCode
+            || permit.BranchCode != context.BranchCode
+            || permit.CurrentQuantity != permit.FinalQuantity
+            || permit.ChangedPileFinalQuantity != permit.FinalQuantity)
+            throw Invalid("The prepared WAC value-delta tail has no matching root permit.");
+        return AppendTailAsync(context, permit, laterEvents, laterSteps,
+            firstRootPostingLineNo, null, null, cancellationToken);
+    }
+
     public static Task<StockReplayWacTailRepricingResult> AppendPreparedRemovalTailAsync(
         StockPostingContext context, StockReplayWacWritePermit permit,
         StockReplayWacRemovalPlan plan, StockCountCorrectionWritePermit countPermit,

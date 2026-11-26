@@ -226,7 +226,7 @@ public sealed partial class IvInventoryPostingService
             await ApplyGoodsReceiptPoQtyAsync(write, grOrders!, grDetails!,
                 +1, authority.EffectiveAt, userId ?? context.UserId,
                 cancellationToken);
-        await ApplyFifoProductionLeafAsync(context, productionPlan, financial.PlanHash,
+        var fgRequired = await ApplyFifoProductionLeafAsync(context, productionPlan, financial.PlanHash,
             physical.BranchWatermark, financial.Snapshot, financial.Projection,
             key, cancellationToken);
         if (reversedIssuePermit is not null)
@@ -245,12 +245,23 @@ public sealed partial class IvInventoryPostingService
                     remap.Error ?? "The posted invoice could not be remapped."));
         }
         await _coordinator!.CompleteReplayInTransactionAsync(
-            context, written.RequiredActiveHistoryIds, cancellationToken);
+            context, written.RequiredActiveHistoryIds.Concat(fgRequired).Distinct().ToArray(), cancellationToken);
         await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
             context, financial, permit, written.Receipt, cancellationToken);
         if (productionPlan?.FinishedGoodCost is { } fg)
-            await StockReplayFifoActiveLayerReader.ReadAsync(write, companyCode, branchCode,
-                fg.ItemCode, cancellationToken);
+        {
+            if (fg.FifoTail is { } fgTail)
+            {
+                var fgPermit = new StockReplayFifoWritePermit(context, fg.ItemCode, fgTail.Snapshot,
+                    fgTail.Projection, fg.EvidenceHash, fg.PileId, fgTail.Projection.FinalQuantity);
+                await StockReplayFifoReconciliationGate.VerifySealedFinishedGoodRevaluationAsync(
+                    context, fg.ItemCode, fgTail.Snapshot, fgTail.Projection, fg.EvidenceHash,
+                    fgPermit, cancellationToken);
+            }
+            else
+                await StockReplayFifoActiveLayerReader.ReadAsync(write, companyCode, branchCode,
+                    fg.ItemCode, cancellationToken);
+        }
         if (reversedIssuePermit is not null)
             await VerifyFifoReversedIssueCorrectionWithinRootAsync(context, reversedIssuePermit, written.Receipt.LayerId, cancellationToken);
         postingScope.MarkCompleted();
@@ -535,7 +546,7 @@ public sealed partial class IvInventoryPostingService
             await ApplyGoodsReceiptPoQtyAsync(write, grOrders!, grDetails!,
                 -1, original.TrxDtTime, userId ?? context.UserId,
                 cancellationToken);
-        await ApplyFifoProductionLeafAsync(context, productionPlan, financial.PlanHash,
+        var fgRequired = await ApplyFifoProductionLeafAsync(context, productionPlan, financial.PlanHash,
             physical.BranchWatermark, financial.Snapshot, financial.Projection,
             key, cancellationToken);
         if (reversedIssuePermit is not null)
@@ -555,12 +566,23 @@ public sealed partial class IvInventoryPostingService
                     remap.Error ?? "The posted invoice could not be remapped."));
         }
         await _coordinator!.CompleteReplayInTransactionAsync(
-            context, written.RequiredActiveHistoryIds, cancellationToken);
+            context, written.RequiredActiveHistoryIds.Concat(fgRequired).Distinct().ToArray(), cancellationToken);
         await StockReplayFifoReconciliationGate.VerifySealedWithinRootAsync(
             context, financial, permit, cancellationToken);
         if (productionPlan?.FinishedGoodCost is { } fg)
-            await StockReplayFifoActiveLayerReader.ReadAsync(write, companyCode, branchCode,
-                fg.ItemCode, cancellationToken);
+        {
+            if (fg.FifoTail is { } fgTail)
+            {
+                var fgPermit = new StockReplayFifoWritePermit(context, fg.ItemCode, fgTail.Snapshot,
+                    fgTail.Projection, fg.EvidenceHash, fg.PileId, fgTail.Projection.FinalQuantity);
+                await StockReplayFifoReconciliationGate.VerifySealedFinishedGoodRevaluationAsync(
+                    context, fg.ItemCode, fgTail.Snapshot, fgTail.Projection, fg.EvidenceHash,
+                    fgPermit, cancellationToken);
+            }
+            else
+                await StockReplayFifoActiveLayerReader.ReadAsync(write, companyCode, branchCode,
+                    fg.ItemCode, cancellationToken);
+        }
         if (reversedIssuePermit is not null)
             await VerifyFifoReversedIssueCorrectionWithinRootAsync(context, reversedIssuePermit, insertedReceiptLayerId: null, cancellationToken);
         postingScope.MarkCompleted();
@@ -1289,7 +1311,9 @@ public sealed partial class IvInventoryPostingService
                 && !neutralizedFactIds.Contains(f.Id)
                 && !returnAdjustmentIds.Contains(f.Id)
                 && !(correctionValueFactIds?.Contains(f.Id) == true
-                    && f.MovementCode == StockReplayFifoReversedIssueGenerationReader.ValueMovement)
+                    && (f.MovementCode == StockReplayFifoReversedIssueGenerationReader.ValueMovement
+                        || f.MovementCode == "FINISHED_GOOD_IN"
+                            && f.ValuationSource == StockValuationSources.ProductionActual))
                 && (f.InventoryHistoryId is not int historyId
                     || !issueHistoryIds.Contains(historyId)
                         && !validReversalIds.Contains(historyId))))

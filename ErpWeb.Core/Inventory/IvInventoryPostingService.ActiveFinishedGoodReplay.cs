@@ -71,12 +71,13 @@ public sealed partial class IvInventoryPostingService
         var fact = facts[0];
         var cleared = hasRestatements && effective.RestatementFactId is null
             && await ProductionFinishedGoodCorrectedRollback.HasClearedCorrectionAsync(
-                db, company, branch, outbound.Uid, ct);
+                db, company, branch, outbound.Uid, ct, allowDownstreamActivity: true);
         if (hasRestatements && effective.RestatementFactId is null && !cleared)
             throw ProductionReplayError("Finished-good correction history has not been fully reversed.");
         var corrected = effective.RestatementFactId is null ? null
             : await ProductionFinishedGoodCorrectedRollback.TryPrepareAsync(
-                db, company, branch, fact.BatchId, outbound.MovementDate, ct);
+                db, company, branch, fact.BatchId, outbound.MovementDate, ct,
+                allowDownstreamActivity: true);
         if (effective.RestatementFactId is not null
             && (corrected is null || corrected.MovementId != outbound.Uid
                 || corrected.CorrectedValue != effective.TotalCost))

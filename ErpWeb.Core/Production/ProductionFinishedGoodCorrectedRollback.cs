@@ -25,7 +25,7 @@ internal static class ProductionFinishedGoodCorrectedRollback
 {
     public static async Task<ProductionFinishedGoodCorrectedRollbackPlan?> TryPrepareAsync(
         AppDbContext db, string company, string branch, int batchId,
-        DateTime rollbackAt, CancellationToken ct)
+        DateTime rollbackAt, CancellationToken ct, bool allowDownstreamActivity = false)
     {
         var document = await db.ProductionFinishedGoodReceiptRows.AsNoTracking()
             .Include(r => r.Batch).SingleOrDefaultAsync(r => r.BatchId == batchId
@@ -218,37 +218,43 @@ internal static class ProductionFinishedGoodCorrectedRollback
         var piles = await db.IvBalLocs.AsNoTracking().Where(b => b.CompanyCode == company
             && b.BranchCode == branch && b.ICode == receipt.ItemCode).ToArrayAsync(ct);
         if (state is null || state.CostMethod != receipt.CostMethod
-            || state.LastValuationFactId != delta.Id || state.LastPostingSequence != root.PostingSequence
-            || state.OnHandBaseQty != fact.BaseQty || state.InventoryValue != effective.TotalCost
-            || state.AverageUnitCost != StockLedgerPrecision.Money(state.InventoryValue / state.OnHandBaseQty)
-            || state.CurrentUnitCost != state.AverageUnitCost || piles.Length != 1
-            || piles[0].Id != fact.DestinationBalanceId || piles[0].StdQty != fact.BaseQty)
+            || piles.Length != 1 || piles[0].Id != fact.DestinationBalanceId
+            || piles[0].StdQty != state.OnHandBaseQty
+            || !allowDownstreamActivity && (state.LastValuationFactId != delta.Id
+                || state.LastPostingSequence != root.PostingSequence
+                || state.OnHandBaseQty != fact.BaseQty || state.InventoryValue != effective.TotalCost
+                || state.AverageUnitCost != StockLedgerPrecision.Money(state.InventoryValue / state.OnHandBaseQty)
+                || state.CurrentUnitCost != state.AverageUnitCost
+                || piles[0].StdQty != fact.BaseQty))
             throw Invalid("Finished goods have later stock activity requiring full replay.");
-        if (receipt.CostMethod == StockCostMethods.MovingAverage)
+        if (!allowDownstreamActivity)
         {
-            var key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
-                owner.PostingSequence, $"H{history.Id:D10}", 0);
-            var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch,
-                receipt.ItemCode, key, ct);
-            if (tail.LaterEvents.Count != 1 || tail.LaterEvents[0].EventId != long.MaxValue - receipt.Id
-                || tail.LaterEvents[0].OldSignedValue != delta.SignedValue
-                || tail.CurrentQuantity != state.OnHandBaseQty || tail.CurrentValue != state.InventoryValue)
-                throw Invalid("Finished goods have a later WAC event requiring full replay.");
-        }
-        else
-        {
-            var fifo = await StockReplayFifoActiveLayerReader.ReadAsync(db, company, branch,
-                receipt.ItemCode, ct);
-            if (fifo.ActiveConsumptions.Count != 0 || fifo.Layers.Count != 1
-                || fifo.CurrentQuantity != state.OnHandBaseQty || fifo.CurrentValue != state.InventoryValue)
-                throw Invalid("Finished goods have a later FIFO event requiring full replay.");
-            var fgLayer = fifo.Layers[0];
-            if (fgLayer.OriginFactId != receipt.Id || fgLayer.OriginalQuantity != fact.BaseQty
-                || fgLayer.RemainingQuantity != fact.BaseQty || fgLayer.OriginalValue != receipt.CostAmount
-                || fgLayer.RemainingValue != effective.TotalCost
-                || fgLayer.AccumulatedAdjustment != delta.SignedValue
-                || fgLayer.Status != StockFifoLayerStatuses.Open)
-                throw Invalid("Finished goods FIFO layer does not match the active correction.");
+            if (receipt.CostMethod == StockCostMethods.MovingAverage)
+            {
+                var key = new StockReplayEventKey(owner.EffectiveAt, StockReplayEventKey.OrdinaryClass,
+                    owner.PostingSequence, $"H{history.Id:D10}", 0);
+                var tail = await StockReplayWacFinancialTailReader.ReadLaterAsync(db, company, branch,
+                    receipt.ItemCode, key, ct);
+                if (tail.LaterEvents.Count != 1 || tail.LaterEvents[0].EventId != long.MaxValue - receipt.Id
+                    || tail.LaterEvents[0].OldSignedValue != delta.SignedValue
+                    || tail.CurrentQuantity != state.OnHandBaseQty || tail.CurrentValue != state.InventoryValue)
+                    throw Invalid("Finished goods have a later WAC event requiring full replay.");
+            }
+            else
+            {
+                var fifo = await StockReplayFifoActiveLayerReader.ReadAsync(db, company, branch,
+                    receipt.ItemCode, ct);
+                if (fifo.ActiveConsumptions.Count != 0 || fifo.Layers.Count != 1
+                    || fifo.CurrentQuantity != state.OnHandBaseQty || fifo.CurrentValue != state.InventoryValue)
+                    throw Invalid("Finished goods have a later FIFO event requiring full replay.");
+                var fgLayer = fifo.Layers[0];
+                if (fgLayer.OriginFactId != receipt.Id || fgLayer.OriginalQuantity != fact.BaseQty
+                    || fgLayer.RemainingQuantity != fact.BaseQty || fgLayer.OriginalValue != receipt.CostAmount
+                    || fgLayer.RemainingValue != effective.TotalCost
+                    || fgLayer.AccumulatedAdjustment != delta.SignedValue
+                    || fgLayer.Status != StockFifoLayerStatuses.Open)
+                    throw Invalid("Finished goods FIFO layer does not match the active correction.");
+            }
         }
         var watermark = await db.StockPostingBranchSequences.AsNoTracking()
             .Where(s => s.CompanyCode == company && s.BranchCode == branch)
@@ -377,7 +383,8 @@ internal static class ProductionFinishedGoodCorrectedRollback
 
     // Receipt-first reversal restores the original value; every earlier pair must still verify.
     public static async Task<bool> HasClearedCorrectionAsync(AppDbContext db,
-        string company, string branch, long movementId, CancellationToken ct)
+        string company, string branch, long movementId, CancellationToken ct,
+        bool allowDownstreamActivity = false)
     {
         var cleared = await ProductionFinishedGoodCorrectionHistory.ReadAsync(
             db, company, branch, movementId, null, null, ct);
@@ -405,9 +412,13 @@ internal static class ProductionFinishedGoodCorrectedRollback
         var piles = await db.IvBalLocs.AsNoTracking().Where(b => b.CompanyCode == company
             && b.BranchCode == branch && b.ICode == receipt.ItemCode).ToArrayAsync(ct);
         if (state is null || state.CostMethod != receipt.CostMethod
-            || state.OnHandBaseQty != fact.BaseQty || state.InventoryValue != fact.TotalValue
-            || state.LastValuationFactId != cleared.LastFactId || state.LastPostingSequence != cleared.LastSequence
-            || piles.Length != 1 || piles[0].Id != fact.DestinationBalanceId || piles[0].StdQty != fact.BaseQty)
+            || piles.Length != 1 || piles[0].Id != fact.DestinationBalanceId
+            || piles[0].StdQty != state.OnHandBaseQty)
+            return false;
+        if (allowDownstreamActivity)
+            return true;
+        if (state.OnHandBaseQty != fact.BaseQty || state.InventoryValue != fact.TotalValue
+            || state.LastValuationFactId != cleared.LastFactId || state.LastPostingSequence != cleared.LastSequence)
             return false;
         if (receipt.CostMethod == StockCostMethods.MovingAverage)
         {

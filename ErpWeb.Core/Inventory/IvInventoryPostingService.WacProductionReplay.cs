@@ -290,22 +290,22 @@ public sealed partial class IvInventoryPostingService
                 "The Production material pool changed after receipt replay planning.", Retryable: true));
     }
 
-    private static Task ApplyWacProductionLeafAsync(
+    private static Task<IReadOnlyList<int>> ApplyWacProductionLeafAsync(
         StockPostingContext context, ProductionLeafReplayPlan? plan,
         string inventoryPlanHash, long branchWatermark,
         IReadOnlyList<StockReplayWacEvent> events, CancellationToken cancellationToken) =>
-        plan is null ? Task.CompletedTask : ApplyProductionLeafAsync(context, plan,
+        plan is null ? Task.FromResult<IReadOnlyList<int>>([]) : ApplyProductionLeafAsync(context, plan,
             inventoryPlanHash, branchWatermark, events.Max(e => e.Key.EffectiveAt),
             events.Count, cancellationToken);
 
-    private static Task ApplyFifoProductionLeafAsync(
+    private static Task<IReadOnlyList<int>> ApplyFifoProductionLeafAsync(
         StockPostingContext context, ProductionLeafReplayPlan? plan,
         string inventoryPlanHash, long branchWatermark,
         StockReplayFifoActiveLayerSnapshot snapshot, StockReplayFifoTailProjection projection,
         StockReplayEventKey candidateKey, CancellationToken cancellationToken)
     {
         if (plan is null)
-            return Task.CompletedTask;
+            return Task.FromResult<IReadOnlyList<int>>([]);
         var issueDates = projection.Issues.Where(i => !i.IsCandidate
                 && i.Key.CompareTo(candidateKey) > 0)
             .Select(i => i.Key.EffectiveAt).ToArray();
@@ -317,7 +317,7 @@ public sealed partial class IvInventoryPostingService
             issueDates.Length + receiptDates.Length, cancellationToken);
     }
 
-    private static async Task ApplyProductionLeafAsync(
+    private static async Task<IReadOnlyList<int>> ApplyProductionLeafAsync(
         StockPostingContext context, ProductionLeafReplayPlan plan,
         string inventoryPlanHash, long branchWatermark, DateTime latestEffectiveAt,
         int affectedHistoryCount, CancellationToken cancellationToken)
@@ -337,6 +337,25 @@ public sealed partial class IvInventoryPostingService
             effectiveLatest = plan.TerminalAdjustments.LatestEffectiveAt;
         if (plan.TerminalReturn is not null && plan.TerminalReturn.EffectiveAt > effectiveLatest)
             effectiveLatest = plan.TerminalReturn.EffectiveAt;
+        if (plan.FinishedGoodCost?.WacTail?.LaterEvents is { Count: > 0 } wacFgLater)
+        {
+            var maxWacFg = wacFgLater.Max(e => e.Key.EffectiveAt);
+            if (maxWacFg > effectiveLatest)
+                effectiveLatest = maxWacFg;
+        }
+        if (plan.FinishedGoodCost?.FifoTail is { } fifoFgTail)
+        {
+            var maxFifoFg = fifoFgTail.Projection.Issues.Select(i => i.Key.EffectiveAt)
+                .Concat(fifoFgTail.Snapshot.Layers.Where(l => l.ReceiptKey is not null)
+                    .Select(l => l.ReceiptKey!.Value.EffectiveAt))
+                .DefaultIfEmpty(effectiveLatest).Max();
+            if (maxFifoFg > effectiveLatest)
+                effectiveLatest = maxFifoFg;
+        }
+        var fgHistoryCount = plan.FinishedGoodCost is not null
+            ? 1 + (plan.FinishedGoodCost.WacTail?.LaterEvents.Count
+                ?? plan.FinishedGoodCost.FifoTail?.Projection.Issues.Count(i => !i.IsCandidate) ?? 0)
+            : plan.Output?.CorrectedReversedFinishedGood is not null ? 2 : 0;
         db.StockReplayRuns.Add(new StockReplayRun
         {
             CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
@@ -346,8 +365,7 @@ public sealed partial class IvInventoryPostingService
             EarliestEffectiveAt = context.Posting.EffectiveAt,
             LatestEffectiveAt = effectiveLatest,
             PlanWatermark = branchWatermark, PlanHash = planHash,
-            AffectedHistoryCount = affectedHistoryCount + (plan.FinishedGoodCost is not null ? 1
-                : plan.Output?.CorrectedReversedFinishedGood is not null ? 2 : 0),
+            AffectedHistoryCount = affectedHistoryCount + fgHistoryCount,
             AffectedItemCount = plan.FinishedGoodCost is not null
                 || plan.Output?.CorrectedReversedFinishedGood is not null
                 || plan.ReversedFinishedGoodPair is not null ? 2 : 1,
@@ -367,7 +385,7 @@ public sealed partial class IvInventoryPostingService
                 context, plan.EffectiveCost, plan.TerminalAdjustments.ExpectedAdjustments, cancellationToken);
         }
         else if (plan.FinishedGoodCost is not null)
-            await ApplyWacFinishedGoodCostAsync(context, plan, plan.FinishedGoodCost, cancellationToken);
+            return await ApplyWacFinishedGoodCostAsync(context, plan, plan.FinishedGoodCost, cancellationToken);
         else if (plan.Output?.ActiveFinishedGood is not null)
         {
             var issue = (await ProductionIssueEffectiveCostReader.ReadWithinRootAsync(
@@ -418,6 +436,7 @@ public sealed partial class IvInventoryPostingService
                 await ApplyReversedFinishedGoodPairAsync(context,
                     plan.ReversedFinishedGoodPair, cancellationToken);
         }
+        return [];
     }
 
     private static async Task<ProductionLeafReplayPlan> PlanTerminalAdjustmentsAsync(

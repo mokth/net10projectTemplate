@@ -252,13 +252,13 @@ public sealed partial class IvInventoryPostingService
         else if (reversedSaleProof is { } saleCorrection
             && saleCorrection.OriginalCost != saleCorrection.ProjectedCost)
             await AppendReversedSaleCorrectionAsync(ledger.Context, saleCorrection, financial, cancellationToken);
-        await ApplyWacProductionLeafAsync(ledger.Context, productionPlan, financial.PlanHash,
+        var fgRequired = await ApplyWacProductionLeafAsync(ledger.Context, productionPlan, financial.PlanHash,
             physical.BranchWatermark, financial.Tail.LaterEvents, cancellationToken);
         if (reversedIssuePlan is { IsCostNeutral: false })
             await AppendWacReversedIssueCorrectionAsync(ledger.Context, reversedIssuePlan,
                 financial.PlanHash, physical.BranchWatermark, cancellationToken);
         await _coordinator!.CompleteReplayInTransactionAsync(
-            ledger.Context, required, cancellationToken);
+            ledger.Context, required.Concat(fgRequired).Distinct().ToArray(), cancellationToken);
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);
         var operation = await write.IvTrxBatches.AsNoTracking()
@@ -512,7 +512,7 @@ public sealed partial class IvInventoryPostingService
         await ApplyGoodsReceiptPoQtyAsync(write, locked.Orders!,
             snapshot.Details!, +1, snapshot.Batch!.TrxDtTime, userId,
             cancellationToken);
-        await ApplyWacProductionLeafAsync(ledger.Context, productionPlan, financial.PlanHash,
+        var fgRequired = await ApplyWacProductionLeafAsync(ledger.Context, productionPlan, financial.PlanHash,
             physical.BranchWatermark, financial.Tail.LaterEvents, cancellationToken);
         if (reversedIssuePlan is { IsCostNeutral: false })
             await AppendWacReversedIssueCorrectionAsync(ledger.Context, reversedIssuePlan,
@@ -531,7 +531,7 @@ public sealed partial class IvInventoryPostingService
                     remap.Error ?? "The posted invoice could not be remapped."));
         }
         await _coordinator!.CompleteReplayInTransactionAsync(
-            ledger.Context, required, cancellationToken);
+            ledger.Context, required.Concat(fgRequired).Distinct().ToArray(), cancellationToken);
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);
         var operation = await write.IvTrxBatches.AsNoTracking()
@@ -1364,7 +1364,7 @@ public sealed partial class IvInventoryPostingService
             await AppendReversedSaleCorrectionAsync(context, saleCorrection, financial, cancellationToken);
         await StockReplayWacCostStateWriter.ApplyAsync(
             context, permit, cancellationToken);
-        await ApplyWacProductionLeafAsync(context, productionPlan, financial.PlanHash,
+        var fgRequired = await ApplyWacProductionLeafAsync(context, productionPlan, financial.PlanHash,
             physical.BranchWatermark, financial.Tail.LaterEvents, cancellationToken);
         if (reversedIssuePlan is { IsCostNeutral: false })
             await AppendWacReversedIssueCorrectionAsync(context, reversedIssuePlan,
@@ -1386,6 +1386,7 @@ public sealed partial class IvInventoryPostingService
         await _coordinator!.CompleteReplayInTransactionAsync(
             context, tail.RepricedHistoryIds.Concat(correctedCounts
                 .Where(g => g.AdjustmentHistoryId.HasValue).Select(g => g.AdjustmentHistoryId!.Value))
+                .Concat(fgRequired)
                 .Distinct().ToArray(), cancellationToken);
         postingScope.MarkCompleted();
         await tx.CommitAsync(cancellationToken);

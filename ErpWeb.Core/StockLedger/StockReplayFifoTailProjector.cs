@@ -172,6 +172,50 @@ public static class StockReplayFifoTailProjector
             finalQuantity, finalValue, origin, IsRemoval: true);
     }
 
+    /// <summary>
+    /// Projects one active FIFO layer's value change across all later consumptions
+    /// without altering layer quantities, creation order, or source identity.
+    /// </summary>
+    public static StockReplayFifoTailProjection RevalueLayer(
+        StockReplayFifoActiveLayerSnapshot snapshot, long layerId, decimal desiredLayerValue)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (desiredLayerValue < 0m || StockLedgerPrecision.Money(desiredLayerValue) != desiredLayerValue)
+            throw Invalid("FIFO layer revaluation requires a non-negative monetary value.");
+        var origin = snapshot.Layers.SingleOrDefault(l => l.LayerId == layerId);
+        if (origin?.ReceiptKey is not { } targetKey || origin.OriginalQuantity <= 0m)
+            throw Invalid($"FIFO receipt layer {layerId} has no canonical key.");
+        var before = StockReplayFifoLayerRewinder.RewindBefore(snapshot, targetKey);
+        var events = BuildEvents(before);
+        if (events.Count(e => e.Receipt?.LayerId == layerId) != 1)
+            throw Invalid($"FIFO receipt layer {layerId} is not active at its key.");
+        ValidateBaseline(snapshot, before, events);
+        var revalued = origin with
+        {
+            AccumulatedAdjustment = StockLedgerPrecision.Money(desiredLayerValue - origin.OriginalValue),
+            RemainingQuantity = origin.OriginalQuantity,
+            RemainingValue = desiredLayerValue,
+            CurrentUnitCost = StockLedgerPrecision.Money(desiredLayerValue / origin.OriginalQuantity),
+            Status = ErpWeb.Model.Entities.StockLedger.StockFifoLayerStatuses.Open
+        };
+        var updatedEvents = events.Select(e => e.Receipt?.LayerId == layerId
+            ? e with { Receipt = revalued } : e);
+        var projected = Replay(before.Layers, updatedEvents, 0m);
+        var finalQuantity = StockLedgerPrecision.Quantity(projected.Layers.Sum(l => l.RemainingQuantity));
+        var finalValue = StockLedgerPrecision.Money(projected.Layers.Sum(l => l.RemainingValue));
+        var changedLaterIssueValue = projected.Issues
+            .Where(i => i.DepletesPool)
+            .Sum(i => i.Value - i.PreviousConsumptions.Sum(c => c.Value));
+        var layerDelta = StockLedgerPrecision.Money(
+            desiredLayerValue - StockLedgerPrecision.Money(origin.OriginalValue + origin.AccumulatedAdjustment));
+        if (finalQuantity != snapshot.CurrentQuantity
+            || finalValue != StockLedgerPrecision.Money(
+                snapshot.CurrentValue + layerDelta - changedLaterIssueValue))
+            throw Invalid("FIFO layer revaluation does not conserve quantity and value.");
+        return new(before, projected.Issues, projected.Layers,
+            finalQuantity, finalValue, revalued, IsRemoval: false);
+    }
+
     public static StockReplayFifoTailProjection RemoveIssue(
         StockReplayFifoActiveLayerSnapshot snapshot,
         StockReplayEventKey issueKey)

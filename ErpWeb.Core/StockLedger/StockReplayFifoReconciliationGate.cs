@@ -48,6 +48,15 @@ public static class StockReplayFifoReconciliationGate
                 ? plan.Projection.CandidateReceipt : null);
     }
 
+    internal static Task VerifySealedFinishedGoodRevaluationAsync(
+        StockPostingContext context, string itemCode,
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayFifoTailProjection projection, string planHash,
+        StockReplayFifoWritePermit permit,
+        CancellationToken cancellationToken = default) =>
+        VerifyCoreAsync(context, itemCode, snapshot, projection, planHash,
+            "REVALUE", null, permit, cancellationToken);
+
     private static async Task VerifyCoreAsync(
         StockPostingContext context, string itemCode,
         StockReplayFifoActiveLayerSnapshot snapshot,
