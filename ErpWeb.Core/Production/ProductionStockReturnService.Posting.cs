@@ -512,13 +512,17 @@ public sealed partial class ProductionStockReturnService
                 throw new ReturnException("The exact PRTN destination Inventory balance is missing.");
             var snapshot = snapshots.SingleOrDefault(x => x.DestinationBalanceId == balance.Id)
                 ?? throw new ReturnException("The original PRTN destination price snapshot is missing.");
-            var hasStandardReplayOverReturn = costMethod == StockCostMethods.Standard
-                && await db.StockReplayRuns.AsNoTracking().AnyAsync(run =>
-                    run.CompanyCode == scope.CompanyCode && run.BranchCode == scope.BranchCode
+            var overlappingReplayPostingIds = await db.StockReplayRuns.AsNoTracking()
+                .Where(run => run.CompanyCode == scope.CompanyCode
+                    && run.BranchCode == scope.BranchCode
                     && run.EarliestEffectiveAt <= originalPosting.EffectiveAt
                     && run.LatestEffectiveAt >= originalPosting.EffectiveAt
                     && db.StockPostings.Any(p => p.Id == run.RootStockPostingId
-                        && p.SealedAtUtc != null), ct);
+                        && p.SealedAtUtc != null))
+                .Select(run => run.RootStockPostingId)
+                .ToArrayAsync(ct);
+            var hasStandardReplayOverReturn = costMethod == StockCostMethods.Standard
+                && overlappingReplayPostingIds.Length > 0;
             var hasRestatedValuation = group.Any(f =>
                 activeValuations[f.InventoryHistoryId].Any(v => v.StockPostingId != r.PostingId)
                 || valueAdjustmentByHistory.GetValueOrDefault(f.InventoryHistoryId) != 0m);
@@ -529,7 +533,20 @@ public sealed partial class ProductionStockReturnService
                 && balance.UnitPrice == snapshot.PostedUnitPrice
                 && balance.Cost == snapshot.PostedCost
                 && balance.PriceEvidence is null;
-            if (!matchesPostedSnapshot && !matchesReplayClearedSnapshot)
+            var matchesReplayReceiptSnapshot = overlappingReplayPostingIds.Length > 0
+                && balance.UnitPrice == balance.Cost
+                && await db.IvTrxHistories.AsNoTracking().AnyAsync(h =>
+                    h.StockPostingId.HasValue
+                    && overlappingReplayPostingIds.Contains(h.StockPostingId.Value)
+                    && h.ToBalLocId == balance.Id
+                    && h.EntryRole == "ORIGINAL"
+                    && (h.TrxType == IvTrxTypes.MiscellaneousReceipt
+                        || h.TrxType == IvTrxTypes.GoodsReceive)
+                    && h.UnitPrice == balance.UnitPrice
+                    && (balance.PriceEvidence == null
+                        || balance.PriceEvidence == "EXPLICIT_COMPANY_BASE_PRICE"
+                        || balance.PriceEvidence == h.PriceEvidence), ct);
+            if (!matchesPostedSnapshot && !matchesReplayClearedSnapshot && !matchesReplayReceiptSnapshot)
                 throw new ReturnException("Destination operational price evidence changed after PRTN; rollback cannot overwrite it.", IvMasterErrorCode.InUse);
             var quantity = histories.Where(x => x.ToBalLocId == balance.Id).Sum(x => x.ToStdQty ?? 0m);
             if (quantity <= 0m || balance.StdQty < quantity)

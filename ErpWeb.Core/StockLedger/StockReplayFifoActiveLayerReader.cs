@@ -288,9 +288,11 @@ public static class StockReplayFifoActiveLayerReader
                                     != l.OriginStockPostingId)
                         || originalHistory.TrxType is IvTrxTypes.CustomerReturn
                             or IvTrxTypes.FinishedGoods
+                            or IvTrxTypes.ProductionStockReturn
                             && reversal.MovementCode != origin.MovementCode + "_REVERSAL"
                         || originalHistory.TrxType is not (IvTrxTypes.CustomerReturn
-                            or IvTrxTypes.FinishedGoods)
+                            or IvTrxTypes.FinishedGoods
+                            or IvTrxTypes.ProductionStockReturn)
                             && reversal.MovementCode != origin.MovementCode
                             && (!(originalHistory.TrxType is IvTrxTypes.MiscellaneousReceipt
                                     or IvTrxTypes.GoodsReceive)

@@ -54,9 +54,6 @@ internal static class ProductionLeafIssueCostCorrectionWriter
         var evidence = await db.ProductionValuationEvidenceRows.AsNoTracking()
             .SingleOrDefaultAsync(e => e.MovementId == movement.Uid,
                 cancellationToken);
-        var poolMovements = await db.ProductionBalLotMovements.AsNoTracking()
-            .Where(m => m.ProductionBalLotId == movement.ProductionBalLotId)
-            .Select(m => m.Uid).ToArrayAsync(cancellationToken);
         if (lot is null || pool is null || evidence is null
             || lot.CompanyCode != context.CompanyCode
             || lot.BranchCode != context.BranchCode
@@ -69,10 +66,11 @@ internal static class ProductionLeafIssueCostCorrectionWriter
             || pool.Status != ProductionPoolValuationService.Verified
             || pool.TrackedBaseQty != lot.BaseQty
             || evidence.ProductionBalLotId != lot.Uid
-            || evidence.Generation != pool.Generation
+            || evidence.Generation <= 0
+            || evidence.Generation > pool.Generation
             || evidence.Status != ProductionPoolValuationService.Verified
-            || poolMovements.Length != 1
-            || poolMovements[0] != movement.Uid)
+            || !await IsIsolatedOrNeutralizedReturnPoolAsync(
+                db, context.CompanyCode, context.BranchCode, lot.Uid, movement.Uid, cancellationToken))
             throw Invalid("Production ISSUE is not an isolated verified material pool.");
         if (lot.TotalCost != expected.TotalCost
             || pool.TrackedValue != expected.TotalCost
@@ -92,6 +90,80 @@ internal static class ProductionLeafIssueCostCorrectionWriter
         pool.TrackedValue = authority.TotalCost;
         await db.SaveChangesAsync(cancellationToken);
         return result;
+    }
+
+    internal static async Task<bool> IsIsolatedOrNeutralizedReturnPoolAsync(
+        ErpWeb.Model.Data.AppDbContext db,
+        string companyCode,
+        string branchCode,
+        long lotId,
+        long issueMovementId,
+        CancellationToken cancellationToken)
+    {
+        var others = await db.ProductionBalLotMovements.AsNoTracking()
+            .Where(m => m.ProductionBalLotId == lotId && m.Uid != issueMovementId)
+            .OrderBy(m => m.Uid)
+            .ToArrayAsync(cancellationToken);
+        if (others.Length == 0)
+            return true;
+        if (others.Any(m => m.CompanyCode != companyCode
+                || m.BranchCode != branchCode
+                || m.DocumentType != ProductionDocumentTypes.ProductionStockReturn
+                || m.StockPostingId is not > 0))
+            return false;
+
+        var returns = others.Where(m =>
+            m.MovementType == ProductionBalLotMovementTypes.Return
+            && m.OriginalMovementId is null).ToArray();
+        var reversals = others.Where(m =>
+            m.MovementType == ProductionBalLotMovementTypes.ReturnReversal
+            && m.OriginalMovementId is not null).ToArray();
+        if (returns.Length == 0
+            || reversals.Length != returns.Length
+            || returns.Length + reversals.Length != others.Length
+            || reversals.Select(r => r.OriginalMovementId!.Value).Distinct().Count() != reversals.Length)
+            return false;
+
+        var postingIds = others.Select(m => m.StockPostingId!.Value).Distinct().ToArray();
+        var postings = await db.StockPostings.AsNoTracking()
+            .Where(p => postingIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, cancellationToken);
+        if (postings.Count != postingIds.Length
+            || postings.Values.Any(p => p.SealedAtUtc is null
+                || p.CompanyCode != companyCode || p.BranchCode != branchCode))
+            return false;
+
+        var returnIds = returns.Select(m => m.Uid).ToArray();
+        var facts = await db.ProductionStockReturnFacts.AsNoTracking()
+            .Where(f => returnIds.Contains(f.ProductionMovementId) && f.ReversesFactId == null)
+            .ToArrayAsync(cancellationToken);
+        var factIds = facts.Select(f => f.Id).ToArray();
+        var reversalFacts = await db.ProductionStockReturnFacts.AsNoTracking()
+            .Where(f => f.ReversesFactId.HasValue && factIds.Contains(f.ReversesFactId.Value))
+            .ToArrayAsync(cancellationToken);
+        if (facts.Length != returns.Length
+            || reversalFacts.Length != returns.Length
+            || reversalFacts.Select(f => f.ReversesFactId!.Value).Distinct().Count() != reversalFacts.Length)
+            return false;
+
+        var effective = await ProductionReplayEffectiveCostReader.ReadAsync(
+            db, companyCode, branchCode, others.Select(m => m.Uid).ToArray(), cancellationToken);
+        var revByOriginal = reversals.ToDictionary(r => r.OriginalMovementId!.Value);
+        var revFactByOriginal = reversalFacts.ToDictionary(f => f.ReversesFactId!.Value);
+        foreach (var ret in returns)
+        {
+            if (!revByOriginal.TryGetValue(ret.Uid, out var rev)
+                || postings[rev.StockPostingId!.Value].PostingRole != "REVERSAL"
+                || postings[rev.StockPostingId!.Value].ReversesPostingId != ret.StockPostingId
+                || rev.BaseQty != ret.BaseQty || rev.Qty != ret.Qty
+                || effective[rev.Uid].TotalCost != effective[ret.Uid].TotalCost
+                || facts.SingleOrDefault(f => f.ProductionMovementId == ret.Uid) is not { } retFact
+                || !revFactByOriginal.TryGetValue(retFact.Id, out var revFact)
+                || revFact.ProductionMovementId != rev.Uid
+                || revFact.StockPostingId != rev.StockPostingId)
+                return false;
+        }
+        return true;
     }
 
     private static StockLedgerException Invalid(string message) =>

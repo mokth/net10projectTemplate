@@ -83,16 +83,19 @@ public sealed partial class IvInventoryPostingService
         var poolMovements = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(m => m.ProductionBalLotId == issue.ProductionBalLotId)
             .OrderBy(m => m.Uid).ToArrayAsync(ct);
+        var isSingleReturn = poolMovements.Length == 2 && poolMovements.Any(m =>
+            m.Uid != issue.Uid
+            && m.MovementType == ProductionBalLotMovementTypes.Return
+            && m.DocumentType == ProductionDocumentTypes.ProductionStockReturn
+            && m.OriginalMovementId == null);
         if (poolMovements.Length == 1
-            || poolMovements.Length == 2 && poolMovements.Any(m =>
-                m.Uid != issue.Uid
-                && m.MovementType == ProductionBalLotMovementTypes.Return
-                && m.DocumentType == ProductionDocumentTypes.ProductionStockReturn
-                && m.OriginalMovementId == null))
+            || isSingleReturn
+            || await ProductionLeafIssueCostCorrectionWriter.IsIsolatedOrNeutralizedReturnPoolAsync(
+                db, company, branch, issue.ProductionBalLotId, issue.Uid, ct))
         {
             var leaf = await PlanProductionLeafAsync(db, company, branch, ids, ct,
-                candidateDate: candidateDate, allowOutput: poolMovements.Length == 2,
-                allowProductionReturn: poolMovements.Length == 2);
+                candidateDate: candidateDate, allowOutput: isSingleReturn,
+                allowProductionReturn: isSingleReturn);
             return new(ids[0], leaf!, string.Empty, leaf!.EffectiveAt, poolMovements.Length);
         }
 

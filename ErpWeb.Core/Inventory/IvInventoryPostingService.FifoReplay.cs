@@ -989,7 +989,8 @@ public sealed partial class IvInventoryPostingService
                     prtnLayer.OriginalValue + prtnLayer.AccumulatedAdjustment)
                 || !histories.Any(h => h.Id == prtnBinding.IssueHistoryId
                     && h.TrxType == IvTrxTypes.IssueToProduction)
-                || snapshot.ActiveConsumptions.Any(c => c.LayerId == prtnLayer.LayerId)
+                || snapshot.ActiveConsumptions.Any(c => c.LayerId == prtnLayer.LayerId
+                    && (!c.DepletesPool || !laterIssues.Any(i => i.Key == c.IssueKey)))
                 || finalLayer is null
                 || finalLayer.OriginalQuantity != prtnLayer.OriginalQuantity
                 || finalLayer.OriginalValue != prtnLayer.OriginalValue)
@@ -1285,6 +1286,30 @@ public sealed partial class IvInventoryPostingService
                 foreach (var adjustment in await StockReplayFifoProductionReturnValueAdjustment
                     .ReadVerifiedAsync(db, prtnOriginFact, cancellationToken))
                     returnAdjustmentIds.Add(adjustment.Id);
+            }
+            catch (StockLedgerException)
+            {
+                return "Backdated FIFO Production stock return has inconsistent value evidence.";
+            }
+        }
+        var neutralizedPrtnOrigins = laterFacts
+            .Where(f => neutralizedFactIds.Contains(f.Id)
+                && f.MovementCode == "PRODUCTION_STOCK_RETURN_IN"
+                && f.ValuationSource == StockValuationSources.ProductionActual)
+            .ToArray();
+        if (neutralizedPrtnOrigins.Length > 0)
+        {
+            try
+            {
+                foreach (var origin in neutralizedPrtnOrigins)
+                {
+                    var adjustments = await StockReplayFifoProductionReturnValueAdjustment
+                        .ReadVerifiedAsync(db, origin, cancellationToken);
+                    if (StockLedgerPrecision.Money(adjustments.Sum(a => a.SignedValue)) != 0m)
+                        return "Backdated FIFO Production stock return has unreversed value adjustments.";
+                    foreach (var adjustment in adjustments)
+                        returnAdjustmentIds.Add(adjustment.Id);
+                }
             }
             catch (StockLedgerException)
             {

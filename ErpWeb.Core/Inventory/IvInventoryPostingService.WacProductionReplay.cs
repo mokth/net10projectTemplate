@@ -185,7 +185,10 @@ public sealed partial class IvInventoryPostingService
             db, companyCode, branchCode, [movement.Uid], cancellationToken))[movement.Uid];
         var otherMovements = await db.ProductionBalLotMovements.AsNoTracking().CountAsync(
             m => m.ProductionBalLotId == movement.ProductionBalLotId, cancellationToken);
-        if (allowOutput && otherMovements > 1 && candidateDate is DateTime date)
+        var onlyNeutralizedReturns = otherMovements > 1
+            && await ProductionLeafIssueCostCorrectionWriter.IsIsolatedOrNeutralizedReturnPoolAsync(
+                db, companyCode, branchCode, movement.ProductionBalLotId, movement.Uid, cancellationToken);
+        if (!onlyNeutralizedReturns && allowOutput && otherMovements > 1 && candidateDate is DateTime date)
         {
             var poolMovements = await db.ProductionBalLotMovements.AsNoTracking()
                 .Where(m => m.ProductionBalLotId == movement.ProductionBalLotId)
@@ -246,9 +249,11 @@ public sealed partial class IvInventoryPostingService
             || pool.Generation <= 0 || pool.Status != ProductionPoolValuationService.Verified
             || pool.TrackedBaseQty != lot.BaseQty || pool.TrackedValue != effective.TotalCost
             || lot.TotalCost != effective.TotalCost || lot.AverageUnitCost != effective.UnitCost
-            || evidence.ProductionBalLotId != lot.Uid || evidence.Generation != pool.Generation
+            || evidence.ProductionBalLotId != lot.Uid
+            || evidence.Generation <= 0 || evidence.Generation > pool.Generation
             || evidence.Status != ProductionPoolValuationService.Verified
-            || otherMovements != 1 || authority.TotalCost != effective.TotalCost
+            || otherMovements != 1 && !onlyNeutralizedReturns
+            || authority.TotalCost != effective.TotalCost
             || authority.UnitCost != effective.UnitCost)
             throw ProductionReplayError("Production issue does not have one unchanged verified material pool.");
 
