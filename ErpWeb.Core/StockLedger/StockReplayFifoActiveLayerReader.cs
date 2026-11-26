@@ -412,6 +412,13 @@ public static class StockReplayFifoActiveLayerReader
                 && origin.ValuationSource == StockValuationSources.ProductionActual)
                 returnAdjustments[origin.Id] = await StockReplayWacReceiptRestatementWriter
                     .ReadVerifiedFifoAdjustmentsAsync(db, origin, cancellationToken);
+            else if (origin.MovementCode == "RECEIPT_IN"
+                && (origin.ValuationSource == StockValuationSources.ReceiptActual
+                    || origin.CostMethod == StockCostMethods.Fifo
+                        && origin.ValuationSource == StockValuationSources.Fifo)
+                && origin.SourceDocumentType == IvTrxTypes.GoodsReceive)
+                returnAdjustments[origin.Id] = await ReadVerifiedPurchaseAdjustmentsAsync(
+                    db, origin, cancellationToken);
         }
         foreach (var layer in layers)
         {
@@ -811,6 +818,92 @@ public static class StockReplayFifoActiveLayerReader
             removedHistoryIds.Add(reversalHistoryId);
         }
         return new(keys, removed, removedHistoryIds);
+    }
+
+    private static async Task<IReadOnlyList<StockValuationFact>> ReadVerifiedPurchaseAdjustmentsAsync(
+        AppDbContext db,
+        StockValuationFact origin,
+        CancellationToken cancellationToken)
+    {
+        var primaries = await db.StockValuationFacts.AsNoTracking()
+            .Include(f => f.StockPosting)
+            .Where(f => f.OriginalValuationFactId == origin.Id
+                && f.ReversesValuationFactId == null
+                && f.InventoryHistoryId == null
+                && f.CostMethod == StockCostMethods.Fifo
+                && f.ValuationSource == StockValuationSources.PurchasePriceVariance)
+            .ToArrayAsync(cancellationToken);
+        if (primaries.Length == 0)
+            return [];
+
+        var primaryIds = primaries.Select(f => f.Id).ToArray();
+        var reversals = await db.StockValuationFacts.AsNoTracking()
+            .Include(f => f.StockPosting)
+            .Where(f => f.ReversesValuationFactId.HasValue
+                && primaryIds.Contains(f.ReversesValuationFactId.Value))
+            .ToArrayAsync(cancellationToken);
+        var byPrimaryId = primaries.ToDictionary(f => f.Id);
+        foreach (var primary in primaries)
+        {
+            var posting = primary.StockPosting;
+            var expectedMovement = primary.Direction > 0
+                ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT";
+            if (posting is null || posting.SealedAtUtc is null
+                || posting.CompanyCode != origin.CompanyCode
+                || posting.BranchCode != origin.BranchCode
+                || posting.LedgerEpochId != origin.LedgerEpochId
+                || posting.SourceModule != "PROCUREMENT"
+                || posting.SourceDocumentType is not ("PO_CDN" or "PO_INVOICE")
+                || posting.PostingRole != "PRIMARY"
+                || primary.CompanyCode != origin.CompanyCode
+                || primary.BranchCode != origin.BranchCode
+                || primary.LedgerEpochId != origin.LedgerEpochId
+                || primary.ItemCode != origin.ItemCode
+                || primary.BaseUom != origin.BaseUom
+                || primary.BaseQty != 0m
+                || primary.Direction is not (-1 or 1)
+                || primary.MovementCode != expectedMovement
+                || primary.ValuationStatus != StockValuationStatuses.Valued
+                || primary.CostAmount <= 0m
+                || StockLedgerPrecision.Money(primary.CostAmount) != primary.CostAmount
+                || primary.BaseCostAmount != primary.CostAmount)
+                throw Invalid($"Receipt fact {origin.Id} has inconsistent FIFO purchase adjustment metadata.");
+        }
+        var reversedParents = new HashSet<long>();
+        foreach (var reversal in reversals)
+        {
+            var prior = byPrimaryId[reversal.ReversesValuationFactId!.Value];
+            var posting = reversal.StockPosting;
+            var priorPosting = prior.StockPosting!;
+            var expectedMovement = reversal.Direction > 0
+                ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT";
+            if (!reversedParents.Add(prior.Id)
+                || posting is null || posting.SealedAtUtc is null
+                || posting.CompanyCode != origin.CompanyCode
+                || posting.BranchCode != origin.BranchCode
+                || posting.LedgerEpochId != origin.LedgerEpochId
+                || posting.SourceModule != "PROCUREMENT"
+                || posting.SourceDocumentType != priorPosting.SourceDocumentType
+                || posting.PostingRole != "REVERSAL"
+                || posting.ReversesPostingId != priorPosting.Id
+                || reversal.InventoryHistoryId is not null
+                || reversal.CompanyCode != origin.CompanyCode
+                || reversal.BranchCode != origin.BranchCode
+                || reversal.LedgerEpochId != origin.LedgerEpochId
+                || reversal.ItemCode != origin.ItemCode
+                || reversal.BaseUom != origin.BaseUom
+                || reversal.BaseQty != 0m
+                || reversal.CostMethod != StockCostMethods.Fifo
+                || reversal.ValuationSource != StockValuationSources.PurchasePriceVariance
+                || reversal.ValuationStatus != StockValuationStatuses.Reversed
+                || reversal.OriginalValuationFactId != prior.Id
+                || reversal.Direction != -prior.Direction
+                || reversal.CostAmount != prior.CostAmount
+                || reversal.BaseCostAmount != reversal.CostAmount
+                || reversal.MovementCode != expectedMovement)
+                throw Invalid($"Receipt fact {origin.Id} has invalid FIFO purchase adjustment reversal lineage.");
+        }
+        return [.. primaries, .. reversals];
     }
 
     private static string OriginLine(StockValuationFact fact) =>

@@ -374,4 +374,64 @@ public sealed partial class PoInvoiceService
         }).SourceSnapshotHash;
         return new(changes, evidenceHash, purchaseReceipts, sales, deliveries);
     }
+
+    internal sealed record FifoPurchaseTailProof(
+        string EvidenceHash,
+        IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts,
+        IReadOnlyList<InvoiceDirectSaleProof> Sales,
+        IReadOnlyList<InvoiceDeliverySaleProof> Deliveries);
+
+    internal static async Task<FifoPurchaseTailProof?> ProveFifoPurchaseTailAsync(
+        AppDbContext db, string company, string branch, string item, long epochId,
+        string invoiceDocNo, string invoicePoNo, short invoicePoRelNo, short invoicePoLineNo,
+        decimal invoiceQty, StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayFifoTailProjection projection, StockReplayEventKey receiptKey, CancellationToken ct)
+    {
+        var laterIssues = projection.Issues.Where(i => !i.IsCandidate && i.Key.CompareTo(receiptKey) > 0).ToArray();
+        var laterReceipts = snapshot.Layers.Where(l => l.ReceiptKey is { } key && key.CompareTo(receiptKey) > 0).ToArray();
+        var issueIds = laterIssues.Select(i => StockReplayFifoMiRootWriter.HistoryId(i.Key)).ToArray();
+        var receiptHistoryIds = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => laterReceipts.Select(l => l.OriginFactId).Contains(f.Id) && f.InventoryHistoryId != null)
+            .Select(f => f.InventoryHistoryId!.Value).ToArrayAsync(ct);
+        var allHistoryIds = issueIds.Concat(receiptHistoryIds).Distinct().ToArray();
+        if (allHistoryIds.Length == 0)
+            return null;
+        var histories = await db.IvTrxHistories.AsNoTracking()
+            .Where(h => allHistoryIds.Contains(h.Id) && h.CompanyCode == company && h.BranchCode == branch)
+            .ToArrayAsync(ct);
+        if (histories.Length != allHistoryIds.Length || histories.Any(h => h.StockPostingId is null))
+            return null;
+        var ownerIds = histories.Select(h => h.StockPostingId!.Value).Distinct().ToArray();
+        var ownersById = await db.StockPostings.AsNoTracking()
+            .Where(p => ownerIds.Contains(p.Id) && p.CompanyCode == company && p.BranchCode == branch)
+            .ToDictionaryAsync(p => p.Id, ct);
+        if (ownersById.Count != ownerIds.Length)
+            return null;
+        var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, company, branch, histories, ct);
+        var purchaseReceipts = await ProveInvoiceLaterGoodsReceiptsAsync(db, company, branch, item,
+            invoiceDocNo, invoicePoNo, invoicePoRelNo, invoicePoLineNo, invoiceQty, invoicePosted: true,
+            histories, ownersById, active, ct);
+        if (purchaseReceipts is null)
+            return null;
+        var sales = await ProveInvoiceDirectSalesAsync(db, company, branch, histories, ct, StockCostMethods.Fifo);
+        if (sales is null)
+            return null;
+        var deliveries = await ProveInvoiceDeliverySalesAsync(db, company, branch, histories, ct, StockCostMethods.Fifo);
+        if (deliveries is null || sales.Count + deliveries.Count != histories.Count(h => h.TrxType == IvTrxTypes.SalesOut))
+            return null;
+        var evidenceHash = StockPostingFingerprint.Create(new { Kind = "PO_CDN_FIFO_TAIL" }, new
+        {
+            Owners = ownersById.Values.OrderBy(p => p.Id).Select(p => new
+            {
+                p.Id, p.PostingSequence, p.RequestFingerprint, p.SourceSnapshotHash, p.SealedAtUtc
+            }).ToArray(),
+            Histories = histories.OrderBy(h => h.Id).Select(h => new
+            {
+                h.Id, h.StockPostingId, h.BatchNo, h.TrxType, h.TrxDtTime, h.FromBalLocId, h.ToBalLocId,
+                h.FrStdQty, h.ToStdQty, Facts = active[h.Id].OrderBy(f => f.Id).Select(f => new { f.Id, f.StockPostingId }).ToArray()
+            }).ToArray(),
+            PurchaseReceipts = purchaseReceipts, Sales = sales, Deliveries = deliveries
+        }).SourceSnapshotHash;
+        return new(evidenceHash, purchaseReceipts, sales, deliveries);
+    }
 }

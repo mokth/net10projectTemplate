@@ -107,6 +107,110 @@ public sealed partial class PoInvoiceService
         return issueIds;
     }
 
+    internal sealed record CdnFifoIssueReplay(
+        int BalanceId, decimal BalanceQty, long ReceiptOriginFactId,
+        StockReplayFifoActiveLayerSnapshot Snapshot, StockReplayFifoTailProjection Projection,
+        string TailEvidenceHash, IReadOnlyList<InvoiceGoodsReceiptPurchaseProof> GoodsReceipts,
+        IReadOnlyList<InvoiceDirectSaleProof> Sales, IReadOnlyList<InvoiceDeliverySaleProof> Deliveries);
+
+    internal static async Task<IReadOnlyList<int>> WriteCdnFifoReplayAsync(
+        StockPostingContext context, string planHash, long watermark, CdnFifoIssueReplay replay,
+        PurchaseCostAdjustmentRequest request, CancellationToken ct)
+    {
+        context.EnsureUnsealed();
+        var value = request.ValueAdjustment;
+        var changedIssues = replay.Projection.Issues.Where(i =>
+            !i.IsCandidate
+            && i.Value != StockLedgerPrecision.Money(i.PreviousConsumptions.Sum(c => c.Value))).ToArray();
+        if (context.Db.Database.CurrentTransaction is null || context.CostMethod != StockCostMethods.Fifo
+            || context.Posting.SourceModule != "PROCUREMENT" || context.Posting.SourceDocumentType != "PO_CDN"
+            || context.Posting.PostingRole is not ("PRIMARY" or "REVERSAL")
+            || (context.Posting.PostingRole == "PRIMARY") != (context.Posting.ReversesPostingId is null)
+            || context.Posting.PostingSequence != checked(watermark + 1)
+            || changedIssues.Length == 0
+            || changedIssues.Any(i => context.Posting.EffectiveAt > i.Key.EffectiveAt
+                || context.Posting.EffectiveAt.Year != i.Key.EffectiveAt.Year
+                || context.Posting.EffectiveAt.Month != i.Key.EffectiveAt.Month)
+            || planHash.Length != 64 || replay.TailEvidenceHash.Length != 64
+            || value is null || value.PostingLineNo != request.SourceDocumentLine
+            || value.SplitOrdinal != 0 || value.ItemCode != request.ItemCode
+            || value.Amount != Math.Abs(request.InventoryAdjustmentAmount)
+            || value.Direction is not (-1 or 1)
+            || value.Direction * value.Amount != request.InventoryAdjustmentAmount
+            || value.OriginalValuationFactId is not > 0
+            || (context.Posting.PostingRole == "PRIMARY") != (value.ReversesValuationFactId is null)
+            || (context.Posting.PostingRole == "PRIMARY") != (request.ReversesAdjustmentId is null)
+            || context.Posting.PostingRole == "REVERSAL"
+                && value.OriginalValuationFactId != value.ReversesValuationFactId
+            || request.CostMethod != StockCostMethods.Fifo
+            || request.SourceDocumentType != "PO_CDN" || request.SourceDocumentNo != context.Posting.SourceDocumentNo
+            || request.SourceCostingRevision != context.Posting.DocumentRevision
+            || request.ConsumedVarianceAmount != 0m
+            || request.InventoryAdjustmentAmount != request.TotalAdjustmentAmount)
+            throw InvoiceReplayInvalid("The FIFO purchase note has no matching locked issue replay authority.");
+
+        var db = context.Db;
+        AppendInvoiceReplayAdjustment(context, request, value);
+        var permit = new StockReplayFifoWritePermit(context, request.ItemCode, replay.Snapshot, replay.Projection,
+            planHash, replay.BalanceId, replay.Projection.FinalQuantity);
+        var repricedIds = new List<int>(changedIssues.Length);
+        var ownerIdsByHistory = await db.IvTrxHistories.AsNoTracking()
+            .Where(h => changedIssues.Select(i => StockReplayFifoMiRootWriter.HistoryId(i.Key)).Contains(h.Id)
+                && h.StockPostingId != null)
+            .ToDictionaryAsync(h => h.Id, h => h.StockPostingId!.Value, ct);
+        for (var i = 0; i < changedIssues.Length; i++)
+        {
+            var issue = changedIssues[i];
+            var historyId = StockReplayFifoMiRootWriter.HistoryId(issue.Key);
+            var facts = await StockReplayFifoIssueRepricingWriter.AppendRevaluedLayerTailAsync(
+                context, request.ItemCode, replay.Snapshot, replay.Projection, planHash,
+                permit, issue.Key, 2 + i * 2, 3 + i * 2, ct, allowSales: true);
+            if (facts.Count == 0 || !ownerIdsByHistory.ContainsKey(historyId))
+                throw InvoiceReplayInvalid("A later FIFO issue has no unique replacement valuation.");
+            repricedIds.Add(historyId);
+        }
+        await db.SaveChangesAsync(ct);
+        var run = new StockReplayRun
+        {
+            CompanyCode = context.CompanyCode, BranchCode = context.BranchCode,
+            RootStockPostingId = context.Posting.Id, RootRequestId = context.Posting.RequestId,
+            RootDocumentType = context.Posting.SourceDocumentType, RootDocumentId = context.Posting.SourceDocumentId,
+            EarliestEffectiveAt = context.Posting.EffectiveAt,
+            LatestEffectiveAt = changedIssues.Max(i => i.Key.EffectiveAt),
+            PlanWatermark = watermark, PlanHash = planHash, AffectedHistoryCount = repricedIds.Count,
+            AffectedItemCount = 1, AffectedProductionMovementCount = 0,
+            CreatedAtUtc = DateTime.UtcNow, CreatedBy = context.UserId
+        };
+        db.StockReplayRuns.Add(run);
+        await db.SaveChangesAsync(ct);
+        var savedFactsByKey = await db.StockValuationFacts.AsNoTracking()
+            .Where(f => f.StockPostingId == context.Posting.Id && f.InventoryHistoryId != null)
+            .Select(f => new { f.Id, f.InventoryHistoryId, f.PostingLineNo, f.ReversesValuationFactId, f.OriginalValuationFactId })
+            .ToArrayAsync(ct);
+        foreach (var savedFact in savedFactsByKey)
+        {
+            var histId = savedFact.InventoryHistoryId!.Value;
+            if (!ownerIdsByHistory.TryGetValue(histId, out var ownerId))
+                continue;
+            var issue = changedIssues.First(x => StockReplayFifoMiRootWriter.HistoryId(x.Key) == histId);
+            var priorId = savedFact.ReversesValuationFactId ?? issue.PreviousConsumptions.Select(c => c.IssueFactId).First();
+            db.StockReplayEffects.Add(new StockReplayEffect
+            {
+                CompanyCode = context.CompanyCode, BranchCode = context.BranchCode, ReplayRunId = run.Id,
+                RootStockPostingId = context.Posting.Id, BusinessOwnerPostingId = ownerId,
+                EffectKind = StockReplayInvoiceIssueAudit.CreditNoteEffectKind,
+                AffectedEntityType = StockReplayEffectTypes.StockValuationFact,
+                AffectedEntityId = savedFact.Id, OriginalEntityId = priorId, CreatedAtUtc = DateTime.UtcNow
+            });
+        }
+        await db.SaveChangesAsync(ct);
+        await StockReplayFifoStateWriter.ApplyPurchaseVarianceRevaluationAsync(
+            context, request.ItemCode, replay.Snapshot, replay.Projection, planHash,
+            replay.BalanceId, replay.Projection.FinalQuantity, permit,
+            replay.ReceiptOriginFactId, context.Posting.PostingRole == "REVERSAL", ct);
+        return repricedIds;
+    }
+
     private static StockValuationFact AppendInvoiceReplayAdjustment(
         StockPostingContext context, PurchaseCostAdjustmentRequest request, StockValueAdjustmentRequest value)
     {
@@ -120,7 +224,7 @@ public sealed partial class PoInvoiceService
             EffectiveAt = context.Posting.EffectiveAt, BusinessDate = context.Posting.BusinessDate,
             PeriodKey = context.Posting.PeriodKey, ItemCode = value.ItemCode, BaseUom = value.BaseUom,
             MovementCode = value.MovementCode, Direction = value.Direction, BaseQty = 0m,
-            CostMethod = StockCostMethods.MovingAverage, UnitCost = 0m, CostAmount = value.Amount,
+            CostMethod = context.CostMethod, UnitCost = 0m, CostAmount = value.Amount,
             BaseCostAmount = value.Amount, ValuationSource = value.ValuationSource,
             ValuationStatus = value.ReversesValuationFactId is null ? StockValuationStatuses.Valued : StockValuationStatuses.Reversed,
             ValuationVersion = 1, OriginalValuationFactId = value.OriginalValuationFactId,

@@ -1,4 +1,5 @@
 using ErpWeb.Core.Inventory;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using Microsoft.EntityFrameworkCore;
@@ -15,7 +16,8 @@ public sealed partial class PoInvoiceService
         string? ItemCode, decimal Qty, decimal StdQty, string? StdUom, decimal NetAmount);
 
     private static async Task<IReadOnlyList<InvoiceDirectSaleProof>?> ProveInvoiceDirectSalesAsync(
-        AppDbContext db, string company, string branch, IReadOnlyList<IvTrxHistory> histories, CancellationToken ct)
+        AppDbContext db, string company, string branch, IReadOnlyList<IvTrxHistory> histories, CancellationToken ct,
+        string costMethod = StockCostMethods.MovingAverage)
     {
         var sales = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut).ToArray();
         if (sales.Length == 0)
@@ -28,7 +30,7 @@ public sealed partial class PoInvoiceService
             return Array.Empty<InvoiceDirectSaleProof>();
         // Customer returns and multiple sales remain on the existing guard.
         if (string.IsNullOrWhiteSpace(sales[0].InvNo)
-            || await IvInventoryPostingService.CheckDirectSalesInvoiceForPurchaseReplayAsync(db, sales[0], ct) is not null)
+            || await IvInventoryPostingService.CheckDirectSalesInvoiceForPurchaseReplayAsync(db, sales[0], ct, costMethod) is not null)
             return null;
         var invoice = await db.SaInvoices.AsNoTracking().Include(i => i.Details).SingleOrDefaultAsync(i =>
             i.CompanyCode == company && i.BranchCode == branch && i.InvNo == sales[0].InvNo, ct);

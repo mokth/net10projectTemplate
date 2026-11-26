@@ -144,7 +144,13 @@ internal static class StockReplayInvoiceIssueAudit
             var issueFacts = facts.Where(f => f.InventoryHistoryId.HasValue).ToArray();
             var valueFacts = facts.Where(f => f.InventoryHistoryId is null).ToArray();
             var issueGroups = issueFacts.GroupBy(f => f.InventoryHistoryId!.Value).ToArray();
-            if (issueFacts.Length != run.AffectedHistoryCount * 2 || valueFacts.Length != 1
+            if (valueFacts.Length != 1)
+                return false;
+            var value = valueFacts[0];
+            var isFifoCdn = isCreditNote && value.CostMethod == StockCostMethods.Fifo;
+            var expectedMethod = isFifoCdn ? StockCostMethods.Fifo : StockCostMethods.MovingAverage;
+            var expectedSource = isFifoCdn ? StockValuationSources.Fifo : StockValuationSources.MovingAverage;
+            if ((!isFifoCdn && issueFacts.Length != run.AffectedHistoryCount * 2)
                 || issueGroups.Length != run.AffectedHistoryCount || effects.Length != issueFacts.Length
                 || !effects.Select(e => e.AffectedEntityId).Order().SequenceEqual(issueFacts.Select(f => f.Id).Order()))
                 return false;
@@ -152,24 +158,22 @@ internal static class StockReplayInvoiceIssueAudit
                 && history.TrxType == IvTrxTypes.SalesOut);
             if (saleCount > 1)
                 return false;
-            var value = valueFacts[0];
             var latestIssue = DateTime.MinValue;
             foreach (var group in issueGroups)
             {
                 var reversals = group.Where(f => f.ReversesValuationFactId.HasValue).ToArray();
                 var replacements = group.Where(f => f.ReversesValuationFactId is null).ToArray();
-                if (reversals.Length != 1 || replacements.Length != 1
-                    || reversals[0].ReversesValuationFactId is not long priorId)
+                if ((!isFifoCdn && (reversals.Length != 1 || replacements.Length != 1))
+                    || (isFifoCdn && (reversals.Length == 0 || replacements.Length == 0))
+                    || reversals.Any(r => r.ReversesValuationFactId is null))
                     return false;
-                var reverse = reversals[0];
-                var replacement = replacements[0];
-                var prior = priorFacts.GetValueOrDefault(priorId);
                 var history = histories.GetValueOrDefault(group.Key);
                 var owner = history?.StockPostingId is long ownerId
                     ? owners.GetValueOrDefault(ownerId) : null;
-                var groupEffects = effects.Where(e => e.AffectedEntityId == reverse.Id
-                    || e.AffectedEntityId == replacement.Id).ToArray();
-                if (prior is null || history is null || owner is null || owner.SealedAtUtc is null
+                var groupIds = group.Select(f => f.Id).ToHashSet();
+                var groupEffects = effects.Where(e => groupIds.Contains(e.AffectedEntityId)).ToArray();
+                var resolvedPriors = reversals.Select(r => priorFacts.GetValueOrDefault(r.ReversesValuationFactId!.Value)).ToArray();
+                if (resolvedPriors.Any(p => p is null) || history is null || owner is null || owner.SealedAtUtc is null
                     || owner.LedgerEpochId != root.LedgerEpochId || history.ICode != value.ItemCode
                     || history.LedgerVersion != 2 || history.LedgerEpochId != root.LedgerEpochId
                     || history.EntryRole != "ORIGINAL" || history.TrxType is not (IvTrxTypes.MiscellaneousIssue or IvTrxTypes.Scrap or IvTrxTypes.SalesOut)
@@ -178,31 +182,47 @@ internal static class StockReplayInvoiceIssueAudit
                     || owner.SourceModule != "INVENTORY" || owner.SourceDocumentType != history.TrxType
                     || owner.CommandType != $"IV_POST_{history.TrxType}" || owner.PostingRole != "PRIMARY"
                     || owner.ReversesPostingId is not null || owner.Id != history.StockPostingId
-                    || owner.EffectiveAt != history.TrxDtTime
-                    || prior.InventoryHistoryId != history.Id
-                    || prior.Direction != -1 || prior.CostMethod != StockCostMethods.MovingAverage
-                    || prior.ValuationStatus != StockValuationStatuses.Valued || prior.ReversesValuationFactId is not null
-                    || reverse.ValuationStatus != StockValuationStatuses.Reversed
-                    || reverse.ValuationSource != StockValuationSources.OriginalReversal
-                    || reverse.Direction != 1 || reverse.BaseQty != prior.BaseQty || reverse.CostAmount != prior.CostAmount
-                    || reverse.OriginalValuationFactId != (prior.OriginalValuationFactId ?? prior.Id)
-                    || reverse.ValuationVersion != prior.ValuationVersion
-                    || replacement.ValuationStatus != StockValuationStatuses.Valued || replacement.Direction != -1
-                    || replacement.ValuationSource != StockValuationSources.MovingAverage || replacement.BaseQty != prior.BaseQty
-                    || replacement.OriginalValuationFactId != (prior.OriginalValuationFactId ?? prior.Id)
-                    || replacement.ValuationVersion != prior.ValuationVersion + 1
-                    || group.Any(f => f.CompanyCode != company || f.BranchCode != branch
+                    || owner.EffectiveAt != history.TrxDtTime)
+                    return false;
+                var prior = resolvedPriors[0]!;
+                for (var idx = 0; idx < reversals.Length; idx++)
+                {
+                    var rev = reversals[idx];
+                    var revPrior = resolvedPriors[idx]!;
+                    if (revPrior.InventoryHistoryId != history.Id
+                        || revPrior.Direction != -1 || revPrior.CostMethod != expectedMethod
+                        || revPrior.ValuationStatus != StockValuationStatuses.Valued || revPrior.ReversesValuationFactId is not null
+                        || rev.ValuationStatus != StockValuationStatuses.Reversed
+                        || rev.ValuationSource != StockValuationSources.OriginalReversal
+                        || rev.Direction != 1 || rev.BaseQty != revPrior.BaseQty || rev.CostAmount != revPrior.CostAmount
+                        || rev.OriginalValuationFactId != (revPrior.OriginalValuationFactId ?? revPrior.Id)
+                        || rev.ValuationVersion != revPrior.ValuationVersion)
+                        return false;
+                }
+                var orderedReplacements = replacements.OrderBy(r => r.SplitOrdinal).ToArray();
+                var expectedOriginal = prior.OriginalValuationFactId ?? prior.Id;
+                if (Costing.StockLedgerPrecision.Quantity(replacements.Sum(r => r.BaseQty))
+                        != Costing.StockLedgerPrecision.Quantity(resolvedPriors.Sum(p => p!.BaseQty))
+                    || orderedReplacements.Where((r, s) => r.SplitOrdinal != s).Any()
+                    || replacements.Any(r => r.ValuationStatus != StockValuationStatuses.Valued || r.Direction != -1
+                        || r.ValuationSource != expectedSource || r.BaseQty <= 0m
+                        || r.OriginalValuationFactId != expectedOriginal
+                        || r.ValuationVersion != prior.ValuationVersion + 1))
+                    return false;
+                if (group.Any(f => f.CompanyCode != company || f.BranchCode != branch
                         || f.LedgerEpochId != root.LedgerEpochId || f.ItemCode != history.ICode
-                        || f.EffectiveAt != history.TrxDtTime || f.CostMethod != StockCostMethods.MovingAverage
+                        || f.EffectiveAt != history.TrxDtTime || f.CostMethod != expectedMethod
                         || f.BusinessDate != prior.BusinessDate || f.PeriodKey != prior.PeriodKey
                         || f.SourceLineId != prior.SourceLineId || f.SourceDocumentType != prior.SourceDocumentType
                         || f.SourceDocumentId != prior.SourceDocumentId || f.SourceDocumentNo != prior.SourceDocumentNo
                         || f.SourceDocumentLine != prior.SourceDocumentLine || f.MovementCode != prior.MovementCode
                         || f.BaseUom != prior.BaseUom || f.FromBalLocId != prior.FromBalLocId
                         || f.BaseCostAmount != f.CostAmount || f.CostAmount < 0m)
-                    || groupEffects.Length != 2 || groupEffects.Any(e => e.CompanyCode != company
+                    || groupEffects.Length != group.Count() || groupEffects.Any(e => e.CompanyCode != company
                         || e.BranchCode != branch || e.ReplayRunId != run.Id || e.BusinessOwnerPostingId != owner.Id
-                        || e.AffectedEntityType != StockReplayEffectTypes.StockValuationFact || e.OriginalEntityId != prior.Id))
+                        || e.AffectedEntityType != StockReplayEffectTypes.StockValuationFact
+                        || (!isFifoCdn && e.OriginalEntityId != prior.Id)
+                        || (isFifoCdn && !resolvedPriors.Any(p => p!.Id == e.OriginalEntityId))))
                     return false;
                 if (history.TrxType == IvTrxTypes.SalesOut)
                 {
@@ -226,7 +246,7 @@ internal static class StockReplayInvoiceIssueAudit
                 || value.SourceDocumentType != root.SourceDocumentType || value.SourceDocumentId != root.SourceDocumentId
                 || value.SourceDocumentNo != root.SourceDocumentNo || value.EffectiveAt != root.EffectiveAt
                 || value.BusinessDate != root.BusinessDate || value.PeriodKey != root.PeriodKey
-                || value.BaseQty != 0m || value.CostMethod != StockCostMethods.MovingAverage
+                || value.BaseQty != 0m || value.CostMethod != expectedMethod
                 || value.BaseCostAmount != value.CostAmount || value.CostAmount < 0m || value.Direction is not (-1 or 1)
                 || value.ValuationSource != StockValuationSources.PurchasePriceVariance
                 || value.MovementCode != (value.Direction > 0 ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
@@ -397,7 +417,8 @@ internal static class StockReplayInvoiceIssueAudit
                 || primaryAdjustment.SourceDocumentType != "PO_CDN" || primaryAdjustment.SourceDocumentNo != primary.SourceDocumentNo
                 || primaryAdjustment.SourceCostingRevision != primary.DocumentRevision
                 || primaryAdjustment.SourceDocumentLine != sourceLine || primaryAdjustment.ItemCode != adjustment.ItemCode
-                || primaryAdjustment.BaseQty != quantity || primaryAdjustment.CostMethod != StockCostMethods.MovingAverage
+                || primaryAdjustment.BaseQty != quantity
+                || primaryAdjustment.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
                 || primaryAdjustment.ReversesAdjustmentId is not null || primaryValue.OriginalValuationFactId is not long receiptId
                 || primaryValue.ReversesValuationFactId is not null || primaryValue.ValuationStatus != StockValuationStatuses.Valued
                 || primaryValue.CompanyCode != company || primaryValue.BranchCode != branch
@@ -405,7 +426,7 @@ internal static class StockReplayInvoiceIssueAudit
                 || primaryValue.SourceDocumentId != primary.SourceDocumentId || primaryValue.SourceDocumentNo != primary.SourceDocumentNo
                 || primaryValue.EffectiveAt != primary.EffectiveAt || primaryValue.ItemCode != adjustment.ItemCode
                 || primaryValue.InventoryHistoryId is not null || primaryValue.BaseQty != 0m
-                || primaryValue.CostMethod != StockCostMethods.MovingAverage || primaryValue.ValuationSource != StockValuationSources.PurchasePriceVariance
+                || primaryValue.CostMethod != primaryAdjustment.CostMethod || primaryValue.ValuationSource != StockValuationSources.PurchasePriceVariance
                 || primaryValue.Direction is not (-1 or 1) || primaryValue.CostAmount < 0m
                 || primaryValue.BaseCostAmount != primaryValue.CostAmount || primaryValue.UnitCost != 0m
                 || primaryValue.ValuationVersion != 1 || primaryValue.TransactionCurrency is not null
@@ -462,9 +483,11 @@ internal static class StockReplayInvoiceIssueAudit
             var receipt = await db.StockValuationFacts.AsNoTracking().SingleOrDefaultAsync(f => f.Id == receiptId, ct);
             if (receipt is null || receipt.CompanyCode != company || receipt.BranchCode != branch
                 || receipt.LedgerEpochId != root.LedgerEpochId || receipt.ItemCode != adjustment.ItemCode
-                || receipt.CostMethod != StockCostMethods.MovingAverage || receipt.Direction != 1
+                || receipt.CostMethod != primaryAdjustment.CostMethod || receipt.Direction != 1
                 || receipt.InventoryHistoryId is not int receiptHistoryId || receipt.EffectiveAt > root.EffectiveAt
-                || receipt.ValuationStatus != StockValuationStatuses.Valued || receipt.ValuationSource != StockValuationSources.ReceiptActual
+                || receipt.ValuationStatus != StockValuationStatuses.Valued
+                || !(receipt.ValuationSource == StockValuationSources.ReceiptActual
+                    || receipt.CostMethod == StockCostMethods.Fifo && receipt.ValuationSource == StockValuationSources.Fifo)
                 || receipt.ReversesValuationFactId is not null || receipt.OriginalValuationFactId is not null
                 || receipt.BaseQty != settlements[0].SettledBaseQty || receipt.BaseUom != primaryValue.BaseUom
                 || receipt.CostAmount != Costing.StockLedgerPrecision.Money(receipt.BaseQty * receipt.UnitCost)

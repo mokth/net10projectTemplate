@@ -2268,7 +2268,7 @@ public sealed partial class PoCdnService : IPoCdnService
                 db, cdn, referencedInvoice, context.CostMethod, cancellationToken);
             if (!result.Succeeded)
                 return (result.Error ?? "Purchase CN/DN costing failed.", null);
-            if (!cdn.ReturnStock && context.CostMethod == StockCostMethods.MovingAverage
+            if (!cdn.ReturnStock && context.CostMethod is (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
                 && await HasUnreplayedCdnDependenciesAsync(db, write, context.Epoch.Id,
                     context.Posting.EffectiveAt, context.Posting.PostingSequence, cdn.DocNo, cdn.CostingRevision,
                     result.Adjustments, cancellationToken))
@@ -2362,12 +2362,18 @@ public sealed partial class PoCdnService : IPoCdnService
                     referencedInvoice!.DocDate, cancellationToken);
                 var result = await _cdnCostAdjustments.BuildAsync(db, cdn, referencedInvoice,
                     begin.Context.CostMethod, cancellationToken);
-                if (!result.Succeeded || begin.Context.CostMethod != StockCostMethods.MovingAverage
+                var methodMatches = replay.FifoReplay is not null
+                    ? begin.Context.CostMethod == StockCostMethods.Fifo
+                    : begin.Context.CostMethod == StockCostMethods.MovingAverage;
+                if (!result.Succeeded || !methodMatches
                     || begin.Context.Epoch.Id != replay.EpochId || begin.Context.Posting.PostingSequence != replay.Watermark + 1
                     || result.Adjustments.Count != 1 || result.Adjustments.Single() != replay.InitialAdjustment)
                     return ("The historical purchase or stock evidence changed. Retry the document.", null);
-                var required = await PoInvoiceService.WriteInvoiceIssueReplayAsync(begin.Context, replay.Fingerprint,
-                    replay.Watermark, replay.Replay, replay.EffectiveAdjustment, cancellationToken);
+                var required = replay.FifoReplay is not null
+                    ? await PoInvoiceService.WriteCdnFifoReplayAsync(begin.Context, replay.Fingerprint,
+                        replay.Watermark, replay.FifoReplay, replay.EffectiveAdjustment, cancellationToken)
+                    : await PoInvoiceService.WriteInvoiceIssueReplayAsync(begin.Context, replay.Fingerprint,
+                        replay.Watermark, replay.Replay!, replay.EffectiveAdjustment, cancellationToken);
                 await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, required, cancellationToken);
             }
             completed = true;
@@ -2469,7 +2475,7 @@ public sealed partial class PoCdnService : IPoCdnService
                 db, cdn, original.Id, write.UserId!, cancellationToken);
             if (!reversal.Succeeded)
                 return (reversal.Error ?? "Purchase CN/DN costing rollback failed.", null);
-            if (replay is null && begin.Context.CostMethod == StockCostMethods.MovingAverage
+            if (replay is null && begin.Context.CostMethod is (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
                 && await HasUnreplayedCdnDependenciesAsync(db, write, original.LedgerEpochId,
                     original.EffectiveAt, original.PostingSequence, cdn.DocNo, cdn.CostingRevision,
                     reversal.Adjustments, cancellationToken))
@@ -2482,12 +2488,18 @@ public sealed partial class PoCdnService : IPoCdnService
             }
             else
             {
-                if (begin.Context.CostMethod != StockCostMethods.MovingAverage || original.Id != replay.OriginalPostingId
+                var methodMatches = replay.FifoReplay is not null
+                    ? begin.Context.CostMethod == StockCostMethods.Fifo
+                    : begin.Context.CostMethod == StockCostMethods.MovingAverage;
+                if (!methodMatches || original.Id != replay.OriginalPostingId
                     || begin.Context.Epoch.Id != replay.EpochId || begin.Context.Posting.PostingSequence != replay.Watermark + 1
                     || reversal.Adjustments.Count != 1 || reversal.Adjustments.Single() != replay.InitialAdjustment)
                     return ("The historical purchase or stock evidence changed. Retry the document.", null);
-                var required = await PoInvoiceService.WriteInvoiceIssueReplayAsync(begin.Context, replay.Fingerprint,
-                    replay.Watermark, replay.Replay, replay.EffectiveAdjustment, cancellationToken);
+                var required = replay.FifoReplay is not null
+                    ? await PoInvoiceService.WriteCdnFifoReplayAsync(begin.Context, replay.Fingerprint,
+                        replay.Watermark, replay.FifoReplay, replay.EffectiveAdjustment, cancellationToken)
+                    : await PoInvoiceService.WriteInvoiceIssueReplayAsync(begin.Context, replay.Fingerprint,
+                        replay.Watermark, replay.Replay!, replay.EffectiveAdjustment, cancellationToken);
                 await _stockCoordinator.CompleteReplayInTransactionAsync(begin.Context, required, cancellationToken);
             }
             completed = true;

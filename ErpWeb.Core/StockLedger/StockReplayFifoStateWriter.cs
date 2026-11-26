@@ -106,6 +106,25 @@ public static class StockReplayFifoStateWriter
             revaluedFgOriginFactId: fgOriginFactId);
     }
 
+    internal static async Task ApplyPurchaseVarianceRevaluationAsync(
+        StockPostingContext context, string itemCode,
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayFifoTailProjection projection, string planHash,
+        int balLocId, decimal finalPileQuantity,
+        StockReplayFifoWritePermit permit, long purchaseOriginFactId,
+        bool isReversal,
+        CancellationToken cancellationToken = default)
+    {
+        var dates = projection.Issues.Select(i => i.Key.EffectiveAt.Date)
+            .Append(context.Posting.EffectiveAt.Date);
+        await StockReplayFifoIssueRepricingWriter.ValidateFifoPolicyAsync(
+            context, dates.Min(), dates.Max(), cancellationToken);
+        await ApplyCoreAsync(context, itemCode, snapshot, projection, planHash,
+            balLocId, finalPileQuantity, "REVALUE", permit, cancellationToken,
+            revaluedPurchaseOriginFactId: purchaseOriginFactId,
+            isPurchaseReversal: isReversal);
+    }
+
     private static async Task ApplyCoreAsync(
         StockPostingContext context, string itemCode,
         StockReplayFifoActiveLayerSnapshot snapshot,
@@ -114,7 +133,9 @@ public static class StockReplayFifoStateWriter
         StockReplayFifoWritePermit permit, CancellationToken cancellationToken,
         StockReplayFifoMrReceiptValuation? receipt = null,
         StockReplayFifoLayerPosition? removedReceipt = null,
-        long? revaluedFgOriginFactId = null)
+        long? revaluedFgOriginFactId = null,
+        long? revaluedPurchaseOriginFactId = null,
+        bool isPurchaseReversal = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(permit);
@@ -191,6 +212,32 @@ public static class StockReplayFifoStateWriter
                 || StockLedgerPrecision.Money(valueFacts.Sum(f => f.SignedValue))
                     != expectedAdjustments[0].SignedValue)
                 throw Invalid("FIFO finished-good value facts do not match the prepared layer adjustment.");
+        }
+        else if (revaluedPurchaseOriginFactId is long purchaseOriginId)
+        {
+            if (operation != "REVALUE"
+                || expectedAdjustments.Length != 1
+                || expectedAdjustments[0].Before.OriginFactId != purchaseOriginId
+                || !adjustmentOrigins.TryGetValue(purchaseOriginId, out var origin)
+                || origin.BaseQty != expectedAdjustments[0].Before.OriginalQuantity
+                || origin.CostAmount != expectedAdjustments[0].Before.OriginalValue
+                || origin.MovementCode != "RECEIPT_IN"
+                || origin.ValuationSource is not (StockValuationSources.ReceiptActual or StockValuationSources.Fifo)
+                || valueFacts.Length != 1
+                || valueFacts[0].ValuationSource != StockValuationSources.PurchasePriceVariance
+                || valueFacts[0].CostMethod != StockCostMethods.Fifo
+                || valueFacts[0].BaseQty != 0m
+                || valueFacts[0].MovementCode != (valueFacts[0].Direction > 0
+                    ? "PURCHASE_PRICE_VARIANCE_IN" : "PURCHASE_PRICE_VARIANCE_OUT")
+                || valueFacts[0].SignedValue != expectedAdjustments[0].SignedValue
+                || (isPurchaseReversal
+                    ? valueFacts[0].ReversesValuationFactId is not long reversedFactId
+                        || valueFacts[0].OriginalValuationFactId != reversedFactId
+                        || valueFacts[0].ValuationStatus != StockValuationStatuses.Reversed
+                    : valueFacts[0].OriginalValuationFactId != purchaseOriginId
+                        || valueFacts[0].ReversesValuationFactId is not null
+                        || valueFacts[0].ValuationStatus != StockValuationStatuses.Valued))
+                throw Invalid("FIFO purchase variance value facts do not match the prepared layer adjustment.");
         }
         else if (expectedAdjustments.Any(x =>
             {

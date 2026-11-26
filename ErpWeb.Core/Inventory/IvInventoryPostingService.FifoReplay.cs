@@ -883,6 +883,17 @@ public sealed partial class IvInventoryPostingService
             operation ?? Guid.Empty);
     }
 
+    internal static Task<string?> CheckFifoPurchaseReplayTailAsync(
+        ErpWeb.Model.Data.AppDbContext db, string itemCode,
+        StockReplayFifoActiveLayerSnapshot snapshot,
+        StockReplayFifoTailProjection projection,
+        StockReplayEventKey candidateKey,
+        IReadOnlyCollection<long>? correctionValueFactIds,
+        CancellationToken cancellationToken) =>
+        CheckSimpleFifoInventoryTailAsync(db, itemCode, snapshot, projection, candidateKey,
+            cancellationToken, allowBoundedSales: true, allowEmpty: true,
+            allowBoundedProduction: false, correctionValueFactIds: correctionValueFactIds);
+
     private static async Task<string?> CheckSimpleFifoInventoryTailAsync(
         ErpWeb.Model.Data.AppDbContext db,
         StockReplayFifoInsertionPlan plan, StockReplayEventKey candidateKey,
@@ -1133,7 +1144,7 @@ public sealed partial class IvInventoryPostingService
                     || f.BranchCode != snapshot.BranchCode
                     || f.ItemCode != itemCode
                     || f.CostMethod != StockCostMethods.Fifo
-                    || f.ValuationSource != StockValuationSources.Fifo
+                    || f.ValuationSource is not (StockValuationSources.Fifo or StockValuationSources.ReceiptActual)
                     || f.SourceDocumentType != IvTrxTypes.GoodsReceive
                     || f.Direction != 1 || f.BaseQty <= 0m
                     || !laterGrOwnerIds.Contains(f.StockPostingId)
@@ -1337,6 +1348,7 @@ public sealed partial class IvInventoryPostingService
                 && !returnAdjustmentIds.Contains(f.Id)
                 && !(correctionValueFactIds?.Contains(f.Id) == true
                     && (f.MovementCode == StockReplayFifoReversedIssueGenerationReader.ValueMovement
+                        || f.ValuationSource == StockValuationSources.PurchasePriceVariance
                         || f.MovementCode == "FINISHED_GOOD_IN"
                             && f.ValuationSource == StockValuationSources.ProductionActual))
                 && (f.InventoryHistoryId is not int historyId

@@ -1,5 +1,6 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Sales;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using Microsoft.EntityFrameworkCore;
@@ -26,7 +27,8 @@ public sealed partial class PoInvoiceService
         IReadOnlyList<InvoiceDeliveryBillingLinkProof> BillingLinks);
 
     private static async Task<IReadOnlyList<InvoiceDeliverySaleProof>?> ProveInvoiceDeliverySalesAsync(
-        AppDbContext db, string company, string branch, IReadOnlyList<IvTrxHistory> histories, CancellationToken ct)
+        AppDbContext db, string company, string branch, IReadOnlyList<IvTrxHistory> histories, CancellationToken ct,
+        string costMethod = StockCostMethods.MovingAverage)
     {
         var sales = histories.Where(h => h.TrxType == IvTrxTypes.SalesOut).ToArray();
         if (sales.Length == 0)
@@ -38,7 +40,7 @@ public sealed partial class PoInvoiceService
         var history = sales[0];
         if (string.IsNullOrWhiteSpace(history.DoNo))
             return Array.Empty<InvoiceDeliverySaleProof>();
-        if (await IvInventoryPostingService.CheckDeliverySaleForPurchaseReplayAsync(db, history, ct) is not null)
+        if (await IvInventoryPostingService.CheckDeliverySaleForPurchaseReplayAsync(db, history, ct, costMethod) is not null)
             return null;
         var deliveryNo = history.DoNo.Trim();
         var delivery = await db.SaDos.AsNoTracking().Include(d => d.Details).SingleOrDefaultAsync(d =>
