@@ -43,7 +43,14 @@ public sealed partial class IvInventoryPostingService
         ActiveFinishedGoodReplayPlan? ActiveFinishedGood = null,
         CorrectedReversedFinishedGoodPlan? CorrectedReversedFinishedGood = null,
         ActiveWorkOrderTransferReplayPlan? ActiveWorkOrderTransfer = null,
-        OutputTerminalAdjustmentsReplayPlan? OutputTerminalAdjustments = null);
+        OutputTerminalAdjustmentsReplayPlan? OutputTerminalAdjustments = null,
+        HandoffOutputReplayPlan? HandoffOutput = null);
+
+    private sealed record HandoffOutputReplayPlan(
+        long OutputId, long ConsumeMovementId, long ProduceMovementId,
+        long TargetPoolId, decimal Quantity, decimal BaseQuantity,
+        ProductionEffectiveCost ExpectedConsume, ProductionEffectiveCost ExpectedProduce,
+        DateTime EffectiveAt, string StableHash);
 
     private sealed record ActiveFinishedGoodReplayPlan(
         int BatchId, long MovementId, decimal Quantity, decimal BaseQuantity, decimal Value,
@@ -246,6 +253,7 @@ public sealed partial class IvInventoryPostingService
         CorrectedReversedFinishedGoodPlan? correctedReversedFinishedGood = null;
         ActiveWorkOrderTransferReplayPlan? activeWorkOrderTransfer = null;
         OutputTerminalAdjustmentsReplayPlan? outputTerminalAdjustments = null;
+        HandoffOutputReplayPlan? handoffOutput = null;
         if (downstreamMovements.Length != 0)
         {
             if (!reversed && downstreamMovements.All(m =>
@@ -258,6 +266,21 @@ public sealed partial class IvInventoryPostingService
                 outputTerminalAdjustments = await VerifyOutputTerminalAdjustmentsAsync(db, company, branch,
                     candidateDate, outputPosting, produce, costs[produce.Uid], outputLot, outputPool,
                     downstreamMovements, allowRestatements, ct);
+            }
+            else if (!reversed && downstreamMovements.Length == 1
+                && downstreamMovements[0].MovementType == ProductionBalLotMovementTypes.Consume)
+            {
+                if (outputLot is null || outputPool is null)
+                    throw ProductionReplayError("Production output pool is missing for WIP handoff.");
+                var issueMethods = await db.StockValuationFacts.AsNoTracking()
+                    .Where(f => authority.ActiveValuationFactIds.Contains(f.Id))
+                    .Select(f => f.CostMethod).Distinct().ToArrayAsync(ct);
+                if (issueMethods.Length != 1
+                    || (!allowRestatements && issueMethods[0] != StockCostMethods.Standard))
+                    throw ProductionReplayError("Production issue has inconsistent cost methods.");
+                (handoffOutput, activeFinishedGood) = await VerifyHandoffOutputAsync(db, company, branch,
+                    candidateDate, outputPosting, issue, produce, costs[produce.Uid], outputLot, outputPool,
+                    downstreamMovements[0], issueMethods[0], allowRestatements, ct);
             }
             else if (!reversed && downstreamMovements.Length == 1
                 && downstreamMovements[0].MovementType == ProductionBalLotMovementTypes.FgReceiptOut)
@@ -328,11 +351,11 @@ public sealed partial class IvInventoryPostingService
             || sourceLot.AverageUnitCost != (sourceLot.BaseQty == 0m ? 0m
                 : StockLedgerPrecision.Money(sourceLot.TotalCost / sourceLot.BaseQty))
             || outputLot.BaseQty != (reversed ? 0m : outputTerminalAdjustments?.ExpectedPoolBaseQty
-                ?? produce.BaseQty - (activeFinishedGood?.BaseQuantity ?? activeWorkOrderTransfer?.BaseQuantity ?? 0m))
+                ?? produce.BaseQty - (handoffOutput?.BaseQuantity ?? activeFinishedGood?.BaseQuantity ?? activeWorkOrderTransfer?.BaseQuantity ?? 0m))
             || outputLot.Qty != (reversed ? 0m : outputTerminalAdjustments?.ExpectedPoolQty
-                ?? produce.Qty - (activeFinishedGood?.Quantity ?? activeWorkOrderTransfer?.Quantity ?? 0m))
+                ?? produce.Qty - (handoffOutput?.Quantity ?? activeFinishedGood?.Quantity ?? activeWorkOrderTransfer?.Quantity ?? 0m))
             || outputLot.TotalCost != (reversed ? 0m : outputTerminalAdjustments?.ExpectedPoolValue
-                ?? costs[produce.Uid].TotalCost - (activeFinishedGood?.Value ?? activeWorkOrderTransfer?.ExpectedOut.TotalCost ?? 0m))
+                ?? costs[produce.Uid].TotalCost - (handoffOutput?.ExpectedConsume.TotalCost ?? activeFinishedGood?.Value ?? activeWorkOrderTransfer?.ExpectedOut.TotalCost ?? 0m))
             || outputLot.AverageUnitCost != (outputLot.BaseQty == 0m ? 0m
                 : StockLedgerPrecision.Money(outputLot.TotalCost / outputLot.BaseQty)))
             throw ProductionReplayError("Production issue or output pool does not reconcile.");
@@ -346,6 +369,7 @@ public sealed partial class IvInventoryPostingService
             throw ProductionReplayError("The reversed Production issue has an active dependency.");
         var allocations = await ProductionActiveEdgeResolver.Allocations(db).AsNoTracking()
             .Where(a => a.ReceiptMovementId == issue.Uid || a.ReceiptMovementId == produce.Uid
+                || handoffOutput != null && a.ReceiptMovementId == handoffOutput.ProduceMovementId
                 || a.OutboundMovementId == consume.Uid).ToArrayAsync(ct);
         if (outputTerminalAdjustments is not null)
         {
@@ -358,6 +382,31 @@ public sealed partial class IvInventoryPostingService
                     && a.OutboundMovementId == consume.Uid && a.StockPostingId == outputPostingId
                     && a.BaseQty == consume.BaseQty) != 1)
                 throw ProductionReplayError("Production output terminal adjustment dependencies do not reconcile.");
+        }
+        else if (handoffOutput is not null)
+        {
+            var expectedOrdered = activeFinishedGood is not null ? 6 : 5;
+            var expectedEdges = activeFinishedGood is not null ? 5 : 4;
+            var expectedAllocations = activeFinishedGood is not null ? 3 : 2;
+            if (graph.OrderedMovementIds.Count != expectedOrdered
+                || graph.Edges.Count != expectedEdges
+                || !graph.Edges.Any(e => e.ContributorMovementId == issue.Uid && e.ConsumerMovementId == consume.Uid)
+                || !graph.Edges.Any(e => e.ContributorMovementId == consume.Uid && e.ConsumerMovementId == produce.Uid)
+                || !graph.Edges.Any(e => e.ContributorMovementId == produce.Uid && e.ConsumerMovementId == handoffOutput.ConsumeMovementId)
+                || !graph.Edges.Any(e => e.ContributorMovementId == handoffOutput.ConsumeMovementId && e.ConsumerMovementId == handoffOutput.ProduceMovementId)
+                || activeFinishedGood is not null && !graph.Edges.Any(e =>
+                    e.ContributorMovementId == handoffOutput.ProduceMovementId && e.ConsumerMovementId == activeFinishedGood.MovementId)
+                || allocations.Length != expectedAllocations
+                || allocations.Count(a => a.ReceiptMovementId == issue.Uid
+                    && a.OutboundMovementId == consume.Uid && a.StockPostingId == outputPostingId
+                    && a.BaseQty == consume.BaseQty) != 1
+                || allocations.Count(a => a.ReceiptMovementId == produce.Uid
+                    && a.OutboundMovementId == handoffOutput.ConsumeMovementId
+                    && a.BaseQty == handoffOutput.BaseQuantity) != 1
+                || activeFinishedGood is not null && allocations.Count(a =>
+                    a.ReceiptMovementId == handoffOutput.ProduceMovementId && a.OutboundMovementId == activeFinishedGood.MovementId
+                    && a.BaseQty == activeFinishedGood.BaseQuantity) != 1)
+                throw ProductionReplayError("Production handoff has an unsupported or inconsistent dependency.");
         }
         else
         {
@@ -552,6 +601,7 @@ public sealed partial class IvInventoryPostingService
             ActiveFinishedGood = activeFinishedGood,
             ActiveWorkOrderTransfer = activeWorkOrderTransfer,
             OutputTerminalAdjustments = outputTerminalAdjustments,
+            HandoffOutput = handoffOutput,
             output.ReversalPostingId, OutputRowVersion = Convert.ToHexString(output.RowVersion ?? []),
             Movements = outputMovements.Select(m => new { m.Uid, m.ProductionBalLotId, m.BaseQty, m.Qty,
                 m.TotalCost, m.UnitCost, m.PostingLinkId, m.StockPostingId, m.LedgerEpochId,
@@ -583,13 +633,15 @@ public sealed partial class IvInventoryPostingService
             new[] { consume.MovementDate, activeFinishedGood?.EffectiveAt ?? consume.MovementDate,
                 activeWorkOrderTransfer?.EffectiveAt ?? consume.MovementDate,
                 outputTerminalAdjustments?.LatestEffectiveAt ?? consume.MovementDate,
+                handoffOutput?.EffectiveAt ?? consume.MovementDate,
                 correctedReversedFinishedGood?.ReversalAt ?? consume.MovementDate }.Max(),
             outputMovements.Length + 1 + (pairedOutput ? reversals.Length : 0) + (activeFinishedGood is null ? 0 : 1)
                 + (activeWorkOrderTransfer is null ? 0 : 2)
+                + (handoffOutput is null ? 0 : 2)
                 + (outputTerminalAdjustments?.ExpectedAdjustments.Count ?? 0)
                 + (correctedReversedFinishedGood is null ? 0 : 2),
             issue.Uid, consume.Uid, produce.Uid, reversed, activeFinishedGood, correctedReversedFinishedGood,
-            activeWorkOrderTransfer, outputTerminalAdjustments);
+            activeWorkOrderTransfer, outputTerminalAdjustments, handoffOutput);
     }
 
     private static async Task<OutputTerminalAdjustmentsReplayPlan> VerifyOutputTerminalAdjustmentsAsync(
@@ -820,6 +872,191 @@ public sealed partial class IvInventoryPostingService
         return new(transfer.Uid, transferOut.Uid, transferInId, targetPoolId,
             transferOut.Qty, transferOut.BaseQty, expectedOut, expectedIn,
             transferOut.MovementDate, hash);
+    }
+
+    private static async Task<(HandoffOutputReplayPlan Handoff, ActiveFinishedGoodReplayPlan? ActiveFinishedGood)> VerifyHandoffOutputAsync(
+        AppDbContext db, string company, string branch, DateTime candidateDate,
+        StockPosting output1Posting, ProductionBalLotMovement issue, ProductionBalLotMovement produce1,
+        ProductionEffectiveCost produce1Cost, ProductionBalLot outputLot, ProductionPoolValuation outputPool,
+        ProductionBalLotMovement consume2, string costMethod, bool allowRestatements, CancellationToken ct)
+    {
+        if (consume2.CompanyCode != company || consume2.BranchCode != branch
+            || consume2.LedgerVersion != 2 || consume2.LedgerEpochId != produce1.LedgerEpochId
+            || consume2.OriginalMovementId is not null || consume2.WorkOrderMaterialId is not null
+            || consume2.MovementType != ProductionBalLotMovementTypes.Consume
+            || consume2.ProductionBalLotId != outputLot.Uid
+            || consume2.WorkOrderId != issue.WorkOrderId
+            || consume2.ValuationStatus != ProductionPoolValuationService.Verified
+            || consume2.BaseQty <= 0m || consume2.BaseQty > produce1.BaseQty
+            || consume2.Qty <= 0m || consume2.Qty > produce1.Qty
+            || consume2.ProductionOutputId is not long output2Id || output2Id == produce1.ProductionOutputId
+            || consume2.StockPostingId is not long output2PostingId
+            || consume2.MovementDate < produce1.MovementDate
+            || consume2.MovementDate.Year != candidateDate.Year
+            || consume2.MovementDate.Month != candidateDate.Month
+            || outputLot.Kind != ProductionBalLotKinds.Wip
+            || outputLot.WorkOrderId != issue.WorkOrderId
+            || outputLot.ItemCode != produce1.ItemCode)
+            throw ProductionReplayError("Production WIP handoff movement is outside the bounded open-month replay.");
+
+        var output2 = await db.ProductionOutputs.AsNoTracking()
+            .SingleOrDefaultAsync(o => o.Uid == output2Id, ct);
+        var output2Posting = await db.StockPostings.AsNoTracking()
+            .SingleOrDefaultAsync(p => p.Id == output2PostingId, ct);
+        var link2 = output2 is null ? null : await db.ProductionPostingLinks.AsNoTracking()
+            .SingleOrDefaultAsync(l => l.Uid == consume2.PostingLinkId, ct);
+        if (output2 is null || output2Posting is null || link2 is null
+            || output2.CompanyCode != company || output2.BranchCode != branch
+            || output2.WorkOrderId != issue.WorkOrderId
+            || output2.Status != ProductionOutputStatuses.Posted
+            || output2.ReversalPostingId is not null
+            || output2.ProductionDate != consume2.MovementDate
+            || output2Posting.CompanyCode != company || output2Posting.BranchCode != branch
+            || output2Posting.LedgerEpochId != issue.LedgerEpochId
+            || output2Posting.SealedAtUtc is null || output2Posting.PostingRole != "PRIMARY"
+            || output2Posting.CommandType != "PRODUCTION_OUTPUT_POST"
+            || output2Posting.EffectiveAt != output2.ProductionDate
+            || output2Posting.PostingSequence <= output1Posting.PostingSequence
+            || output2Posting.ProductionPostingLinkId != link2.Uid
+            || output2.DocumentRevision != output2Posting.DocumentRevision
+            || link2.CompanyCode != company || link2.BranchCode != branch
+            || link2.CommandType != ProductionPostingCommandTypes.OutputPost
+            || link2.Status != ProductionPostingLinkStatuses.Succeeded
+            || link2.ProductionDocumentLineId != output2Id
+            || link2.WorkOrderId != output2.WorkOrderId
+            || link2.DocumentRevision != output2Posting.DocumentRevision)
+            throw ProductionReplayError("Second-stage Production output has no exact sealed business owner.");
+
+        var output2Movements = await db.ProductionBalLotMovements.AsNoTracking()
+            .Where(m => m.ProductionOutputId == output2Id && m.StockPostingId == output2PostingId
+                && m.OriginalMovementId == null)
+            .OrderBy(m => m.Uid).ToArrayAsync(ct);
+        var inputs2 = output2Movements.Where(m => m.MovementType == ProductionBalLotMovementTypes.Consume).ToArray();
+        var produces2 = output2Movements.Where(m => m.MovementType == ProductionBalLotMovementTypes.Produce).ToArray();
+        if (inputs2.Length != 1 || inputs2[0].Uid != consume2.Uid || produces2.Length != 1
+            || output2Movements.Length != 2
+            || output2Movements.Any(m => m.CompanyCode != company || m.BranchCode != branch
+                || m.LedgerVersion != 2 || m.LedgerEpochId != issue.LedgerEpochId
+                || m.StockPostingId != output2PostingId || m.PostingLinkId != link2.Uid
+                || m.ProductionOutputId != output2Id || m.MovementDate != output2.ProductionDate
+                || m.WorkOrderId != output2.WorkOrderId
+                || m.WorkOrderOperationId != output2.WorkOrderOperationId
+                || m.RouteStepId != output2.RouteStepId || m.BaseQty <= 0m
+                || m.TotalCost < 0m || m.UnitCost != StockLedgerPrecision.Money(m.TotalCost / m.BaseQty)
+                || m.ValuationStatus != ProductionPoolValuationService.Verified))
+            throw ProductionReplayError("Second-stage Production output must consume only its single WIP handoff pool.");
+
+        var produce2 = produces2[0];
+        if (await db.ProductionBalLotMovements.AsNoTracking().AnyAsync(m =>
+                m.OriginalMovementId == consume2.Uid || m.OriginalMovementId == produce2.Uid, ct)
+            || await db.ProductionMaterialMovements.AsNoTracking().AnyAsync(m =>
+                m.ProductionBalLotMovementId == consume2.Uid || m.ProductionOutputId == output2Id, ct))
+            throw ProductionReplayError("Second-stage Production output has reversals or unsupported material lines.");
+
+        var costs2 = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch,
+            [consume2.Uid, produce2.Uid], ct);
+        if ((!allowRestatements && (costs2[consume2.Uid].RestatementFactId is not null
+                || costs2[produce2.Uid].RestatementFactId is not null
+                || costs2[consume2.Uid].TotalCost != consume2.TotalCost
+                || costs2[produce2.Uid].TotalCost != produce2.TotalCost))
+            || costs2[consume2.Uid].TotalCost != (consume2.BaseQty == produce1.BaseQty
+                ? produce1Cost.TotalCost
+                : StockLedgerPrecision.Money(produce1Cost.TotalCost * consume2.BaseQty / produce1.BaseQty)))
+            throw ProductionReplayError("Second-stage Production output cost does not reconcile to its WIP handoff source.");
+
+        var conversion2 = await db.ProductionConversionCostFacts.AsNoTracking()
+            .Where(f => f.ProductionOutputId == output2Id && f.ReversesFactId == null
+                && f.StockPostingId == output2PostingId)
+            .OrderBy(f => f.Id).ToArrayAsync(ct);
+        if (await db.ProductionConversionCostFacts.AsNoTracking().AnyAsync(f =>
+                f.ProductionMovementId == produce2.Uid
+                && (f.StockPostingId != output2PostingId || f.ReversesFactId != null), ct)
+            || conversion2.Any(f => f.CompanyCode != company || f.BranchCode != branch
+                || f.ProductionMovementId != produce2.Uid || f.WorkOrderId != output2.WorkOrderId
+                || f.WorkOrderOperationId != output2.WorkOrderOperationId
+                || f.RouteStepId != output2.RouteStepId || f.CostAmount < 0m)
+            || costs2[produce2.Uid].TotalCost != StockLedgerPrecision.Money(
+                costs2[consume2.Uid].TotalCost + conversion2.Sum(f => f.CostAmount)))
+            throw ProductionReplayError("Second-stage Production output value does not reconcile to conversion cost.");
+
+        var allocs2 = await db.ProductionMovementAllocations.AsNoTracking()
+            .Where(a => a.ReceiptMovementId == produce1.Uid && a.OutboundMovementId == consume2.Uid
+                && a.ReversesAllocationId == null).ToArrayAsync(ct);
+        var edges2 = await db.ProductionPoolDependencyRows.AsNoTracking()
+            .Where(e => (e.ConsumerMovementId == consume2.Uid || e.ConsumerMovementId == produce2.Uid)
+                && e.ReversesDependencyId == null).ToArrayAsync(ct);
+        var alloc2Ids = allocs2.Select(a => a.Id).ToArray();
+        var edge2Ids = edges2.Select(e => e.Id).ToArray();
+        if (allocs2.Length != 1 || allocs2[0].StockPostingId != output2PostingId
+            || allocs2[0].BaseQty != consume2.BaseQty
+            || edges2.Length != 2
+            || edges2.Count(e => e.ContributorMovementId == produce1.Uid
+                && e.ConsumerMovementId == consume2.Uid && e.StockPostingId == output2PostingId) != 1
+            || edges2.Count(e => e.ContributorMovementId == consume2.Uid
+                && e.ConsumerMovementId == produce2.Uid && e.StockPostingId == output2PostingId) != 1
+            || await db.ProductionMovementAllocations.AsNoTracking().AnyAsync(a =>
+                a.ReversesAllocationId.HasValue && alloc2Ids.Contains(a.ReversesAllocationId.Value), ct)
+            || await db.ProductionPoolDependencyRows.AsNoTracking().AnyAsync(e =>
+                e.ReversesDependencyId.HasValue && edge2Ids.Contains(e.ReversesDependencyId.Value), ct))
+            throw ProductionReplayError("Second-stage Production output allocation or dependency evidence is incomplete.");
+
+        var stage2Lot = await db.ProductionBalLots.AsNoTracking()
+            .SingleOrDefaultAsync(l => l.Uid == produce2.ProductionBalLotId, ct);
+        var stage2Pool = await db.ProductionPoolValuationRows.AsNoTracking()
+            .SingleOrDefaultAsync(p => p.ProductionBalLotId == produce2.ProductionBalLotId, ct);
+        var evidence2 = await db.ProductionValuationEvidenceRows.AsNoTracking()
+            .Where(e => e.MovementId == consume2.Uid || e.MovementId == produce2.Uid)
+            .ToArrayAsync(ct);
+        if (stage2Lot is null || stage2Pool is null || stage2Lot.Uid == outputLot.Uid
+            || stage2Lot.Uid == issue.ProductionBalLotId
+            || stage2Lot.CompanyCode != company || stage2Lot.BranchCode != branch
+            || stage2Pool.Generation <= 0
+            || ProductionCostReadiness.PoolValuationError(stage2Lot, stage2Pool) is not null
+            || evidence2.Length != 2
+            || evidence2.Count(e => e.MovementId == consume2.Uid && e.ProductionBalLotId == outputLot.Uid
+                && e.Generation == outputPool.Generation && e.Status == ProductionPoolValuationService.Verified
+                && e.Price == consume2.UnitCost) != 1
+            || evidence2.Count(e => e.MovementId == produce2.Uid && e.ProductionBalLotId == stage2Lot.Uid
+                && e.Generation == stage2Pool.Generation && e.Status == ProductionPoolValuationService.Verified
+                && e.Price == produce2.UnitCost) != 1)
+            throw ProductionReplayError("Second-stage Production pool or valuation evidence is incomplete.");
+
+        var stage2Downstream = await db.ProductionBalLotMovements.AsNoTracking()
+            .Where(m => m.ProductionBalLotId == stage2Lot.Uid && m.Uid != produce2.Uid)
+            .OrderBy(m => m.Uid).ToArrayAsync(ct);
+        ActiveFinishedGoodReplayPlan? fg = null;
+        if (stage2Downstream.Length == 1 && stage2Downstream[0].MovementType == ProductionBalLotMovementTypes.FgReceiptOut)
+        {
+            fg = await VerifyActiveFinishedGoodAsync(db, company, branch, candidateDate,
+                produce2, costs2[produce2.Uid], stage2Downstream[0], costMethod, ct);
+        }
+        else if (stage2Downstream.Length != 0)
+        {
+            throw ProductionReplayError("Second-stage Production pool has unsupported downstream consumers.");
+        }
+
+        if (stage2Lot.BaseQty != produce2.BaseQty - (fg?.BaseQuantity ?? 0m)
+            || stage2Lot.Qty != produce2.Qty - (fg?.Quantity ?? 0m)
+            || stage2Lot.TotalCost != StockLedgerPrecision.Money(costs2[produce2.Uid].TotalCost - (fg?.Value ?? 0m))
+            || stage2Lot.AverageUnitCost != (stage2Lot.BaseQty == 0m ? 0m
+                : StockLedgerPrecision.Money(stage2Lot.TotalCost / stage2Lot.BaseQty)))
+            throw ProductionReplayError("Second-stage Production pool does not reconcile.");
+
+        var hash = StockPostingFingerprint.Create(new
+        {
+            output2Id, output2PostingId, output2.DocumentRevision,
+            Output2RowVersion = Convert.ToHexString(output2.RowVersion ?? []),
+            consume2.Uid, Produce2Uid = produce2.Uid,
+            Costs2 = costs2.Values.OrderBy(c => c.MovementId).ToArray(),
+            Conversion2 = conversion2.Select(f => new { f.Id, f.CostAmount, f.CostType, f.SourceLineKey }).ToArray(),
+            stage2Lot.Qty, stage2Lot.BaseQty, stage2Lot.TotalCost, stage2Pool.Generation,
+            Stage2RowVersion = Convert.ToHexString(stage2Lot.RowVersion ?? []),
+            ActiveFinishedGood = fg
+        }, new { }).RequestFingerprint;
+
+        return (new(output2Id, consume2.Uid, produce2.Uid, stage2Lot.Uid,
+            consume2.Qty, consume2.BaseQty, costs2[consume2.Uid], costs2[produce2.Uid],
+            fg?.EffectiveAt ?? output2.ProductionDate, hash), fg);
     }
 
     private static async Task ApplyStandardProductionAsync(

@@ -7,6 +7,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ErpWeb.Core.Production;
 
+/// <summary>Handoff second-stage daily production output identity (optional FG receipt on stage 2).</summary>
+internal sealed record HandoffStageCorrection(
+    long ConsumeMovementId,
+    long ProduceMovementId,
+    long? ActiveFinishedGoodId = null,
+    decimal ActiveFinishedGoodValue = 0m);
+
 /// <summary>Restates one issue and its isolated Daily Production output inside the receipt root.</summary>
 internal static class ProductionOutputIssueCostCorrectionWriter
 {
@@ -18,7 +25,8 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         long? activeTransferOutId = null, decimal activeTransferOutValue = 0m,
         IReadOnlyCollection<long>? outputTerminalAdjustmentIds = null,
         decimal? outputTerminalAdjustmentPoolBaseQty = null,
-        decimal? outputTerminalAdjustmentPoolValue = null)
+        decimal? outputTerminalAdjustmentPoolValue = null,
+        HandoffStageCorrection? handoff = null)
     {
         context.EnsureUnsealed();
         var db = context.Db;
@@ -32,14 +40,18 @@ internal static class ProductionOutputIssueCostCorrectionWriter
             || db.ChangeTracker.Entries<ProductionPoolValuation>().Any(e =>
                 e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
             throw Invalid("Production output correction needs an unchanged pool and the replay transaction.");
-        var ids = new[] { issueId, consumeId, produceId };
+        var ids = handoff is null
+            ? new[] { issueId, consumeId, produceId }
+            : new[] { issueId, consumeId, produceId, handoff.ConsumeMovementId, handoff.ProduceMovementId };
         var movements = await db.ProductionBalLotMovements.AsNoTracking()
             .Where(m => ids.Contains(m.Uid)).ToDictionaryAsync(m => m.Uid, ct);
-        if (ids.Distinct().Count() != 3 || movements.Count != 3)
+        if (ids.Distinct().Count() != ids.Length || movements.Count != ids.Length)
             throw Invalid("Production output correction has invalid movement identities.");
         var issue = movements[issueId];
         var consume = movements[consumeId];
         var produce = movements[produceId];
+        var handoffConsume = handoff is null ? null : movements[handoff.ConsumeMovementId];
+        var handoffProduce = handoff is null ? null : movements[handoff.ProduceMovementId];
         var costs = await ProductionReplayEffectiveCostReader.ReadAsync(db,
             context.CompanyCode, context.BranchCode, ids, ct);
         var authority = (await ProductionIssueEffectiveCostReader.ReadWithinRootAsync(
@@ -58,21 +70,45 @@ internal static class ProductionOutputIssueCostCorrectionWriter
         var sourcePool = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == source.Uid, ct);
         var target = await db.ProductionBalLots.SingleAsync(l => l.Uid == produce.ProductionBalLotId, ct);
         var targetPool = await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == target.Uid, ct);
+        var stage2 = handoffProduce is null ? null
+            : await db.ProductionBalLots.SingleAsync(l => l.Uid == handoffProduce.ProductionBalLotId, ct);
+        var stage2Pool = handoffProduce is null ? null
+            : await db.ProductionPoolValuationRows.SingleAsync(p => p.ProductionBalLotId == handoffProduce.ProductionBalLotId, ct);
         var hasOutputAdjustments = outputTerminalAdjustmentIds is { Count: > 0 };
         if ((activeFinishedGoodId is not null ? 1 : 0)
             + (activeTransferOutId is not null ? 1 : 0)
-            + (hasOutputAdjustments ? 1 : 0) > 1)
-            throw Invalid("Production output cannot combine finished-good, work-order transfer, and terminal adjustment replay.");
+            + (hasOutputAdjustments ? 1 : 0)
+            + (handoff is not null ? 1 : 0) > 1)
+            throw Invalid("Production output cannot combine finished-good, work-order transfer, handoff, and terminal adjustment replay.");
         if (hasOutputAdjustments && (outputReversed
             || outputTerminalAdjustmentPoolBaseQty is null || outputTerminalAdjustmentPoolValue is null))
             throw Invalid("Production output terminal adjustment replay parameters are incomplete.");
-        var finished = activeFinishedGoodId is long finishedId
+        if (handoff is not null && (outputReversed
+            || handoffConsume is null || handoffProduce is null
+            || handoffConsume.MovementType != ProductionBalLotMovementTypes.Consume
+            || handoffProduce.MovementType != ProductionBalLotMovementTypes.Produce
+            || handoffConsume.ProductionBalLotId != target.Uid
+            || handoffConsume.ProductionOutputId != handoffProduce.ProductionOutputId
+            || handoffConsume.ProductionOutputId == produce.ProductionOutputId
+            || handoffConsume.BaseQty <= 0m || handoffConsume.BaseQty > produce.BaseQty
+            || handoffProduce.BaseQty <= 0m
+            || stage2 is null || stage2Pool is null
+            || stage2.Uid == target.Uid || stage2.Uid == source.Uid
+            || stage2Pool.Status != ProductionPoolValuationService.Verified
+            || stage2Pool.TrackedBaseQty != stage2.BaseQty || stage2Pool.TrackedValue != stage2.TotalCost))
+            throw Invalid("Production handoff stage dependencies are inconsistent.");
+        var effectiveFinishedGoodId = activeFinishedGoodId ?? handoff?.ActiveFinishedGoodId;
+        var effectiveFinishedGoodValue = activeFinishedGoodId is not null
+            ? activeFinishedGoodValue : (handoff?.ActiveFinishedGoodValue ?? 0m);
+        var finished = effectiveFinishedGoodId is long finishedId
             ? await db.ProductionBalLotMovements.AsNoTracking().SingleOrDefaultAsync(m => m.Uid == finishedId, ct)
             : null;
-        if (activeFinishedGoodId is not null && (outputReversed
+        var fgExpectedSource = handoffProduce ?? produce;
+        if (effectiveFinishedGoodId is not null && (outputReversed
             || context.CostMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo)
             || finished is null || finished.MovementType != ProductionBalLotMovementTypes.FgReceiptOut
-            || finished.ProductionBalLotId != target.Uid || finished.BaseQty > produce.BaseQty))
+            || finished.ProductionBalLotId != fgExpectedSource.ProductionBalLotId
+            || finished.BaseQty > fgExpectedSource.BaseQty))
             throw Invalid("Production output has an unsupported finished-good dependency.");
         var transferOut = activeTransferOutId is long transferId
             ? await db.ProductionBalLotMovements.AsNoTracking().SingleOrDefaultAsync(m => m.Uid == transferId, ct)
@@ -81,11 +117,14 @@ internal static class ProductionOutputIssueCostCorrectionWriter
             || transferOut is null || transferOut.MovementType != ProductionBalLotMovementTypes.TransferOut
             || transferOut.ProductionBalLotId != target.Uid || transferOut.BaseQty != produce.BaseQty))
             throw Invalid("Production output has an unsupported work-order transfer dependency.");
-        var downstreamQty = finished?.BaseQty ?? transferOut?.BaseQty ?? 0m;
-        var downstreamValue = finished is not null ? activeFinishedGoodValue
+        var downstreamQty = handoffConsume?.BaseQty ?? finished?.BaseQty ?? transferOut?.BaseQty ?? 0m;
+        var downstreamValue = handoffConsume is not null ? costs[handoffConsume.Uid].TotalCost
+            : finished is not null ? effectiveFinishedGoodValue
             : transferOut is not null ? activeTransferOutValue : 0m;
         var expectedTargetQty = hasOutputAdjustments ? outputTerminalAdjustmentPoolBaseQty!.Value : produce.BaseQty - downstreamQty;
         var expectedTargetValue = hasOutputAdjustments ? outputTerminalAdjustmentPoolValue!.Value : costs[produceId].TotalCost - downstreamValue;
+        var expectedStage2Qty = handoffProduce is null ? 0m : handoffProduce.BaseQty - (finished?.BaseQty ?? 0m);
+        var expectedStage2Value = handoffProduce is null ? 0m : costs[handoffProduce.Uid].TotalCost - (finished is not null ? effectiveFinishedGoodValue : 0m);
         if (source.Uid == target.Uid || sourcePool.Status != ProductionPoolValuationService.Verified
             || targetPool.Status != ProductionPoolValuationService.Verified
             || sourcePool.TrackedBaseQty != source.BaseQty || sourcePool.TrackedValue != source.TotalCost
@@ -93,7 +132,8 @@ internal static class ProductionOutputIssueCostCorrectionWriter
             || source.TotalCost != expectedIssue.TotalCost - (outputReversed ? 0m : costs[consumeId].TotalCost)
             || source.BaseQty != issue.BaseQty - (outputReversed ? 0m : consume.BaseQty)
             || target.BaseQty != (outputReversed ? 0m : expectedTargetQty)
-            || target.TotalCost != (outputReversed ? 0m : expectedTargetValue))
+            || target.TotalCost != (outputReversed ? 0m : expectedTargetValue)
+            || (handoffProduce is not null && (stage2!.BaseQty != expectedStage2Qty || stage2.TotalCost != expectedStage2Value)))
             throw Invalid("Production output pools changed after replay planning.");
 
         var graph = await ProductionReplayDependencyPlanner.BuildAsync(db,
@@ -105,6 +145,20 @@ internal static class ProductionOutputIssueCostCorrectionWriter
                 || !graph.Edges.Any(e => e.ContributorMovementId == consumeId && e.ConsumerMovementId == produceId)
                 || graph.Edges.Any(e => !allowedIds.Contains(e.ContributorMovementId) || !allowedIds.Contains(e.ConsumerMovementId)))
                 throw Invalid("Production output terminal adjustment dependencies changed after replay planning.");
+        }
+        else if (handoff is not null)
+        {
+            var expectedOrderedCount = finished is not null ? 6 : 5;
+            var expectedEdgeCount = finished is not null ? 5 : 4;
+            if (graph.OrderedMovementIds.Count != expectedOrderedCount
+                || graph.Edges.Count != expectedEdgeCount
+                || !graph.Edges.Any(e => e.ContributorMovementId == issueId && e.ConsumerMovementId == consumeId)
+                || !graph.Edges.Any(e => e.ContributorMovementId == consumeId && e.ConsumerMovementId == produceId)
+                || !graph.Edges.Any(e => e.ContributorMovementId == produceId && e.ConsumerMovementId == handoffConsume!.Uid)
+                || !graph.Edges.Any(e => e.ContributorMovementId == handoffConsume!.Uid && e.ConsumerMovementId == handoffProduce!.Uid)
+                || finished is not null && !graph.Edges.Any(e => e.ContributorMovementId == handoffProduce!.Uid
+                    && e.ConsumerMovementId == finished.Uid))
+                throw Invalid("Production handoff dependencies changed after replay planning.");
         }
         else
         {
@@ -129,8 +183,17 @@ internal static class ProductionOutputIssueCostCorrectionWriter
             - (outputReversed ? 0m : correctedConsume));
         var correctedProduce = StockLedgerPrecision.Money(costs[produceId].TotalCost
             + correctedConsume - costs[consumeId].TotalCost);
-        if (correctedSource < 0m || correctedProduce < 0m
-            || source.BaseQty == 0m && correctedSource != 0m)
+        var correctedConsume2 = handoffConsume is null ? 0m
+            : handoffConsume.BaseQty == produce.BaseQty ? correctedProduce
+            : StockLedgerPrecision.Money(correctedProduce * handoffConsume.BaseQty / produce.BaseQty);
+        var correctedWip = handoffConsume is null ? correctedProduce
+            : StockLedgerPrecision.Money(correctedProduce - correctedConsume2);
+        var correctedProduce2 = handoffProduce is null ? 0m
+            : StockLedgerPrecision.Money(costs[handoffProduce.Uid].TotalCost
+                + correctedConsume2 - costs[handoffConsume!.Uid].TotalCost);
+        if (correctedSource < 0m || correctedProduce < 0m || correctedWip < 0m || correctedProduce2 < 0m
+            || source.BaseQty == 0m && correctedSource != 0m
+            || handoff is not null && target.BaseQty == 0m && correctedWip != 0m)
             throw Invalid("Production output correction would leave a negative or stranded pool value.");
 
         await ProductionCostRestatementWriter.AppendWithinRootAsync(context, expectedIssue,
@@ -148,12 +211,32 @@ internal static class ProductionOutputIssueCostCorrectionWriter
                 correctedConsume, StockLedgerPrecision.Money(correctedConsume / consume.BaseQty), ct);
             await ProductionCostRestatementWriter.AppendWithinRootAsync(context, costs[produceId],
                 correctedProduce, StockLedgerPrecision.Money(correctedProduce / produce.BaseQty), ct);
+            if (handoff is not null)
+            {
+                await ProductionCostRestatementWriter.AppendWithinRootAsync(context, costs[handoffConsume!.Uid],
+                    correctedConsume2, StockLedgerPrecision.Money(correctedConsume2 / handoffConsume.BaseQty), ct);
+                await ProductionCostRestatementWriter.AppendWithinRootAsync(context, costs[handoffProduce!.Uid],
+                    correctedProduce2, StockLedgerPrecision.Money(correctedProduce2 / handoffProduce.BaseQty), ct);
+            }
         }
         source.TotalCost = correctedSource;
         source.AverageUnitCost = source.BaseQty > 0m
             ? StockLedgerPrecision.Money(correctedSource / source.BaseQty) : 0m;
         sourcePool.TrackedValue = correctedSource;
-        if (!outputReversed && finished is null && transferOut is null && !hasOutputAdjustments)
+        if (!outputReversed && handoff is not null)
+        {
+            target.TotalCost = correctedWip;
+            target.AverageUnitCost = target.BaseQty > 0m
+                ? StockLedgerPrecision.Money(correctedWip / target.BaseQty) : 0m;
+            targetPool.TrackedValue = correctedWip;
+            if (finished is null)
+            {
+                stage2!.TotalCost = correctedProduce2;
+                stage2.AverageUnitCost = StockLedgerPrecision.Money(correctedProduce2 / handoffProduce!.BaseQty);
+                stage2Pool!.TrackedValue = correctedProduce2;
+            }
+        }
+        else if (!outputReversed && finished is null && transferOut is null && !hasOutputAdjustments)
         {
             target.TotalCost = correctedProduce;
             target.AverageUnitCost = StockLedgerPrecision.Money(correctedProduce / produce.BaseQty);

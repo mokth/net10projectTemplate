@@ -61,7 +61,8 @@ public sealed partial class IvInventoryPostingService
         if (plan?.Output is not null && plan.Output.ActiveFinishedGood is null
             && plan.Output.CorrectedReversedFinishedGood is null
             && plan.Output.ActiveWorkOrderTransfer is null
-            && plan.Output.OutputTerminalAdjustments is null)
+            && plan.Output.OutputTerminalAdjustments is null
+            && plan.Output.HandoffOutput is null)
         {
             var issueSteps = projectedSteps.Where(s => s.EventId == plan.HistoryId).ToArray();
             if (issueSteps.Length != 1 || issueSteps[0].SignedQuantity != -plan.Quantity
@@ -113,7 +114,8 @@ public sealed partial class IvInventoryPostingService
         if (plan?.Output is not null && plan.Output.ActiveFinishedGood is null
             && plan.Output.CorrectedReversedFinishedGood is null
             && plan.Output.ActiveWorkOrderTransfer is null
-            && plan.Output.OutputTerminalAdjustments is null)
+            && plan.Output.OutputTerminalAdjustments is null
+            && plan.Output.HandoffOutput is null)
         {
             var issues = projection.Issues.Where(i => !i.IsCandidate && i.Key.CompareTo(candidateKey) > 0
                 && StockReplayFifoMiRootWriter.HistoryId(i.Key) == plan.HistoryId).ToArray();
@@ -426,6 +428,15 @@ public sealed partial class IvInventoryPostingService
             await ProductionOutputTerminalAdjustmentCorrectionWriter.AppendWithinRootAsync(
                 context, plan.Output.ProduceMovementId!.Value,
                 outputAdjustments.ExpectedProduce, outputAdjustments.ExpectedAdjustments, cancellationToken);
+        }
+        else if (plan.Output.HandoffOutput is { } handoffOutput)
+        {
+            await ProductionOutputIssueCostCorrectionWriter.AppendWithinRootAsync(
+                context, plan.Output.IssueMovementId!.Value,
+                plan.Output.ConsumeMovementId!.Value, plan.Output.ProduceMovementId!.Value,
+                outputReversed: false, plan.EffectiveCost, cancellationToken,
+                handoff: new HandoffStageCorrection(
+                    handoffOutput.ConsumeMovementId, handoffOutput.ProduceMovementId));
         }
         else
         {

@@ -73,25 +73,42 @@ public sealed partial class IvInventoryPostingService
     {
         var output = plan.Output!;
         var fg = output.ActiveFinishedGood!;
+        var handoff = output.HandoffOutput;
+        var ids = handoff is null
+            ? new[] { plan.MovementId, output.ConsumeMovementId!.Value, output.ProduceMovementId!.Value, fg.MovementId }
+            : new[]
+            {
+                plan.MovementId, output.ConsumeMovementId!.Value, output.ProduceMovementId!.Value,
+                handoff.ConsumeMovementId, handoff.ProduceMovementId, fg.MovementId
+            };
         var movements = await db.ProductionBalLotMovements.AsNoTracking()
-            .Where(m => m.Uid == plan.MovementId || m.Uid == output.ConsumeMovementId
-                || m.Uid == output.ProduceMovementId || m.Uid == fg.MovementId)
+            .Where(m => ids.Contains(m.Uid))
             .ToDictionaryAsync(m => m.Uid, ct);
-        if (movements.Count != 4 || projectedIssueQuantity != plan.Quantity
+        if (movements.Count != ids.Length || projectedIssueQuantity != plan.Quantity
             || projectedIssueValue < 0m
             || costMethod is not (StockCostMethods.MovingAverage or StockCostMethods.Fifo))
             throw ProductionReplayError("The finished-good issue projection is incomplete.");
         var issue = movements[plan.MovementId];
-        var consume = movements[output.ConsumeMovementId!.Value];
-        var produce = movements[output.ProduceMovementId!.Value];
+        var consume1 = movements[output.ConsumeMovementId!.Value];
+        var produce1 = movements[output.ProduceMovementId!.Value];
+        var consume = handoff is null ? consume1 : movements[handoff.ConsumeMovementId];
+        var produce = handoff is null ? produce1 : movements[handoff.ProduceMovementId];
         var finished = movements[fg.MovementId];
-        var costs = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch,
-            [consume.Uid, produce.Uid], ct);
+        var costIds = handoff is null
+            ? new[] { consume1.Uid, produce1.Uid }
+            : new[] { consume1.Uid, produce1.Uid, consume.Uid, produce.Uid };
+        var costs = await ProductionReplayEffectiveCostReader.ReadAsync(db, company, branch, costIds, ct);
         var desiredIssue = projectedIssueValue;
-        var desiredConsume = consume.BaseQty == issue.BaseQty ? desiredIssue
-            : StockLedgerPrecision.Money(desiredIssue * consume.BaseQty / issue.BaseQty);
-        var desiredProduce = StockLedgerPrecision.Money(costs[produce.Uid].TotalCost
-            + desiredConsume - costs[consume.Uid].TotalCost);
+        var desiredConsume1 = consume1.BaseQty == issue.BaseQty ? desiredIssue
+            : StockLedgerPrecision.Money(desiredIssue * consume1.BaseQty / issue.BaseQty);
+        var desiredProduce1 = StockLedgerPrecision.Money(costs[produce1.Uid].TotalCost
+            + desiredConsume1 - costs[consume1.Uid].TotalCost);
+        var desiredConsume = handoff is null ? desiredConsume1
+            : consume.BaseQty == produce1.BaseQty ? desiredProduce1
+            : StockLedgerPrecision.Money(desiredProduce1 * consume.BaseQty / produce1.BaseQty);
+        var desiredProduce = handoff is null ? desiredProduce1
+            : StockLedgerPrecision.Money(costs[produce.Uid].TotalCost
+                + desiredConsume - costs[consume.Uid].TotalCost);
         var fact = await db.ProductionFinishedGoodFactRows.AsNoTracking()
             .SingleAsync(f => f.BatchId == fg.BatchId && f.ProductionMovementId == fg.MovementId
                 && f.ReversesFactId == null, ct);
@@ -346,10 +363,15 @@ public sealed partial class IvInventoryPostingService
             context, [plan.MovementId], ct))[plan.MovementId];
         if (issue.BaseQty != plan.Quantity || issue.TotalCost != fg.ProjectedIssueValue)
             throw ProductionReplayError("The finished-good source changed after replay planning.");
+        var handoff = output.HandoffOutput;
         await ProductionOutputIssueCostCorrectionWriter.AppendWithinRootAsync(context,
             output.IssueMovementId!.Value, output.ConsumeMovementId!.Value,
             output.ProduceMovementId!.Value, false, plan.EffectiveCost, ct,
-            fg.MovementId, fg.CurrentValue);
+            handoff is null ? fg.MovementId : null,
+            handoff is null ? fg.CurrentValue : 0m,
+            handoff: handoff is null ? null : new HandoffStageCorrection(
+                handoff.ConsumeMovementId, handoff.ProduceMovementId,
+                fg.MovementId, fg.CurrentValue));
         var delta = await ProductionFinishedGoodWacReceiptCorrection.AppendWithinRootAsync(context,
             fg.HistoryId, fg.ReceiptFactId, fg.ProjectedValue, 1000001, 1000002, ct);
         if (delta is null || fg.ProjectedValue == fg.CurrentValue)
@@ -414,10 +436,11 @@ public sealed partial class IvInventoryPostingService
         {
             await ApplyFifoFinishedGoodCostStateAsync(context, fg, ct);
         }
+        var targetProduceId = handoff?.ProduceMovementId ?? output.ProduceMovementId!.Value;
         var finalCost = (await ProductionEffectiveCostResolver.ResolveAsync(db,
-            context.CompanyCode, context.BranchCode, [fg.MovementId, output.ProduceMovementId.Value], ct));
+            context.CompanyCode, context.BranchCode, [fg.MovementId, targetProduceId], ct));
         if (finalCost[fg.MovementId].TotalCost != fg.ProjectedValue
-            || finalCost[output.ProduceMovementId.Value].TotalCost != fg.ProjectedProduceValue
+            || finalCost[targetProduceId].TotalCost != fg.ProjectedProduceValue
             || pool.TrackedValue != remaining)
             throw ProductionReplayError("Finished-good and Production values failed replay reconciliation.");
         return repricedHistoryIds;
