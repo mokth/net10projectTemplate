@@ -212,6 +212,7 @@ public class BomExplosionServiceTests : IAsyncLifetime
             Version = draft.Data.Version,
             BomHdrId = draft.Data.BomHdrId,
             HeaderRowVersion = draft.Data.HeaderRowVersion,
+            OriginalStructureFingerprint = draft.Data.OriginalStructureFingerprint,
             Status = draft.Data.Status,
             BaseQty = 1m,
             Lines = draft.Data.Lines

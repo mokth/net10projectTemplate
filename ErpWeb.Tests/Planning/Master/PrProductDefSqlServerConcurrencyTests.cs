@@ -5,8 +5,10 @@ using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using System.Data.Common;
 
 namespace ErpWeb.Tests.Planning.Master;
 
@@ -88,26 +90,29 @@ public sealed class PrProductDefSqlServerConcurrencyTests
             return;
         }
 
-        await using var host = await Host.CreateAsync(cs);
-        var first = host.CreateSut();
-        var second = host.CreateSut();
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await using var host = await Host.CreateAsync(cs);
+            var first = host.CreateSut();
+            var second = host.CreateSut();
 
-        var cloneA = first.CreateNewVersionAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
-        var cloneB = second.CreateNewVersionAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
-        var results = await Task.WhenAll(cloneA, cloneB);
+            var cloneA = first.CreateNewVersionAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
+            var cloneB = second.CreateNewVersionAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
+            var results = await Task.WhenAll(cloneA, cloneB);
 
-        Assert.Contains(results, x => x.Succeeded);
-        var versions = results.Where(x => x.Succeeded).Select(x => x.Data!.Version).ToList();
-        Assert.Equal(versions.Count, versions.Distinct().Count());
-        Assert.All(results.Where(x => !x.Succeeded),
-            x => Assert.Equal(IvMasterErrorCode.Concurrency, x.ErrorCode));
+            Assert.Contains(results, x => x.Succeeded);
+            var versions = results.Where(x => x.Succeeded).Select(x => x.Data!.Version).ToList();
+            Assert.Equal(versions.Count, versions.Distinct().Count());
+            Assert.All(results.Where(x => !x.Succeeded),
+                x => Assert.Equal(IvMasterErrorCode.Concurrency, x.ErrorCode));
 
-        await using var db = await host.Factory.CreateDbContextAsync();
-        var headers = await db.PrBomHdrs
-            .Where(x => x.CompanyCode == Host.Company && x.ProdCode == host.ProdCode)
-            .ToListAsync();
-        Assert.True(headers.Count >= 2);
-        Assert.DoesNotContain(headers, x => x.Status == PrBomStatuses.Draft && !db.PrDefBOMs.Any(l => l.BomHdrId == x.Uid));
+            await using var db = await host.Factory.CreateDbContextAsync();
+            var headers = await db.PrBomHdrs
+                .Where(x => x.CompanyCode == Host.Company && x.ProdCode == host.ProdCode)
+                .ToListAsync();
+            Assert.True(headers.Count >= 2);
+            Assert.DoesNotContain(headers, x => x.Status == PrBomStatuses.Draft && !db.PrDefBOMs.Any(l => l.BomHdrId == x.Uid));
+        }
     }
 
     [Fact]
@@ -188,6 +193,176 @@ public sealed class PrProductDefSqlServerConcurrencyTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Child_changed_or_deleted_after_load_rejects_stale_save(bool delete)
+    {
+        var cs = TryResolveScratch();
+        if (cs is null) return;
+        await using var host = await Host.CreateAsync(cs);
+        var sut = host.CreateSut();
+        var loaded = await sut.GetAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
+        Assert.True(loaded.Succeeded, loaded.Message);
+        var lineId = Assert.Single(loaded.Data!.Lines).Uid;
+        await using (var db = await host.Factory.CreateDbContextAsync())
+        {
+            var line = await db.PrDefBOMs.SingleAsync(x => x.Uid == lineId);
+            if (delete) db.PrDefBOMs.Remove(line);
+            else line.StdQty = 7m;
+            await db.SaveChangesAsync();
+        }
+
+        loaded.Data.Remark = "stale edit";
+        var save = await sut.SaveAsync(loaded.Data, false, false);
+        Assert.False(save.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, save.ErrorCode);
+        await using var check = await host.Factory.CreateDbContextAsync();
+        var persisted = await check.PrDefBOMs.SingleOrDefaultAsync(x => x.Uid == lineId);
+        if (delete) Assert.Null(persisted);
+        else Assert.Equal(7m, persisted!.StdQty);
+        Assert.NotEqual("stale edit", (await check.PrBomHdrs.SingleAsync(x => x.Uid == loaded.Data.BomHdrId)).Remark);
+    }
+
+    [Fact]
+    public async Task Intentional_child_removal_succeeds_when_structure_is_unchanged()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null) return;
+        await using var host = await Host.CreateAsync(cs);
+        var sut = host.CreateSut();
+        var loaded = await sut.GetAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
+        Assert.True(loaded.Succeeded, loaded.Message);
+        loaded.Data!.Lines.Add(new PrProductDefLineVm
+        {
+            ICode = host.ExtraComponent, StdQty = 2m, Warehouse = "WH01", SeqNo = 2
+        });
+        var expanded = await sut.SaveAsync(loaded.Data, false, false);
+        Assert.True(expanded.Succeeded, expanded.Message);
+        Assert.Equal(2, expanded.Data!.Lines.Count);
+        expanded.Data.Lines.RemoveAll(x => x.ICode != host.ExtraComponent);
+        var saved = await sut.SaveAsync(expanded.Data, false, false);
+        Assert.True(saved.Succeeded, saved.Message);
+        Assert.Equal(host.ExtraComponent, Assert.Single(saved.Data!.Lines).ICode);
+    }
+
+    [Fact]
+    public async Task Existing_definition_without_original_structure_fingerprint_requires_reload()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null) return;
+        await using var host = await Host.CreateAsync(cs);
+        var sut = host.CreateSut();
+        var loaded = await sut.GetAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
+        Assert.True(loaded.Succeeded, loaded.Message);
+        loaded.Data!.OriginalStructureFingerprint = null;
+        var save = await sut.SaveAsync(loaded.Data, false, false);
+        Assert.False(save.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, save.ErrorCode);
+        await using var db = await host.Factory.CreateDbContextAsync();
+        Assert.Single(await db.PrDefBOMs.Where(x => x.BomHdrId == loaded.Data.BomHdrId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task Branch_default_inserted_after_load_is_not_removed_by_stale_save()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null) return;
+        await using var host = await Host.CreateAsync(cs);
+        var sut = host.CreateSut();
+        var loaded = await sut.GetAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
+        Assert.True(loaded.Succeeded, loaded.Message);
+        var lineId = Assert.Single(loaded.Data!.Lines).Uid;
+        await using (var db = await host.Factory.CreateDbContextAsync())
+        {
+            var line = await db.PrDefBOMs.SingleAsync(x => x.Uid == lineId);
+            db.PrBomMaterialBranchDefaults.Add(new PrBomMaterialBranchDefault
+            {
+                MaterialId = lineId, BranchCode = line.BranchCode ?? Host.Branch,
+                WarehouseCode = line.Warehouse ?? "WH01", RowVersion = []
+            });
+            await db.SaveChangesAsync();
+        }
+        var save = await sut.SaveAsync(loaded.Data, false, false);
+        Assert.False(save.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, save.ErrorCode);
+        await using var check = await host.Factory.CreateDbContextAsync();
+        Assert.Single(await check.PrBomMaterialBranchDefaults.Where(x => x.MaterialId == lineId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task Child_insert_during_save_is_serialized_and_preserved()
+    {
+        var cs = TryResolveScratch();
+        if (cs is null) return;
+        var barrier = new BomDeleteBarrier();
+        await using var host = await Host.CreateAsync(cs, barrier);
+        var sut = host.CreateSut();
+        var loaded = await sut.GetAsync(host.ProdCode, PrProductDefinitionCodes.Standard);
+        Assert.True(loaded.Succeeded, loaded.Message);
+        loaded.Data!.Remark = "save with concurrent child";
+        barrier.Arm();
+        var saveTask = sut.SaveAsync(loaded.Data, false, false);
+        try
+        {
+            await barrier.DeleteReached.WaitAsync(TimeSpan.FromSeconds(30));
+            var insertTask = Task.Run(async () =>
+            {
+                await using var db = await host.Factory.CreateDbContextAsync();
+                db.PrDefBOMs.Add(new PrDefBOM
+                {
+                    BomHdrId = loaded.Data.BomHdrId, CompanyCode = Host.Company,
+                    ProdCode = host.ProdCode, ICode = host.ExtraComponent, StdQty = 1m,
+                    StdUom = "PCS", SeqNo = 99, Warehouse = "WH01",
+                    IssueMethod = PrMaterialIssueMethods.Manual,
+                    SupplySource = PrMaterialSupplySources.Purchased, RowVersion = []
+                });
+                await db.SaveChangesAsync();
+            });
+            await barrier.InsertReached.WaitAsync(TimeSpan.FromSeconds(30));
+            await Task.Delay(300);
+            Assert.False(insertTask.IsCompleted, "The concurrent insert should wait for the definition save.");
+            barrier.Release();
+            var saved = await saveTask.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(saved.Succeeded, saved.Message);
+            await insertTask.WaitAsync(TimeSpan.FromSeconds(30));
+            await using var check = await host.Factory.CreateDbContextAsync();
+            Assert.True(await check.PrDefBOMs.AnyAsync(x => x.BomHdrId == loaded.Data.BomHdrId
+                && x.ICode == host.ExtraComponent));
+        }
+        finally { barrier.Release(); }
+    }
+
+    private sealed class BomDeleteBarrier : DbCommandInterceptor
+    {
+        private int _armed;
+        private readonly TaskCompletionSource _deleteReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _insertReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task DeleteReached => _deleteReached.Task;
+        public Task InsertReached => _insertReached.Task;
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+        public void Release() => _release.TrySetResult();
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _armed) == 2
+                && command.CommandText.Contains("INSERT INTO [PrDefBOM]", StringComparison.OrdinalIgnoreCase)
+                && _deleteReached.Task.IsCompleted)
+                _insertReached.TrySetResult();
+            if (command.CommandText.Contains("DELETE FROM [PrDefBOM]", StringComparison.OrdinalIgnoreCase)
+                && Interlocked.CompareExchange(ref _armed, 2, 1) == 1)
+            {
+                _deleteReached.TrySetResult();
+                await _release.Task.WaitAsync(TimeSpan.FromSeconds(45), cancellationToken);
+            }
+            return result;
+        }
+    }
+
     private sealed class Host : IAsyncDisposable
     {
         public const string Company = "DEMO";
@@ -204,9 +379,11 @@ public sealed class PrProductDefSqlServerConcurrencyTests
         public string ProdCode { get; }
         public string ExtraComponent { get; }
 
-        public static async Task<Host> CreateAsync(string connectionString)
+        public static async Task<Host> CreateAsync(string connectionString, DbCommandInterceptor? interceptor = null)
         {
-            var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connectionString).Options;
+            var builder = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connectionString);
+            if (interceptor is not null) builder.AddInterceptors(interceptor);
+            var options = builder.Options;
             IDbContextFactory<AppDbContext> factory = new TestDbContextFactory(options);
             await using (var db = await factory.CreateDbContextAsync())
             {

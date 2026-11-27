@@ -176,6 +176,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
             Version = get.Data.Version,
             BomHdrId = get.Data.BomHdrId,
             HeaderRowVersion = get.Data.HeaderRowVersion,
+            OriginalStructureFingerprint = get.Data.OriginalStructureFingerprint,
             Status = get.Data.Status,
             BaseQty = 1m,
             Lines =
@@ -197,6 +198,27 @@ public class PrProductDefServiceTests : IAsyncLifetime
         var del = await sut.DeleteAsync([new PrProductDefinitionKey { ProdCode = "FG001", DefinitionCode = PrProductDefinitionCodes.Standard }]);
         Assert.True(del.Succeeded, del.Message);
         Assert.False((await sut.GetAsync("FG001", PrProductDefinitionCodes.Standard)).Succeeded);
+    }
+
+    [Fact]
+    public async Task Save_rejects_child_change_even_without_provider_rowversion()
+    {
+        var sut = CreateSut();
+        var draft = await sut.SaveAsync(Bom("FG001", ("RM001", 1m)), true, false);
+        Assert.True(draft.Succeeded, draft.Message);
+        var lineId = Assert.Single(draft.Data!.Lines).Uid;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var line = await db.PrDefBOMs.SingleAsync(x => x.Uid == lineId);
+            line.StdQty = 3m;
+            await db.SaveChangesAsync();
+        }
+        draft.Data.Remark = "stale edit";
+        var saved = await sut.SaveAsync(draft.Data, false, false);
+        Assert.False(saved.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, saved.ErrorCode);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(3m, (await check.PrDefBOMs.SingleAsync(x => x.Uid == lineId)).StdQty);
     }
 
     [Fact]
@@ -291,6 +313,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
             Version = get.Data!.Version,
             BomHdrId = get.Data.BomHdrId,
             HeaderRowVersion = get.Data.HeaderRowVersion,
+            OriginalStructureFingerprint = get.Data.OriginalStructureFingerprint,
             Status = get.Data.Status,
             BaseQty = 1m,
             Lines =
@@ -372,6 +395,7 @@ public class PrProductDefServiceTests : IAsyncLifetime
             Version = draft.Data!.Version,
             BomHdrId = draft.Data.BomHdrId,
             HeaderRowVersion = draft.Data.HeaderRowVersion,
+            OriginalStructureFingerprint = draft.Data.OriginalStructureFingerprint,
             Status = draft.Data.Status,
             BaseQty = 1m,
             Lines = draft.Data.Lines

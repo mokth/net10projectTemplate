@@ -319,6 +319,12 @@ public sealed class PrProductDefEditVm
     /// <summary>Header concurrency token from Get.</summary>
     public byte[]? HeaderRowVersion { get; set; }
 
+    /// <summary>
+    /// Fingerprint of the persisted child structure when the definition was loaded.
+    /// Retained independently of editable lines so intentional deletions remain possible.
+    /// </summary>
+    public string? OriginalStructureFingerprint { get; set; }
+
     public List<PrProductDefLineVm> Lines { get; set; } = [];
     public List<PrProductDefOperationVm> Operations { get; set; } = [];
 }

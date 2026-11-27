@@ -118,6 +118,16 @@ public sealed class ProductDefinitionAuthoringTests : IAsyncLifetime
         Assert.Null(material.ProducingRouteStepId);
         Assert.Equal(PrMaterialIssueMethods.Manual, material.IssueMethod);
         Assert.Equal(PrMaterialSupplySources.Purchased, material.SupplySource);
+
+        // A machine option can change without advancing the BOM header token.
+        // An older editor must not replace it with the values it originally read.
+        machine.CycleSeconds = 45m;
+        await db.SaveChangesAsync();
+        var stale = await sut.SaveAsync(save.Data!, isNew: false, activate: false);
+        Assert.False(stale.Succeeded);
+        Assert.Equal(IvMasterErrorCode.Concurrency, stale.ErrorCode);
+        await db.Entry(machine).ReloadAsync();
+        Assert.Equal(45m, machine.CycleSeconds);
     }
 
     [Fact]

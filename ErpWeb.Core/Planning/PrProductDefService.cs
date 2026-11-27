@@ -2,12 +2,14 @@ using System.Data;
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Production;
+using ErpWeb.Core.StockLedger;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Planning;
 using ErpWeb.Model.Entities.Production;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Data.SqlClient;
 
 namespace ErpWeb.Core.Planning;
 
@@ -276,8 +278,11 @@ public sealed class PrProductDefService : IPrProductDefService
             .GroupBy(x => x.ProcessCd)
             .ToDictionaryAsync(x => x.Key, x => x.First().ProcessDes, StringComparer.OrdinalIgnoreCase, cancellationToken);
 
-        return IvMasterOperationResult<PrProductDefEditVm>.Ok(
-            MapEdit(header, product, lines, mfgByCode, operations, routeStepKeyById, wcDescriptions, operationDescriptions));
+        var result = MapEdit(header, product, lines, mfgByCode, operations,
+            routeStepKeyById, wcDescriptions, operationDescriptions);
+        result.OriginalStructureFingerprint = await StructureFingerprintAsync(
+            db, header.Uid, lines, operations, routeSteps, cancellationToken);
+        return IvMasterOperationResult<PrProductDefEditVm>.Ok(result);
     }
 
     public async Task<IvMasterOperationResult<PrBomStructureResult>> GetStructureTreeAsync(
@@ -479,6 +484,11 @@ public sealed class PrProductDefService : IPrProductDefService
                 if (stale is not null)
                 {
                     return stale;
+                }
+                if (string.IsNullOrWhiteSpace(model.OriginalStructureFingerprint))
+                {
+                    return FailVm(IvMasterErrorCode.Concurrency,
+                        "This product definition must be reloaded before it can be saved.");
                 }
 
                 definitionName = Truncate(
@@ -937,6 +947,7 @@ public sealed class PrProductDefService : IPrProductDefService
             else
             {
                 header = existingHeader!;
+                await LockProductDefinitionForWriteAsync(db, company, prodCode, definitionCode, cancellationToken);
                 if (IsSqlServerProvider(db))
                 {
                     await db.Entry(header).ReloadAsync(cancellationToken);
@@ -958,6 +969,18 @@ public sealed class PrProductDefService : IPrProductDefService
                 var persistedLines = await db.PrDefBOMs
                     .Where(x => x.BomHdrId == header.Uid)
                     .ToListAsync(cancellationToken);
+                var fingerprintOperations = await db.PrBomOperations.AsNoTracking()
+                    .Where(x => x.BomHdrId == header.Uid)
+                    .Include(x => x.Machines).ThenInclude(x => x.Labours)
+                    .AsSplitQuery().ToListAsync(cancellationToken);
+                var fingerprint = await StructureFingerprintAsync(db, header.Uid, persistedLines,
+                    fingerprintOperations, persistedSteps, cancellationToken);
+                if (!string.Equals(fingerprint, model.OriginalStructureFingerprint, StringComparison.Ordinal))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return FailVm(IvMasterErrorCode.Concurrency,
+                        "This product definition was changed by another user. Reload and try again.");
+                }
                 var refusal = await ClassifyPersistedSourceShapeAsync(
                     db, header, persistedOps, persistedSteps, persistedLines, cancellationToken);
                 if (refusal is not null)
@@ -1059,6 +1082,12 @@ public sealed class PrProductDefService : IPrProductDefService
             return FailVm(IvMasterErrorCode.Concurrency,
                 "This product definition was changed by another user. Reload and try again.");
         }
+        catch (Exception ex) when (IsSqlServerLockContention(ex))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "This product definition is being changed by another user. Reload and try again.");
+        }
         catch (DbUpdateException ex) when (IsUniqueIndexConflict(ex))
         {
             await tx.RollbackAsync(cancellationToken);
@@ -1115,6 +1144,7 @@ public sealed class PrProductDefService : IPrProductDefService
         await using var tx = await BeginProductDefWriteTransactionAsync(db, cancellationToken);
         try
         {
+        await LockProductDefinitionForWriteAsync(db, company, code, defCode, cancellationToken);
         var source = fromVersion is int v
             ? await db.PrBomHdrs.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.CompanyCode == company
@@ -1293,6 +1323,12 @@ public sealed class PrProductDefService : IPrProductDefService
             await tx.RollbackAsync(cancellationToken);
             return FailVm(IvMasterErrorCode.Concurrency,
                 "This product definition was changed by another user. Reload and try again.");
+        }
+        catch (Exception ex) when (IsSqlServerLockContention(ex))
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return FailVm(IvMasterErrorCode.Concurrency,
+                "This product definition is being changed by another user. Reload and try again.");
         }
         catch (DbUpdateException ex) when (IsUniqueIndexConflict(ex))
         {
@@ -2402,6 +2438,72 @@ public sealed class PrProductDefService : IPrProductDefService
         }
 
         return (operationsByKey, routeStepsByKey);
+    }
+
+    // Both an edit and a clone can replace/read the same revision graph.
+    // Update-lock the definition's version range before reading it so two
+    // serializable clones do not deadlock while upgrading shared locks.
+    private static async Task LockProductDefinitionForWriteAsync(
+        AppDbContext db, string company, string product, string definition, CancellationToken cancellationToken)
+    {
+        if (!IsSqlServerProvider(db))
+            return;
+
+        await db.PrBomHdrs.FromSqlInterpolated($"""
+            SELECT * FROM dbo.PrBomHdr WITH (UPDLOCK, HOLDLOCK)
+            WHERE CompanyCode = {company} AND ProdCode = {product} AND DefinitionCode = {definition}
+            """).AsNoTracking().Select(x => x.Uid).ToArrayAsync(cancellationToken);
+    }
+
+    private static bool IsSqlServerLockContention(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            if (current is SqlException sql && sql.Errors.Cast<SqlError>()
+                .Any(error => error.Number is 1205 or 1222))
+                return true;
+        return false;
+    }
+
+    // The snapshot is based on persisted scalar values, including rowversions,
+    // rather than editable view-model rows. This permits intentional deletes
+    // while detecting inserts, deletes and edits made since GetAsync.
+    private static async Task<string> StructureFingerprintAsync(
+        AppDbContext db, long headerId,
+        IReadOnlyCollection<PrDefBOM> lines,
+        IReadOnlyCollection<PrBomOperation> operations,
+        IReadOnlyCollection<PrBomRouteStep> steps,
+        CancellationToken cancellationToken)
+    {
+        var operationIds = operations.Select(x => x.Uid).ToArray();
+        var materialIds = lines.Select(x => x.Uid).ToArray();
+        var requirements = await db.PrBomLabourRequirements.AsNoTracking()
+            .Where(x => operationIds.Contains(x.OperationId)).ToArrayAsync(cancellationToken);
+        var defaults = await db.PrBomMaterialBranchDefaults.AsNoTracking()
+            .Where(x => materialIds.Contains(x.MaterialId)).ToArrayAsync(cancellationToken);
+        var machines = operations.SelectMany(x => x.Machines).OrderBy(x => x.Uid).ToArray();
+        var labours = machines.SelectMany(x => x.Labours).OrderBy(x => x.Uid).ToArray();
+
+        object[] Rows<T>(IEnumerable<T> rows) where T : class
+        {
+            var entityType = db.Model.FindEntityType(typeof(T))
+                ?? throw new InvalidOperationException($"Unmapped product definition type {typeof(T).Name}.");
+            var properties = entityType.GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).ToArray();
+            if (properties.Any(p => p.PropertyInfo is null))
+                throw new InvalidOperationException($"Product definition type {typeof(T).Name} has unmapped snapshot values.");
+            return rows.Select(row => properties.ToDictionary(
+                p => p.Name, p => p.PropertyInfo!.GetValue(row), StringComparer.Ordinal)).Cast<object>().ToArray();
+        }
+
+        return StockPostingFingerprint.Create(new { Kind = "ProductDefinitionStructure", Version = 1, headerId }, new
+        {
+            Lines = Rows(lines.OrderBy(x => x.Uid)),
+            Operations = Rows(operations.OrderBy(x => x.Uid)),
+            Steps = Rows(steps.OrderBy(x => x.Uid)),
+            Machines = Rows(machines),
+            Labours = Rows(labours),
+            Requirements = Rows(requirements.OrderBy(x => x.Uid)),
+            Defaults = Rows(defaults.OrderBy(x => x.Uid))
+        }).SourceSnapshotHash;
     }
 
     private static async Task<IDbContextTransaction> BeginProductDefWriteTransactionAsync(
