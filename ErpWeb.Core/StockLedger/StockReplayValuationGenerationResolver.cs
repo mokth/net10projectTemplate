@@ -97,14 +97,18 @@ public static class StockReplayValuationGenerationResolver
                 throw Corrupt($"Valuation fact {reversal.Id} is not an exact unique reversal of {priorId}.");
         }
 
+        var factsByHistory = facts
+            .Where(x => x.InventoryHistoryId.HasValue)
+            .ToLookup(x => x.InventoryHistoryId!.Value);
+
         foreach (var history in activeHistories)
         {
             if (history.Id <= 0 || result.ContainsKey(history.Id)
                 || history.LedgerVersion != 2 || history.EntryRole != "ORIGINAL")
                 throw Corrupt($"History {history.Id} is not one unique active V2 original.");
 
-            var active = facts.Where(x => x.InventoryHistoryId == history.Id
-                    && x.ReversesValuationFactId is null
+            var active = factsByHistory[history.Id]
+                .Where(x => x.ReversesValuationFactId is null
                     && !reversalChildren.ContainsKey(x.Id))
                 .OrderBy(x => x.StockPostingId).ThenBy(x => x.PostingLineNo)
                 .ThenBy(x => x.SplitOrdinal).ToArray();

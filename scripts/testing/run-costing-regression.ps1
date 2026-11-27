@@ -13,7 +13,7 @@ $patterns = @(
     'StockReplayFifoLayerAllocatorTests', 'StockReplayFifoReversedIssueProjectorTests',
     'StockReplayStandardSimulatorTests', 'StockReplayValuationGenerationResolverTests',
     'InventoryValuationServiceTests', 'IvGoodsReceiptServiceTests', 'IvMiscReceiptServiceTests',
-    'IvStockTransferPostingServiceTests', 'IvPeriodCloseServiceTests', 'IvPeriodCloseGuardTests',
+    'IvStockTransferPostingServiceTests', 'IvPeriodCloseServiceTests', 'IvPeriodCloseGuardTests', 'V2PeriodCloseReplayReconciliationTests',
     'CostingDiagnosticCenterTests', 'QaPhysicalHoldTests', 'QaIncomingGrantTests',
     'QaFgGrantTests', 'QaLogicalHoldTests',
     'SubconPostBlockedTests', 'SubconModeTests', 'SubconLiveCustodyPostingTests',
