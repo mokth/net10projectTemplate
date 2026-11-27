@@ -185,7 +185,9 @@ $patterns = @(
     'Partially_billed_do_sales_return_attributes_cogs_reduction_only_to_returned_invoice',
     'Scrap_before_count_posts_rolls_back_and_reposts',
     'Vendor_return_before_count_updates_po_return_qty_and_restores_on_rollback',
-    'Goods_receipt_before_count_reprices_changed_cost_updates_po_and_restores_on_rollback'
+    'Goods_receipt_before_count_reprices_changed_cost_updates_po_and_restores_on_rollback',
+    'Public_backdated_FIFO_count_posts_rolls_back_and_reposts_with_bounded_tail',
+    'Posted_return_rejects_legacy_rollback_after_either_ledger_is_restated'
 )
 $required = @(
     'StockLedgerInfrastructureTests', 'StockReplayWacSimulatorTests', 'StockReplayFifoLayerAllocatorTests',
@@ -412,7 +414,9 @@ $required = @(
     'Invoice_cogs_proof_pro_rates_partially_billed_linked_do_and_rejects_overbilled_do',
     'Scrap_before_count_posts_rolls_back_and_reposts',
     'Vendor_return_before_count_updates_po_return_qty_and_restores_on_rollback',
-    'Goods_receipt_before_count_reprices_changed_cost_updates_po_and_restores_on_rollback'
+    'Goods_receipt_before_count_reprices_changed_cost_updates_po_and_restores_on_rollback',
+    'Public_backdated_FIFO_count_posts_rolls_back_and_reposts_with_bounded_tail',
+    'Posted_return_rejects_legacy_rollback_after_either_ledger_is_restated'
 )
 $filter = '(' + (($patterns | ForEach-Object { 'FullyQualifiedName~' + $_ }) -join '|') +
     ')&FullyQualifiedName!~SqlServer&Category!=SqlServer'

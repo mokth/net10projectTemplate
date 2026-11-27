@@ -1,6 +1,8 @@
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace ErpWeb.Core.Numbering;
 
@@ -36,38 +38,72 @@ public sealed class RunningNumberService : IRunningNumberService
         var (company, key) = Normalize(companyCode, docKey);
         var isSqlServer = string.Equals(db.Database.ProviderName, SqlServerProvider, StringComparison.Ordinal);
 
-        for (var attempt = 0; attempt < 3; attempt++)
+        for (var attempt = 0; attempt < 5; attempt++)
         {
-            var row = await LoadForUpdateAsync(db, company, key, isSqlServer, cancellationToken);
-            if (row is null)
+            IDbContextTransaction? ownedTx = null;
+            MsRunningNo? row = null;
+            if (isSqlServer && db.Database.CurrentTransaction is null)
+                ownedTx = await db.Database.BeginTransactionAsync(cancellationToken);
+            try
             {
-                row = new MsRunningNo
+                row = await LoadForUpdateAsync(db, company, key, isSqlServer, cancellationToken);
+                if (row is null)
                 {
-                    CompanyCode = company,
-                    DocKey = key,
-                    LastNo = 0,
-                    CreatedDate = DateTime.UtcNow
-                };
-                db.MsRunningNos.Add(row);
-                try
-                {
-                    await db.SaveChangesAsync(cancellationToken);
-                }
-                catch (DbUpdateException)
-                {
-                    db.Entry(row).State = EntityState.Detached;
-                    continue;
-                }
-            }
+                    row = new MsRunningNo
+                    {
+                        CompanyCode = company,
+                        DocKey = key,
+                        LastNo = 1,
+                        CreatedDate = DateTime.UtcNow
+                    };
+                    db.MsRunningNos.Add(row);
+                    try
+                    {
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    catch (DbUpdateException)
+                    {
+                        db.Entry(row).State = EntityState.Detached;
+                        if (ownedTx is not null)
+                            await ownedTx.RollbackAsync(cancellationToken);
+                        continue;
+                    }
 
-            row.LastNo += 1;
-            row.ModifiedDate = DateTime.UtcNow;
-            await db.SaveChangesAsync(cancellationToken);
-            return row.LastNo;
+                    if (ownedTx is not null)
+                        await ownedTx.CommitAsync(cancellationToken);
+                    return 1;
+                }
+
+                row.LastNo += 1;
+                row.ModifiedDate = DateTime.UtcNow;
+                await db.SaveChangesAsync(cancellationToken);
+                if (ownedTx is not null)
+                    await ownedTx.CommitAsync(cancellationToken);
+                return row.LastNo;
+            }
+            catch (Exception ex) when (isSqlServer && ownedTx is not null && IsRetryableSqlRace(ex))
+            {
+                if (row is not null)
+                    db.Entry(row).State = EntityState.Detached;
+                await ownedTx.RollbackAsync(cancellationToken);
+            }
+            finally
+            {
+                if (ownedTx is not null)
+                    await ownedTx.DisposeAsync();
+            }
         }
 
         throw new InvalidOperationException("Unable to allocate the next running number.");
     }
+
+    private static bool IsRetryableSqlRace(Exception exception) =>
+        exception switch
+        {
+            SqlException sql => sql.Number is 1205 or 2601 or 2627,
+            DbUpdateException dbEx when dbEx.InnerException is not null => IsRetryableSqlRace(dbEx.InnerException),
+            _ => false
+        };
 
     private static async Task<MsRunningNo?> LoadForUpdateAsync(
         AppDbContext db,

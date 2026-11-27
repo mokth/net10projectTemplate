@@ -773,18 +773,20 @@ public static class StockReplayFifoActiveLayerReader
         foreach (var generation in generations)
         {
             var historyId = generation.AdjustmentHistoryId!.Value;
+            StockCountReplayGeneration? parent = null;
             if (!active.TryGetValue(generation.StockCountLineId,
                     out var leaf)
                 || generation.PreviousGenerationId is long parentId
-                    && (!byGeneration.TryGetValue(parentId, out var parent)
+                    && (!byGeneration.TryGetValue(parentId, out parent)
                         || parent.StockCountLineId != generation.StockCountLineId
-                        || parent.AnchorPostingId != generation.AnchorPostingId
-                        || parent.AnchorPostingSequence != generation.AnchorPostingSequence
-                        || parent.EffectiveAt != generation.EffectiveAt
                         || !parent.IsRemoval
-                            && parent.AdjustmentHistoryId.HasValue
-                            && generation.ReversalHistoryId is null)
-                || !generation.PreviousGenerationId.HasValue
+                            && (parent.AnchorPostingId != generation.AnchorPostingId
+                                || parent.AnchorPostingSequence
+                                    != generation.AnchorPostingSequence
+                                || parent.EffectiveAt != generation.EffectiveAt
+                                || parent.AdjustmentHistoryId.HasValue
+                                    && generation.ReversalHistoryId is null))
+                || (parent is null || parent.IsRemoval)
                     && generation.WritePostingId != generation.AnchorPostingId
                 || generation.SignedAdjustmentQty == 0m)
                 throw Invalid("FIFO count needs one unchanged initial adjustment origin.");

@@ -8963,7 +8963,10 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
         var rollback = await returns.RollbackAsync(new(draft.Id, currentReturn.Data.RowVersion,
             Guid.NewGuid(), "Restated cost requires replay-aware rollback"));
         Assert.False(rollback.Succeeded);
-        Assert.Contains(restateProduction ? "corrected Production cost" : "corrected Inventory valuation",
+        Assert.Contains(
+            restateProduction
+                ? "Inventory and Production effective costs do not reconcile"
+                : "unreversed value-only Inventory adjustments",
             rollback.Message, StringComparison.OrdinalIgnoreCase);
 
         await using var verify = await _factory.CreateDbContextAsync();

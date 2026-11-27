@@ -208,6 +208,7 @@ public class PoCdnSqlServerConcurrencyTests : IAsyncLifetime
         await DeleteByCompanyAsync<IvLocation>(db);
         await DeleteByCompanyAsync<IvWarehouse>(db);
         await DeleteByCompanyAsync<IvStatus>(db);
+        await DeleteByCompanyAsync<ErpWeb.Model.Entities.Company>(db);
     }
 
     /// <summary>
@@ -245,6 +246,15 @@ public class PoCdnSqlServerConcurrencyTests : IAsyncLifetime
 
         if (!await db.IvWarehouses.AnyAsync(x => x.CompanyCode == _company))
         {
+            if (!await db.Companies.AnyAsync(x => x.CompanyCode == _company))
+            {
+                db.Companies.Add(new ErpWeb.Model.Entities.Company
+                {
+                    CompanyCode = _company, CompanyName = _company, CurrencyCode = "MYR",
+                    IsActive = true, CreatedDate = DateTime.UtcNow, CreatedBy = "test"
+                });
+            }
+
             db.IvWarehouses.Add(new IvWarehouse
             {
                 CompanyCode = _company, BranchCode = "HQ", WarehouseCode = "MAIN", IsActive = true
