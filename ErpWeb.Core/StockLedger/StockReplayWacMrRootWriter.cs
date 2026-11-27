@@ -1,6 +1,7 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Numbering;
 using ErpWeb.Core.StockLedger.Costing;
+using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.StockLedger;
 using Microsoft.EntityFrameworkCore;
@@ -55,6 +56,12 @@ public static class StockReplayWacMrRootWriter
                 StockLedgerErrorCodes.StaleDocument,
                 "The branch posting sequence changed after replay planning.",
                 Retryable: true) { IsBranchWatermarkDrift = true });
+
+        if (countPermit is not null && physical.LaterEvents.Count > 1
+            && !await SupportsCountThenIssuesAsync(context.Db, context.CompanyCode, context.BranchCode,
+                plan.ItemCode, physical.BalLocId, context.Posting.EffectiveAt, physical.LaterEvents,
+                plan.Tail.LaterEvents, plan.Projection.LaterSteps, cancellationToken))
+            throw Invalid("The receipt has unsupported movements after its stock count.");
 
         var permit = await StockReplayWacInsertionPlanner.PrepareWithinRootAsync(
             context, plan, cancellationToken);
@@ -196,7 +203,7 @@ public static class StockReplayWacMrRootWriter
             if (allowInvoiced || purchasePermit is not null
                 || context.Posting.SourceDocumentType != receiptType
                 || countPermit.ReversedCandidateHistoryId is not null || countPermit.Lines.Length != 1
-                || plan.Tail.LaterEvents.Count != 1
+                || plan.Tail.LaterEvents.Count == 0
                 || plan.Tail.LaterEvents[0].EventId != -countPermit.Lines[0].PreviousGenerationId)
                 throw Invalid("The receipt has no unique prepared count correction.");
             correctedCounts = await StockCountCorrectionHistoryWriter.AppendAsync(context, countPermit,
@@ -214,6 +221,44 @@ public static class StockReplayWacMrRootWriter
         return new[] { history.Id }.Concat(tail.RepricedHistoryIds)
             .Concat(correctedCounts.Where(g => g.AdjustmentHistoryId.HasValue).Select(g => g.AdjustmentHistoryId!.Value))
             .Distinct().ToArray();
+    }
+
+    internal static async Task<bool> SupportsCountThenIssuesAsync(
+        AppDbContext db, string company, string branch, string item, int pileId, DateTime receiptAt,
+        IReadOnlyList<StockReplayPhysicalEvent> physical, IReadOnlyList<StockReplayWacEvent> financial,
+        IReadOnlyList<StockReplayWacStep> steps, CancellationToken cancellationToken)
+    {
+        if (physical.Count is < 2 or > 100 || financial.Count != physical.Count
+            || steps.Count != physical.Count || physical[0].EventId >= 0
+            || financial[0].EventId != physical[0].EventId || financial[0].Key != physical[0].Key)
+            return false;
+        for (var i = 1; i < physical.Count; i++)
+        {
+            var movement = physical[i];
+            var valuation = financial[i];
+            if (movement.EventId is <= 0 or > int.MaxValue || movement.SignedDelta >= 0m
+                || movement.AbsoluteCountQty is not null || movement.Key.CompareTo(physical[i - 1].Key) <= 0
+                || valuation.EventId != movement.EventId || valuation.Key != movement.Key
+                || valuation.OldSignedQuantity != movement.SignedDelta
+                || valuation.ReplaySignedQuantity != movement.SignedDelta
+                || valuation.AbsoluteCountQty is not null || steps[i].EventId != movement.EventId
+                || steps[i].SignedQuantity != movement.SignedDelta)
+                return false;
+        }
+        var issues = financial.Skip(1).ToArray();
+        var ids = issues.Select(x => checked((int)x.EventId)).ToArray();
+        if (ids.Distinct().Count() != ids.Length)
+            return false;
+        if (await IvInventoryPostingService.CheckSimpleWacTailAsync(db, issues, receiptAt, cancellationToken)
+            is not null)
+            return false;
+        var histories = await db.IvTrxHistories.AsNoTracking().Where(h => ids.Contains(h.Id)
+                && h.CompanyCode == company && h.BranchCode == branch && h.ICode == item
+                && h.FromBalLocId == pileId
+                && (h.TrxType == IvTrxTypes.MiscellaneousIssue || h.TrxType == IvTrxTypes.Scrap))
+            .Select(h => new { h.Id, h.FrStdQty }).ToArrayAsync(cancellationToken);
+        return histories.Length == ids.Length && issues.All(e => histories.Any(h =>
+            h.Id == e.EventId && h.FrStdQty == -e.OldSignedQuantity));
     }
 
     private static string? BlankToNull(string? value) =>

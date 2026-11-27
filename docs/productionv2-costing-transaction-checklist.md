@@ -20,7 +20,7 @@ Add `-IncludeSqlServer` to also run the selected receipt replay concurrency and 
 
 The gate is a **focused subset**. Its SQL checks cover selected receipt scenarios, not every transaction, costing method or cross-module dependency. Extend the selected groups and scratch scenarios when the transaction impact map requires it. It does not prove production readiness or replace the full suite, performance checks and manual review in the replay plan.
 
-The current Subcontract inventory and Production posting adapters are blocked. The focused gate runs their existing blocking tests so stock and WIP posting cannot be enabled without replacing that safeguard with the required costing, replay and rollback coverage.
+The registered Subcontract Inventory adapter supports policy-controlled, non-lot same-SKU custody send-out and receive-back posting and rollback when historical replay is not required. The Production/WIP adapter remains blocked, as do Subcontract posting and rollback that require historical replay. The focused gate includes custody and blocking tests; future changes must preserve these safeguards until the affected costing, replay and rollback cases are implemented and verified.
 
 Some existing SQL Server tests read the application's default connection string. Do not run the full suite against an operational database; first configure and verify a disposable test database and the selected test fixtures. The focused gate overrides the default connection and clears selected test connection settings for its local test phase; its optional SQL checks use the dedicated scratch runner.
 

@@ -11,6 +11,7 @@ public sealed partial class IvInventoryPostingService
     private sealed record CountReplayProof(int HeaderId, int LineId, long GenerationId, string Fingerprint);
 
     // One movement may alter one later count without changing the final quantity.
+    // A receipt can also precede bounded Inventory issues after that count.
     // Removal must undo the exact correction made by that movement.
     private static async Task<CountReplayProof?> PlanSingleCountReplayAsync(
         AppDbContext db, string company, string branch, string item, int pileId,
@@ -19,8 +20,13 @@ public sealed partial class IvInventoryPostingService
         decimal currentQty, decimal currentValue, decimal finalQty, decimal finalValue,
         long? removingOwnerId, bool receipt, CancellationToken ct)
     {
-        if (quantity <= 0m || physical.Count != 1 || financial.Count != 1 || steps.Count != 1
+        if (quantity <= 0m || physical.Count == 0 || physical.Count != financial.Count
+            || financial.Count != steps.Count
             || currentQty != finalQty || !receipt && currentValue != finalValue)
+            return null;
+        if (physical.Count > 1 && (!receipt
+            || !await StockReplayWacMrRootWriter.SupportsCountThenIssuesAsync(
+                db, company, branch, item, pileId, movementAt, physical, financial, steps, ct)))
             return null;
         var movement = physical[0];
         var value = financial[0];

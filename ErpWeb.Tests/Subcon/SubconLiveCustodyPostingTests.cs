@@ -1149,6 +1149,60 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
         await AssertStockAndValueAsync(mainQty: 100m, subconQty: 0m, expectedValue: 500m, method: "WAC");
     }
 
+    [Fact]
+    public async Task Receipt_before_count_does_not_cross_or_strand_later_subcon_dispatch()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-3));
+        var (svc, _, _) = CreateServices();
+        await EnableLiveCustodyPolicyAsync(svc);
+        var count = InventoryLedgerTestFixture.CreateStockCount(_factory, Today, enableBackdatedReplay: true);
+        var savedCount = await count.SaveAsync(new IvStockCountSaveRequest
+        {
+            CountDate = Today.AddDays(-1), WHCode = "MAIN", IncludeZeroQty = true
+        });
+        Assert.True(savedCount.Succeeded, savedCount.ErrorMessage);
+        Assert.True((await count.GenerateAsync(savedCount.Id, discardCounts: false)).Succeeded);
+        var line = Assert.Single((await count.GetAsync(savedCount.CountNo!)).Document!.Lines);
+        Assert.True((await count.SaveCountsAsync(savedCount.Id,
+            [new IvStockCountLineCountRequest { BalLocId = line.BalLocId, PhysicalQty = 90m }], null)).Succeeded);
+        var counted = await count.PostAsync(savedCount.Id);
+        Assert.True(counted.Succeeded, counted.ErrorMessage);
+        var dispatch = await PostSimpleDispatchAsync(svc, qty: 20m);
+
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, Today, enableBackdatedReplay: true);
+        var draft = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = Today.AddDays(-2), RefNo = "COUNT-BEFORE-SUBCON",
+            Lines = [new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN",
+                ToLocation = "BIN1", Quantity = 10m, UnitPrice = 8m, PriceConfirmed = true,
+                Uom = "EA", IClassCode = "RAW", IStatus = "ACTIVE", Reason = "ADJ" }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var blocked = await receipt.PostAsync([draft.BatchNo]);
+        Assert.False(blocked.Succeeded);
+        await AssertCountedStockAsync(mainQty: 70m, subconQty: 20m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(IvBatchStatuses.New, (await db.IvTrxBatches.SingleAsync(b => b.BatchNo == draft.BatchNo)).BatchStatus);
+            var active = (await StockCountGenerationResolver.ResolveActiveAsync(db, "DEMO", "HQ", [line.Id]))[line.Id];
+            Assert.Equal(-10m, active.SignedAdjustmentQty);
+        }
+        var rolled = await svc.RollbackDispatchAsync(new SubconKeyCommand { DocNo = dispatch.DocNo, RowVersion = dispatch.RowVersion });
+        Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+        await AssertCountedStockAsync(mainQty: 90m, subconQty: 0m);
+
+        async Task AssertCountedStockAsync(decimal mainQty, decimal subconQty)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var main = await db.IvBalLocs.SingleAsync(b => b.ICode == "A100" && b.WhCode == "MAIN");
+            var custody = await db.IvBalLocs.SingleOrDefaultAsync(b => b.ICode == "A100" && b.WhCode == "SUBCON");
+            Assert.Equal(mainQty, main.StdQty);
+            Assert.Equal(subconQty, custody?.StdQty ?? 0m);
+            var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal((90m, 450m), (state.OnHandBaseQty, state.InventoryValue));
+        }
+    }
+
     [Theory]
     [InlineData("WAC")]
     [InlineData("STANDARD")]

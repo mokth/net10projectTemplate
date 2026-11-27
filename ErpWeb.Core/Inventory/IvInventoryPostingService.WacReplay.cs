@@ -1504,7 +1504,7 @@ public sealed partial class IvInventoryPostingService
         return (invoice, null);
     }
 
-    private static async Task<string?> CheckSimpleWacTailAsync(
+    internal static async Task<string?> CheckSimpleWacTailAsync(
         ErpWeb.Model.Data.AppDbContext db,
         IReadOnlyList<StockReplayWacEvent> events,
         DateTime candidateDate,
