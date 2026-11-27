@@ -63,9 +63,31 @@ public sealed partial class IvInventoryPostingService
         var root = ledger.Context;
         if (root is null || root.CostMethod != StockCostMethods.MovingAverage)
             throw InvalidWacTransfer("Replay-aware transfer rollback needs an active WAC root.");
+        var result = await RollBackWacTransferWithinRootAsync(root, batchNo,
+            candidate.Id, prior[0].Id, cancellationToken);
+        if (!result.Succeeded)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return result;
+        }
+        await _coordinator!.CompleteReplayInTransactionAsync(root,
+            result.ReplayActiveHistoryIds!, cancellationToken);
+        postingScope.MarkCompleted();
+        await tx.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    private async Task<IvInventoryPostingBatchResult> RollBackWacTransferWithinRootAsync(
+        StockPostingContext root, int batchNo, int expectedBatchId, int expectedHistoryId,
+        CancellationToken cancellationToken, bool allowIndependentPiles = false)
+    {
+        root.EnsureUnsealed();
+        var db = root.Db;
+        var companyCode = root.CompanyCode;
+        var branchCode = root.BranchCode;
         var batch = await _posting.LockBatchForUpdateAsync(db,
             companyCode, branchCode, batchNo, cancellationToken);
-        if (batch is null || batch.Id != candidate.Id
+        if (batch is null || batch.Id != expectedBatchId
             || batch.BatchStatus != IvBatchStatuses.Posted
             || batch.TrxType != IvTrxTypes.StockTransfer
             || batch.DeletedAtUtc is not null || batch.ForceCloseDate is not null)
@@ -73,7 +95,6 @@ public sealed partial class IvInventoryPostingService
         if (await IvPeriodCloseGuard.EnsureOpenAsync(db, companyCode,
                 branchCode, batch.TrxDtTime, cancellationToken) is string closed)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, closed);
         }
         var details = await _posting.LoadDetailsForBatchAsync(db,
@@ -81,7 +102,7 @@ public sealed partial class IvInventoryPostingService
         var current = await _posting.LoadHistoryForBatchAsync(db,
             companyCode, branchCode, batchNo, cancellationToken);
         if (details.Count != 1 || current.Count != 1
-            || current[0].Id != prior[0].Id
+            || current[0].Id != expectedHistoryId
             || ValidateTrHistoryIntegrity(details, current,
                 companyCode, branchCode, batchNo) is not null)
             throw InvalidWacTransfer("The transfer detail or original history changed.");
@@ -165,14 +186,13 @@ public sealed partial class IvInventoryPostingService
             db, companyCode, branchCode, history.ICode, key,
             cancellationToken);
         var tailError = await CheckWacTransferRemovalTailAsync(db, history,
-            sourcePlan, destPlan, tail, cancellationToken);
+            sourcePlan, destPlan, tail, cancellationToken, allowIndependentPiles);
         if (sourcePlan.Projection.FinalQuantity != source.StdQty + quantity
             || destPlan.Projection.FinalQuantity != destination.StdQty - quantity
             || sourcePlan.LedgerEpochId != root.Epoch.Id
             || destPlan.LedgerEpochId != root.Epoch.Id
             || tailError is not null)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo,
                 tailError ?? "The WAC transfer physical removal changed its projection.");
         }
@@ -265,7 +285,6 @@ public sealed partial class IvInventoryPostingService
             db, companyCode, branchCode, batchNo, sourcePlan, destPlan, cancellationToken);
         if (qaError is not null)
         {
-            await tx.RollbackAsync(cancellationToken);
             return IvInventoryPostingBatchResult.Fail(batchNo, qaError);
         }
 
@@ -300,8 +319,6 @@ public sealed partial class IvInventoryPostingService
                 new StockReplayValuationReversalLine(f.Id, 1, i,
                     reversal.Id)).ToArray(), cancellationToken);
         reversal.ValuationStatus = StockValuationStatuses.Reversed;
-        await _coordinator!.CompleteReplayInTransactionAsync(root,
-            [], cancellationToken);
         var finalState = await db.StockCostStates.AsNoTracking()
             .SingleAsync(s => s.CompanyCode == companyCode
                 && s.BranchCode == branchCode && s.ItemCode == history.ICode,
@@ -311,10 +328,11 @@ public sealed partial class IvInventoryPostingService
             || source.StdQty + destination.StdQty
                 != sourcePlan.CurrentQuantity + destPlan.CurrentQuantity)
             throw InvalidWacTransfer("The removed transfer changed its item WAC pool.");
-        postingScope.MarkCompleted();
-        await tx.CommitAsync(cancellationToken);
-        return IvInventoryPostingBatchResult.Ok(batchNo,
-            batch.RollbackOperationId ?? Guid.Empty);
+        return new IvInventoryPostingBatchResult
+        {
+            Succeeded = true, BatchNo = batchNo, OperationId = batch.RollbackOperationId,
+            ReplayActiveHistoryIds = []
+        };
     }
 
     private static StockLedgerException InvalidWacTransfer(string message) =>
@@ -325,7 +343,7 @@ public sealed partial class IvInventoryPostingService
         StockReplayPhysicalRemovalPlan source,
         StockReplayPhysicalRemovalPlan destination,
         StockReplayWacFinancialTail tail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool allowIndependentPiles = false)
     {
         if (source.LaterEvents.Count == 0
             && destination.LaterEvents.Count == 0
@@ -341,9 +359,19 @@ public sealed partial class IvInventoryPostingService
             || StockReplayFifoTransferTailGuard.ChangesPhysicalTail(source)
             || StockReplayFifoTransferTailGuard.ChangesPhysicalTail(destination))
             return "Replay-aware WAC transfer rollback changes a later movement.";
+        // A Subcontract receive-back may create a new company pile while later
+        // Inventory activity belongs to a different pile. The removed transfer
+        // changes neither that activity nor the item WAC pool. Only use the
+        // existing independent-pile guard when the destination has no tail,
+        // and prove its empty physical tail against the same financial snapshot.
+        var destinationForGuard = (int?)destination.BalLocId;
+        if (allowIndependentPiles && destination.LaterEvents.Count == 0
+            && tail.PhysicalByPile.TryGetValue(destination.BalLocId, out var destinationFinancial)
+            && destinationFinancial.Count == 0)
+            destinationForGuard = null;
         return await CheckWacTransferDescendantTailAsync(db,
             source.CompanyCode, source.BranchCode, removed.ICode!,
-            removed.TrxDtTime, source.BalLocId, destination.BalLocId,
+            removed.TrxDtTime, source.BalLocId, destinationForGuard,
             source.LaterEvents, destination.LaterEvents,
             tail, projected.LaterSteps, cancellationToken);
     }

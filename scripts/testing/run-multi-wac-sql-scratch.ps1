@@ -89,13 +89,14 @@ param(
     [switch]$CostChangingReceiptBeforeCountReplay,
     [switch]$ReceiptBeforeCountThenIssueReplay,
     [switch]$GoodsReceiptBeforeCountThenIssueReplay,
+    [switch]$SubconWacReplay,
     [switch]$PartlyConsumedNoteReplay,
     [switch]$PartlyConsumedNoteIssueRollback,
     [switch]$PurchaseCdnConsumedGuard
 )
 
 $ErrorActionPreference = 'Stop'
-if ($ReceiptBeforeCountThenIssueReplay -or $GoodsReceiptBeforeCountThenIssueReplay) {
+if ($ReceiptBeforeCountThenIssueReplay -or $GoodsReceiptBeforeCountThenIssueReplay -or $SubconWacReplay) {
     $cases = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('NoBuild', 'Server') })
     if ($cases.Count -ne 1) { throw 'Choose this replay case on its own.' }
 }
@@ -129,6 +130,9 @@ Push-Location -LiteralPath $repo
 $created = $false
 $scratchId = $null
 $originalConnection = [Environment]::GetEnvironmentVariable('ERPWEB_MULTI_WAC_SQL_TEST_CONNECTION', 'Process')
+$originalDefaultConnection = [Environment]::GetEnvironmentVariable('ConnectionStrings__DefaultConnection', 'Process')
+$originalSqlServerConnection = [Environment]::GetEnvironmentVariable('ConnectionStrings__SqlServerTestConnection', 'Process')
+$originalRequireSqlServer = [Environment]::GetEnvironmentVariable('ERPWEB_REQUIRE_SQLSERVER_TESTS', 'Process')
 try {
     $existing = & sqlcmd -S $Server -d master -E -b -h -1 -W -Q "SET NOCOUNT ON; SELECT COALESCE(CONVERT(varchar(12), DB_ID(N'$scratch')), 'NULL')"
     if ($LASTEXITCODE -ne 0 -or ($existing | Out-String).Trim() -ne 'NULL') {
@@ -144,9 +148,17 @@ try {
 
     [Environment]::SetEnvironmentVariable('ERPWEB_MULTI_WAC_SQL_TEST_CONNECTION',
         "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
+    if ($SubconWacReplay) {
+        [Environment]::SetEnvironmentVariable('ConnectionStrings__DefaultConnection',
+            'Server=127.0.0.1,1;Database=Codex_Disabled_Test;Connect Timeout=1;TrustServerCertificate=True', 'Process')
+        [Environment]::SetEnvironmentVariable('ConnectionStrings__SqlServerTestConnection',
+            "Server=$Server;Database=$scratch;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true", 'Process')
+        [Environment]::SetEnvironmentVariable('ERPWEB_REQUIRE_SQLSERVER_TESTS', '1', 'Process')
+    }
     $resultName = "multi-wac-sql-$scratch.trx"
     $resultDirectory = 'ErpWeb.Tests\TestResults\MultiWacScratch'
-    $testName = if ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
+    $testName = if ($SubconWacReplay) { 'Backdated_wac_custody_transfer_replay_is_atomic_and_serializes_duplicates' }
+        elseif ($BackdatedInvoiceDepleted) { 'SqlServer_backdated_invoice_reprices_depleted_later_issue' }
         elseif ($CurrentDayCountReplay) { 'SqlServer_current_day_zero_count_anchors_once_and_rolls_back_atomically' }
         elseif ($IssueBeforeZeroCountReplay) { 'SqlServer_issue_before_zero_count_posts_and_rolls_back_atomically' }
         elseif ($IssueBeforeVarianceCountReplay) { 'SqlServer_issue_before_variance_count_posts_and_rolls_back_atomically' }
@@ -254,12 +266,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'The isolated SQL Server test failed.' }
     [xml]$result = Get-Content -LiteralPath (Join-Path $resultDirectory $resultName)
     $counts = $result.TestRun.ResultSummary.Counters
-    if ([int]$counts.passed -ne 1 -or [int]$counts.failed -ne 0 -or [int]$counts.notExecuted -ne 0) {
-        throw 'The isolated SQL Server test did not pass exactly once.'
+    $expectedPassed = if ($SubconWacReplay) { 4 } else { 1 }
+    if ([int]$counts.passed -ne $expectedPassed -or [int]$counts.failed -ne 0 -or [int]$counts.notExecuted -ne 0) {
+        throw "The isolated SQL Server test did not pass all $expectedPassed expected cases."
     }
 }
 finally {
     [Environment]::SetEnvironmentVariable('ERPWEB_MULTI_WAC_SQL_TEST_CONNECTION', $originalConnection, 'Process')
+    [Environment]::SetEnvironmentVariable('ConnectionStrings__DefaultConnection', $originalDefaultConnection, 'Process')
+    [Environment]::SetEnvironmentVariable('ConnectionStrings__SqlServerTestConnection', $originalSqlServerConnection, 'Process')
+    [Environment]::SetEnvironmentVariable('ERPWEB_REQUIRE_SQLSERVER_TESTS', $originalRequireSqlServer, 'Process')
     if ($created) {
         if ($scratch -cnotmatch '^Codex_ReplayNeutral_Test_[0-9a-f]{12}$' -or $scratchId -notmatch '^\d+$') {
             throw "Scratch database identity could not be verified; cleanup was not attempted: $scratch"

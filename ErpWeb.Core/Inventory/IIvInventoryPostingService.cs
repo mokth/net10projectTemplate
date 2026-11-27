@@ -51,6 +51,8 @@ public sealed class IvInventoryPostingBatchResult
     public bool Succeeded { get; init; }
     public string? ErrorMessage { get; init; }
     public Guid? OperationId { get; init; }
+    internal IReadOnlyList<int>? ReplayActiveHistoryIds { get; init; }
+    internal SubconWacTransferReplayVerification? SubconReplayVerification { get; init; }
 
     /// <summary>
     /// Friendly text for this batch's failure, or null when the failure is not a structured ledger
@@ -85,6 +87,14 @@ public interface IIvInventoryPostingService
     Task CompletePostingInTransactionAsync(
         StockPostingContext? context, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
+
+    Task<(SubconWacTransferReplayPlan? Plan, string? Error)> PrepareSubconTransferReplayInTransactionAsync(
+        AppDbContext db, string companyCode, string branchCode, int batchNo,
+        CancellationToken cancellationToken = default) => Task.FromResult<(SubconWacTransferReplayPlan?, string?)>((null, null));
+
+    Task CompleteSubconTransferInTransactionAsync(StockPostingContext? context,
+        IvInventoryPostingBatchResult result, CancellationToken cancellationToken = default) =>
+        CompletePostingInTransactionAsync(context, cancellationToken);
 
     Task AbortPostingInTransactionAsync(
         StockPostingContext? context, CancellationToken cancellationToken = default) =>
@@ -223,10 +233,8 @@ public interface IIvInventoryPostingService
         throw new NotSupportedException("This posting service does not support V2 stock-count anchors.");
 
     /// <summary>
-    /// Stock-transfer (TR) fast-path post on the caller's context, transaction, and StockPostingContext.
-    /// Does not Commit. Calls an intermediate SaveChangesAsync inside the caller's open transaction to
-    /// materialize new destination IvBalLoc IDs before writing IvTrxHistory. Rejects atomically if
-    /// RequiresReplay == true; caller must roll back the transaction on failure.
+    /// Stock-transfer post within the caller's transaction. Historical Subcontract transfers
+    /// require a prepared and revalidated replay plan; unsupported histories fail atomically.
     /// </summary>
     Task<IvInventoryPostingBatchResult> PostStockTransferInTransactionAsync(
         StockPostingContext? postingContext,
@@ -236,13 +244,13 @@ public interface IIvInventoryPostingService
         string userId,
         int batchNo,
         bool isAuthorizedSubconCaller = false,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        SubconWacTransferReplayPlan? replayPlan = null) =>
         throw new NotSupportedException("This posting service does not support in-transaction stock transfers.");
 
     /// <summary>
-    /// Stock-transfer (TR) fast-path rollback on the caller's context, transaction, and StockPostingContext.
-    /// Does not Commit. Rejects atomically if RequiresReplay == true or if replay-corrected valuation
-    /// facts exist on the transfer; caller must roll back the transaction on failure.
+    /// Stock-transfer rollback within the caller's transaction; unsupported historical
+    /// and corrected generations are rejected unless an authorized replay path proves them.
     /// </summary>
     Task<IvInventoryPostingBatchResult> RollBackStockTransferInTransactionAsync(
         StockPostingContext? postingContext,

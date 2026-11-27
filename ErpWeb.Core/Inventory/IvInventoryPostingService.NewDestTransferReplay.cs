@@ -11,7 +11,7 @@ namespace ErpWeb.Core.Inventory;
 
 public sealed partial class IvInventoryPostingService
 {
-    private sealed record NewDestTransferAuthority(
+    internal sealed record NewDestTransferAuthority(
         int BatchId, int BatchNo, int DetailId, int DocumentRevision,
         string ItemCode, int SourceBalLocId, bool LotControl,
         int? SourceLotId, string SourceLotNo, string DestinationLotNo,

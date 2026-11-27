@@ -11,7 +11,7 @@ namespace ErpWeb.Core.Subcon;
 /// <summary>
 /// Gate G3 atomic Inventory custody adapter for non-lot, same-SKU Subcon Send-Out and Receive-Back.
 /// Owns a single SQL transaction + BranchStockTransactionLock + single Inventory TR batch + single V2 StockPosting root.
-/// Fails closed on lot-controlled items, backdated historical replay (RequiresReplay == true), and disabled policy flags.
+/// Fails closed on lot-controlled items, disabled policy flags, and unsupported historical replay shapes.
 /// </summary>
 public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapter
 {
@@ -310,6 +310,14 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
             db.IvTrxBatches.Add(batch);
             await db.SaveChangesAsync(cancellationToken);
 
+            var replay = await _inventoryPosting.PrepareSubconTransferReplayInTransactionAsync(
+                db, scope.CompanyCode, scope.BranchCode, batch.BatchNo, cancellationToken);
+            if (replay.Error is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SubconResult.Fail(replay.Error);
+            }
+
             // Open ONE V2 StockPosting root for this TR batch (fail closed if V2 ledger/coordinator is inactive).
             var begin = await _inventoryPosting.BeginPostingInTransactionAsync(
                 db, scope.CompanyCode, scope.BranchCode, batch.BatchNo,
@@ -324,7 +332,7 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
 
             var postResult = await _inventoryPosting.PostStockTransferInTransactionAsync(
                 postingContext, db, scope.CompanyCode, scope.BranchCode, scope.UserId,
-                batch.BatchNo, isAuthorizedSubconCaller: true, cancellationToken);
+                batch.BatchNo, isAuthorizedSubconCaller: true, cancellationToken, replay.Plan);
             if (!postResult.Succeeded)
             {
                 await AbortAndRollbackAsync(postingContext, tx);
@@ -409,7 +417,7 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
             TestHookAfterSubconLinkWrite?.Invoke();
 
             // Value pending V2 facts (WAC/FIFO/Standard) and seal posting atomically before commit.
-            await _inventoryPosting.CompletePostingInTransactionAsync(postingContext, cancellationToken);
+            await _inventoryPosting.CompleteSubconTransferInTransactionAsync(postingContext, postResult, cancellationToken);
             postingContext = null;
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -531,6 +539,11 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
             }
 
             var allocations = await LockAllocationsByDispatchAsync(db, entity.Uid, cancellationToken);
+            if (!await MatchesDispatchRollbackEvidenceAsync(db, scope, entity, activeLink, allocations, cancellationToken))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SubconResult.Fail("The send-out stock transfer or custody allocation no longer matches its posting.");
+            }
             if (allocations.Any(a => a.ReturnedBaseQty > 0m || a.ConsumedBaseQty > 0m || a.ScrapBaseQty > 0m))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -549,6 +562,12 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                 return SubconResult.Fail(beginFailure);
             }
 
+            if (activeLink.StockPostingId is not > 0 || postingContext!.Posting.ReversesPostingId != activeLink.StockPostingId
+                || postingContext.Posting.SourceDocumentId != activeLink.TrxBatchId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            {
+                await AbortAndRollbackAsync(postingContext, tx);
+                return SubconResult.Fail("The active Subcontract posting link does not match its stock transfer.");
+            }
             var rollbackResult = await _inventoryPosting.RollBackStockTransferInTransactionAsync(
                 postingContext, db, scope.CompanyCode, scope.BranchCode, scope.UserId,
                 activeLink.TrxBatchNo, isAuthorizedSubconCaller: true, cancellationToken);
@@ -608,7 +627,7 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
 
             TestHookAfterSubconLinkWrite?.Invoke();
 
-            await _inventoryPosting.CompletePostingInTransactionAsync(postingContext, cancellationToken);
+            await _inventoryPosting.CompleteSubconTransferInTransactionAsync(postingContext, rollbackResult, cancellationToken);
             postingContext = null;
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -870,6 +889,14 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
             db.IvTrxBatches.Add(batch);
             await db.SaveChangesAsync(cancellationToken);
 
+            var replay = await _inventoryPosting.PrepareSubconTransferReplayInTransactionAsync(
+                db, scope.CompanyCode, scope.BranchCode, batch.BatchNo, cancellationToken);
+            if (replay.Error is not null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SubconResult.Fail(replay.Error);
+            }
+
             var begin = await _inventoryPosting.BeginPostingInTransactionAsync(
                 db, scope.CompanyCode, scope.BranchCode, batch.BatchNo,
                 reversal: false, effectiveAt: batch.TrxDtTime, cancellationToken);
@@ -883,7 +910,7 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
 
             var postResult = await _inventoryPosting.PostStockTransferInTransactionAsync(
                 postingContext, db, scope.CompanyCode, scope.BranchCode, scope.UserId,
-                batch.BatchNo, isAuthorizedSubconCaller: true, cancellationToken);
+                batch.BatchNo, isAuthorizedSubconCaller: true, cancellationToken, replay.Plan);
             if (!postResult.Succeeded)
             {
                 await AbortAndRollbackAsync(postingContext, tx);
@@ -935,7 +962,7 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
 
             TestHookAfterSubconLinkWrite?.Invoke();
 
-            await _inventoryPosting.CompletePostingInTransactionAsync(postingContext, cancellationToken);
+            await _inventoryPosting.CompleteSubconTransferInTransactionAsync(postingContext, postResult, cancellationToken);
             postingContext = null;
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -1040,6 +1067,12 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
             var allocationsByDispatchLine = (await LockAllocationsByDispatchLinesAsync(db, dispatchLineIds, cancellationToken))
                 .ToDictionary(x => x.DispatchLineId);
 
+            if (!await MatchesReceiptRollbackEvidenceAsync(db, scope, entity, activeLink, allocationsByDispatchLine, cancellationToken))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return SubconResult.Fail("The receive-back stock transfer or custody allocation no longer matches its posting.");
+            }
+
             var begin = await _inventoryPosting.BeginPostingInTransactionAsync(
                 db, scope.CompanyCode, scope.BranchCode, activeLink.TrxBatchNo,
                 reversal: true, effectiveAt: activeLink.EffectiveAt, cancellationToken);
@@ -1051,6 +1084,12 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
                 return SubconResult.Fail(beginFailure);
             }
 
+            if (activeLink.StockPostingId is not > 0 || postingContext!.Posting.ReversesPostingId != activeLink.StockPostingId
+                || postingContext.Posting.SourceDocumentId != activeLink.TrxBatchId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            {
+                await AbortAndRollbackAsync(postingContext, tx);
+                return SubconResult.Fail("The active Subcontract posting link does not match its stock transfer.");
+            }
             var rollbackResult = await _inventoryPosting.RollBackStockTransferInTransactionAsync(
                 postingContext, db, scope.CompanyCode, scope.BranchCode, scope.UserId,
                 activeLink.TrxBatchNo, isAuthorizedSubconCaller: true, cancellationToken);
@@ -1113,7 +1152,7 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
 
             TestHookAfterSubconLinkWrite?.Invoke();
 
-            await _inventoryPosting.CompletePostingInTransactionAsync(postingContext, cancellationToken);
+            await _inventoryPosting.CompleteSubconTransferInTransactionAsync(postingContext, rollbackResult, cancellationToken);
             postingContext = null;
             await db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -1125,6 +1164,88 @@ public sealed class SubconInventoryTransferAdapter : ISubconInventorySourceAdapt
             await AbortAndRollbackAsync(postingContext, tx);
             throw;
         }
+    }
+
+    private static bool SameEvidence(string? first, string? second) =>
+        string.Equals(first?.Trim(), second?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static bool MatchesActiveLink(SubconPostingLink link, string company, string branch,
+        string docKind, long docId, string docNo, int revision, DateTime date) =>
+        link.IsActive && link.ReversedByLinkId is null && link.StockPostingId is > 0
+        && link.CompanyCode == company && link.BranchCode == branch && link.DocKind == docKind
+        && link.DocId == docId && link.DocNo == docNo && link.DocumentRevision == revision
+        && link.TrxType == IvTrxTypes.StockTransfer && link.EffectiveAt == date.Date;
+
+    private static async Task<bool> MatchesDispatchRollbackEvidenceAsync(AppDbContext db, InventoryTenantScope scope,
+        SubconDispatch dispatch, SubconPostingLink link, IReadOnlyCollection<SubconCustodyAllocation> allocations,
+        CancellationToken cancellationToken)
+    {
+        if (!MatchesActiveLink(link, scope.CompanyCode, scope.BranchCode!, SubconPostingDocKinds.Dispatch,
+                dispatch.Uid, dispatch.DocNo, dispatch.DocumentRevision, dispatch.TrxDate)) return false;
+        var lines = dispatch.Lines.OrderBy(l => l.LineNo).ToArray();
+        var details = await db.IvTrxBatchDetails.AsNoTracking().Where(d => d.BatchId == link.TrxBatchId
+            && d.CompanyCode == scope.CompanyCode && d.BranchCode == scope.BranchCode && d.BatchNo == link.TrxBatchNo)
+            .OrderBy(d => d.TrxLineNo).ToArrayAsync(cancellationToken);
+        if (lines.Length == 0 || lines.Length != details.Length || lines.Length != allocations.Count
+            || lines.Select(l => l.LineNo).Distinct().Count() != lines.Length) return false;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var detail = details[i];
+            var matches = allocations.Where(a => a.DispatchLineId == line.Uid).ToArray();
+            if (matches.Length != 1) return false;
+            var alloc = matches[0];
+            if (detail.TrxLineNo != i + 1 || detail.TrxType != IvTrxTypes.StockTransfer
+                || line.BaseQty is not > 0m || line.IvBalLocId is not > 0 || line.CustodyBalLocId is not > 0
+                || detail.FrStdQty != line.BaseQty || detail.ToStdQty != line.BaseQty
+                || detail.FromBalLocId != line.IvBalLocId || detail.ToBalLocId != line.CustodyBalLocId
+                || !SameEvidence(detail.ICode, line.ItemCode) || !SameEvidence(detail.FrStdUom, line.BaseUom)
+                || !SameEvidence(detail.ToStdUom, line.BaseUom) || !SameEvidence(detail.IStatus, line.StockStatus)
+                || alloc.CompanyCode != scope.CompanyCode || alloc.BranchCode != scope.BranchCode
+                || alloc.DispatchId != dispatch.Uid || alloc.PostingLinkId != link.Uid || !alloc.IsActive
+                || alloc.CustodyBalLocId != line.CustodyBalLocId || alloc.DispatchedBaseQty != line.BaseQty
+                || !SameEvidence(alloc.SupplierCode, dispatch.SupplierCode) || !SameEvidence(alloc.ItemCode, line.ItemCode)
+                || !SameEvidence(alloc.BaseUom, line.BaseUom) || !SameEvidence(alloc.StockStatus, line.StockStatus)
+                || !SameEvidence(alloc.CustodyWarehouseCode, line.CustodyWarehouseCode)
+                || !SameEvidence(alloc.CustodyLocationCode, line.CustodyLocationCode)
+                || !SameEvidence(detail.ToWarehouse, line.CustodyWarehouseCode)
+                || !SameEvidence(detail.ToLocation, line.CustodyLocationCode)) return false;
+        }
+        return true;
+    }
+
+    private static async Task<bool> MatchesReceiptRollbackEvidenceAsync(AppDbContext db, InventoryTenantScope scope,
+        SubconReceipt receipt, SubconPostingLink link, IReadOnlyDictionary<long, SubconCustodyAllocation> allocations,
+        CancellationToken cancellationToken)
+    {
+        if (!MatchesActiveLink(link, scope.CompanyCode, scope.BranchCode!, SubconPostingDocKinds.Receipt,
+                receipt.Uid, receipt.DocNo, receipt.DocumentRevision, receipt.TrxDate)) return false;
+        var lines = receipt.Lines.OrderBy(l => l.LineNo).ToArray();
+        var details = await db.IvTrxBatchDetails.AsNoTracking().Where(d => d.BatchId == link.TrxBatchId
+            && d.CompanyCode == scope.CompanyCode && d.BranchCode == scope.BranchCode && d.BatchNo == link.TrxBatchNo)
+            .OrderBy(d => d.TrxLineNo).ToArrayAsync(cancellationToken);
+        if (lines.Length == 0 || lines.Length != details.Length
+            || lines.Select(l => l.LineNo).Distinct().Count() != lines.Length) return false;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var detail = details[i];
+            if (!allocations.TryGetValue(line.DispatchLineId, out var alloc) || !alloc.IsActive
+                || alloc.CompanyCode != scope.CompanyCode || alloc.BranchCode != scope.BranchCode
+                || alloc.DispatchId != line.DispatchId || !SameEvidence(alloc.SupplierCode, receipt.SupplierCode)
+                || detail.TrxLineNo != i + 1 || detail.TrxType != IvTrxTypes.StockTransfer
+                || line.BaseQty is not > 0m || line.ToBalLocId is not > 0
+                || detail.FrStdQty != line.BaseQty || detail.ToStdQty != line.BaseQty
+                || detail.FromBalLocId != alloc.CustodyBalLocId || detail.ToBalLocId != line.ToBalLocId
+                || !SameEvidence(detail.ICode, alloc.ItemCode) || !SameEvidence(detail.FrStdUom, alloc.BaseUom)
+                || !SameEvidence(detail.ToStdUom, alloc.BaseUom) || !SameEvidence(detail.IStatus, alloc.StockStatus)
+                || !SameEvidence(detail.FrWarehouse, alloc.CustodyWarehouseCode)
+                || !SameEvidence(detail.FrLocation, alloc.CustodyLocationCode)
+                || !SameEvidence(detail.ToWarehouse, line.ToWarehouseCode)
+                || !SameEvidence(detail.ToLocation, line.ToLocationCode)) return false;
+        }
+        return lines.GroupBy(l => l.DispatchLineId).All(g =>
+            allocations[g.Key].ReturnedBaseQty >= g.Sum(l => l.BaseQty!.Value));
     }
 
     private static string? ValidateBeginPosting(StockPostingBeginResult begin)

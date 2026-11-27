@@ -5,6 +5,7 @@ using ErpWeb.Core.Services;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using ErpWeb.Core.StockLedger;
@@ -117,6 +118,32 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         context is null || _coordinator is null
             ? Task.CompletedTask
             : _coordinator.CompleteInTransactionAsync(context, cancellationToken);
+
+    public async Task CompleteSubconTransferInTransactionAsync(StockPostingContext? context,
+        IvInventoryPostingBatchResult result, CancellationToken cancellationToken = default)
+    {
+        if (!result.Succeeded) throw new InvalidOperationException("A failed transfer cannot be completed.");
+        if (result.ReplayActiveHistoryIds is null)
+        {
+            await CompletePostingInTransactionAsync(context, cancellationToken);
+            return;
+        }
+        if (context is null || _coordinator is null)
+            throw new InvalidOperationException("A replay transfer needs its posting context.");
+        await _coordinator.CompleteReplayInTransactionAsync(context, result.ReplayActiveHistoryIds, cancellationToken);
+        if (result.SubconReplayVerification is { } verification)
+        {
+            if (verification.Plan.NewDestinationAuthority is { } newDestination && verification.NewDestinationId is int destinationId)
+                await VerifyNewDestPostedWacOrStandardTransferAsync(context, verification.Plan.Source, destinationId,
+                    newDestination, StockCostMethods.MovingAverage, verification.Plan.Tail.CurrentQuantity,
+                    verification.Plan.Tail.CurrentValue, verification.HistoryId, verification.Amount, cancellationToken);
+            else
+                await VerifyPostedWacTransferAsync(context, verification.Plan.Source,
+                    verification.Plan.Destination ?? throw InvalidWacTransfer("The verified destination is missing."),
+                    verification.Plan.Authority ?? throw InvalidWacTransfer("The verified draft is missing."),
+                    verification.Plan.Tail, verification.HistoryId, verification.Amount, cancellationToken);
+        }
+    }
 
     public Task AbortPostingInTransactionAsync(
         StockPostingContext? context, CancellationToken cancellationToken = default) =>
@@ -3131,7 +3158,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         string userId,
         int batchNo,
         bool isAuthorizedSubconCaller = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SubconWacTransferReplayPlan? replayPlan = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (db.Database.CurrentTransaction is null)
@@ -3139,8 +3167,16 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
 
         var route = await StockReplayInventoryRouteSelector.ReadAsync(
             db, companyCode, branchCode, batchNo, IvTrxTypes.StockTransfer, cancellationToken);
+        if (replayPlan is not null && !route.RequiresReplay)
+            return IvInventoryPostingBatchResult.Fail(batchNo, "The transfer history changed after replay planning.");
         if (route.RequiresReplay)
-            return UnsupportedHistoricalInventoryPost(batchNo, IvTrxTypes.StockTransfer);
+        {
+            if (!isAuthorizedSubconCaller || !_openPeriodBackdatedReplayEnabled
+                || postingContext is null || replayPlan is null)
+                return UnsupportedHistoricalInventoryPost(batchNo, IvTrxTypes.StockTransfer);
+            try { return await PostPreparedSubconWacTransferAsync(postingContext, db, batchNo, replayPlan, cancellationToken); }
+            catch (StockLedgerException ex) { return IvInventoryPostingBatchResult.Fail(batchNo, ex.Error.Message); }
+        }
 
         var result = await PostInventoryTRCoreAsync(
             db, companyCode, branchCode, userId, batchNo, isAuthorizedSubconCaller, cancellationToken);
@@ -3166,7 +3202,44 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         var route = await StockReplayInventoryRouteSelector.ReadRollbackAsync(
             db, companyCode, branchCode, batchNo, IvTrxTypes.StockTransfer, cancellationToken);
         if (route.RequiresReplay)
-            return UnsupportedHistoricalInventoryRollback(batchNo, IvTrxTypes.StockTransfer);
+        {
+            if (!isAuthorizedSubconCaller || !_openPeriodBackdatedReplayEnabled
+                || postingContext is null || !ReferenceEquals(postingContext.Db, db)
+                || postingContext.CompanyCode != companyCode || postingContext.BranchCode != branchCode)
+                return UnsupportedHistoricalInventoryRollback(batchNo, IvTrxTypes.StockTransfer);
+            var batch = await db.IvTrxBatches.AsNoTracking().SingleOrDefaultAsync(b =>
+                b.CompanyCode == companyCode && b.BranchCode == branchCode && b.BatchNo == batchNo
+                && b.TrxType == IvTrxTypes.StockTransfer && b.BatchStatus == IvBatchStatuses.Posted, cancellationToken);
+            var history = await _posting.LoadHistoryForBatchAsync(db, companyCode, branchCode, batchNo, cancellationToken);
+            if (batch is null || history.Count != 1 || history[0].EntryRole != "ORIGINAL"
+                || history[0].LedgerVersion != 2 || history[0].StockPostingId is not > 0
+                || history[0].ICode is null)
+                return UnsupportedHistoricalInventoryRollback(batchNo, IvTrxTypes.StockTransfer);
+            var subconOwners = await db.SubconPostingLinks.AsNoTracking().Where(l =>
+                l.CompanyCode == companyCode && l.BranchCode == branchCode && l.TrxBatchId == batch.Id
+                && l.TrxBatchNo == batchNo && l.IsActive && l.ReversedByLinkId == null
+                && l.PostingRole == SubconPostingRoles.Primary && l.StockPostingId == history[0].StockPostingId
+                && (l.DocKind == SubconPostingDocKinds.Dispatch || l.DocKind == SubconPostingDocKinds.Receipt))
+                .Select(l => l.Uid).Take(2).ToArrayAsync(cancellationToken);
+            if (subconOwners.Length != 1)
+                return IvInventoryPostingBatchResult.Fail(batchNo, "The transfer has no unique active Subcontract owner.");
+            var method = await db.StockCostStates.AsNoTracking().Where(s =>
+                s.CompanyCode == companyCode && s.BranchCode == branchCode && s.ItemCode == history[0].ICode)
+                .Select(s => s.CostMethod).SingleOrDefaultAsync(cancellationToken);
+            if (method != StockCostMethods.MovingAverage)
+                return UnsupportedHistoricalInventoryRollback(batchNo, IvTrxTypes.StockTransfer);
+            try
+            {
+                var active = await StockReplayValuationGenerationResolver.ResolveAsync(db,
+                    companyCode, branchCode, history, cancellationToken);
+                if (active[history[0].Id].Any(f => f.StockPostingId != history[0].StockPostingId))
+                    return IvInventoryPostingBatchResult.Fail(batchNo,
+                        "A Subcontract transfer with corrected valuation needs a supported correction replay.");
+                return await RollBackWacTransferWithinRootAsync(postingContext, batchNo, batch.Id, history[0].Id,
+                    cancellationToken, allowIndependentPiles: true);
+            }
+            catch (StockLedgerException ex) { return IvInventoryPostingBatchResult.Fail(batchNo, ex.Error.Message); }
+        }
 
         return await RollBackInventoryTRCoreAsync(
             db, companyCode, branchCode, userId, batchNo, isAuthorizedSubconCaller, postingContext,
@@ -5123,7 +5196,8 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
         int batchNo,
         IReadOnlyList<IvTrxBatchDetail> details,
         CancellationToken cancellationToken,
-        decimal? effectiveOnHandOverride = null)
+        decimal? effectiveOnHandOverride = null,
+        bool isAuthorizedSubconCaller = false)
     {
         var ids = details
             .Where(d => d.FromBalLocId is > 0)
@@ -5178,7 +5252,7 @@ public sealed partial class IvInventoryPostingService : IIvInventoryPostingServi
             db, companyCode, branchCode, trxType,
             sourceBalLocIds: ids,
             destinationWarehouseCodes: details.Where(d => !string.IsNullOrWhiteSpace(d.ToWarehouse)).Select(d => d.ToWarehouse!).ToArray(),
-            isAuthorizedSubconCaller: false,
+            isAuthorizedSubconCaller: isAuthorizedSubconCaller,
             cancellationToken);
         if (replayCustodyError is not null)
             return replayCustodyError;

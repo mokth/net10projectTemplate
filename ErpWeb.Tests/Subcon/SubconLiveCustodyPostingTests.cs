@@ -1,12 +1,14 @@
 using ErpWeb.Core.Inventory;
 using ErpWeb.Core.Menus;
 using ErpWeb.Core.Numbering;
+using ErpWeb.Core.Quality;
 using ErpWeb.Core.Services;
 using ErpWeb.Core.StockLedger;
 using ErpWeb.Core.Subcon;
 using ErpWeb.Model.Data;
 using ErpWeb.Model.Entities.Inventory;
 using ErpWeb.Model.Entities.Purchase;
+using ErpWeb.Model.Entities.Quality;
 using ErpWeb.Model.Entities.StockLedger;
 using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Tests.Inventory.Transaction;
@@ -586,6 +588,422 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
             Assert.Equal(0, await db.SubconPostingLinks.CountAsync());
             Assert.Equal(SubconStatuses.New, await db.SubconDispatches.Where(d => d.DocNo == backdatedDraft.Dispatch.DocNo).Select(d => d.Status).SingleAsync());
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Backdated_wac_send_out_before_later_issue_posts_rolls_back_and_reposts(bool existingDestination)
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        if (existingDestination)
+        {
+            // Create a real, empty custody pile before the later issue.
+            var previous = await SaveAndPostDispatchAtAsync(svc, Today.AddDays(-8), 1m);
+            var undone = await svc.RollbackDispatchAsync(new SubconKeyCommand
+            {
+                DocNo = previous.DocNo, RowVersion = previous.RowVersion
+            });
+            Assert.True(undone.Succeeded, undone.ErrorMessage);
+        }
+        var issueBatch = await PostLaterIssueForSubconReplayAsync();
+        var draft = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            TrxDate = Today.AddDays(-5), Mode = SubconModes.Inventory, SupplierCode = "SUP01",
+            Lines = [new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "A100", Uom = "EA",
+                Qty = 20m, WarehouseCode = "MAIN", LocationCode = "BIN1" }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var current = draft.Dispatch!;
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var posted = await svc.PostDispatchAsync(new SubconKeyCommand { DocNo = current.DocNo, RowVersion = current.RowVersion });
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertSubconReplayStateAsync(70m, 20m, issueBatch, 20m);
+            var rolled = await svc.RollbackDispatchAsync(new SubconKeyCommand { DocNo = posted.Dispatch!.DocNo, RowVersion = posted.Dispatch.RowVersion });
+            Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+            await AssertSubconReplayStateAsync(90m, 0m, issueBatch, 0m);
+            current = rolled.Dispatch!;
+        }
+    }
+
+    [Fact]
+    public async Task Backdated_wac_receive_back_before_later_issue_posts_rolls_back_and_reposts()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        var dispatch = await SaveAndPostDispatchAtAsync(svc, Today.AddDays(-8), 20m);
+        var issueBatch = await PostLaterIssueForSubconReplayAsync();
+        var draft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today.AddDays(-5), SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatch.DocNo,
+                DispatchLineNo = 1, Qty = 10m }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var current = draft.Receipt!;
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = current.DocNo, RowVersion = current.RowVersion });
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertSubconReplayStateAsync(80m, 10m, issueBatch, 10m);
+            var rolled = await svc.RollbackReceiptAsync(new SubconKeyCommand { DocNo = posted.Receipt!.DocNo, RowVersion = posted.Receipt.RowVersion });
+            Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+            await AssertSubconReplayStateAsync(70m, 20m, issueBatch, 20m);
+            current = rolled.Receipt!;
+        }
+    }
+
+    [Fact]
+    public async Task Backdated_wac_receive_back_to_new_destination_posts_rolls_back_and_reposts()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IvLocations.Add(new IvLocation { CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!,
+                WarehouseCode = "MAIN", LocCode = "BIN2", LocDesc = "Main Bin 2", IsActive = true, RowVersion = [1] });
+            await db.SaveChangesAsync();
+        }
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        var dispatch = await SaveAndPostDispatchAtAsync(svc, Today.AddDays(-8), 20m);
+        var issueBatch = await PostLaterIssueForSubconReplayAsync();
+        var draft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today.AddDays(-5), SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatch.DocNo,
+                DispatchLineNo = 1, Qty = 10m, ToWarehouseCode = "MAIN", ToLocationCode = "BIN2" }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var current = draft.Receipt!;
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            var posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = current.DocNo, RowVersion = current.RowVersion });
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertStateAsync(10m, 10m);
+            var rolled = await svc.RollbackReceiptAsync(new SubconKeyCommand { DocNo = posted.Receipt!.DocNo, RowVersion = posted.Receipt.RowVersion });
+            Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+            await AssertStateAsync(0m, 20m);
+            current = rolled.Receipt!;
+        }
+
+        async Task AssertStateAsync(decimal newLocationQty, decimal custodyQty)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(70m, (await db.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN" && b.LocCode == "BIN1")).StdQty);
+            Assert.Equal(newLocationQty, (await db.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN" && b.LocCode == "BIN2")).StdQty);
+            Assert.Equal(custodyQty, (await db.IvBalLocs.SingleAsync(b => b.WhCode == "SUBCON")).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((90m, 450m), (state.OnHandBaseQty, state.InventoryValue));
+            var alloc = await db.SubconCustodyAllocations.SingleAsync(a => a.IsActive);
+            Assert.Equal(custodyQty, alloc.DispatchedBaseQty - alloc.ReturnedBaseQty);
+            var issue = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == issueBatch && h.EntryRole == "ORIGINAL");
+            var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, _scope.CompanyCode, _scope.BranchCode!, [issue]);
+            Assert.Equal(50m, facts[issue.Id].Sum(f => f.CostAmount));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Backdated_subcon_replay_refuses_closed_period_or_cross_month_tail_atomically(bool crossMonth)
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        var later = crossMonth ? new DateTime(Today.Year, Today.Month, 1).AddMonths(1) : Today;
+        await PostLaterIssueForSubconReplayAsync(later);
+        var draft = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            TrxDate = Today.AddDays(-5), Mode = SubconModes.Inventory, SupplierCode = "SUP01",
+            Lines = [new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "A100", Uom = "EA",
+                Qty = 20m, WarehouseCode = "MAIN", LocationCode = "BIN1" }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        if (!crossMonth)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var first = new DateTime(Today.Year, Today.Month, 1);
+            db.IvPeriodCloseHdrs.Add(new IvPeriodCloseHdr
+            {
+                CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!,
+                PeriodFrom = first, PeriodTo = first.AddMonths(1).AddDays(-1), Status = IvPeriodCloseStatuses.Closed
+            });
+            await db.SaveChangesAsync();
+        }
+        async Task<(int Roots, int Facts, int Links, int Allocations, decimal Main, decimal Value)> SnapshotAsync()
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            return (await db.StockPostings.CountAsync(), await db.StockValuationFacts.CountAsync(),
+                await db.SubconPostingLinks.CountAsync(), await db.SubconCustodyAllocations.CountAsync(),
+                await db.IvBalLocs.Where(b => b.WhCode == "MAIN").Select(b => b.StdQty).SingleAsync(),
+                (await db.StockCostStates.SingleAsync()).InventoryValue);
+        }
+        var before = await SnapshotAsync();
+        var blocked = await svc.PostDispatchAsync(new SubconKeyCommand
+        {
+            DocNo = draft.Dispatch!.DocNo, RowVersion = draft.Dispatch.RowVersion
+        });
+        Assert.False(blocked.Succeeded);
+        Assert.Equal(before, await SnapshotAsync());
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(0, await check.IvBalLocs.CountAsync(b => b.WhCode == "SUBCON"));
+        Assert.Equal(SubconStatuses.New, (await check.SubconDispatches.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task Backdated_subcon_receive_back_rollback_respects_quality_holds()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true, qaPhysical: new QaPhysicalHoldAuthorizationService());
+        await EnableLiveCustodyPolicyAsync(svc);
+        var dispatch = await SaveAndPostDispatchAtAsync(svc, Today.AddDays(-8), 20m);
+        var issueBatch = await PostLaterIssueForSubconReplayAsync();
+        var draft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today.AddDays(-5), SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatch.DocNo,
+                DispatchLineNo = 1, Qty = 10m }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = draft.Receipt!.DocNo, RowVersion = draft.Receipt.RowVersion });
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        int roots, facts, links;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var balance = await db.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN");
+            db.QaPolicies.Add(new QaPolicy { CompanyCode = _scope.CompanyCode, Version = 1, Enabled = true,
+                IsPublished = true, PhysicalHoldEnabled = true, CreatedDate = DateTime.UtcNow, CreatedBy = "tester" });
+            var line = new QaCaseLine { LineNo = 1, ItemCode = balance.ICode, Uom = "EA", Qty = 75m };
+            var qaCase = new QaCase { CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!,
+                CaseNo = "QA-SUBCON-REPLAY", CaseDate = Today, Status = QaCaseStatuses.Approved,
+                SourceType = QaSourceTypes.InventoryStock, CreatedDate = DateTime.UtcNow, CreatedBy = "tester", Lines = [line] };
+            qaCase.PhysicalHolds.Add(new QaPhysicalHold { CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!,
+                CaseLine = line, BalLocId = balance.Id, ItemCode = balance.ICode, WarehouseCode = balance.WhCode,
+                LocationCode = balance.LocCode, LotNo = balance.LotNo ?? string.Empty, ItemStatus = balance.IStatus,
+                ReservedBaseQty = 75m, Status = QaLogicalHoldStatuses.Active, Cause = QaLogicalHoldCauses.KeepHold,
+                CreatedAtUtc = DateTime.UtcNow });
+            db.QaCases.Add(qaCase);
+            await db.SaveChangesAsync();
+            roots = await db.StockPostings.CountAsync();
+            facts = await db.StockValuationFacts.CountAsync();
+            links = await db.SubconPostingLinks.CountAsync();
+        }
+        var blocked = await svc.RollbackReceiptAsync(new SubconKeyCommand { DocNo = posted.Receipt!.DocNo, RowVersion = posted.Receipt.RowVersion });
+        Assert.False(blocked.Succeeded);
+        Assert.Contains("quality hold", blocked.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        await AssertSubconReplayStateAsync(80m, 10m, issueBatch, 10m);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(roots, await db.StockPostings.CountAsync());
+            Assert.Equal(facts, await db.StockValuationFacts.CountAsync());
+            Assert.Equal(links, await db.SubconPostingLinks.CountAsync());
+            (await db.QaPhysicalHolds.SingleAsync()).ReservedBaseQty = 70m;
+            await db.SaveChangesAsync();
+        }
+        var rolled = await svc.RollbackReceiptAsync(new SubconKeyCommand { DocNo = posted.Receipt.DocNo, RowVersion = posted.Receipt.RowVersion });
+        Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+        await AssertSubconReplayStateAsync(70m, 20m, issueBatch, 20m);
+    }
+
+    [Fact]
+    public async Task Backdated_subcon_send_out_rejects_historical_shortage_even_when_current_stock_is_sufficient()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        await PostLaterIssueForSubconReplayAsync(qty: 90m);
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, Today);
+        var received = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = Today,
+            Lines = [new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                Quantity = 100m, UnitPrice = 5m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", Reason = "ADJ" }]
+        });
+        Assert.True(received.Succeeded, received.ErrorMessage);
+        var postedReceipt = await receipt.PostAsync([received.BatchNo]);
+        Assert.True(postedReceipt.Succeeded, postedReceipt.ErrorMessage);
+        var draft = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            TrxDate = Today.AddDays(-5), Mode = SubconModes.Inventory, SupplierCode = "SUP01",
+            Lines = [new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "A100", Uom = "EA",
+                Qty = 105m, WarehouseCode = "MAIN", LocationCode = "BIN1" }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        int roots, facts;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            roots = await db.StockPostings.CountAsync();
+            facts = await db.StockValuationFacts.CountAsync();
+        }
+        var blocked = await svc.PostDispatchAsync(new SubconKeyCommand { DocNo = draft.Dispatch!.DocNo, RowVersion = draft.Dispatch.RowVersion });
+        Assert.False(blocked.Succeeded);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(roots, await check.StockPostings.CountAsync());
+        Assert.Equal(facts, await check.StockValuationFacts.CountAsync());
+        Assert.Equal(0, await check.SubconPostingLinks.CountAsync());
+        Assert.Equal(0, await check.SubconCustodyAllocations.CountAsync());
+        Assert.Equal(0, await check.IvBalLocs.CountAsync(b => b.WhCode == "SUBCON"));
+        Assert.Equal(110m, (await check.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN")).StdQty);
+        Assert.Equal((110m, 550m), ((await check.StockCostStates.SingleAsync()).OnHandBaseQty,
+            (await check.StockCostStates.SingleAsync()).InventoryValue));
+    }
+
+    [Fact]
+    public async Task Backdated_subcon_send_out_uses_historical_wac_when_later_receipt_changes_the_average()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        var receipt = InventoryLedgerTestFixture.CreateMiscReceipt(_factory, Today);
+        var later = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = Today,
+            Lines = [new IvMiscReceiptLineRequest { ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1",
+                Quantity = 100m, UnitPrice = 10m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", Reason = "ADJ" }]
+        });
+        Assert.True(later.Succeeded, later.ErrorMessage);
+        var receiptPost = await receipt.PostAsync([later.BatchNo]);
+        Assert.True(receiptPost.Succeeded, receiptPost.ErrorMessage);
+        var issueBatch = await PostLaterIssueForSubconReplayAsync();
+        var draft = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            TrxDate = Today.AddDays(-5), Mode = SubconModes.Inventory, SupplierCode = "SUP01",
+            Lines = [new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "A100", Uom = "EA",
+                Qty = 20m, WarehouseCode = "MAIN", LocationCode = "BIN1" }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var posted = await svc.PostDispatchAsync(new SubconKeyCommand { DocNo = draft.Dispatch!.DocNo, RowVersion = draft.Dispatch.RowVersion });
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(170m, (await db.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN")).StdQty);
+            Assert.Equal(20m, (await db.IvBalLocs.SingleAsync(b => b.WhCode == "SUBCON")).StdQty);
+            var state = await db.StockCostStates.SingleAsync();
+            Assert.Equal((190m, 1425m), (state.OnHandBaseQty, state.InventoryValue));
+            var transfer = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == posted.Dispatch!.PostedTrxBatchNo && h.EntryRole == "ORIGINAL");
+            var issue = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == issueBatch && h.EntryRole == "ORIGINAL");
+            var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, _scope.CompanyCode, _scope.BranchCode!, [transfer, issue]);
+            Assert.Equal(2, facts[transfer.Id].Count);
+            Assert.All(facts[transfer.Id], fact => Assert.Equal(100m, fact.CostAmount));
+            Assert.Equal(75m, facts[issue.Id].Sum(f => f.CostAmount));
+        }
+        var rolled = await svc.RollbackDispatchAsync(new SubconKeyCommand { DocNo = posted.Dispatch!.DocNo, RowVersion = posted.Dispatch.RowVersion });
+        Assert.True(rolled.Succeeded, rolled.ErrorMessage);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(190m, (await check.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN")).StdQty);
+        Assert.Equal(0m, (await check.IvBalLocs.SingleAsync(b => b.WhCode == "SUBCON")).StdQty);
+        Assert.Equal(1425m, (await check.StockCostStates.SingleAsync()).InventoryValue);
+    }
+
+    [Fact]
+    public async Task Backdated_subcon_rollback_refuses_a_closed_original_period_without_mutation()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        var issueBatch = await PostLaterIssueForSubconReplayAsync();
+        var posted = await SaveAndPostDispatchAtAsync(svc, Today.AddDays(-5), 20m);
+        int roots, facts, links;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var first = new DateTime(Today.Year, Today.Month, 1);
+            db.IvPeriodCloseHdrs.Add(new IvPeriodCloseHdr { CompanyCode = _scope.CompanyCode, BranchCode = _scope.BranchCode!,
+                PeriodFrom = first, PeriodTo = first.AddMonths(1).AddDays(-1), Status = IvPeriodCloseStatuses.Closed });
+            await db.SaveChangesAsync();
+            roots = await db.StockPostings.CountAsync();
+            facts = await db.StockValuationFacts.CountAsync();
+            links = await db.SubconPostingLinks.CountAsync();
+        }
+        var blocked = await svc.RollbackDispatchAsync(new SubconKeyCommand { DocNo = posted.DocNo, RowVersion = posted.RowVersion });
+        Assert.False(blocked.Succeeded);
+        await AssertSubconReplayStateAsync(70m, 20m, issueBatch, 20m);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(roots, await check.StockPostings.CountAsync());
+        Assert.Equal(facts, await check.StockValuationFacts.CountAsync());
+        Assert.Equal(links, await check.SubconPostingLinks.CountAsync());
+        Assert.Equal(SubconStatuses.Posted, (await check.SubconDispatches.SingleAsync()).Status);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Backdated_subcon_rollback_rejects_changed_link_or_custody_allocation(bool changeLink)
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        var issueBatch = await PostLaterIssueForSubconReplayAsync();
+        var posted = await SaveAndPostDispatchAtAsync(svc, Today.AddDays(-5), 20m);
+        int roots, facts, links;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.SubconPostingLinks.SingleAsync(l => l.IsActive);
+            if (changeLink)
+                link.StockPostingId = (await db.IvTrxHistories.SingleAsync(h => h.BatchNo == issueBatch && h.EntryRole == "ORIGINAL")).StockPostingId;
+            else
+                (await db.SubconCustodyAllocations.SingleAsync(a => a.IsActive)).DispatchedBaseQty = 19m;
+            await db.SaveChangesAsync();
+            roots = await db.StockPostings.CountAsync();
+            facts = await db.StockValuationFacts.CountAsync();
+            links = await db.SubconPostingLinks.CountAsync();
+        }
+        var blocked = await svc.RollbackDispatchAsync(new SubconKeyCommand { DocNo = posted.DocNo, RowVersion = posted.RowVersion });
+        Assert.False(blocked.Succeeded);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(roots, await check.StockPostings.CountAsync());
+        Assert.Equal(facts, await check.StockValuationFacts.CountAsync());
+        Assert.Equal(links, await check.SubconPostingLinks.CountAsync());
+        Assert.Equal(70m, (await check.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN")).StdQty);
+        Assert.Equal(20m, (await check.IvBalLocs.SingleAsync(b => b.WhCode == "SUBCON")).StdQty);
+        Assert.Equal(450m, (await check.StockCostStates.SingleAsync()).InventoryValue);
+        Assert.True((await check.SubconCustodyAllocations.SingleAsync()).IsActive);
+        Assert.Equal(SubconStatuses.Posted, (await check.SubconDispatches.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task Backdated_subcon_receive_back_rollback_rejects_changed_custody_allocation()
+    {
+        await SeedCostMethodAndOpeningStockAsync("WAC", openingDate: Today.AddDays(-10));
+        var (svc, _, _) = CreateServices(enableBackdatedReplay: true);
+        await EnableLiveCustodyPolicyAsync(svc);
+        var dispatch = await SaveAndPostDispatchAtAsync(svc, Today.AddDays(-8), 20m);
+        await PostLaterIssueForSubconReplayAsync();
+        var draft = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
+        {
+            TrxDate = Today.AddDays(-5), SupplierCode = "SUP01",
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatch.DocNo,
+                DispatchLineNo = 1, Qty = 10m }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var posted = await svc.PostReceiptAsync(new SubconKeyCommand { DocNo = draft.Receipt!.DocNo, RowVersion = draft.Receipt.RowVersion });
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        int roots, facts, links;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var mainId = (await db.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN")).Id;
+            (await db.SubconCustodyAllocations.SingleAsync(a => a.IsActive)).CustodyBalLocId = mainId;
+            await db.SaveChangesAsync();
+            roots = await db.StockPostings.CountAsync();
+            facts = await db.StockValuationFacts.CountAsync();
+            links = await db.SubconPostingLinks.CountAsync();
+        }
+        var blocked = await svc.RollbackReceiptAsync(new SubconKeyCommand { DocNo = posted.Receipt!.DocNo, RowVersion = posted.Receipt.RowVersion });
+        Assert.False(blocked.Succeeded);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(roots, await check.StockPostings.CountAsync());
+        Assert.Equal(facts, await check.StockValuationFacts.CountAsync());
+        Assert.Equal(links, await check.SubconPostingLinks.CountAsync());
+        Assert.Equal(80m, (await check.IvBalLocs.SingleAsync(b => b.WhCode == "MAIN")).StdQty);
+        Assert.Equal(10m, (await check.IvBalLocs.SingleAsync(b => b.WhCode == "SUBCON")).StdQty);
+        Assert.Equal(450m, (await check.StockCostStates.SingleAsync()).InventoryValue);
+        Assert.Equal(10m, (await check.SubconCustodyAllocations.SingleAsync()).ReturnedBaseQty);
+        Assert.Equal(SubconStatuses.Posted, (await check.SubconReceipts.SingleAsync()).Status);
     }
 
     [Fact]
@@ -1347,9 +1765,11 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
             lookups.Object);
     }
 
-    private (SubconApplicationService Service, IvInventoryPostingService Posting, SubconInventoryTransferAdapter Adapter) CreateServices()
+    private (SubconApplicationService Service, IvInventoryPostingService Posting, SubconInventoryTransferAdapter Adapter) CreateServices(
+        bool enableBackdatedReplay = false, IQaPhysicalHoldAuthorization? qaPhysical = null)
     {
-        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory, _scope.CompanyCode, _scope.BranchCode!, _access.Object);
+        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory, _scope.CompanyCode, _scope.BranchCode!, _access.Object,
+            enableBackdatedReplay: enableBackdatedReplay, qaPhysical: qaPhysical);
         var numbers = new RunningNumberService();
         var uom = new IvUomConversionService(_factory);
         var softRes = new InventorySoftReservationReader();
@@ -1384,6 +1804,53 @@ public sealed class SubconLiveCustodyPostingTests : IAsyncLifetime
         var posted = await svc.PostDispatchAsync(new SubconKeyCommand { DocNo = saved.Dispatch!.DocNo, RowVersion = saved.Dispatch.RowVersion });
         Assert.True(posted.Succeeded, posted.ErrorMessage);
         return posted.Dispatch!;
+    }
+
+    private async Task<SubconDispatchDto> SaveAndPostDispatchAtAsync(SubconApplicationService svc, DateTime date, decimal qty)
+    {
+        var saved = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
+        {
+            TrxDate = date, Mode = SubconModes.Inventory, SupplierCode = "SUP01",
+            Lines = [new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "A100", Uom = "EA",
+                Qty = qty, WarehouseCode = "MAIN", LocationCode = "BIN1" }]
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+        var posted = await svc.PostDispatchAsync(new SubconKeyCommand { DocNo = saved.Dispatch!.DocNo, RowVersion = saved.Dispatch.RowVersion });
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        return posted.Dispatch!;
+    }
+
+    private async Task<int> PostLaterIssueForSubconReplayAsync(DateTime? issueDate = null, decimal qty = 10m)
+    {
+        var date = issueDate ?? Today;
+        int mainId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            mainId = await db.IvBalLocs.Where(b => b.ICode == "A100" && b.WhCode == "MAIN").Select(b => b.Id).SingleAsync();
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, date);
+        var draft = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = date,
+            Lines = [new IvMiscIssueLineRequest { ICode = "A100", FromBalLocId = mainId,
+                FrWarehouse = "MAIN", FrLocation = "BIN1", IStatus = "ACTIVE", Quantity = qty, Uom = "EA" }]
+        });
+        Assert.True(draft.Succeeded, draft.ErrorMessage);
+        var posted = await issue.PostAsync([draft.BatchNo]);
+        Assert.True(posted.Succeeded, posted.ErrorMessage);
+        return draft.BatchNo;
+    }
+
+    private async Task AssertSubconReplayStateAsync(decimal mainQty, decimal custodyQty, int issueBatch, decimal outstanding)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(mainQty, await db.IvBalLocs.Where(b => b.ICode == "A100" && b.WhCode == "MAIN").Select(b => b.StdQty).SingleAsync());
+        Assert.Equal(custodyQty, await db.IvBalLocs.Where(b => b.ICode == "A100" && b.WhCode == "SUBCON").Select(b => b.StdQty).SingleAsync());
+        var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+        Assert.Equal((90m, 450m), (state.OnHandBaseQty, state.InventoryValue));
+        var allocations = await db.SubconCustodyAllocations.Where(a => a.IsActive).ToArrayAsync();
+        Assert.Equal(outstanding, allocations.Sum(a => a.DispatchedBaseQty - a.ReturnedBaseQty - a.ConsumedBaseQty - a.ScrapBaseQty));
+        var history = await db.IvTrxHistories.SingleAsync(h => h.BatchNo == issueBatch && h.EntryRole == "ORIGINAL");
+        var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, _scope.CompanyCode, _scope.BranchCode!, [history]);
+        Assert.Equal(50m, facts[history.Id].Sum(f => f.CostAmount));
     }
 
     private async Task SeedCostMethodAndOpeningStockAsync(string method, DateTime? openingDate = null)

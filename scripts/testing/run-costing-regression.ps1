@@ -17,6 +17,16 @@ $patterns = @(
     'CostingDiagnosticCenterTests', 'QaPhysicalHoldTests', 'QaIncomingGrantTests',
     'QaFgGrantTests', 'QaLogicalHoldTests',
     'SubconPostBlockedTests', 'SubconModeTests', 'SubconLiveCustodyPostingTests',
+    'Backdated_wac_send_out_before_later_issue_posts_rolls_back_and_reposts',
+    'Backdated_wac_receive_back_before_later_issue_posts_rolls_back_and_reposts',
+    'Backdated_wac_receive_back_to_new_destination_posts_rolls_back_and_reposts',
+    'Backdated_subcon_replay_refuses_closed_period_or_cross_month_tail_atomically',
+    'Backdated_subcon_receive_back_rollback_respects_quality_holds',
+    'Backdated_subcon_send_out_rejects_historical_shortage_even_when_current_stock_is_sufficient',
+    'Backdated_subcon_send_out_uses_historical_wac_when_later_receipt_changes_the_average',
+    'Backdated_subcon_rollback_refuses_a_closed_original_period_without_mutation',
+    'Backdated_subcon_rollback_rejects_changed_link_or_custody_allocation',
+    'Backdated_subcon_receive_back_rollback_rejects_changed_custody_allocation',
     'PoInvoiceServiceTests', 'PoCdnServiceTests',
     'Backdated_purchase_invoice_reprices_direct_sale_and_rolls_back',
     'Backdated_purchase_invoice_before_sale_respects_disabled_replay',
@@ -212,6 +222,16 @@ $required = @(
     'Issue_before_zero_count_rejects_insufficient_stock_or_an_unhandled_later_movement',
     'IvPeriodCloseServiceTests', 'QaPhysicalHoldTests', 'QaFgGrantTests', 'QaLogicalHoldTests', 'PoInvoiceServiceTests',
     'SubconPostBlockedTests', 'SubconModeTests', 'SubconLiveCustodyPostingTests',
+    'Backdated_wac_send_out_before_later_issue_posts_rolls_back_and_reposts',
+    'Backdated_wac_receive_back_before_later_issue_posts_rolls_back_and_reposts',
+    'Backdated_wac_receive_back_to_new_destination_posts_rolls_back_and_reposts',
+    'Backdated_subcon_replay_refuses_closed_period_or_cross_month_tail_atomically',
+    'Backdated_subcon_receive_back_rollback_respects_quality_holds',
+    'Backdated_subcon_send_out_rejects_historical_shortage_even_when_current_stock_is_sufficient',
+    'Backdated_subcon_send_out_uses_historical_wac_when_later_receipt_changes_the_average',
+    'Backdated_subcon_rollback_refuses_a_closed_original_period_without_mutation',
+    'Backdated_subcon_rollback_rejects_changed_link_or_custody_allocation',
+    'Backdated_subcon_receive_back_rollback_rejects_changed_custody_allocation',
     'Backdated_MR_targeting_subcon_custody_warehouse_is_blocked_even_with_replay_enabled',
     'Backdated_MR_and_StockCount_cannot_reprice_or_strand_later_subcon_custody_transfer',
     'Warehouse_and_location_delete_are_blocked_when_referenced_by_subcon_policy_or_map',
@@ -528,6 +548,7 @@ try {
         & $sqlRunner -Server $SqlServer -NoBuild -CostChangingReceiptBeforeCountReplay
         & $sqlRunner -Server $SqlServer -NoBuild -ReceiptBeforeCountThenIssueReplay
         & $sqlRunner -Server $SqlServer -NoBuild -GoodsReceiptBeforeCountThenIssueReplay
+        & $sqlRunner -Server $SqlServer -NoBuild -SubconWacReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PartlyConsumedNoteReplay
         & $sqlRunner -Server $SqlServer -NoBuild -PartlyConsumedNoteIssueRollback
         & $sqlRunner -Server $SqlServer -NoBuild -ReversedSaleLate

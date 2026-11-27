@@ -526,8 +526,148 @@ public sealed class SubconSqlServerConcurrencyTests : IAsyncLifetime
         Assert.Equal(10m, await db.IvBalLocs.Where(b => b.CompanyCode == _company && b.WhCode == "MAIN").Select(b => b.StdQty).SingleAsync());
     }
 
-    private async Task SeedOpeningStockWacAsync(decimal openingQty, decimal unitCost)
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Backdated_wac_custody_transfer_replay_is_atomic_and_serializes_duplicates(bool receiveBack, bool existingDestination)
     {
+        if (SkipWithoutSqlServer()) return;
+        await SeedOpeningStockWacAsync(100m, 5m, Today.AddDays(-10));
+        var (svc, adapter) = CreateLiveService(enableBackdatedReplay: true);
+        await EnableLivePolicyAsync(svc);
+        var previous = receiveBack || existingDestination
+            ? await PostDispatchAsync(svc, receiveBack ? 20m : 1m, Today.AddDays(-8)) : null;
+        if (!receiveBack && previous is not null)
+        {
+            var undone = await svc.RollbackDispatchAsync(new SubconKeyCommand { DocNo = previous.DocNo, RowVersion = previous.RowVersion });
+            Assert.True(undone.Succeeded, undone.ErrorMessage);
+        }
+        int mainId;
+        await using (var db = await _factory!.CreateDbContextAsync())
+            mainId = await db.IvBalLocs.Where(b => b.CompanyCode == _company && b.WhCode == "MAIN").Select(b => b.Id).SingleAsync();
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory!, Today, _company, Branch);
+        var issueDraft = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+        {
+            TrxDate = Today,
+            Lines = [new IvMiscIssueLineRequest { ICode = "RM1", FromBalLocId = mainId,
+                FrWarehouse = "MAIN", FrLocation = "BIN1", IStatus = "ACTIVE", Quantity = 10m, Uom = "PCS" }]
+        });
+        Assert.True(issueDraft.Succeeded, issueDraft.ErrorMessage);
+        var issuePost = await issue.PostAsync([issueDraft.BatchNo]);
+        Assert.True(issuePost.Succeeded, issuePost.ErrorMessage);
+
+        if (receiveBack && !existingDestination)
+        {
+            await using var db = await _factory!.CreateDbContextAsync();
+            db.IvLocations.Add(new IvLocation { CompanyCode = _company, BranchCode = Branch, WarehouseCode = "MAIN",
+                LocCode = "BIN2", LocDesc = "Bin 2", IsActive = true });
+            await db.SaveChangesAsync();
+        }
+        var receipt = receiveBack ? await SaveReceiptDraftAsync(svc, previous!.DocNo, 10m, Today.AddDays(-5),
+            existingDestination ? null : "BIN2") : null;
+        var dispatch = !receiveBack ? await SaveDispatchDraftAsync(svc, 20m, Today.AddDays(-5)) : null;
+        var docNo = receiveBack ? receipt!.DocNo : dispatch!.DocNo;
+        var draftVersion = receiveBack ? receipt!.RowVersion : dispatch!.RowVersion;
+
+        async Task<(decimal Main, decimal Custody, decimal Qty, decimal Value, int MainPiles, int CustodyPiles, int Roots, int Facts, int Links, int Allocations, string Status)> SnapshotAsync()
+        {
+            await using var db = await _factory!.CreateDbContextAsync();
+            var state = await db.StockCostStates.SingleAsync(s => s.CompanyCode == _company && s.ItemCode == "RM1");
+            return (await db.IvBalLocs.Where(b => b.CompanyCode == _company && b.WhCode == "MAIN").SumAsync(b => b.StdQty),
+                await db.IvBalLocs.Where(b => b.CompanyCode == _company && b.WhCode == "SUBCON").Select(b => (decimal?)b.StdQty).SingleOrDefaultAsync() ?? 0m,
+                state.OnHandBaseQty, state.InventoryValue,
+                await db.IvBalLocs.CountAsync(b => b.CompanyCode == _company && b.WhCode == "MAIN"),
+                await db.IvBalLocs.CountAsync(b => b.CompanyCode == _company && b.WhCode == "SUBCON"),
+                await db.StockPostings.CountAsync(p => p.CompanyCode == _company),
+                await db.StockValuationFacts.CountAsync(f => f.CompanyCode == _company),
+                await db.SubconPostingLinks.CountAsync(l => l.CompanyCode == _company),
+                await db.SubconCustodyAllocations.CountAsync(a => a.CompanyCode == _company),
+                receiveBack ? await db.SubconReceipts.Where(r => r.CompanyCode == _company && r.DocNo == docNo).Select(r => r.Status).SingleAsync()
+                    : await db.SubconDispatches.Where(d => d.CompanyCode == _company && d.DocNo == docNo).Select(d => d.Status).SingleAsync());
+        }
+        async Task AssertStateAsync(decimal main, decimal custody, decimal outstanding)
+        {
+            await using var db = await _factory!.CreateDbContextAsync();
+            var snapshot = await SnapshotAsync();
+            Assert.Equal((main, custody, 90m, 450m), (snapshot.Main, snapshot.Custody, snapshot.Qty, snapshot.Value));
+            if (receiveBack && !existingDestination)
+                Assert.Equal(main == 80m ? 10m : 0m, await db.IvBalLocs.Where(b => b.CompanyCode == _company
+                    && b.WhCode == "MAIN" && b.LocCode == "BIN2").Select(b => b.StdQty).SingleAsync());
+            var allocations = await db.SubconCustodyAllocations.Where(a => a.CompanyCode == _company && a.IsActive).ToArrayAsync();
+            Assert.Equal(outstanding, allocations.Sum(a => a.DispatchedBaseQty - a.ReturnedBaseQty - a.ConsumedBaseQty - a.ScrapBaseQty));
+            var history = await db.IvTrxHistories.SingleAsync(h => h.CompanyCode == _company && h.BatchNo == issueDraft.BatchNo && h.EntryRole == "ORIGINAL");
+            var facts = await StockReplayValuationGenerationResolver.ResolveAsync(db, _company, Branch, [history]);
+            Assert.Equal(50m, facts[history.Id].Sum(f => f.CostAmount));
+        }
+        async Task AssertSessionClearedAsync()
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT SESSION_CONTEXT(N'STOCK_LEDGER_V2_POSTING_ID')";
+            Assert.True(await command.ExecuteScalarAsync() is null or DBNull);
+        }
+        Task<SubconResult> PostAsync(SubconApplicationService service, SubconKeyCommand command) =>
+            receiveBack ? service.PostReceiptAsync(command) : service.PostDispatchAsync(command);
+        Task<SubconResult> RollbackAsync(SubconApplicationService service, SubconKeyCommand command) =>
+            receiveBack ? service.RollbackReceiptAsync(command) : service.RollbackDispatchAsync(command);
+
+        var postRequest = Guid.NewGuid();
+        var beforePost = await SnapshotAsync();
+        adapter.TestHookAfterSubconLinkWrite = () => throw new InvalidOperationException("Replay failure before seal");
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => PostAsync(svc,
+                new SubconKeyCommand { DocNo = docNo, RowVersion = draftVersion, RequestId = postRequest }));
+        }
+        finally { adapter.TestHookAfterSubconLinkWrite = null; }
+        Assert.Equal(beforePost, await SnapshotAsync());
+        await AssertSessionClearedAsync();
+
+        var (svc1, _) = CreateLiveService(true);
+        var (svc2, _) = CreateLiveService(true);
+        var posts = await RunSimultaneouslyAsync(
+            () => PostAsync(svc1, new SubconKeyCommand { DocNo = docNo, RowVersion = draftVersion, RequestId = postRequest }),
+            () => PostAsync(svc2, new SubconKeyCommand { DocNo = docNo, RowVersion = draftVersion, RequestId = Guid.NewGuid() }))
+            .WaitAsync(TimeSpan.FromSeconds(45));
+        var winner = Assert.Single(posts, r => r.Succeeded);
+        Assert.Single(posts, r => !r.Succeeded);
+        await AssertStateAsync(receiveBack ? 80m : 70m, receiveBack ? 10m : 20m, receiveBack ? 10m : 20m);
+        var postedVersion = receiveBack ? winner.Receipt!.RowVersion : winner.Dispatch!.RowVersion;
+        var rollbackRequest = Guid.NewGuid();
+        var beforeRollback = await SnapshotAsync();
+        adapter.TestHookAfterSubconLinkWrite = () => throw new InvalidOperationException("Replay reversal failure before seal");
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RollbackAsync(svc,
+                new SubconKeyCommand { DocNo = docNo, RowVersion = postedVersion, RequestId = rollbackRequest }));
+        }
+        finally { adapter.TestHookAfterSubconLinkWrite = null; }
+        Assert.Equal(beforeRollback, await SnapshotAsync());
+        await AssertSessionClearedAsync();
+
+        var rollbacks = await RunSimultaneouslyAsync(
+            () => RollbackAsync(svc1, new SubconKeyCommand { DocNo = docNo, RowVersion = postedVersion, RequestId = rollbackRequest }),
+            () => RollbackAsync(svc2, new SubconKeyCommand { DocNo = docNo, RowVersion = postedVersion, RequestId = Guid.NewGuid() }))
+            .WaitAsync(TimeSpan.FromSeconds(45));
+        var rolled = Assert.Single(rollbacks, r => r.Succeeded);
+        Assert.Single(rollbacks, r => !r.Succeeded);
+        await AssertStateAsync(receiveBack ? 70m : 90m, receiveBack ? 20m : 0m, receiveBack ? 20m : 0m);
+        var rolledVersion = receiveBack ? rolled.Receipt!.RowVersion : rolled.Dispatch!.RowVersion;
+        var reposted = await PostAsync(svc, new SubconKeyCommand { DocNo = docNo, RowVersion = rolledVersion });
+        Assert.True(reposted.Succeeded, reposted.ErrorMessage);
+        var repostedVersion = receiveBack ? reposted.Receipt!.RowVersion : reposted.Dispatch!.RowVersion;
+        var rerolled = await RollbackAsync(svc, new SubconKeyCommand { DocNo = docNo, RowVersion = repostedVersion });
+        Assert.True(rerolled.Succeeded, rerolled.ErrorMessage);
+        await AssertStateAsync(receiveBack ? 70m : 90m, receiveBack ? 20m : 0m, receiveBack ? 20m : 0m);
+        await AssertSessionClearedAsync();
+    }
+
+    private async Task SeedOpeningStockWacAsync(decimal openingQty, decimal unitCost, DateTime? openingDate = null)
+    {
+        var date = openingDate ?? Today.AddDays(-1);
         await using var db = await _factory!.CreateDbContextAsync();
         db.IvBalLocs.Add(new IvBalLoc
         {
@@ -540,14 +680,14 @@ public sealed class SubconSqlServerConcurrencyTests : IAsyncLifetime
             IStatus = "ACTIVE",
             StdQty = openingQty,
             StdUom = "PCS",
-            TransDate = Today.AddDays(-1),
+            TransDate = date,
             Cost = unitCost,
             UnitPrice = unitCost
         });
         await db.SaveChangesAsync();
         await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db, _company, Branch);
         await InventoryLedgerTestFixture.SeedCostStateAsync(db, "RM1", openingQty, unitCost, StockCostMethods.MovingAverage, _company, Branch);
-        await InventoryLedgerTestFixture.SeedOpeningValuationFactAsync(db, "RM1", openingQty, unitCost, Today.AddDays(-1), StockCostMethods.MovingAverage, _company, Branch);
+        await InventoryLedgerTestFixture.SeedOpeningValuationFactAsync(db, "RM1", openingQty, unitCost, date, StockCostMethods.MovingAverage, _company, Branch);
     }
 
     private async Task EnableLivePolicyAsync(SubconApplicationService svc)
@@ -562,11 +702,11 @@ public sealed class SubconSqlServerConcurrencyTests : IAsyncLifetime
         Assert.True(res.Succeeded, res.ErrorMessage);
     }
 
-    private async Task<SubconDispatchDto> SaveDispatchDraftAsync(SubconApplicationService svc, decimal qty)
+    private async Task<SubconDispatchDto> SaveDispatchDraftAsync(SubconApplicationService svc, decimal qty, DateTime? date = null)
     {
         var saved = await svc.SaveDispatchDraftAsync(new SubconDispatchSaveCommand
         {
-            TrxDate = Today,
+            TrxDate = date ?? Today,
             Mode = SubconModes.Inventory,
             SupplierCode = "SUP01",
             Lines = [new SubconDispatchLineSaveCommand { LineNo = 1, ItemCode = "RM1", Qty = qty, WarehouseCode = "MAIN", LocationCode = "BIN1", Uom = "PCS" }]
@@ -575,21 +715,23 @@ public sealed class SubconSqlServerConcurrencyTests : IAsyncLifetime
         return saved.Dispatch!;
     }
 
-    private async Task<SubconDispatchDto> PostDispatchAsync(SubconApplicationService svc, decimal qty)
+    private async Task<SubconDispatchDto> PostDispatchAsync(SubconApplicationService svc, decimal qty, DateTime? date = null)
     {
-        var draft = await SaveDispatchDraftAsync(svc, qty);
+        var draft = await SaveDispatchDraftAsync(svc, qty, date);
         var posted = await svc.PostDispatchAsync(new SubconKeyCommand { DocNo = draft.DocNo, RowVersion = draft.RowVersion, RequestId = Guid.NewGuid() });
         Assert.True(posted.Succeeded, posted.ErrorMessage);
         return posted.Dispatch!;
     }
 
-    private async Task<SubconReceiptDto> SaveReceiptDraftAsync(SubconApplicationService svc, string dispatchDocNo, decimal qty)
+    private async Task<SubconReceiptDto> SaveReceiptDraftAsync(SubconApplicationService svc, string dispatchDocNo, decimal qty,
+        DateTime? date = null, string? toLocation = null)
     {
         var saved = await svc.SaveReceiptDraftAsync(new SubconReceiptSaveCommand
         {
-            TrxDate = Today,
+            TrxDate = date ?? Today,
             SupplierCode = "SUP01",
-            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatchDocNo, DispatchLineNo = 1, Qty = qty }]
+            Lines = [new SubconReceiptLineSaveCommand { LineNo = 1, DispatchDocNo = dispatchDocNo, DispatchLineNo = 1, Qty = qty,
+                ToWarehouseCode = toLocation is null ? null : "MAIN", ToLocationCode = toLocation }]
         });
         Assert.True(saved.Succeeded, saved.ErrorMessage);
         return saved.Receipt!;
@@ -682,10 +824,11 @@ public sealed class SubconSqlServerConcurrencyTests : IAsyncLifetime
             new SubconBlockedProductionSourceAdapter());
     }
 
-    private (SubconApplicationService Service, SubconInventoryTransferAdapter Adapter) CreateLiveService()
+    private (SubconApplicationService Service, SubconInventoryTransferAdapter Adapter) CreateLiveService(bool enableBackdatedReplay = false)
     {
         var (tenant, access) = CreateTenantAndAccess();
-        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory!, _company, Branch, access.Object);
+        var posting = InventoryLedgerTestFixture.CreateInventoryPosting(_factory!, _company, Branch, access.Object,
+            enableBackdatedReplay: enableBackdatedReplay);
         var numbers = new RunningNumberService();
         var adapter = new SubconInventoryTransferAdapter(
             _factory!, posting, numbers, new IvUomConversionService(_factory!), new InventorySoftReservationReader());
