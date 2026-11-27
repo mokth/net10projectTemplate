@@ -367,6 +367,23 @@ public static class StockReplayWacTailRepricingWriter
         var histories = new List<int>();
         var countLines = new List<int>();
         var repricedSales = new Dictionary<long, IReadOnlyList<StockValuationFact>>();
+        var pendingIssues = new List<StockReplayWacIssueRepricingRequest>();
+
+        async Task FlushIssuesAsync()
+        {
+            if (pendingIssues.Count == 0)
+                return;
+            var results = await StockReplayWacIssueRepricingWriter.AppendManyAsync(
+                context, pendingIssues, cancellationToken);
+            foreach (var result in results)
+            {
+                repricedSales[result.HistoryId] = result.Replacements;
+                if (result.Replacements.Count > 0)
+                    histories.Add(result.HistoryId);
+            }
+            pendingIssues.Clear();
+        }
+
         var eventIndex = 0;
         foreach (var movement in laterEvents)
         {
@@ -374,6 +391,16 @@ public static class StockReplayWacTailRepricingWriter
             var replacementLine = checked(reversalLine + 1);
             eventIndex++;
             var step = steps[movement.EventId];
+            if (movement.EventId is >= 0 and <= int.MaxValue && movement.OldSignedQuantity < 0m)
+            {
+                pendingIssues.Add(new StockReplayWacIssueRepricingRequest(
+                    checked((int)movement.EventId), movement, step, reversalLine, replacementLine));
+                continue;
+            }
+
+            // Returns, transfers, counts and other events can depend on earlier
+            // issue facts. Finish each contiguous issue run before processing them.
+            await FlushIssuesAsync();
             if (movement.EventId < 0)
             {
                 var countLineId = ParseCountLine(movement.Key.LineIdentity);
@@ -400,16 +427,7 @@ public static class StockReplayWacTailRepricingWriter
             }
             else if (movement.EventId <= int.MaxValue)
             {
-                if (movement.OldSignedQuantity < 0m)
-                {
-                    var replacements = await StockReplayWacIssueRepricingWriter.AppendAsync(
-                        context, checked((int)movement.EventId), movement, step,
-                        reversalLine, replacementLine, cancellationToken);
-                    repricedSales[movement.EventId] = replacements;
-                    if (replacements.Count > 0)
-                        histories.Add(checked((int)movement.EventId));
-                }
-                else if (movement.ReturnOfSaleEventId is long saleId)
+                if (movement.ReturnOfSaleEventId is long saleId)
                 {
                     if (!allowSalesReturn || !repricedSales.TryGetValue(saleId, out var saleFacts))
                         throw Invalid("A WAC Sales return has no authorized earlier sale.");
@@ -442,6 +460,7 @@ public static class StockReplayWacTailRepricingWriter
                 await StockReplayWacPurchaseVarianceWriter.AppendAsync(context, permit, purchasePermit!,
                     movement, step, reversalLine, replacementLine, cancellationToken);
         }
+        await FlushIssuesAsync();
         return new(permit, histories, countLines);
     }
 

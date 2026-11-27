@@ -12,9 +12,11 @@ using ErpWeb.Model.Repositories.Inventory;
 using ErpWeb.Model.Repositories.Purchase;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Data.Common;
 
 using ErpWeb.Tests.Procurement.Transaction;
 namespace ErpWeb.Tests.Inventory.Transaction;
@@ -26,6 +28,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
 
     private readonly SqliteConnection _connection;
     private readonly IDbContextFactory<AppDbContext> _factory;
+    private readonly ReplayQueryCounter _replayQueryCounter = new();
 
     public IvMiscReceiptServiceTests()
     {
@@ -33,6 +36,7 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         _connection.Open();
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlite(_connection)
+            .AddInterceptors(_replayQueryCounter)
             .Options;
         _factory = new TestDbContextFactory(options);
         using var db = _factory.CreateDbContext();
@@ -2073,6 +2077,92 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
             .SingleAsync(b => b.BatchNo == saved.BatchNo)).BatchStatus);
         Assert.Equal(7m, (await afterRejected.StockCostStates
             .SingleAsync(s => s.ItemCode == "A100")).OnHandBaseQty);
+    }
+
+    [Fact]
+    public async Task Backdated_wac_receipt_batches_later_issue_repricing_on_post_rollback_and_repost()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await InventoryLedgerTestFixture.SeedCompanyAsync(db);
+            await InventoryLedgerTestFixture.SeedActiveEpochAsync(db);
+            await InventoryLedgerTestFixture.SeedMovingAveragePolicyAsync(db);
+            db.IvBalLocs.Add(new IvBalLoc
+            {
+                CompanyCode = "DEMO", BranchCode = "HQ", ICode = "A100",
+                WhCode = "MAIN", LocCode = "BIN1", LotNo = string.Empty,
+                IStatus = "ACTIVE", StdQty = 30m, StdUom = "EA",
+                TransDate = FixedToday.AddDays(-5)
+            });
+            await db.SaveChangesAsync();
+            await InventoryLedgerTestFixture.SeedCostStateAsync(db, "A100", 30m, 2m);
+        }
+
+        int pileId;
+        await using (var db = await _factory.CreateDbContextAsync())
+            pileId = await db.IvBalLocs.Select(b => b.Id).SingleAsync();
+        var issue = InventoryLedgerTestFixture.CreateMiscIssue(_factory, FixedToday);
+        var issues = new List<int>();
+        for (var i = 0; i < 10; i++)
+        {
+            var draft = await issue.SaveNewAsync(new IvMiscIssueSaveRequest
+            {
+                TrxDate = FixedToday,
+                Lines = [new IvMiscIssueLineRequest
+                {
+                    FromBalLocId = pileId, ICode = "A100", FrWarehouse = "MAIN", FrLocation = "BIN1",
+                    FrLotNo = string.Empty, Quantity = 1m, Uom = "EA", IClassCode = "RAW",
+                    IStatus = "ACTIVE", UnitPrice = 2m
+                }]
+            });
+            Assert.True(draft.Succeeded, draft.ErrorMessage);
+            var issuePost = await issue.PostAsync([draft.BatchNo]);
+            Assert.True(issuePost.Succeeded, issuePost.ErrorMessage);
+            issues.Add(draft.BatchNo);
+        }
+
+        var receipt = CreateSut(withLedger: true, enableBackdatedReplay: true);
+        var saved = await receipt.SaveNewAsync(new IvMiscReceiptSaveRequest
+        {
+            TrxDate = FixedToday.AddDays(-2),
+            Lines = [new IvMiscReceiptLineRequest
+            {
+                ICode = "A100", ToWarehouse = "MAIN", ToLocation = "BIN1", Quantity = 10m,
+                UnitPrice = 8m, PriceConfirmed = true, Uom = "EA", IClassCode = "RAW",
+                IStatus = "ACTIVE", Reason = "ADJ"
+            }]
+        });
+        Assert.True(saved.Succeeded, saved.ErrorMessage);
+
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            _replayQueryCounter.Start();
+            var posted = await receipt.PostAsync([saved.BatchNo]);
+            var reads = _replayQueryCounter.Stop();
+            Assert.True(posted.Succeeded, posted.ErrorMessage);
+            await AssertStateAsync(30m, 105m, 3.5m);
+            // The old per-issue writer required 327 reader commands for this
+            // scenario. Leave margin for unrelated queries while preventing
+            // its return to one history/fact lookup per issue.
+            Assert.True(reads < 300, $"Post executed {reads} database reader commands.");
+
+            var rolledBack = await receipt.RollbackAsync([saved.BatchNo]);
+            Assert.True(rolledBack.Succeeded, rolledBack.ErrorMessage);
+            await AssertStateAsync(20m, 40m, 2m);
+        }
+
+        async Task AssertStateAsync(decimal quantity, decimal value, decimal issueCost)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Equal(quantity, (await db.IvBalLocs.SingleAsync(b => b.Id == pileId)).StdQty);
+            var state = await db.StockCostStates.SingleAsync(s => s.ItemCode == "A100");
+            Assert.Equal((quantity, value), (state.OnHandBaseQty, state.InventoryValue));
+            var histories = await db.IvTrxHistories.Where(h => issues.Contains(h.BatchNo)
+                && h.EntryRole == "ORIGINAL").ToArrayAsync();
+            Assert.Equal(10, histories.Length);
+            var active = await StockReplayValuationGenerationResolver.ResolveAsync(db, "DEMO", "HQ", histories);
+            Assert.All(histories, h => Assert.Equal(issueCost, active[h.Id].Sum(f => f.CostAmount)));
+        }
     }
 
     [Fact]
@@ -4512,6 +4602,30 @@ public class IvMiscReceiptServiceTests : IAsyncLifetime
         {
             await onCreateAsync();
             return await inner.CreateDbContextAsync(cancellationToken);
+        }
+    }
+
+    private sealed class ReplayQueryCounter : DbCommandInterceptor
+    {
+        private bool _enabled;
+        private int _reads;
+
+        public void Start() { _reads = 0; _enabled = true; }
+        public int Stop() { _enabled = false; return _reads; }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            if (_enabled) _reads++;
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (_enabled) _reads++;
+            return ValueTask.FromResult(result);
         }
     }
 
