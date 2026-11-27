@@ -2759,27 +2759,6 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
                 });
             if (consumeAt is 26 or 27 or 28 or 29 or 30 or 31 or 34 or 35 or 36 or 37 or 38 or 39 or 40 or 41 or 42 or 43 or 44 or 45 or 46 or 47 or 48 or 49 or 50 or 52 or 53 or 54 or 55 or 56 or 57 or 58 or 59 or 60 or 61 or 62 or 63 or 64 or 65 or 66 or 67 or 68 or 74 or 901)
                 await ConfigureFinishedGoodRouteAsync(db, graph.Process2Id);
-            await db.SaveChangesAsync();
-            if (standard)
-            {
-                (await db.StockCostPolicyRevisions.SingleAsync()).CostMethod = StockCostMethods.Standard;
-                (await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001")).CostMethod = StockCostMethods.Standard;
-            }
-            if (goodsReceipt)
-                db.PoOrders.Add(new PoOrder
-                {
-                    CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-IP-REPLAY",
-                    PoRelNo = 1, PoDate = new DateTime(2026, 9, 30), Status = "NEW",
-                    VendCode = "SUP01", CurCode = "MYR", RowVersion = [1],
-                    Details = [new PoOrderDetail
-                    {
-                        CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-IP-REPLAY",
-                        PoRelNo = 1, Line = 1, ICode = "RM001", PoQty = 10m,
-                        PoPurQty = 10m, PoUnitPrice = receiptPrice, NetAmount = 10m * receiptPrice,
-                        PurchaseUom = "EA", StdUom = "EA", PackSz = 1m,
-                        CurCode = "MYR", ToWarehouse = "WH01"
-                    }]
-                });
             var explicitBalance = db.Database.IsSqlServer()
                 && consumeAt is 113 or 114 or 124 or 125 or 126;
             if (explicitBalance)
@@ -2789,6 +2768,27 @@ public sealed class ProductionMaterialIssueSequenceOverlapTests : IAsyncDisposab
             }
             try
             {
+                await db.SaveChangesAsync();
+                if (standard)
+                {
+                    (await db.StockCostPolicyRevisions.SingleAsync()).CostMethod = StockCostMethods.Standard;
+                    (await db.StockCostStates.SingleAsync(s => s.ItemCode == "RM001")).CostMethod = StockCostMethods.Standard;
+                }
+                if (goodsReceipt)
+                    db.PoOrders.Add(new PoOrder
+                    {
+                        CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-IP-REPLAY",
+                        PoRelNo = 1, PoDate = new DateTime(2026, 9, 30), Status = "NEW",
+                        VendCode = "SUP01", CurCode = "MYR", RowVersion = [1],
+                        Details = [new PoOrderDetail
+                        {
+                            CompanyCode = "DEMO", BranchCode = "HQ", PoNo = "PO-IP-REPLAY",
+                            PoRelNo = 1, Line = 1, ICode = "RM001", PoQty = 10m,
+                            PoPurQty = 10m, PoUnitPrice = receiptPrice, NetAmount = 10m * receiptPrice,
+                            PurchaseUom = "EA", StdUom = "EA", PackSz = 1m,
+                            CurCode = "MYR", ToWarehouse = "WH01"
+                        }]
+                    });
                 await db.SaveChangesAsync();
             }
             finally

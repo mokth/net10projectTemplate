@@ -135,28 +135,28 @@ public sealed class PoSupplierService : IPoSupplierService
         var code = (model.SuppCode ?? string.Empty).Trim();
         model.SuppCode = code;
 
-        var errors = ValidateModel(model, isNew, null);
+        if (!isNew && (model.RowVersion is null || model.RowVersion.Length == 0))
+        {
+            return Fail<PoSupplierEditVm>(IvMasterErrorCode.Concurrency, "Concurrency token is missing. Reload and try again.");
+        }
+
         if (isNew)
         {
+            var errors = ValidateModel(model, isNew: true, null);
             await AddLookupValidationErrorsAsync(errors, model, existingSnapshot: null, cancellationToken);
             if (!errors.ContainsKey("SuppCode") &&
                 await _suppliers.ExistsAsync(context.CompanyCode!, context.BranchCode!, code, cancellationToken))
             {
                 errors["SuppCode"] = "Supplier code already exists.";
             }
-        }
 
-        if (!isNew && (model.RowVersion is null || model.RowVersion.Length == 0))
-        {
-            return Fail<PoSupplierEditVm>(IvMasterErrorCode.Concurrency, "Concurrency token is missing. Reload and try again.");
-        }
-
-        if (errors.Count > 0)
-        {
-            return IvMasterOperationResult<PoSupplierEditVm>.Fail(
-                IvMasterErrorCode.Validation,
-                "Validation failed.",
-                errors);
+            if (errors.Count > 0)
+            {
+                return IvMasterOperationResult<PoSupplierEditVm>.Fail(
+                    IvMasterErrorCode.Validation,
+                    "Validation failed.",
+                    errors);
+            }
         }
 
         var now = _dates.Now;

@@ -167,7 +167,8 @@ public class PoPrSqlServerConcurrencyTests
             Request(fixture, qty: 4m, line: line, rowVersion: token));
         var results = await Task.WhenAll(cancel, edit);
 
-        Assert.Equal(1, results.Count(x => x.Succeeded));
+        Assert.True(results.Count(x => x.Succeeded) == 1,
+            string.Join(" | ", results.Select(r => $"{r.Succeeded}:{r.ErrorKind}:{r.ErrorMessage}")));
         Assert.Equal(1, results.Count(x => x.ErrorKind == PoPrErrorKind.Concurrency));
 
         var current = await sut.GetAsync(save.PrNo!);
@@ -206,10 +207,21 @@ public class PoPrSqlServerConcurrencyTests
         var edit = sut.UpdateAsync(
             save.PrNo!,
             Request(fixture, qty: 5m, line: line, rowVersion: token));
-        var results = await Task.WhenAll(delete, edit);
+        await Task.WhenAll(delete, edit);
+        var deleteResult = await delete;
+        var editResult = await edit;
 
-        Assert.Equal(1, results.Count(x => x.Succeeded));
-        Assert.Equal(1, results.Count(x => x.ErrorKind == PoPrErrorKind.Concurrency));
+        Assert.True(deleteResult.Succeeded ^ editResult.Succeeded,
+            $"delete={deleteResult.Succeeded}:{deleteResult.ErrorKind}:{deleteResult.ErrorMessage} | "
+            + $"edit={editResult.Succeeded}:{editResult.ErrorKind}:{editResult.ErrorMessage}");
+        if (deleteResult.Succeeded)
+        {
+            Assert.Equal(PoPrErrorKind.NotFound, editResult.ErrorKind);
+        }
+        else
+        {
+            Assert.Equal(PoPrErrorKind.Concurrency, deleteResult.ErrorKind);
+        }
     }
 
     private sealed record Fixture(string ICode);

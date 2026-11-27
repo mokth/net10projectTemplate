@@ -214,10 +214,7 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
                 await db.Database.EnsureCreatedAsync();
                 await using var connection = new SqlConnection(connectionString);
                 await connection.OpenAsync();
-                await using var command = connection.CreateCommand();
-                command.CommandTimeout = 60;
-                command.CommandText = File.ReadAllText(FindScript("create-production-work-order-transfer.sql"));
-                await command.ExecuteNonQueryAsync();
+                await ExecuteScriptAsync(connection, "create-production-work-order-transfer.sql");
                 _schemaReady = true;
             }
             finally { SchemaGate.Release(); }
@@ -227,11 +224,19 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
         {
             await using var db = await Factory.CreateDbContextAsync();
             await ProductionLedgerTestFixture.SeedActiveEpochAsync(db, Company, "HQ", BusinessTime.AddDays(-1));
+            var bom = new PrBomHdr
+            {
+                CompanyCode = Company, ProdCode = "FG-TRANSFER", DefinitionCode = "STD", Version = 1,
+                Status = PrBomStatuses.Draft, BaseQty = 1m, BaseUom = "EA",
+                ValidationStatus = PrBomValidationStatuses.Unverified
+            };
+            db.PrBomHdrs.Add(bom);
+            await db.SaveChangesAsync();
 
-            var source = CreateOrder("WO-SOURCE", ProductionWorkOrderStatuses.InProgress, Company);
+            var source = CreateOrder("WO-SOURCE", ProductionWorkOrderStatuses.InProgress, Company, bom.Uid);
             var sourceRoute = CreateRoute(source, "WC-SOURCE", "WIP-1", "BOX");
             var sourceOperation = CreateOperation(source, sourceRoute, "OP-SOURCE", true, "BOX");
-            var target = CreateOrder("WO-TARGET", ProductionWorkOrderStatuses.Released, Company);
+            var target = CreateOrder("WO-TARGET", ProductionWorkOrderStatuses.Released, Company, bom.Uid);
             var producerRoute = CreateRoute(target, "WC-TARGET-PRODUCER", "WIP-1", "BOX");
             var producerOperation = CreateOperation(target, producerRoute, "OP-PRODUCE", true, "BOX");
             var consumerRoute = CreateRoute(target, "WC-TARGET-PRODUCER", "FG-1", "EA");
@@ -259,11 +264,7 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
 
             var sourceLocation = await AddLocationAsync(db, "WC-SOURCE");
             var producerLocation = await AddLocationAsync(db, "WC-TARGET-PRODUCER");
-            var sourcePool = CreatePool(source, sourceRoute, sourceOperation, sourceLocation,
-                "LOT-TRANSFER-1", 4.25m, 10.625m, 35.123456m);
-            db.ProductionBalLots.Add(sourcePool);
-            await db.SaveChangesAsync();
-            await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, sourcePool);
+            var sourcePool = await SeedVerifiedSourcePoolAsync(db, source, sourceRoute, sourceOperation, sourceLocation);
 
             SourcePoolId = sourcePool.Uid;
             SourceWorkOrderId = source.Uid;
@@ -278,17 +279,61 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
         public async Task<long> AddSecondSourceAsync()
         {
             await using var db = await Factory.CreateDbContextAsync();
-            var order = CreateOrder("WO-SOURCE-2", ProductionWorkOrderStatuses.InProgress, Company);
+            var bomId = await db.PrBomHdrs.Where(x => x.CompanyCode == Company).Select(x => x.Uid).FirstAsync();
+            var order = CreateOrder("WO-SOURCE-2", ProductionWorkOrderStatuses.InProgress, Company, bomId);
             var route = CreateRoute(order, "WC-SOURCE-2", "WIP-1", "BOX");
             var operation = CreateOperation(order, route, "OP-SOURCE-2", true, "BOX");
             db.ProductionWorkOrders.Add(order);
             await db.SaveChangesAsync();
             var location = await AddLocationAsync(db, "WC-SOURCE-2");
-            var pool = CreatePool(order, route, operation, location, "LOT-TRANSFER-1", 4.25m, 10.625m, 35.123456m);
+            var pool = await SeedVerifiedSourcePoolAsync(db, order, route, operation, location);
+            return pool.Uid;
+        }
+
+        private async Task<ProductionBalLot> SeedVerifiedSourcePoolAsync(
+            AppDbContext db, ProductionWorkOrder order, ProductionWorkOrderRouteStep route,
+            ProductionWorkOrderOperation operation, ProductionLocation location)
+        {
+            var pool = CreatePool(order, route, operation, location,
+                "LOT-TRANSFER-1", 4.25m, 10.625m, 35.123456m);
             db.ProductionBalLots.Add(pool);
             await db.SaveChangesAsync();
             await ProductionLedgerTestFixture.SeedVerifiedPoolAsync(db, pool);
-            return pool.Uid;
+
+            var link = new ProductionPostingLink
+            {
+                CompanyCode = Company, BranchCode = "HQ", CommandType = "SEED_OUTPUT_POST",
+                PostingRequestId = Guid.NewGuid().ToString("N"), DocumentRevision = 1,
+                WorkOrderId = order.Uid, ProductionDocumentType = ProductionDocumentTypes.ProductionOutput,
+                ProductionDocumentNo = order.WorkOrderNo, Status = ProductionPostingLinkStatuses.Succeeded,
+                CreatedDate = BusinessTime.AddDays(-1), CreatedBy = "test"
+            };
+            db.ProductionPostingLinks.Add(link);
+            await db.SaveChangesAsync();
+
+            var receipt = new ProductionBalLotMovement
+            {
+                ProductionBalLotId = pool.Uid,
+                MovementType = ProductionBalLotMovementTypes.Produce,
+                Qty = pool.Qty, Uom = pool.Uom, BaseQty = pool.BaseQty, BaseUom = pool.BaseUom,
+                UnitCost = pool.AverageUnitCost, TotalCost = pool.TotalCost,
+                WorkOrderId = order.Uid, WorkOrderOperationId = operation.Uid,
+                RouteStepId = route.Uid, PostingLinkId = link.Uid,
+                DocumentType = ProductionDocumentTypes.ProductionOutput, DocumentNo = order.WorkOrderNo,
+                MovementDate = pool.LastMovementDate!.Value,
+                CreatedDate = pool.LastMovementDate.Value, CreatedBy = "test"
+            };
+            db.ProductionBalLotMovements.Add(receipt);
+            await db.SaveChangesAsync();
+
+            db.ProductionValuationEvidenceRows.Add(new ProductionValuationEvidence
+            {
+                MovementId = receipt.Uid, ProductionBalLotId = pool.Uid,
+                Generation = 1, Status = ProductionPoolValuationService.Verified,
+                Basis = "TEST_VERIFIED_SOURCE"
+            });
+            await db.SaveChangesAsync();
+            return pool;
         }
 
         public async Task CompleteTargetProducerAsync()
@@ -366,9 +411,9 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
             LastMovementDate = BusinessTime.AddDays(-1), LastStockEventEffectiveAt = BusinessTime.AddDays(-1),
         };
 
-        private static ProductionWorkOrder CreateOrder(string number, string status, string company) => new()
+        private static ProductionWorkOrder CreateOrder(string number, string status, string company, long bomHdrId) => new()
         {
-            CompanyCode = company, BranchCode = "HQ", WorkOrderNo = number,
+            CompanyCode = company, BranchCode = "HQ", WorkOrderNo = number, SourceBomHdrId = bomHdrId,
             ProductCode = number.Contains("TARGET", StringComparison.Ordinal) ? "FG-TARGET" : "FG-SOURCE",
             ProductDescription = "Transfer SQL test product", OutputUom = "EA", Status = status,
             PlannedQty = 10m, RemainingQty = 10m, SnapshotRevision = 1,

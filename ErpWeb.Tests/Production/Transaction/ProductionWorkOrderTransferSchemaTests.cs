@@ -105,19 +105,8 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
         var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connectionString).Options;
         await using (var db = new AppDbContext(options)) await db.Database.EnsureCreatedAsync();
 
-        var script = File.ReadAllText(FindScript("create-production-work-order-transfer.sql"));
-        var batches = Regex.Split(script, @"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase)
-            .Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
-        for (var run = 0; run < 2; run++)
-        {
-            foreach (var batch in batches)
-            {
-                await using var command = connection.CreateCommand();
-                command.CommandTimeout = 60;
-                command.CommandText = batch;
-                await command.ExecuteNonQueryAsync();
-            }
-        }
+        await ExecuteScriptAsync(connection, "create-production-work-order-transfer.sql");
+        await ExecuteScriptAsync(connection, "create-production-work-order-transfer.sql");
 
         await using var verify = connection.CreateCommand();
         verify.CommandText = """
@@ -128,6 +117,20 @@ public sealed partial class ProductionWorkOrderTransferSqlServerTests
                 THEN 1 ELSE 0 END;
             """;
         Assert.Equal(1, Convert.ToInt32(await verify.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    internal static async Task ExecuteScriptAsync(SqlConnection connection, string scriptName)
+    {
+        var script = File.ReadAllText(FindScript(scriptName));
+        var batches = Regex.Split(script, @"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase)
+            .Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+        foreach (var batch in batches)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandTimeout = 60;
+            command.CommandText = batch;
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     private static string FindScript(string name)

@@ -523,6 +523,17 @@ public class SaInvoiceSqlServerConcurrencyTests
             db.IvMsCodes.Add(new IvMsCode { Code = payCode, Name = "Test pay", CodeType = IvMsCodeTypes.PayCode });
         }
 
+        if (!await db.SaSalesReps.AnyAsync(x => x.CompanyCode == "DEMO" && x.SrepCode == "SM1"))
+        {
+            db.SaSalesReps.Add(new SaSalesRep
+            {
+                CompanyCode = "DEMO",
+                SrepCode = "SM1",
+                SrepName = "Sales One",
+                IsActive = true
+            });
+        }
+
         var custCode = "C" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
         db.SaCusts.Add(new SaCust
         {
@@ -531,6 +542,21 @@ public class SaInvoiceSqlServerConcurrencyTests
             CustName = "Invoice concurrency",
             Currency = "MYR",
             PayCode = payCode,
+            SalesmanCode = "SM1",
+            GlCode = "GLAR01",
+            TinNo = "TIN01",
+            CustBrn = "BRN01",
+            Address1 = "1 Test St",
+            City = "KL",
+            PostalCode = "50000",
+            Country = "MYS",
+            Tel = "0312345678",
+            Email = "inv-test@example.com",
+            InvName = "Invoice concurrency",
+            InvAddress1 = "1 Test St",
+            InvCity = "KL",
+            InvPostalCode = "50000",
+            InvCountry = "MYS",
             IsActive = true
         });
 
@@ -542,10 +568,14 @@ public class SaInvoiceSqlServerConcurrencyTests
             ICode = iCode,
             IDesc = "Invoice stock item",
             IClassCode = classCode,
+            Classification = "022",
             StdUom = "EA",
+            SellingUom = "EA",
+            StdPackSize = 1m,
             StockControl = true,
             IsActive = true,
             SellingPrice = 10m,
+            SellingGlCode = "GLSALE",
             DefWarehouse = "MAIN"
         });
         db.IvStockMasters.Add(new IvStockMaster
@@ -554,10 +584,14 @@ public class SaInvoiceSqlServerConcurrencyTests
             ICode = serviceCode,
             IDesc = "Invoice service",
             IClassCode = classCode,
+            Classification = "022",
             StdUom = "EA",
+            SellingUom = "EA",
+            StdPackSize = 1m,
             StockControl = false,
             IsActive = true,
-            SellingPrice = 10m
+            SellingPrice = 10m,
+            SellingGlCode = "GLSVC"
         });
         await db.SaveChangesAsync();
 
@@ -625,6 +659,7 @@ public class SaInvoiceSqlServerConcurrencyTests
             CustCode = fixture.CustCode,
             Currency = "MYR",
             PayCode = fixture.PayCode,
+            SalesmanCode = "SM1",
             RowVersion = rowVersion,
             Lines =
             [

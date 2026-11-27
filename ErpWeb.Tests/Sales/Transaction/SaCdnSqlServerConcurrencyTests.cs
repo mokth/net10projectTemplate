@@ -203,6 +203,9 @@ public class SaCdnSqlServerConcurrencyTests
         if (!await db.IvMsCodes.AnyAsync(x => x.CodeType == IvMsCodeTypes.PayCode && x.Code == payCode))
             db.IvMsCodes.Add(new IvMsCode { Code = payCode, Name = "Test pay", CodeType = IvMsCodeTypes.PayCode });
 
+        if (!await db.SaSalesReps.AnyAsync(x => x.CompanyCode == "DEMO" && x.SrepCode == "SM1"))
+            db.SaSalesReps.Add(new SaSalesRep { CompanyCode = "DEMO", SrepCode = "SM1", SrepName = "Sales One", IsActive = true });
+
         // Unique customer
         var custCode = "C" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
         db.SaCusts.Add(new SaCust
@@ -212,6 +215,21 @@ public class SaCdnSqlServerConcurrencyTests
             CustName = "CDN concurrency",
             Currency = "MYR",
             PayCode = payCode,
+            SalesmanCode = "SM1",
+            GlCode = "GLAR01",
+            TinNo = "TIN01",
+            CustBrn = "BRN01",
+            Address1 = "1 Test St",
+            City = "KL",
+            PostalCode = "50000",
+            Country = "MYS",
+            Tel = "0312345678",
+            Email = "cdn-test@example.com",
+            InvName = "CDN concurrency",
+            InvAddress1 = "1 Test St",
+            InvCity = "KL",
+            InvPostalCode = "50000",
+            InvCountry = "MYS",
             IsActive = true
         });
 
@@ -223,7 +241,10 @@ public class SaCdnSqlServerConcurrencyTests
             ICode = serviceICode,
             IDesc = "CDN service",
             IClassCode = classCode,
+            Classification = "022",
             StdUom = "EA",
+            SellingUom = "EA",
+            StdPackSize = 1m,
             StockControl = false,
             IsActive = true,
             SellingPrice = 10m,
@@ -238,7 +259,10 @@ public class SaCdnSqlServerConcurrencyTests
             ICode = stockICode,
             IDesc = "CDN stock item",
             IClassCode = classCode,
+            Classification = "022",
             StdUom = "EA",
+            SellingUom = "EA",
+            StdPackSize = 1m,
             StockControl = true,
             IsActive = true,
             SellingPrice = 10m,
@@ -396,6 +420,7 @@ public class SaCdnSqlServerConcurrencyTests
             DocDate = FixedToday,
             CustCode = fixture.CustCode,
             Currency = "MYR",
+            SalesmanCode = "SM1",
             InvNo = invNo,
             RowVersion = rowVersion,
             Lines = [new SaCdnLineRequest { ICode = fixture.ServiceICode, Qty = qty, UnitPrice = price }]
@@ -409,6 +434,7 @@ public class SaCdnSqlServerConcurrencyTests
             DocDate = FixedToday,
             CustCode = fixture.CustCode,
             Currency = "MYR",
+            SalesmanCode = "SM1",
             InvNo = invNo,
             ReturnStock = true,
             Lines =
@@ -478,6 +504,7 @@ public class SaCdnSqlServerConcurrencyTests
             CustCode = fixture.CustCode,
             Currency = "MYR",
             PayCode = fixture.PayCode,
+            SalesmanCode = "SM1",
             Lines =
             [
                 new SaInvoiceLineRequest
